@@ -3,8 +3,9 @@ from app.services.video.base import BaseVideoService
 from app.services.video.ffmpeg_service import FFmpegService, FFmpegStaticService
 from app.services.video.kling_service import KlingService
 from app.services.video.fal_service import FalVideoService
+from app.services.video.comfyui_service import ComfyUIVideoService
 
-# v1.1.61: 로컬 ComfyUI 비디오 모델 전면 제거 — 사용자 요청. 클라우드만 유지.
+# v1.1.62: LTX Video 2B distilled (local i2v) 추가. WAN 2.2 는 모델 미설치로 제외.
 
 VIDEO_REGISTRY: dict[str, dict] = {
     # --- Local (free) ---
@@ -14,6 +15,14 @@ VIDEO_REGISTRY: dict[str, dict] = {
     # 효과 없는 정지 이미지 영상. 사용자 선택 모델 드롭다운에는 default=False.
     "ffmpeg-static":    {"name": "FFmpeg Static (no motion)", "provider": "local-static",
                          "cost_per_unit": "Free (local)", "cost_value": 0},
+
+    # --- Local ComfyUI (free, GPU) ---
+    "comfyui-ltxv-2b":  {"name": "ComfyUI LTX Video 2B distilled (local, i2v, fast)",
+                         "provider": "comfyui",
+                         "cost_per_unit": "Free (local GPU, ~3GB VRAM)", "cost_value": 0},
+    "comfyui-hunyuan15-480p": {"name": "ComfyUI HunyuanVideo 1.5 480p i2v (local, quality)",
+                         "provider": "comfyui",
+                         "cost_per_unit": "Free (local GPU, ~10GB VRAM)", "cost_value": 0},
 
     # --- Cheapest fal.ai options (added v1.1.11) ---
     "ltx2-fast":        {"name": "LTX Video 2.0 Fast",    "provider": "fal",
@@ -53,6 +62,8 @@ def get_video_service(model_id: str) -> BaseVideoService:
         return FFmpegStaticService()
     elif provider == "kling":
         return KlingService()
+    elif provider == "comfyui":
+        return ComfyUIVideoService(model_id)
     elif provider == "fal":
         return FalVideoService(model_id)
     else:

@@ -1,12 +1,19 @@
 {
   "_meta": {
     "name": "LTX Video 2B 0.9.8 distilled (image-to-video)",
-    "notes": "Lightricks LTXV 2B 증류 버전. 8 steps, cfg 1.0, euler. 12GB VRAM 에 여유롭게 돌아감. 768x512 @ 24fps 네이티브. 해상도는 32 배수. WAN 2.2 5B 대비 훨씬 가벼움 (~3GB VRAM)."
+    "notes": "Lightricks LTXV 2B 증류 버전. 8 steps, cfg 1.0, euler. 12GB VRAM 에 여유롭게 돌아감. 640x384 @ 24fps. 해상도는 32 배수. T5-XXL 텍스트 인코더 별도 로드 필요 (CLIPLoader)."
   },
   "1": {
     "class_type": "CheckpointLoaderSimple",
     "inputs": {
       "ckpt_name": "ltxv-2b-0.9.8-distilled.safetensors"
+    }
+  },
+  "14": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "t5xxl_fp8_e4m3fn_scaled.safetensors",
+      "type": "ltxv"
     }
   },
   "2": {
@@ -18,15 +25,15 @@
   "3": {
     "class_type": "CLIPTextEncode",
     "inputs": {
-      "clip": ["1", 1],
+      "clip": ["14", 0],
       "text": "${PROMPT}"
     }
   },
   "4": {
     "class_type": "CLIPTextEncode",
     "inputs": {
-      "clip": ["1", 1],
-      "text": "low quality, worst quality, deformed, distorted, blurry, watermark, text"
+      "clip": ["14", 0],
+      "text": "low quality, worst quality, deformed, distorted, disfigured, mutated, extra limbs, extra eyes, misplaced eyes, morphing face, blurry, watermark, text"
     }
   },
   "5": {
@@ -41,7 +48,7 @@
       "length": "${LENGTH}",
       "batch_size": 1,
       "strength": 1.0,
-      "image_noise_scale": 0.15
+      "image_noise_scale": 0.05
     }
   },
   "6": {
@@ -49,7 +56,7 @@
     "inputs": {
       "positive": ["5", 0],
       "negative": ["5", 1],
-      "frame_rate": 24
+      "frame_rate": 16
     }
   },
   "7": {
@@ -63,7 +70,7 @@
   "8": {
     "class_type": "LTXVScheduler",
     "inputs": {
-      "steps": 8,
+      "steps": 10,
       "max_shift": 2.05,
       "base_shift": 0.95,
       "stretch": true,
@@ -83,7 +90,7 @@
       "model": ["7", 0],
       "add_noise": true,
       "noise_seed": "${SEED}",
-      "cfg": 1.0,
+      "cfg": 1.2,
       "positive": ["6", 0],
       "negative": ["6", 1],
       "sampler": ["9", 0],
@@ -102,7 +109,7 @@
     "class_type": "CreateVideo",
     "inputs": {
       "images": ["11", 0],
-      "fps": 24
+      "fps": 16
     }
   },
   "13": {

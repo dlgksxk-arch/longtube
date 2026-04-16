@@ -108,7 +108,7 @@ def _count_ai_video_cuts(total_cuts: int, selection: str, ai_first_n: int = 5) -
     router/video.py 의 should_generate_ai_video 와 동일한 규칙:
     - all           : 전체
     - every_3/4/5   : (n-1) % N == 0  (1,4,7... / 1,5,9... / 1,6,11...)
-    - character_only: every_3 과 동일 — image.py 의 cut_has_character 규칙과 일치
+    - character_only: every_5 과 동일 — image.py 의 cut_has_character 규칙과 일치 (20%)
 
     v1.1.55: `ai_first_n` 양수면 컷 1..N 은 selection 무시하고 AI 로 카운트.
     """
@@ -120,8 +120,10 @@ def _count_ai_video_cuts(total_cuts: int, selection: str, ai_first_n: int = 5) -
         n_force = 0
     if selection not in VIDEO_TARGET_OPTIONS or selection == "all":
         return total_cuts
-    if selection == "every_3" or selection == "character_only":
+    if selection == "every_3":
         step = 3
+    elif selection == "character_only":
+        step = 5
     elif selection == "every_4":
         step = 4
     elif selection == "every_5":

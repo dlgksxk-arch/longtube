@@ -54,12 +54,12 @@ def apply_reference_style_prefix(prompt: str, has_reference: bool) -> str:
 # ── 캐릭터 슬롯 규칙 ──
 
 def cut_has_character(cut_number: int) -> bool:
-    """1-based cut_number 기준, 3컷마다 1장씩 캐릭터 배치.
-    즉 cut 1, 4, 7, 10, ... 가 캐릭터 컷.
+    """1-based cut_number 기준, 5컷마다 1장씩 캐릭터 배치 (20%).
+    즉 cut 1, 6, 11, 16, ... 가 캐릭터 컷.
     """
     if cut_number is None or cut_number < 1:
         return False
-    return (cut_number - 1) % 3 == 0
+    return (cut_number - 1) % 5 == 0
 
 
 # ── 레퍼런스/캐릭터 이미지 수집 ──

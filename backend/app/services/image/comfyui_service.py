@@ -26,6 +26,8 @@ _WORKFLOW_FILES = {
     "comfyui-revanimated": "revanimated_v2_text2img.json",
     "comfyui-meinamix": "meinamix_v12_text2img.json",
     "comfyui-dreamshaper-xl": "dreamshaper_xl_lightning_text2img.json",
+    "comfyui-dreamshaper-xl-vector": "dreamshaper_xl_vector_text2img.json",
+    "comfyui-dreamshaper-xl-longtube": "dreamshaper_xl_longtube_text2img.json",
     # Qwen-Image-Edit 는 t2i 전용 워크플로가 없음 (레퍼런스 필수). ref 워크플로만 등록.
 }
 
@@ -51,18 +53,20 @@ _DISPLAY_NAMES = {
     "comfyui-revanimated": "ComfyUI ReV Animated v2 Rebirth (local, 2.5D)",
     "comfyui-meinamix": "ComfyUI MeinaMix v12 (local, anime)",
     "comfyui-dreamshaper-xl": "ComfyUI DreamShaper XL Lightning (local, SDXL)",
+    "comfyui-dreamshaper-xl-vector": "ComfyUI DreamShaper XL + Vector Art (카툰/벡터, local)",
+    "comfyui-dreamshaper-xl-longtube": "ComfyUI DreamShaper XL + LongTube Style (커스텀, local)",
     "comfyui-qwen-image-edit-2509": "ComfyUI Qwen-Image-Edit 2509 fp8 (local, ref 필수)",
 }
 
 # SDXL 계열 (1024 훈련) — 해상도 강제 매핑 대상
-_SDXL_FAMILY = {"comfyui-dreamshaper-xl"}
+_SDXL_FAMILY = {"comfyui-dreamshaper-xl", "comfyui-dreamshaper-xl-vector", "comfyui-dreamshaper-xl-longtube"}
 
 _SDXL_DIMS = {
-    "16:9": (1344, 768),
-    "9:16": (768, 1344),
-    "1:1":  (1024, 1024),
-    "3:4":  (896, 1152),
-    "4:3":  (1152, 896),
+    "16:9": (1024, 576),
+    "9:16": (576, 1024),
+    "1:1":  (768, 768),
+    "3:4":  (640, 832),
+    "4:3":  (832, 640),
 }
 
 # Qwen-Image 계열 (1328 native, 64 배수 권장). 레퍼런스 필수.
@@ -78,8 +82,9 @@ _QWEN_DIMS = {
 
 # 사용자 `image_negative_prompt` 가 비어 있을 때의 기본값.
 DEFAULT_NEGATIVE_PROMPT = (
-    "blurry, low quality, watermark, text, distorted, ugly, deformed, "
-    "bad anatomy, extra fingers, jpeg artifacts"
+    "blurry, low quality, watermark, text, letters, words, numbers, subtitles, "
+    "captions, typography, logo, sign, writing, font, label, "
+    "distorted, ugly, deformed, bad anatomy, extra fingers, jpeg artifacts"
 )
 
 # SD 1.5 계열 (512 훈련) — 해상도 강제 매핑 대상
@@ -227,6 +232,14 @@ class ComfyUIImageService(BaseImageService):
         # (IPAdapter/Redux 설치 난이도 높음). 레퍼런스 들어와도 기본 워크플로로 실행.
         # 스타일은 global_style/프롬프트 텍스트로 유도.
         final_prompt_text = (prompt or "").strip() or "an image"
+
+        # LoRA 트리거 워드 자동 삽입
+        if self.model_id == "comfyui-dreamshaper-xl-vector":
+            if "vector" not in final_prompt_text.lower():
+                final_prompt_text = f"vector, {final_prompt_text}"
+        elif self.model_id == "comfyui-dreamshaper-xl-longtube":
+            if "longtubestyle" not in final_prompt_text.lower():
+                final_prompt_text = f"longtubestyle, {final_prompt_text}"
         subs = {
             "PROMPT": final_prompt_text,
             "NEGATIVE": neg,

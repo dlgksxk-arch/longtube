@@ -36,7 +36,7 @@ def should_generate_ai_video(cut_number: int, selection: str, ai_first_n: int = 
     if selection == "every_5":
         return (cut_number - 1) % 5 == 0
     if selection == "character_only":
-        return (cut_number - 1) % 3 == 0
+        return (cut_number - 1) % 5 == 0
     return True
 
 
@@ -57,41 +57,35 @@ def build_video_motion_prompt(
 
     parts: list[str] = []
 
+    # v1.1.62: 심플 일러스트/카툰 스타일에 맞게 모션 프롬프트 단순화.
+    # 과도한 실사 묘사(먼지 파티클, 빛 깜빡임 등)를 제거하고
+    # 부드럽고 단순한 애니메이션 지시로 통일.
     if is_first:
         parts.append(
-            "The camera slowly pushes in from wide to medium shot. "
-            "Soft ambient motion in the scene: dust particles drift through the air, "
-            "light flickers gently, background elements sway. "
-            "Opening shot energy, building anticipation."
+            "Gentle slow zoom in. Subtle movement in the scene, "
+            "soft animation, smooth opening."
         )
     elif is_last:
         parts.append(
-            "The camera slowly pulls out and drifts upward. "
-            "Ambient motion continues: gentle wind, soft light shift, "
-            "subtle atmospheric movement. Satisfying closing beat."
+            "Gentle slow zoom out. Soft fading motion, "
+            "calm and peaceful ending."
         )
     else:
         parts.append(
-            "The camera slowly pans and drifts with subtle parallax. "
-            "Things in the scene move naturally: wind moves fabric and hair, "
-            "light shimmers, particles float, water or smoke flows. "
-            "Continuous cinematic motion throughout the shot."
+            "Gentle slow pan. Subtle natural movement, "
+            "smooth continuous motion, soft animation."
         )
 
     if is_character_cut and character_description:
         parts.append(
-            f"The main character ({character_description}) is present and MUST move "
-            f"naturally — subtle head turn, eye blink, hair/clothes drift, small hand "
-            f"or shoulder gesture, breathing motion. Keep the face and outfit "
-            f"perfectly consistent with the reference image. No teleporting, no "
-            f"identity drift, no extra limbs."
+            f"The character ({character_description}) moves slightly — "
+            f"small gesture, gentle sway. Keep appearance consistent."
         )
     elif is_character_cut:
         parts.append(
-            "The main focal character moves naturally — subtle gestures, breathing, "
-            "tiny idle motion. Preserve identity exactly."
+            "The character moves slightly — small gesture, gentle sway."
         )
     else:
-        parts.append("No hard cuts inside the clip; keep motion gentle and continuous.")
+        parts.append("Keep motion smooth and gentle, no sudden changes.")
 
     return " ".join(parts)

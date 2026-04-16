@@ -18,6 +18,18 @@ IMAGE_REGISTRY: dict[str, dict] = {
         "cost_per_unit": "Free (local GPU, ~7GB)",
         "cost_value": 0.0,
     },
+    "comfyui-dreamshaper-xl-vector": {
+        "name": "ComfyUI DreamShaper XL + Vector Art (카툰/벡터, local)",
+        "provider": "comfyui",
+        "cost_per_unit": "Free (local GPU, ~7GB)",
+        "cost_value": 0.0,
+    },
+    "comfyui-dreamshaper-xl-longtube": {
+        "name": "ComfyUI DreamShaper XL + LongTube Style LoRA (커스텀, local)",
+        "provider": "comfyui",
+        "cost_per_unit": "Free (local GPU, ~7GB)",
+        "cost_value": 0.0,
+    },
     "comfyui-qwen-image-edit-2509": {
         "name": "ComfyUI Qwen-Image-Edit 2509 fp8 (local, 레퍼런스 필수)",
         "provider": "comfyui",

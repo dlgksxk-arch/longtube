@@ -293,12 +293,12 @@ export interface CharacterSlotsResponse {
 }
 
 /**
- * 결정론적 규칙: 3컷마다 1장 캐릭터 — 컷 1, 4, 7, 10… 이 캐릭터 컷.
+ * 결정론적 규칙: 5컷마다 1장 캐릭터 (20%) — 컷 1, 6, 11, 16… 이 캐릭터 컷.
  * 백엔드 `cut_has_character()` 와 반드시 동일해야 함.
  */
 export const cutHasCharacter = (cutNumber: number): boolean => {
   if (cutNumber == null || cutNumber < 1) return false;
-  return (cutNumber - 1) % 3 === 0;
+  return (cutNumber - 1) % 5 === 0;
 };
 
 export const imageApi = {

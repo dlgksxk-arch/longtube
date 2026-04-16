@@ -21,6 +21,7 @@ _WORKFLOW_FILES = {
     "comfyui-wan22-5b": "wan22_ti2v_5b.json",
     "comfyui-ltxv-2b": "ltxv_2b_distilled_i2v.json",
     "comfyui-ltxv-13b": "ltxv_13b_distilled_i2v.json",
+    "comfyui-hunyuan15-480p": "hunyuan15_480p_i2v.json",
 }
 
 _DISPLAY_NAMES = {
@@ -28,14 +29,16 @@ _DISPLAY_NAMES = {
     "comfyui-wan22-5b": "ComfyUI WAN 2.2 TI2V 5B (local)",
     "comfyui-ltxv-2b": "ComfyUI LTX Video 2B distilled (local, ultra-fast)",
     "comfyui-ltxv-13b": "ComfyUI LTX Video 13B distilled fp8 (local, quality)",
+    "comfyui-hunyuan15-480p": "ComfyUI HunyuanVideo 1.5 480p i2v (local, quality)",
 }
 
-# 모델별 기본 FPS. 14B I2V = 16fps, 5B TI2V = 24fps, LTXV = 24fps.
+# 모델별 기본 FPS. 14B I2V = 16fps, 5B TI2V = 24fps, LTXV = 24fps, Hunyuan = 24fps.
 _FPS_BY_MODEL = {
     "comfyui-wan22-i2v-fast": 16,
     "comfyui-wan22-5b": 24,
-    "comfyui-ltxv-2b": 24,
+    "comfyui-ltxv-2b": 16,
     "comfyui-ltxv-13b": 24,
+    "comfyui-hunyuan15-480p": 16,
 }
 
 # 해상도 배수 요구사항 (width/height 가 이 값의 배수여야 함).
@@ -44,14 +47,16 @@ _DIM_MULTIPLE = {
     "comfyui-wan22-5b": 16,
     "comfyui-ltxv-2b": 32,
     "comfyui-ltxv-13b": 32,
+    "comfyui-hunyuan15-480p": 16,
 }
 
-# LTXV 는 프레임 수도 8n+1 형태 (WAN 은 4n+1).
+# LTXV 는 프레임 수도 8n+1 형태 (WAN 은 4n+1, Hunyuan 은 4n+1).
 _FRAME_QUANTIZE = {
     "comfyui-wan22-i2v-fast": 4,
     "comfyui-wan22-5b": 4,
     "comfyui-ltxv-2b": 8,
     "comfyui-ltxv-13b": 8,
+    "comfyui-hunyuan15-480p": 4,
 }
 
 
@@ -61,9 +66,9 @@ def _wan_dims(aspect_ratio: str, multiple: int = 16) -> tuple[int, int]:
     if aspect_ratio == "9:16":
         w, h = 384, 640
     elif aspect_ratio == "1:1":
-        w, h = 512, 512
+        w, h = 512, 512  # 32 배수
     elif aspect_ratio == "3:4":
-        w, h = 448, 576  # 432 는 32 배수 아니라 448 로 올림
+        w, h = 448, 576  # 32 배수
     else:  # 16:9
         w, h = 640, 384
     # 배수 보정
@@ -112,6 +117,9 @@ class ComfyUIVideoService(BaseVideoService):
             raise ValueError("output_path required")
         if not Path(image_path).exists():
             raise FileNotFoundError(f"입력 이미지 없음: {image_path}")
+
+        # 0) 이전 모델(DreamShaper XL 등)이 VRAM 에 남아있으면 OOM 위험 → 해제
+        await comfyui_client.free_memory(unload_models=True, free_memory=True)
 
         # 1) 소스 이미지를 ComfyUI 서버에 업로드 → filename 획득
         uploaded_name = await comfyui_client.upload_image(image_path)

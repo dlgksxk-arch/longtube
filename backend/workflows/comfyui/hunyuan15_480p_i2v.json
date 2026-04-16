@@ -1,0 +1,105 @@
+{
+  "_meta": {
+    "name": "HunyuanVideo 1.5 480p i2v (cfg distilled fp8)",
+    "notes": "텐센트 HunyuanVideo 1.5 i2v. 8.3B 파라미터, cfg distilled fp8. DualCLIPLoader(clip_l + qwen_2.5_vl_7b) + UNETLoader + VAELoader. 12GB VRAM 에서 동작 확인. 해상도 16 배수."
+  },
+  "1": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "hunyuanvideo1.5_480p_i2v_cfg_distilled_fp8_scaled.safetensors",
+      "weight_dtype": "default"
+    }
+  },
+  "2": {
+    "class_type": "DualCLIPLoader",
+    "inputs": {
+      "clip_name1": "clip_l.safetensors",
+      "clip_name2": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+      "type": "hunyuan_video_15"
+    }
+  },
+  "3": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "hunyuanvideo15_vae_fp16.safetensors"
+    }
+  },
+  "4": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "${INPUT_IMAGE_NAME}"
+    }
+  },
+  "7": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": ["2", 0],
+      "text": "${PROMPT}"
+    }
+  },
+  "8": {
+    "class_type": "HunyuanVideo15ImageToVideo",
+    "inputs": {
+      "positive": ["7", 0],
+      "negative": ["7", 0],
+      "vae": ["3", 0],
+      "width": "${WIDTH}",
+      "height": "${HEIGHT}",
+      "length": "${LENGTH}",
+      "batch_size": 1,
+      "start_image": ["4", 0]
+    }
+  },
+  "9": {
+    "class_type": "KSamplerSelect",
+    "inputs": {
+      "sampler_name": "euler"
+    }
+  },
+  "10": {
+    "class_type": "BasicScheduler",
+    "inputs": {
+      "model": ["1", 0],
+      "scheduler": "simple",
+      "steps": 8,
+      "denoise": 1.0
+    }
+  },
+  "11": {
+    "class_type": "SamplerCustom",
+    "inputs": {
+      "model": ["1", 0],
+      "add_noise": true,
+      "noise_seed": "${SEED}",
+      "cfg": 1.0,
+      "positive": ["8", 0],
+      "negative": ["8", 1],
+      "sampler": ["9", 0],
+      "sigmas": ["10", 0],
+      "latent_image": ["8", 2]
+    }
+  },
+  "12": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": ["11", 0],
+      "vae": ["3", 0]
+    }
+  },
+  "13": {
+    "class_type": "CreateVideo",
+    "inputs": {
+      "images": ["12", 0],
+      "fps": 16
+    }
+  },
+  "14": {
+    "class_type": "SaveVideo",
+    "inputs": {
+      "video": ["13", 0],
+      "filename_prefix": "${PREFIX}",
+      "format": "mp4",
+      "codec": "h264"
+    }
+  }
+}

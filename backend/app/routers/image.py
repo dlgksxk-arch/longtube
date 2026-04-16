@@ -272,14 +272,14 @@ def _collect_logo_images(project_id: str, config: dict) -> list[str]:
 
 
 def cut_has_character(cut_number: int) -> bool:
-    """1-based cut_number 기준, 3컷마다 1장씩 캐릭터 배치.
+    """1-based cut_number 기준, 5컷마다 1장씩 캐릭터 배치 (20%).
 
-    즉 cut 1, 4, 7, 10, ... 가 캐릭터 컷.
+    즉 cut 1, 6, 11, 16, ... 가 캐릭터 컷.
     DB 마이그레이션 없이 결정적으로 계산 가능해 프론트/백엔드 모두 같은 규칙 적용 가능.
     """
     if cut_number is None or cut_number < 1:
         return False
-    return (cut_number - 1) % 3 == 0
+    return (cut_number - 1) % 5 == 0
 
 
 def _prompt_mentions_character(prompt: str, config: dict) -> bool:
