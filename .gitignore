@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+venv/
+.venv/
+
+# Node
+node_modules/
+.next/
+.pnpm-store/
+
+# Environment
+.env
+.env.local
+*.env
+
+# Data (생성된 에셋 - 용량이 크므로 git 제외)
+data/projects/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Redis
+dump.rdb
+
+# YouTube OAuth token
+token.json
+client_secret*.json
+*.db
+data/

@@ -1,0 +1,95 @@
+{
+  "_meta": {
+    "name": "Qwen-Image-Edit 2509 (fp8 e4m3fn) reference-style edit",
+    "notes": "ComfyUI 네이티브 Qwen-Image-Edit 2509 워크플로. 레퍼런스 이미지 1장 + 텍스트 프롬프트 → 스타일/구성 전이. 필수 파일: models/diffusion_models/qwen_image_edit_2509_fp8_e4m3fn.safetensors, models/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors, models/vae/qwen_image_vae.safetensors. 20 steps, cfg 2.5, euler/simple, shift 3.1. 해상도는 1024/1328 native 근접 권장."
+  },
+  "1": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "qwen_image_edit_2509_fp8_e4m3fn.safetensors",
+      "weight_dtype": "default"
+    }
+  },
+  "2": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+      "type": "qwen_image",
+      "device": "default"
+    }
+  },
+  "3": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "qwen_image_vae.safetensors"
+    }
+  },
+  "4": {
+    "class_type": "ModelSamplingAuraFlow",
+    "inputs": {
+      "model": ["1", 0],
+      "shift": 3.1
+    }
+  },
+  "5": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "${REF_IMAGE}"
+    }
+  },
+  "6": {
+    "class_type": "TextEncodeQwenImageEditPlus",
+    "inputs": {
+      "clip": ["2", 0],
+      "vae": ["3", 0],
+      "image1": ["5", 0],
+      "prompt": "${PROMPT}"
+    }
+  },
+  "7": {
+    "class_type": "TextEncodeQwenImageEditPlus",
+    "inputs": {
+      "clip": ["2", 0],
+      "vae": ["3", 0],
+      "image1": ["5", 0],
+      "prompt": "${NEGATIVE}"
+    }
+  },
+  "8": {
+    "class_type": "EmptySD3LatentImage",
+    "inputs": {
+      "width": "${WIDTH}",
+      "height": "${HEIGHT}",
+      "batch_size": 1
+    }
+  },
+  "9": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": ["4", 0],
+      "positive": ["6", 0],
+      "negative": ["7", 0],
+      "latent_image": ["8", 0],
+      "seed": "${SEED}",
+      "steps": 20,
+      "cfg": 2.5,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1.0
+    }
+  },
+  "10": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": ["9", 0],
+      "vae": ["3", 0]
+    }
+  },
+  "11": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": ["10", 0],
+      "filename_prefix": "${PREFIX}"
+    }
+  }
+}

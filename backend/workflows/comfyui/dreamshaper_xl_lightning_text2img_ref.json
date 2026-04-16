@@ -1,0 +1,63 @@
+{
+  "_meta": {
+    "name": "DreamShaper XL Lightning text-to-image (ref-compat, IPAdapter-free)",
+    "notes": "레퍼런스 이미지 픽셀 주입을 제거한 버전. IPAdapter/CLIPVision 커스텀 노드 의존 없음. 스타일은 프롬프트 텍스트(global_style)로만 유도. ${REF_IMAGE_NAME} 은 무시됨."
+  },
+  "1": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": {
+      "ckpt_name": "dreamshaperXL_sfwLightningDPMSDE.safetensors"
+    }
+  },
+  "2": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": ["1", 1],
+      "text": "${PROMPT}"
+    }
+  },
+  "3": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": ["1", 1],
+      "text": "${NEGATIVE}"
+    }
+  },
+  "4": {
+    "class_type": "EmptyLatentImage",
+    "inputs": {
+      "width": "${WIDTH}",
+      "height": "${HEIGHT}",
+      "batch_size": 1
+    }
+  },
+  "5": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": ["1", 0],
+      "positive": ["2", 0],
+      "negative": ["3", 0],
+      "latent_image": ["4", 0],
+      "seed": "${SEED}",
+      "steps": 8,
+      "cfg": 2.0,
+      "sampler_name": "dpmpp_sde",
+      "scheduler": "karras",
+      "denoise": 1.0
+    }
+  },
+  "6": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": ["5", 0],
+      "vae": ["1", 2]
+    }
+  },
+  "7": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": ["6", 0],
+      "filename_prefix": "${PREFIX}"
+    }
+  }
+}

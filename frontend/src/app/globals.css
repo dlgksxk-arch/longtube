@@ -1,0 +1,40 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-primary: #0D0D0D;
+  --bg-secondary: #1A1A2E;
+  --bg-tertiary: #16213E;
+  --accent-primary: #7C3AED;
+  --accent-secondary: #F59E0B;
+}
+
+body {
+  background-color: var(--bg-primary);
+  color: #ffffff;
+  font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--bg-primary); }
+::-webkit-scrollbar-thumb { background: #2D2D44; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #3D3D54; }
+
+/* Animations */
+@keyframes slide-in {
+  from { transform: translateX(100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+.animate-slide-in { animation: slide-in 0.3s ease-out; }
+
+/* Selection */
+::selection { background: rgba(124, 58, 237, 0.3); }
+
+/* Focus styles */
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: var(--accent-primary) !important;
+  box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.15);
+}

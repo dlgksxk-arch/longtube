@@ -1,0 +1,642 @@
+[03:16:10] === generate_all_videos_async called project=65552077 cut_count=5 ===
+[03:16:10] _run ENTER project=65552077
+[03:16:10] _run config loaded model=comfyui-ltxv-13b aspect=16:9 selection=all ai_first_n=5
+[03:16:10] _run preflight force_full_fallback=False reason=not_fal
+[03:16:10] _run primary_service=ComfyUIVideoService
+[03:16:10] _run loaded 5 cuts from DB
+[03:16:10] _worker ENTER cut=1 state.status=running
+[03:16:10] _worker ENTER cut=2 state.status=running
+[03:16:10] _worker ENTER cut=3 state.status=running
+[03:16:10] _worker ENTER cut=4 state.status=running
+[03:16:10] _worker ENTER cut=5 state.status=running
+[03:18:33] === generate_all_videos_async called project=65552077 cut_count=5 ===
+[03:18:33] _run ENTER project=65552077
+[03:18:33] _run config loaded model=comfyui-ltxv-13b aspect=16:9 selection=all ai_first_n=5
+[03:18:33] _run preflight force_full_fallback=False reason=not_fal
+[03:18:33] _run primary_service=ComfyUIVideoService
+[03:18:33] _run loaded 5 cuts from DB
+[03:18:33] _worker ENTER cut=1 state.status=running
+[03:18:33] _gen_safe cut=1 primary=ComfyUIVideoService max_retries=3
+[03:18:33] _gen_safe cut=1 attempt=1 → primary.generate() 호출
+[03:18:34] _worker ENTER cut=2 state.status=running
+[03:18:34] _worker ENTER cut=3 state.status=running
+[03:18:34] _worker ENTER cut=4 state.status=running
+[03:18:34] _worker ENTER cut=5 state.status=running
+[03:18:34] _gen_safe cut=1 attempt=1 PRIMARY FAILED: ComfyUIError: ComfyUI 실행 실패 (8893295c-36c8-45c8-82b4-93366c215149): [['execution_start', {'prompt_id': '8893295c-36c8-45c8-82b4-93366c215149', 'timestamp': 1776277112743}], ['execution_cached', {'nodes': ['1'], 'prompt_id': '8893295c-36c8-45c8-82b4-93366c215149', 'timestamp': 1776277112747}], ['execution_error', {'prompt_id': '8893295c-36c8-45c8-82b4-93366c215149', 'node_id': '4', 'node_type': 'CLIPTextEncode', 'executed': ['2'], 'exception_message': 'ERROR: clip input is invalid: None\n\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.\n', 'exception_type': 'RuntimeError', 'traceback': ['  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 534, in execute\n    output_data, output_ui, has_subgraph, has_pending_tasks = await get_output_data(prompt_id, unique_id, obj, input_data_all, execution_block_cb=execution_block_cb, pre_execute_cb=pre_execute_cb, v3_data=v3_data)\n                                                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 334, in get_output_data\n    return_values = await _async_map_node_over_list(prompt_id, unique_id, obj, input_data_all, obj.FUNCTION, allow_interrupt=True, execution_block_cb=execution_block_cb, pre_execute_cb=pre_execute_cb, v3_data=v3_data)\n                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 308, in _async_map_node_over_list\n    await process_inputs(input_dict, i)\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 296, in process_inputs\n    result = f(**inputs)\n             ^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\nodes.py", line 78, in encode\n    raise RuntimeError("ERROR: clip input is invalid: None\\n\\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.")\n'], 'current_inputs': {'clip': [None], 'text': ['low quality, worst quality, deformed, distorted, blurry, watermark, text']}, 'current_outputs': ['6', '3', '4', '7', '10', '9', '13', '1', '12', '5', '2', '8', '11'], 'timestamp': 1776277112777}]]
+lgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 296, in process_inputs\n    result = f(**inputs)\n             ^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\nodes.py", line 78, in encode\n    raise RuntimeError("ERROR: clip input is invalid: None\\n\\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.")\n'], 'current_inputs': {'clip': [None], 'text': ['low quality, worst quality, deformed, distorted, blurry, watermark, text']}, 'current_outputs': ['6', '3', '4', '7', '10', '9', '13', '1', '12', '5', '2', '8', '11'], 'timestamp': 1776277112777}]]
+
+[03:18:39] _gen_safe cut=1 attempt=2 → primary.generate() 호출
+[03:18:40] _gen_safe cut=1 attempt=2 PRIMARY FAILED: ComfyUIError: ComfyUI 실행 실패 (751a3553-7ef7-40ab-a24e-0cf1a55859b7): [['execution_start', {'prompt_id': '751a3553-7ef7-40ab-a24e-0cf1a55859b7', 'timestamp': 1776277118477}], ['execution_cached', {'nodes': ['1'], 'prompt_id': '751a3553-7ef7-40ab-a24e-0cf1a55859b7', 'timestamp': 1776277118481}], ['execution_error', {'prompt_id': '751a3553-7ef7-40ab-a24e-0cf1a55859b7', 'node_id': '4', 'node_type': 'CLIPTextEncode', 'executed': ['2'], 'exception_message': 'ERROR: clip input is invalid: None\n\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.\n', 'exception_type': 'RuntimeError', 'traceback': ['  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 534, in execute\n    output_data, output_ui, has_subgraph, has_pending_tasks = await get_output_data(prompt_id, unique_id, obj, input_data_all, execution_block_cb=execution_block_cb, pre_execute_cb=pre_execute_cb, v3_data=v3_data)\n                                                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 334, in get_output_data\n    return_values = await _async_map_node_over_list(prompt_id, unique_id, obj, input_data_all, obj.FUNCTION, allow_interrupt=True, execution_block_cb=execution_block_cb, pre_execute_cb=pre_execute_cb, v3_data=v3_data)\n                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 308, in _async_map_node_over_list\n    await process_inputs(input_dict, i)\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 296, in process_inputs\n    result = f(**inputs)\n             ^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\nodes.py", line 78, in encode\n    raise RuntimeError("ERROR: clip input is invalid: None\\n\\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.")\n'], 'current_inputs': {'clip': [None], 'text': ['low quality, worst quality, deformed, distorted, blurry, watermark, text']}, 'current_outputs': ['6', '3', '4', '7', '10', '9', '13', '1', '12', '5', '2', '8', '11'], 'timestamp': 1776277118517}]]
+lgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 296, in process_inputs\n    result = f(**inputs)\n             ^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\nodes.py", line 78, in encode\n    raise RuntimeError("ERROR: clip input is invalid: None\\n\\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.")\n'], 'current_inputs': {'clip': [None], 'text': ['low quality, worst quality, deformed, distorted, blurry, watermark, text']}, 'current_outputs': ['6', '3', '4', '7', '10', '9', '13', '1', '12', '5', '2', '8', '11'], 'timestamp': 1776277118517}]]
+
+[03:18:50] _gen_safe cut=1 attempt=3 → primary.generate() 호출
+[03:18:51] _gen_safe cut=1 attempt=3 PRIMARY FAILED: ComfyUIError: ComfyUI 실행 실패 (6f5dcc93-239c-43d2-94e0-2d6f3d9ab30c): [['execution_start', {'prompt_id': '6f5dcc93-239c-43d2-94e0-2d6f3d9ab30c', 'timestamp': 1776277129325}], ['execution_cached', {'nodes': ['1'], 'prompt_id': '6f5dcc93-239c-43d2-94e0-2d6f3d9ab30c', 'timestamp': 1776277129328}], ['execution_error', {'prompt_id': '6f5dcc93-239c-43d2-94e0-2d6f3d9ab30c', 'node_id': '4', 'node_type': 'CLIPTextEncode', 'executed': ['2'], 'exception_message': 'ERROR: clip input is invalid: None\n\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.\n', 'exception_type': 'RuntimeError', 'traceback': ['  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 534, in execute\n    output_data, output_ui, has_subgraph, has_pending_tasks = await get_output_data(prompt_id, unique_id, obj, input_data_all, execution_block_cb=execution_block_cb, pre_execute_cb=pre_execute_cb, v3_data=v3_data)\n                                                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 334, in get_output_data\n    return_values = await _async_map_node_over_list(prompt_id, unique_id, obj, input_data_all, obj.FUNCTION, allow_interrupt=True, execution_block_cb=execution_block_cb, pre_execute_cb=pre_execute_cb, v3_data=v3_data)\n                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 308, in _async_map_node_over_list\n    await process_inputs(input_dict, i)\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 296, in process_inputs\n    result = f(**inputs)\n             ^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\nodes.py", line 78, in encode\n    raise RuntimeError("ERROR: clip input is invalid: None\\n\\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.")\n'], 'current_inputs': {'clip': [None], 'text': ['low quality, worst quality, deformed, distorted, blurry, watermark, text']}, 'current_outputs': ['6', '3', '4', '7', '10', '9', '13', '1', '12', '5', '2', '8', '11'], 'timestamp': 1776277129360}]]
+lgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 296, in process_inputs\n    result = f(**inputs)\n             ^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\nodes.py", line 78, in encode\n    raise RuntimeError("ERROR: clip input is invalid: None\\n\\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.")\n'], 'current_inputs': {'clip': [None], 'text': ['low quality, worst quality, deformed, distorted, blurry, watermark, text']}, 'current_outputs': ['6', '3', '4', '7', '10', '9', '13', '1', '12', '5', '2', '8', '11'], 'timestamp': 1776277129360}]]
+
+[03:18:51] _gen_safe cut=2 primary=ComfyUIVideoService max_retries=3
+[03:18:51] _gen_safe cut=2 attempt=1 → primary.generate() 호출
+[03:18:52] _gen_safe cut=2 attempt=1 PRIMARY FAILED: ComfyUIError: ComfyUI 실행 실패 (bdd8b152-9da2-460e-b0fa-f16cb6d1b3f4): [['execution_start', {'prompt_id': 'bdd8b152-9da2-460e-b0fa-f16cb6d1b3f4', 'timestamp': 1776277130824}], ['execution_cached', {'nodes': ['1'], 'prompt_id': 'bdd8b152-9da2-460e-b0fa-f16cb6d1b3f4', 'timestamp': 1776277130828}], ['execution_error', {'prompt_id': 'bdd8b152-9da2-460e-b0fa-f16cb6d1b3f4', 'node_id': '4', 'node_type': 'CLIPTextEncode', 'executed': ['2'], 'exception_message': 'ERROR: clip input is invalid: None\n\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.\n', 'exception_type': 'RuntimeError', 'traceback': ['  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 534, in execute\n    output_data, output_ui, has_subgraph, has_pending_tasks = await get_output_data(prompt_id, unique_id, obj, input_data_all, execution_block_cb=execution_block_cb, pre_execute_cb=pre_execute_cb, v3_data=v3_data)\n                                                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 334, in get_output_data\n    return_values = await _async_map_node_over_list(prompt_id, unique_id, obj, input_data_all, obj.FUNCTION, allow_interrupt=True, execution_block_cb=execution_block_cb, pre_execute_cb=pre_execute_cb, v3_data=v3_data)\n                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 308, in _async_map_node_over_list\n    await process_inputs(input_dict, i)\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 296, in process_inputs\n    result = f(**inputs)\n             ^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\nodes.py", line 78, in encode\n    raise RuntimeError("ERROR: clip input is invalid: None\\n\\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.")\n'], 'current_inputs': {'clip': [None], 'text': ['low quality, worst quality, deformed, distorted, blurry, watermark, text']}, 'current_outputs': ['6', '3', '4', '7', '10', '9', '13', '1', '12', '5', '2', '8', '11'], 'timestamp': 1776277130859}]]
+lgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 296, in process_inputs\n    result = f(**inputs)\n             ^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\nodes.py", line 78, in encode\n    raise RuntimeError("ERROR: clip input is invalid: None\\n\\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.")\n'], 'current_inputs': {'clip': [None], 'text': ['low quality, worst quality, deformed, distorted, blurry, watermark, text']}, 'current_outputs': ['6', '3', '4', '7', '10', '9', '13', '1', '12', '5', '2', '8', '11'], 'timestamp': 1776277130859}]]
+
+[03:18:57] _gen_safe cut=2 attempt=2 → primary.generate() 호출
+[03:18:58] _gen_safe cut=2 attempt=2 PRIMARY FAILED: ComfyUIError: ComfyUI 실행 실패 (57e66a98-6a35-4e09-bbbb-ad891576e212): [['execution_start', {'prompt_id': '57e66a98-6a35-4e09-bbbb-ad891576e212', 'timestamp': 1776277136583}], ['execution_cached', {'nodes': ['1'], 'prompt_id': '57e66a98-6a35-4e09-bbbb-ad891576e212', 'timestamp': 1776277136589}], ['execution_error', {'prompt_id': '57e66a98-6a35-4e09-bbbb-ad891576e212', 'node_id': '4', 'node_type': 'CLIPTextEncode', 'executed': ['2'], 'exception_message': 'ERROR: clip input is invalid: None\n\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.\n', 'exception_type': 'RuntimeError', 'traceback': ['  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 534, in execute\n    output_data, output_ui, has_subgraph, has_pending_tasks = await get_output_data(prompt_id, unique_id, obj, input_data_all, execution_block_cb=execution_block_cb, pre_execute_cb=pre_execute_cb, v3_data=v3_data)\n                                                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 334, in get_output_data\n    return_values = await _async_map_node_over_list(prompt_id, unique_id, obj, input_data_all, obj.FUNCTION, allow_interrupt=True, execution_block_cb=execution_block_cb, pre_execute_cb=pre_execute_cb, v3_data=v3_data)\n                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 308, in _async_map_node_over_list\n    await process_inputs(input_dict, i)\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 296, in process_inputs\n    result = f(**inputs)\n             ^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\nodes.py", line 78, in encode\n    raise RuntimeError("ERROR: clip input is invalid: None\\n\\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.")\n'], 'current_inputs': {'clip': [None], 'text': ['low quality, worst quality, deformed, distorted, blurry, watermark, text']}, 'current_outputs': ['6', '3', '4', '7', '10', '9', '13', '1', '12', '5', '2', '8', '11'], 'timestamp': 1776277136623}]]
+lgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 296, in process_inputs\n    result = f(**inputs)\n             ^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\nodes.py", line 78, in encode\n    raise RuntimeError("ERROR: clip input is invalid: None\\n\\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.")\n'], 'current_inputs': {'clip': [None], 'text': ['low quality, worst quality, deformed, distorted, blurry, watermark, text']}, 'current_outputs': ['6', '3', '4', '7', '10', '9', '13', '1', '12', '5', '2', '8', '11'], 'timestamp': 1776277136623}]]
+
+[03:19:08] _gen_safe cut=2 attempt=3 → primary.generate() 호출
+[03:19:09] _gen_safe cut=2 attempt=3 PRIMARY FAILED: ComfyUIError: ComfyUI 실행 실패 (27c551a9-ee7b-4ec4-924b-2c7b7003a3b4): [['execution_start', {'prompt_id': '27c551a9-ee7b-4ec4-924b-2c7b7003a3b4', 'timestamp': 1776277147373}], ['execution_cached', {'nodes': ['1'], 'prompt_id': '27c551a9-ee7b-4ec4-924b-2c7b7003a3b4', 'timestamp': 1776277147378}], ['execution_error', {'prompt_id': '27c551a9-ee7b-4ec4-924b-2c7b7003a3b4', 'node_id': '4', 'node_type': 'CLIPTextEncode', 'executed': ['2'], 'exception_message': 'ERROR: clip input is invalid: None\n\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.\n', 'exception_type': 'RuntimeError', 'traceback': ['  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 534, in execute\n    output_data, output_ui, has_subgraph, has_pending_tasks = await get_output_data(prompt_id, unique_id, obj, input_data_all, execution_block_cb=execution_block_cb, pre_execute_cb=pre_execute_cb, v3_data=v3_data)\n                                                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 334, in get_output_data\n    return_values = await _async_map_node_over_list(prompt_id, unique_id, obj, input_data_all, obj.FUNCTION, allow_interrupt=True, execution_block_cb=execution_block_cb, pre_execute_cb=pre_execute_cb, v3_data=v3_data)\n                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 308, in _async_map_node_over_list\n    await process_inputs(input_dict, i)\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 296, in process_inputs\n    result = f(**inputs)\n             ^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\nodes.py", line 78, in encode\n    raise RuntimeError("ERROR: clip input is invalid: None\\n\\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.")\n'], 'current_inputs': {'clip': [None], 'text': ['low quality, worst quality, deformed, distorted, blurry, watermark, text']}, 'current_outputs': ['6', '3', '4', '7', '10', '9', '13', '1', '12', '5', '2', '8', '11'], 'timestamp': 1776277147410}]]
+lgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 296, in process_inputs\n    result = f(**inputs)\n             ^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\nodes.py", line 78, in encode\n    raise RuntimeError("ERROR: clip input is invalid: None\\n\\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.")\n'], 'current_inputs': {'clip': [None], 'text': ['low quality, worst quality, deformed, distorted, blurry, watermark, text']}, 'current_outputs': ['6', '3', '4', '7', '10', '9', '13', '1', '12', '5', '2', '8', '11'], 'timestamp': 1776277147410}]]
+
+[03:19:10] _gen_safe cut=3 primary=ComfyUIVideoService max_retries=3
+[03:19:10] _gen_safe cut=3 attempt=1 → primary.generate() 호출
+[03:19:10] _gen_safe cut=3 attempt=1 PRIMARY FAILED: ComfyUIError: ComfyUI 실행 실패 (70cf60c1-1271-4ac2-8c33-f09684c6c7ef): [['execution_start', {'prompt_id': '70cf60c1-1271-4ac2-8c33-f09684c6c7ef', 'timestamp': 1776277148897}], ['execution_cached', {'nodes': ['1'], 'prompt_id': '70cf60c1-1271-4ac2-8c33-f09684c6c7ef', 'timestamp': 1776277148901}], ['execution_error', {'prompt_id': '70cf60c1-1271-4ac2-8c33-f09684c6c7ef', 'node_id': '4', 'node_type': 'CLIPTextEncode', 'executed': ['2'], 'exception_message': 'ERROR: clip input is invalid: None\n\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.\n', 'exception_type': 'RuntimeError', 'traceback': ['  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 534, in execute\n    output_data, output_ui, has_subgraph, has_pending_tasks = await get_output_data(prompt_id, unique_id, obj, input_data_all, execution_block_cb=execution_block_cb, pre_execute_cb=pre_execute_cb, v3_data=v3_data)\n                                                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 334, in get_output_data\n    return_values = await _async_map_node_over_list(prompt_id, unique_id, obj, input_data_all, obj.FUNCTION, allow_interrupt=True, execution_block_cb=execution_block_cb, pre_execute_cb=pre_execute_cb, v3_data=v3_data)\n                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 308, in _async_map_node_over_list\n    await process_inputs(input_dict, i)\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 296, in process_inputs\n    result = f(**inputs)\n             ^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\nodes.py", line 78, in encode\n    raise RuntimeError("ERROR: clip input is invalid: None\\n\\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.")\n'], 'current_inputs': {'clip': [None], 'text': ['low quality, worst quality, deformed, distorted, blurry, watermark, text']}, 'current_outputs': ['6', '3', '4', '7', '10', '9', '13', '1', '12', '5', '2', '8', '11'], 'timestamp': 1776277148933}]]
+lgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 296, in process_inputs\n    result = f(**inputs)\n             ^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\nodes.py", line 78, in encode\n    raise RuntimeError("ERROR: clip input is invalid: None\\n\\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.")\n'], 'current_inputs': {'clip': [None], 'text': ['low quality, worst quality, deformed, distorted, blurry, watermark, text']}, 'current_outputs': ['6', '3', '4', '7', '10', '9', '13', '1', '12', '5', '2', '8', '11'], 'timestamp': 1776277148933}]]
+
+[03:19:15] _gen_safe cut=3 attempt=2 → primary.generate() 호출
+[03:19:16] _gen_safe cut=3 attempt=2 PRIMARY FAILED: ComfyUIError: ComfyUI 실행 실패 (d958023b-4b24-4ba9-9133-004979c8e331): [['execution_start', {'prompt_id': 'd958023b-4b24-4ba9-9133-004979c8e331', 'timestamp': 1776277154686}], ['execution_cached', {'nodes': ['1'], 'prompt_id': 'd958023b-4b24-4ba9-9133-004979c8e331', 'timestamp': 1776277154690}], ['execution_error', {'prompt_id': 'd958023b-4b24-4ba9-9133-004979c8e331', 'node_id': '4', 'node_type': 'CLIPTextEncode', 'executed': ['2'], 'exception_message': 'ERROR: clip input is invalid: None\n\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.\n', 'exception_type': 'RuntimeError', 'traceback': ['  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 534, in execute\n    output_data, output_ui, has_subgraph, has_pending_tasks = await get_output_data(prompt_id, unique_id, obj, input_data_all, execution_block_cb=execution_block_cb, pre_execute_cb=pre_execute_cb, v3_data=v3_data)\n                                                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 334, in get_output_data\n    return_values = await _async_map_node_over_list(prompt_id, unique_id, obj, input_data_all, obj.FUNCTION, allow_interrupt=True, execution_block_cb=execution_block_cb, pre_execute_cb=pre_execute_cb, v3_data=v3_data)\n                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 308, in _async_map_node_over_list\n    await process_inputs(input_dict, i)\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 296, in process_inputs\n    result = f(**inputs)\n             ^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\nodes.py", line 78, in encode\n    raise RuntimeError("ERROR: clip input is invalid: None\\n\\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.")\n'], 'current_inputs': {'clip': [None], 'text': ['low quality, worst quality, deformed, distorted, blurry, watermark, text']}, 'current_outputs': ['6', '3', '4', '7', '10', '9', '13', '1', '12', '5', '2', '8', '11'], 'timestamp': 1776277154725}]]
+lgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 296, in process_inputs\n    result = f(**inputs)\n             ^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\nodes.py", line 78, in encode\n    raise RuntimeError("ERROR: clip input is invalid: None\\n\\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.")\n'], 'current_inputs': {'clip': [None], 'text': ['low quality, worst quality, deformed, distorted, blurry, watermark, text']}, 'current_outputs': ['6', '3', '4', '7', '10', '9', '13', '1', '12', '5', '2', '8', '11'], 'timestamp': 1776277154725}]]
+
+[03:19:26] _gen_safe cut=3 attempt=3 → primary.generate() 호출
+[03:19:27] _gen_safe cut=3 attempt=3 PRIMARY FAILED: ComfyUIError: ComfyUI 실행 실패 (d67f47e1-4cf1-4a77-b6ae-90f0c32230ac): [['execution_start', {'prompt_id': 'd67f47e1-4cf1-4a77-b6ae-90f0c32230ac', 'timestamp': 1776277165472}], ['execution_cached', {'nodes': ['1'], 'prompt_id': 'd67f47e1-4cf1-4a77-b6ae-90f0c32230ac', 'timestamp': 1776277165476}], ['execution_error', {'prompt_id': 'd67f47e1-4cf1-4a77-b6ae-90f0c32230ac', 'node_id': '4', 'node_type': 'CLIPTextEncode', 'executed': ['2'], 'exception_message': 'ERROR: clip input is invalid: None\n\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.\n', 'exception_type': 'RuntimeError', 'traceback': ['  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 534, in execute\n    output_data, output_ui, has_subgraph, has_pending_tasks = await get_output_data(prompt_id, unique_id, obj, input_data_all, execution_block_cb=execution_block_cb, pre_execute_cb=pre_execute_cb, v3_data=v3_data)\n                                                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 334, in get_output_data\n    return_values = await _async_map_node_over_list(prompt_id, unique_id, obj, input_data_all, obj.FUNCTION, allow_interrupt=True, execution_block_cb=execution_block_cb, pre_execute_cb=pre_execute_cb, v3_data=v3_data)\n                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 308, in _async_map_node_over_list\n    await process_inputs(input_dict, i)\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 296, in process_inputs\n    result = f(**inputs)\n             ^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\nodes.py", line 78, in encode\n    raise RuntimeError("ERROR: clip input is invalid: None\\n\\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.")\n'], 'current_inputs': {'clip': [None], 'text': ['low quality, worst quality, deformed, distorted, blurry, watermark, text']}, 'current_outputs': ['6', '3', '4', '7', '10', '9', '13', '1', '12', '5', '2', '8', '11'], 'timestamp': 1776277165508}]]
+lgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 296, in process_inputs\n    result = f(**inputs)\n             ^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\nodes.py", line 78, in encode\n    raise RuntimeError("ERROR: clip input is invalid: None\\n\\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.")\n'], 'current_inputs': {'clip': [None], 'text': ['low quality, worst quality, deformed, distorted, blurry, watermark, text']}, 'current_outputs': ['6', '3', '4', '7', '10', '9', '13', '1', '12', '5', '2', '8', '11'], 'timestamp': 1776277165508}]]
+
+[03:19:28] _gen_safe cut=4 primary=ComfyUIVideoService max_retries=3
+[03:19:28] _gen_safe cut=4 attempt=1 → primary.generate() 호출
+[03:19:29] _gen_safe cut=4 attempt=1 PRIMARY FAILED: ComfyUIError: ComfyUI 실행 실패 (d21702f4-1e85-4b9d-a463-306dae17370d): [['execution_start', {'prompt_id': 'd21702f4-1e85-4b9d-a463-306dae17370d', 'timestamp': 1776277167211}], ['execution_cached', {'nodes': ['1'], 'prompt_id': 'd21702f4-1e85-4b9d-a463-306dae17370d', 'timestamp': 1776277167216}], ['execution_error', {'prompt_id': 'd21702f4-1e85-4b9d-a463-306dae17370d', 'node_id': '4', 'node_type': 'CLIPTextEncode', 'executed': ['2'], 'exception_message': 'ERROR: clip input is invalid: None\n\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.\n', 'exception_type': 'RuntimeError', 'traceback': ['  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 534, in execute\n    output_data, output_ui, has_subgraph, has_pending_tasks = await get_output_data(prompt_id, unique_id, obj, input_data_all, execution_block_cb=execution_block_cb, pre_execute_cb=pre_execute_cb, v3_data=v3_data)\n                                                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 334, in get_output_data\n    return_values = await _async_map_node_over_list(prompt_id, unique_id, obj, input_data_all, obj.FUNCTION, allow_interrupt=True, execution_block_cb=execution_block_cb, pre_execute_cb=pre_execute_cb, v3_data=v3_data)\n                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 308, in _async_map_node_over_list\n    await process_inputs(input_dict, i)\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 296, in process_inputs\n    result = f(**inputs)\n             ^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\nodes.py", line 78, in encode\n    raise RuntimeError("ERROR: clip input is invalid: None\\n\\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.")\n'], 'current_inputs': {'clip': [None], 'text': ['low quality, worst quality, deformed, distorted, blurry, watermark, text']}, 'current_outputs': ['6', '3', '4', '7', '10', '9', '13', '1', '12', '5', '2', '8', '11'], 'timestamp': 1776277167249}]]
+lgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 296, in process_inputs\n    result = f(**inputs)\n             ^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\nodes.py", line 78, in encode\n    raise RuntimeError("ERROR: clip input is invalid: None\\n\\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.")\n'], 'current_inputs': {'clip': [None], 'text': ['low quality, worst quality, deformed, distorted, blurry, watermark, text']}, 'current_outputs': ['6', '3', '4', '7', '10', '9', '13', '1', '12', '5', '2', '8', '11'], 'timestamp': 1776277167249}]]
+
+[03:19:34] _gen_safe cut=4 attempt=2 → primary.generate() 호출
+[03:19:35] _gen_safe cut=4 attempt=2 PRIMARY FAILED: ComfyUIError: ComfyUI 실행 실패 (ed95c360-4f62-43df-aa1e-337297924cf0): [['execution_start', {'prompt_id': 'ed95c360-4f62-43df-aa1e-337297924cf0', 'timestamp': 1776277173023}], ['execution_cached', {'nodes': ['1'], 'prompt_id': 'ed95c360-4f62-43df-aa1e-337297924cf0', 'timestamp': 1776277173028}], ['execution_error', {'prompt_id': 'ed95c360-4f62-43df-aa1e-337297924cf0', 'node_id': '4', 'node_type': 'CLIPTextEncode', 'executed': ['2'], 'exception_message': 'ERROR: clip input is invalid: None\n\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.\n', 'exception_type': 'RuntimeError', 'traceback': ['  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 534, in execute\n    output_data, output_ui, has_subgraph, has_pending_tasks = await get_output_data(prompt_id, unique_id, obj, input_data_all, execution_block_cb=execution_block_cb, pre_execute_cb=pre_execute_cb, v3_data=v3_data)\n                                                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 334, in get_output_data\n    return_values = await _async_map_node_over_list(prompt_id, unique_id, obj, input_data_all, obj.FUNCTION, allow_interrupt=True, execution_block_cb=execution_block_cb, pre_execute_cb=pre_execute_cb, v3_data=v3_data)\n                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 308, in _async_map_node_over_list\n    await process_inputs(input_dict, i)\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 296, in process_inputs\n    result = f(**inputs)\n             ^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\nodes.py", line 78, in encode\n    raise RuntimeError("ERROR: clip input is invalid: None\\n\\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.")\n'], 'current_inputs': {'clip': [None], 'text': ['low quality, worst quality, deformed, distorted, blurry, watermark, text']}, 'current_outputs': ['6', '3', '4', '7', '10', '9', '13', '1', '12', '5', '2', '8', '11'], 'timestamp': 1776277173063}]]
+lgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 296, in process_inputs\n    result = f(**inputs)\n             ^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\nodes.py", line 78, in encode\n    raise RuntimeError("ERROR: clip input is invalid: None\\n\\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.")\n'], 'current_inputs': {'clip': [None], 'text': ['low quality, worst quality, deformed, distorted, blurry, watermark, text']}, 'current_outputs': ['6', '3', '4', '7', '10', '9', '13', '1', '12', '5', '2', '8', '11'], 'timestamp': 1776277173063}]]
+
+[03:19:45] _gen_safe cut=4 attempt=3 → primary.generate() 호출
+[03:19:45] _gen_safe cut=4 attempt=3 PRIMARY FAILED: ComfyUIError: ComfyUI 실행 실패 (c5a851fb-05df-4bc5-85ee-ecdf093af89c): [['execution_start', {'prompt_id': 'c5a851fb-05df-4bc5-85ee-ecdf093af89c', 'timestamp': 1776277183887}], ['execution_cached', {'nodes': ['1'], 'prompt_id': 'c5a851fb-05df-4bc5-85ee-ecdf093af89c', 'timestamp': 1776277183894}], ['execution_error', {'prompt_id': 'c5a851fb-05df-4bc5-85ee-ecdf093af89c', 'node_id': '4', 'node_type': 'CLIPTextEncode', 'executed': ['2'], 'exception_message': 'ERROR: clip input is invalid: None\n\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.\n', 'exception_type': 'RuntimeError', 'traceback': ['  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 534, in execute\n    output_data, output_ui, has_subgraph, has_pending_tasks = await get_output_data(prompt_id, unique_id, obj, input_data_all, execution_block_cb=execution_block_cb, pre_execute_cb=pre_execute_cb, v3_data=v3_data)\n                                                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 334, in get_output_data\n    return_values = await _async_map_node_over_list(prompt_id, unique_id, obj, input_data_all, obj.FUNCTION, allow_interrupt=True, execution_block_cb=execution_block_cb, pre_execute_cb=pre_execute_cb, v3_data=v3_data)\n                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 308, in _async_map_node_over_list\n    await process_inputs(input_dict, i)\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 296, in process_inputs\n    result = f(**inputs)\n             ^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\nodes.py", line 78, in encode\n    raise RuntimeError("ERROR: clip input is invalid: None\\n\\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.")\n'], 'current_inputs': {'clip': [None], 'text': ['low quality, worst quality, deformed, distorted, blurry, watermark, text']}, 'current_outputs': ['6', '3', '4', '7', '10', '9', '13', '1', '12', '5', '2', '8', '11'], 'timestamp': 1776277183928}]]
+lgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 296, in process_inputs\n    result = f(**inputs)\n             ^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\nodes.py", line 78, in encode\n    raise RuntimeError("ERROR: clip input is invalid: None\\n\\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.")\n'], 'current_inputs': {'clip': [None], 'text': ['low quality, worst quality, deformed, distorted, blurry, watermark, text']}, 'current_outputs': ['6', '3', '4', '7', '10', '9', '13', '1', '12', '5', '2', '8', '11'], 'timestamp': 1776277183928}]]
+
+[03:19:46] _gen_safe cut=5 primary=ComfyUIVideoService max_retries=3
+[03:19:46] _gen_safe cut=5 attempt=1 → primary.generate() 호출
+[03:19:47] _gen_safe cut=5 attempt=1 PRIMARY FAILED: ComfyUIError: ComfyUI 실행 실패 (c53efd28-0206-42c9-8f24-1e2de9954ecf): [['execution_start', {'prompt_id': 'c53efd28-0206-42c9-8f24-1e2de9954ecf', 'timestamp': 1776277185538}], ['execution_cached', {'nodes': ['1'], 'prompt_id': 'c53efd28-0206-42c9-8f24-1e2de9954ecf', 'timestamp': 1776277185545}], ['execution_error', {'prompt_id': 'c53efd28-0206-42c9-8f24-1e2de9954ecf', 'node_id': '4', 'node_type': 'CLIPTextEncode', 'executed': ['2'], 'exception_message': 'ERROR: clip input is invalid: None\n\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.\n', 'exception_type': 'RuntimeError', 'traceback': ['  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 534, in execute\n    output_data, output_ui, has_subgraph, has_pending_tasks = await get_output_data(prompt_id, unique_id, obj, input_data_all, execution_block_cb=execution_block_cb, pre_execute_cb=pre_execute_cb, v3_data=v3_data)\n                                                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 334, in get_output_data\n    return_values = await _async_map_node_over_list(prompt_id, unique_id, obj, input_data_all, obj.FUNCTION, allow_interrupt=True, execution_block_cb=execution_block_cb, pre_execute_cb=pre_execute_cb, v3_data=v3_data)\n                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 308, in _async_map_node_over_list\n    await process_inputs(input_dict, i)\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 296, in process_inputs\n    result = f(**inputs)\n             ^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\nodes.py", line 78, in encode\n    raise RuntimeError("ERROR: clip input is invalid: None\\n\\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.")\n'], 'current_inputs': {'clip': [None], 'text': ['low quality, worst quality, deformed, distorted, blurry, watermark, text']}, 'current_outputs': ['6', '3', '4', '7', '10', '9', '13', '1', '12', '5', '2', '8', '11'], 'timestamp': 1776277185580}]]
+lgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 296, in process_inputs\n    result = f(**inputs)\n             ^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\nodes.py", line 78, in encode\n    raise RuntimeError("ERROR: clip input is invalid: None\\n\\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.")\n'], 'current_inputs': {'clip': [None], 'text': ['low quality, worst quality, deformed, distorted, blurry, watermark, text']}, 'current_outputs': ['6', '3', '4', '7', '10', '9', '13', '1', '12', '5', '2', '8', '11'], 'timestamp': 1776277185580}]]
+
+[03:19:52] _gen_safe cut=5 attempt=2 → primary.generate() 호출
+[03:19:53] _gen_safe cut=5 attempt=2 PRIMARY FAILED: ComfyUIError: ComfyUI 실행 실패 (276a485d-4db3-45c2-9ec5-590ae7be0d39): [['execution_start', {'prompt_id': '276a485d-4db3-45c2-9ec5-590ae7be0d39', 'timestamp': 1776277191305}], ['execution_cached', {'nodes': ['1'], 'prompt_id': '276a485d-4db3-45c2-9ec5-590ae7be0d39', 'timestamp': 1776277191310}], ['execution_error', {'prompt_id': '276a485d-4db3-45c2-9ec5-590ae7be0d39', 'node_id': '4', 'node_type': 'CLIPTextEncode', 'executed': ['2'], 'exception_message': 'ERROR: clip input is invalid: None\n\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.\n', 'exception_type': 'RuntimeError', 'traceback': ['  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 534, in execute\n    output_data, output_ui, has_subgraph, has_pending_tasks = await get_output_data(prompt_id, unique_id, obj, input_data_all, execution_block_cb=execution_block_cb, pre_execute_cb=pre_execute_cb, v3_data=v3_data)\n                                                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 334, in get_output_data\n    return_values = await _async_map_node_over_list(prompt_id, unique_id, obj, input_data_all, obj.FUNCTION, allow_interrupt=True, execution_block_cb=execution_block_cb, pre_execute_cb=pre_execute_cb, v3_data=v3_data)\n                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 308, in _async_map_node_over_list\n    await process_inputs(input_dict, i)\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 296, in process_inputs\n    result = f(**inputs)\n             ^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\nodes.py", line 78, in encode\n    raise RuntimeError("ERROR: clip input is invalid: None\\n\\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.")\n'], 'current_inputs': {'clip': [None], 'text': ['low quality, worst quality, deformed, distorted, blurry, watermark, text']}, 'current_outputs': ['6', '3', '4', '7', '10', '9', '13', '1', '12', '5', '2', '8', '11'], 'timestamp': 1776277191345}]]
+lgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 296, in process_inputs\n    result = f(**inputs)\n             ^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\nodes.py", line 78, in encode\n    raise RuntimeError("ERROR: clip input is invalid: None\\n\\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.")\n'], 'current_inputs': {'clip': [None], 'text': ['low quality, worst quality, deformed, distorted, blurry, watermark, text']}, 'current_outputs': ['6', '3', '4', '7', '10', '9', '13', '1', '12', '5', '2', '8', '11'], 'timestamp': 1776277191345}]]
+
+[03:20:03] _gen_safe cut=5 attempt=3 → primary.generate() 호출
+[03:20:04] _gen_safe cut=5 attempt=3 PRIMARY FAILED: ComfyUIError: ComfyUI 실행 실패 (42d4bbd7-ae65-4b7f-a38e-3bc9326c50b9): [['execution_start', {'prompt_id': '42d4bbd7-ae65-4b7f-a38e-3bc9326c50b9', 'timestamp': 1776277202154}], ['execution_cached', {'nodes': ['1'], 'prompt_id': '42d4bbd7-ae65-4b7f-a38e-3bc9326c50b9', 'timestamp': 1776277202159}], ['execution_error', {'prompt_id': '42d4bbd7-ae65-4b7f-a38e-3bc9326c50b9', 'node_id': '4', 'node_type': 'CLIPTextEncode', 'executed': ['2'], 'exception_message': 'ERROR: clip input is invalid: None\n\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.\n', 'exception_type': 'RuntimeError', 'traceback': ['  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 534, in execute\n    output_data, output_ui, has_subgraph, has_pending_tasks = await get_output_data(prompt_id, unique_id, obj, input_data_all, execution_block_cb=execution_block_cb, pre_execute_cb=pre_execute_cb, v3_data=v3_data)\n                                                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 334, in get_output_data\n    return_values = await _async_map_node_over_list(prompt_id, unique_id, obj, input_data_all, obj.FUNCTION, allow_interrupt=True, execution_block_cb=execution_block_cb, pre_execute_cb=pre_execute_cb, v3_data=v3_data)\n                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 308, in _async_map_node_over_list\n    await process_inputs(input_dict, i)\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 296, in process_inputs\n    result = f(**inputs)\n             ^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\nodes.py", line 78, in encode\n    raise RuntimeError("ERROR: clip input is invalid: None\\n\\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.")\n'], 'current_inputs': {'clip': [None], 'text': ['low quality, worst quality, deformed, distorted, blurry, watermark, text']}, 'current_outputs': ['6', '3', '4', '7', '10', '9', '13', '1', '12', '5', '2', '8', '11'], 'timestamp': 1776277202193}]]
+lgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 296, in process_inputs\n    result = f(**inputs)\n             ^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\nodes.py", line 78, in encode\n    raise RuntimeError("ERROR: clip input is invalid: None\\n\\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.")\n'], 'current_inputs': {'clip': [None], 'text': ['low quality, worst quality, deformed, distorted, blurry, watermark, text']}, 'current_outputs': ['6', '3', '4', '7', '10', '9', '13', '1', '12', '5', '2', '8', '11'], 'timestamp': 1776277202193}]]
+
+[03:26:04] === generate_all_videos_async called project=65552077 cut_count=5 ===
+[03:26:04] _run ENTER project=65552077
+[03:26:04] _run config loaded model=comfyui-ltxv-13b aspect=16:9 selection=all ai_first_n=5
+[03:26:04] _run preflight force_full_fallback=False reason=not_fal
+[03:26:04] _run primary_service=ComfyUIVideoService
+[03:26:04] _run loaded 5 cuts from DB
+[03:26:04] _worker ENTER cut=1 state.status=running
+[03:26:04] _gen_safe cut=1 primary=ComfyUIVideoService max_retries=3
+[03:26:04] _gen_safe cut=1 attempt=1 → primary.generate() 호출
+[03:26:04] _worker ENTER cut=2 state.status=running
+[03:26:04] _worker ENTER cut=3 state.status=running
+[03:26:04] _worker ENTER cut=4 state.status=running
+[03:26:04] _worker ENTER cut=5 state.status=running
+[03:26:05] _gen_safe cut=1 attempt=1 PRIMARY FAILED: ComfyUIError: /prompt 400: {"error": {"type": "prompt_outputs_failed_validation", "message": "Prompt outputs failed validation", "details": "", "extra_info": {}}, "node_errors": {"14": {"errors": [{"type": "value_not_in_list", "message": "Value not in list", "details": "clip_name: 't5xxl_fp8_e4m3fn.safetensors' not in ['mistral_3_small_flux2_bf16.safetensors', 'qwen_3_4b.safetensors', 'umt5_xxl_fp8_e4m3fn_scaled.safetensors']", "extra_info": {"input_name": "clip_name", "input_config": [["mistral_3_small_flux2_bf16.safetensors", "qwen_3_4b.safetensors", "umt5_xxl_fp8_e4m3fn_scaled.safetensors"], {}], "received_value": "t
+f"/prompt {r.status_code}: {r.text[:600]}")
+app.services.comfyui_client.ComfyUIError: /prompt 400: {"error": {"type": "prompt_outputs_failed_validation", "message": "Prompt outputs failed validation", "details": "", "extra_info": {}}, "node_errors": {"14": {"errors": [{"type": "value_not_in_list", "message": "Value not in list", "details": "clip_name: 't5xxl_fp8_e4m3fn.safetensors' not in ['mistral_3_small_flux2_bf16.safetensors', 'qwen_3_4b.safetensors', 'umt5_xxl_fp8_e4m3fn_scaled.safetensors']", "extra_info": {"input_name": "clip_name", "input_config": [["mistral_3_small_flux2_bf16.safetensors", "qwen_3_4b.safetensors", "umt5_xxl_fp8_e4m3fn_scaled.safetensors"], {}], "received_value": "t
+
+[03:26:10] _gen_safe cut=1 attempt=2 → primary.generate() 호출
+[03:26:10] _gen_safe cut=1 attempt=2 PRIMARY FAILED: ComfyUIError: /prompt 400: {"error": {"type": "prompt_outputs_failed_validation", "message": "Prompt outputs failed validation", "details": "", "extra_info": {}}, "node_errors": {"14": {"errors": [{"type": "value_not_in_list", "message": "Value not in list", "details": "clip_name: 't5xxl_fp8_e4m3fn.safetensors' not in ['mistral_3_small_flux2_bf16.safetensors', 'qwen_3_4b.safetensors', 'umt5_xxl_fp8_e4m3fn_scaled.safetensors']", "extra_info": {"input_name": "clip_name", "input_config": [["mistral_3_small_flux2_bf16.safetensors", "qwen_3_4b.safetensors", "umt5_xxl_fp8_e4m3fn_scaled.safetensors"], {}], "received_value": "t
+f"/prompt {r.status_code}: {r.text[:600]}")
+app.services.comfyui_client.ComfyUIError: /prompt 400: {"error": {"type": "prompt_outputs_failed_validation", "message": "Prompt outputs failed validation", "details": "", "extra_info": {}}, "node_errors": {"14": {"errors": [{"type": "value_not_in_list", "message": "Value not in list", "details": "clip_name: 't5xxl_fp8_e4m3fn.safetensors' not in ['mistral_3_small_flux2_bf16.safetensors', 'qwen_3_4b.safetensors', 'umt5_xxl_fp8_e4m3fn_scaled.safetensors']", "extra_info": {"input_name": "clip_name", "input_config": [["mistral_3_small_flux2_bf16.safetensors", "qwen_3_4b.safetensors", "umt5_xxl_fp8_e4m3fn_scaled.safetensors"], {}], "received_value": "t
+
+[03:26:20] _gen_safe cut=1 attempt=3 → primary.generate() 호출
+[03:26:21] _gen_safe cut=1 attempt=3 PRIMARY FAILED: ComfyUIError: /prompt 400: {"error": {"type": "prompt_outputs_failed_validation", "message": "Prompt outputs failed validation", "details": "", "extra_info": {}}, "node_errors": {"14": {"errors": [{"type": "value_not_in_list", "message": "Value not in list", "details": "clip_name: 't5xxl_fp8_e4m3fn.safetensors' not in ['mistral_3_small_flux2_bf16.safetensors', 'qwen_3_4b.safetensors', 'umt5_xxl_fp8_e4m3fn_scaled.safetensors']", "extra_info": {"input_name": "clip_name", "input_config": [["mistral_3_small_flux2_bf16.safetensors", "qwen_3_4b.safetensors", "umt5_xxl_fp8_e4m3fn_scaled.safetensors"], {}], "received_value": "t
+f"/prompt {r.status_code}: {r.text[:600]}")
+app.services.comfyui_client.ComfyUIError: /prompt 400: {"error": {"type": "prompt_outputs_failed_validation", "message": "Prompt outputs failed validation", "details": "", "extra_info": {}}, "node_errors": {"14": {"errors": [{"type": "value_not_in_list", "message": "Value not in list", "details": "clip_name: 't5xxl_fp8_e4m3fn.safetensors' not in ['mistral_3_small_flux2_bf16.safetensors', 'qwen_3_4b.safetensors', 'umt5_xxl_fp8_e4m3fn_scaled.safetensors']", "extra_info": {"input_name": "clip_name", "input_config": [["mistral_3_small_flux2_bf16.safetensors", "qwen_3_4b.safetensors", "umt5_xxl_fp8_e4m3fn_scaled.safetensors"], {}], "received_value": "t
+
+[03:26:22] _gen_safe cut=2 primary=ComfyUIVideoService max_retries=3
+[03:26:22] _gen_safe cut=2 attempt=1 → primary.generate() 호출
+[03:26:22] _gen_safe cut=2 attempt=1 PRIMARY FAILED: ComfyUIError: /prompt 400: {"error": {"type": "prompt_outputs_failed_validation", "message": "Prompt outputs failed validation", "details": "", "extra_info": {}}, "node_errors": {"14": {"errors": [{"type": "value_not_in_list", "message": "Value not in list", "details": "clip_name: 't5xxl_fp8_e4m3fn.safetensors' not in ['mistral_3_small_flux2_bf16.safetensors', 'qwen_3_4b.safetensors', 'umt5_xxl_fp8_e4m3fn_scaled.safetensors']", "extra_info": {"input_name": "clip_name", "input_config": [["mistral_3_small_flux2_bf16.safetensors", "qwen_3_4b.safetensors", "umt5_xxl_fp8_e4m3fn_scaled.safetensors"], {}], "received_value": "t
+f"/prompt {r.status_code}: {r.text[:600]}")
+app.services.comfyui_client.ComfyUIError: /prompt 400: {"error": {"type": "prompt_outputs_failed_validation", "message": "Prompt outputs failed validation", "details": "", "extra_info": {}}, "node_errors": {"14": {"errors": [{"type": "value_not_in_list", "message": "Value not in list", "details": "clip_name: 't5xxl_fp8_e4m3fn.safetensors' not in ['mistral_3_small_flux2_bf16.safetensors', 'qwen_3_4b.safetensors', 'umt5_xxl_fp8_e4m3fn_scaled.safetensors']", "extra_info": {"input_name": "clip_name", "input_config": [["mistral_3_small_flux2_bf16.safetensors", "qwen_3_4b.safetensors", "umt5_xxl_fp8_e4m3fn_scaled.safetensors"], {}], "received_value": "t
+
+[03:26:27] _gen_safe cut=2 attempt=2 → primary.generate() 호출
+[03:26:28] _gen_safe cut=2 attempt=2 PRIMARY FAILED: ComfyUIError: /prompt 400: {"error": {"type": "prompt_outputs_failed_validation", "message": "Prompt outputs failed validation", "details": "", "extra_info": {}}, "node_errors": {"14": {"errors": [{"type": "value_not_in_list", "message": "Value not in list", "details": "clip_name: 't5xxl_fp8_e4m3fn.safetensors' not in ['mistral_3_small_flux2_bf16.safetensors', 'qwen_3_4b.safetensors', 'umt5_xxl_fp8_e4m3fn_scaled.safetensors']", "extra_info": {"input_name": "clip_name", "input_config": [["mistral_3_small_flux2_bf16.safetensors", "qwen_3_4b.safetensors", "umt5_xxl_fp8_e4m3fn_scaled.safetensors"], {}], "received_value": "t
+f"/prompt {r.status_code}: {r.text[:600]}")
+app.services.comfyui_client.ComfyUIError: /prompt 400: {"error": {"type": "prompt_outputs_failed_validation", "message": "Prompt outputs failed validation", "details": "", "extra_info": {}}, "node_errors": {"14": {"errors": [{"type": "value_not_in_list", "message": "Value not in list", "details": "clip_name: 't5xxl_fp8_e4m3fn.safetensors' not in ['mistral_3_small_flux2_bf16.safetensors', 'qwen_3_4b.safetensors', 'umt5_xxl_fp8_e4m3fn_scaled.safetensors']", "extra_info": {"input_name": "clip_name", "input_config": [["mistral_3_small_flux2_bf16.safetensors", "qwen_3_4b.safetensors", "umt5_xxl_fp8_e4m3fn_scaled.safetensors"], {}], "received_value": "t
+
+[03:26:38] _gen_safe cut=2 attempt=3 → primary.generate() 호출
+[03:26:38] _gen_safe cut=2 attempt=3 PRIMARY FAILED: ComfyUIError: /prompt 400: {"error": {"type": "prompt_outputs_failed_validation", "message": "Prompt outputs failed validation", "details": "", "extra_info": {}}, "node_errors": {"14": {"errors": [{"type": "value_not_in_list", "message": "Value not in list", "details": "clip_name: 't5xxl_fp8_e4m3fn.safetensors' not in ['mistral_3_small_flux2_bf16.safetensors', 'qwen_3_4b.safetensors', 'umt5_xxl_fp8_e4m3fn_scaled.safetensors']", "extra_info": {"input_name": "clip_name", "input_config": [["mistral_3_small_flux2_bf16.safetensors", "qwen_3_4b.safetensors", "umt5_xxl_fp8_e4m3fn_scaled.safetensors"], {}], "received_value": "t
+f"/prompt {r.status_code}: {r.text[:600]}")
+app.services.comfyui_client.ComfyUIError: /prompt 400: {"error": {"type": "prompt_outputs_failed_validation", "message": "Prompt outputs failed validation", "details": "", "extra_info": {}}, "node_errors": {"14": {"errors": [{"type": "value_not_in_list", "message": "Value not in list", "details": "clip_name: 't5xxl_fp8_e4m3fn.safetensors' not in ['mistral_3_small_flux2_bf16.safetensors', 'qwen_3_4b.safetensors', 'umt5_xxl_fp8_e4m3fn_scaled.safetensors']", "extra_info": {"input_name": "clip_name", "input_config": [["mistral_3_small_flux2_bf16.safetensors", "qwen_3_4b.safetensors", "umt5_xxl_fp8_e4m3fn_scaled.safetensors"], {}], "received_value": "t
+
+[03:26:39] _gen_safe cut=3 primary=ComfyUIVideoService max_retries=3
+[03:26:39] _gen_safe cut=3 attempt=1 → primary.generate() 호출
+[03:26:40] _gen_safe cut=3 attempt=1 PRIMARY FAILED: ComfyUIError: /prompt 400: {"error": {"type": "prompt_outputs_failed_validation", "message": "Prompt outputs failed validation", "details": "", "extra_info": {}}, "node_errors": {"14": {"errors": [{"type": "value_not_in_list", "message": "Value not in list", "details": "clip_name: 't5xxl_fp8_e4m3fn.safetensors' not in ['mistral_3_small_flux2_bf16.safetensors', 'qwen_3_4b.safetensors', 'umt5_xxl_fp8_e4m3fn_scaled.safetensors']", "extra_info": {"input_name": "clip_name", "input_config": [["mistral_3_small_flux2_bf16.safetensors", "qwen_3_4b.safetensors", "umt5_xxl_fp8_e4m3fn_scaled.safetensors"], {}], "received_value": "t
+f"/prompt {r.status_code}: {r.text[:600]}")
+app.services.comfyui_client.ComfyUIError: /prompt 400: {"error": {"type": "prompt_outputs_failed_validation", "message": "Prompt outputs failed validation", "details": "", "extra_info": {}}, "node_errors": {"14": {"errors": [{"type": "value_not_in_list", "message": "Value not in list", "details": "clip_name: 't5xxl_fp8_e4m3fn.safetensors' not in ['mistral_3_small_flux2_bf16.safetensors', 'qwen_3_4b.safetensors', 'umt5_xxl_fp8_e4m3fn_scaled.safetensors']", "extra_info": {"input_name": "clip_name", "input_config": [["mistral_3_small_flux2_bf16.safetensors", "qwen_3_4b.safetensors", "umt5_xxl_fp8_e4m3fn_scaled.safetensors"], {}], "received_value": "t
+
+[03:26:45] _gen_safe cut=3 attempt=2 → primary.generate() 호출
+[03:26:45] _gen_safe cut=3 attempt=2 PRIMARY FAILED: ComfyUIError: /prompt 400: {"error": {"type": "prompt_outputs_failed_validation", "message": "Prompt outputs failed validation", "details": "", "extra_info": {}}, "node_errors": {"14": {"errors": [{"type": "value_not_in_list", "message": "Value not in list", "details": "clip_name: 't5xxl_fp8_e4m3fn.safetensors' not in ['mistral_3_small_flux2_bf16.safetensors', 'qwen_3_4b.safetensors', 'umt5_xxl_fp8_e4m3fn_scaled.safetensors']", "extra_info": {"input_name": "clip_name", "input_config": [["mistral_3_small_flux2_bf16.safetensors", "qwen_3_4b.safetensors", "umt5_xxl_fp8_e4m3fn_scaled.safetensors"], {}], "received_value": "t
+f"/prompt {r.status_code}: {r.text[:600]}")
+app.services.comfyui_client.ComfyUIError: /prompt 400: {"error": {"type": "prompt_outputs_failed_validation", "message": "Prompt outputs failed validation", "details": "", "extra_info": {}}, "node_errors": {"14": {"errors": [{"type": "value_not_in_list", "message": "Value not in list", "details": "clip_name: 't5xxl_fp8_e4m3fn.safetensors' not in ['mistral_3_small_flux2_bf16.safetensors', 'qwen_3_4b.safetensors', 'umt5_xxl_fp8_e4m3fn_scaled.safetensors']", "extra_info": {"input_name": "clip_name", "input_config": [["mistral_3_small_flux2_bf16.safetensors", "qwen_3_4b.safetensors", "umt5_xxl_fp8_e4m3fn_scaled.safetensors"], {}], "received_value": "t
+
+[03:26:55] _gen_safe cut=3 attempt=3 → primary.generate() 호출
+[03:26:56] _gen_safe cut=3 attempt=3 PRIMARY FAILED: ComfyUIError: /prompt 400: {"error": {"type": "prompt_outputs_failed_validation", "message": "Prompt outputs failed validation", "details": "", "extra_info": {}}, "node_errors": {"14": {"errors": [{"type": "value_not_in_list", "message": "Value not in list", "details": "clip_name: 't5xxl_fp8_e4m3fn.safetensors' not in ['mistral_3_small_flux2_bf16.safetensors', 'qwen_3_4b.safetensors', 'umt5_xxl_fp8_e4m3fn_scaled.safetensors']", "extra_info": {"input_name": "clip_name", "input_config": [["mistral_3_small_flux2_bf16.safetensors", "qwen_3_4b.safetensors", "umt5_xxl_fp8_e4m3fn_scaled.safetensors"], {}], "received_value": "t
+f"/prompt {r.status_code}: {r.text[:600]}")
+app.services.comfyui_client.ComfyUIError: /prompt 400: {"error": {"type": "prompt_outputs_failed_validation", "message": "Prompt outputs failed validation", "details": "", "extra_info": {}}, "node_errors": {"14": {"errors": [{"type": "value_not_in_list", "message": "Value not in list", "details": "clip_name: 't5xxl_fp8_e4m3fn.safetensors' not in ['mistral_3_small_flux2_bf16.safetensors', 'qwen_3_4b.safetensors', 'umt5_xxl_fp8_e4m3fn_scaled.safetensors']", "extra_info": {"input_name": "clip_name", "input_config": [["mistral_3_small_flux2_bf16.safetensors", "qwen_3_4b.safetensors", "umt5_xxl_fp8_e4m3fn_scaled.safetensors"], {}], "received_value": "t
+
+[03:26:56] _gen_safe cut=4 primary=ComfyUIVideoService max_retries=3
+[03:26:56] _gen_safe cut=4 attempt=1 → primary.generate() 호출
+[03:26:57] _gen_safe cut=4 attempt=1 PRIMARY FAILED: ComfyUIError: /prompt 400: {"error": {"type": "prompt_outputs_failed_validation", "message": "Prompt outputs failed validation", "details": "", "extra_info": {}}, "node_errors": {"14": {"errors": [{"type": "value_not_in_list", "message": "Value not in list", "details": "clip_name: 't5xxl_fp8_e4m3fn.safetensors' not in ['mistral_3_small_flux2_bf16.safetensors', 'qwen_3_4b.safetensors', 'umt5_xxl_fp8_e4m3fn_scaled.safetensors']", "extra_info": {"input_name": "clip_name", "input_config": [["mistral_3_small_flux2_bf16.safetensors", "qwen_3_4b.safetensors", "umt5_xxl_fp8_e4m3fn_scaled.safetensors"], {}], "received_value": "t
+f"/prompt {r.status_code}: {r.text[:600]}")
+app.services.comfyui_client.ComfyUIError: /prompt 400: {"error": {"type": "prompt_outputs_failed_validation", "message": "Prompt outputs failed validation", "details": "", "extra_info": {}}, "node_errors": {"14": {"errors": [{"type": "value_not_in_list", "message": "Value not in list", "details": "clip_name: 't5xxl_fp8_e4m3fn.safetensors' not in ['mistral_3_small_flux2_bf16.safetensors', 'qwen_3_4b.safetensors', 'umt5_xxl_fp8_e4m3fn_scaled.safetensors']", "extra_info": {"input_name": "clip_name", "input_config": [["mistral_3_small_flux2_bf16.safetensors", "qwen_3_4b.safetensors", "umt5_xxl_fp8_e4m3fn_scaled.safetensors"], {}], "received_value": "t
+
+[03:27:02] _gen_safe cut=4 attempt=2 → primary.generate() 호출
+[03:27:03] _gen_safe cut=4 attempt=2 PRIMARY FAILED: ComfyUIError: /prompt 400: {"error": {"type": "prompt_outputs_failed_validation", "message": "Prompt outputs failed validation", "details": "", "extra_info": {}}, "node_errors": {"14": {"errors": [{"type": "value_not_in_list", "message": "Value not in list", "details": "clip_name: 't5xxl_fp8_e4m3fn.safetensors' not in ['mistral_3_small_flux2_bf16.safetensors', 'qwen_3_4b.safetensors', 'umt5_xxl_fp8_e4m3fn_scaled.safetensors']", "extra_info": {"input_name": "clip_name", "input_config": [["mistral_3_small_flux2_bf16.safetensors", "qwen_3_4b.safetensors", "umt5_xxl_fp8_e4m3fn_scaled.safetensors"], {}], "received_value": "t
+f"/prompt {r.status_code}: {r.text[:600]}")
+app.services.comfyui_client.ComfyUIError: /prompt 400: {"error": {"type": "prompt_outputs_failed_validation", "message": "Prompt outputs failed validation", "details": "", "extra_info": {}}, "node_errors": {"14": {"errors": [{"type": "value_not_in_list", "message": "Value not in list", "details": "clip_name: 't5xxl_fp8_e4m3fn.safetensors' not in ['mistral_3_small_flux2_bf16.safetensors', 'qwen_3_4b.safetensors', 'umt5_xxl_fp8_e4m3fn_scaled.safetensors']", "extra_info": {"input_name": "clip_name", "input_config": [["mistral_3_small_flux2_bf16.safetensors", "qwen_3_4b.safetensors", "umt5_xxl_fp8_e4m3fn_scaled.safetensors"], {}], "received_value": "t
+
+[03:27:13] _gen_safe cut=4 attempt=3 → primary.generate() 호출
+[03:27:13] _gen_safe cut=4 attempt=3 PRIMARY FAILED: ComfyUIError: /prompt 400: {"error": {"type": "prompt_outputs_failed_validation", "message": "Prompt outputs failed validation", "details": "", "extra_info": {}}, "node_errors": {"14": {"errors": [{"type": "value_not_in_list", "message": "Value not in list", "details": "clip_name: 't5xxl_fp8_e4m3fn.safetensors' not in ['mistral_3_small_flux2_bf16.safetensors', 'qwen_3_4b.safetensors', 'umt5_xxl_fp8_e4m3fn_scaled.safetensors']", "extra_info": {"input_name": "clip_name", "input_config": [["mistral_3_small_flux2_bf16.safetensors", "qwen_3_4b.safetensors", "umt5_xxl_fp8_e4m3fn_scaled.safetensors"], {}], "received_value": "t
+f"/prompt {r.status_code}: {r.text[:600]}")
+app.services.comfyui_client.ComfyUIError: /prompt 400: {"error": {"type": "prompt_outputs_failed_validation", "message": "Prompt outputs failed validation", "details": "", "extra_info": {}}, "node_errors": {"14": {"errors": [{"type": "value_not_in_list", "message": "Value not in list", "details": "clip_name: 't5xxl_fp8_e4m3fn.safetensors' not in ['mistral_3_small_flux2_bf16.safetensors', 'qwen_3_4b.safetensors', 'umt5_xxl_fp8_e4m3fn_scaled.safetensors']", "extra_info": {"input_name": "clip_name", "input_config": [["mistral_3_small_flux2_bf16.safetensors", "qwen_3_4b.safetensors", "umt5_xxl_fp8_e4m3fn_scaled.safetensors"], {}], "received_value": "t
+
+[03:27:14] _gen_safe cut=5 primary=ComfyUIVideoService max_retries=3
+[03:27:14] _gen_safe cut=5 attempt=1 → primary.generate() 호출
+[03:27:14] _gen_safe cut=5 attempt=1 PRIMARY FAILED: ComfyUIError: /prompt 400: {"error": {"type": "prompt_outputs_failed_validation", "message": "Prompt outputs failed validation", "details": "", "extra_info": {}}, "node_errors": {"14": {"errors": [{"type": "value_not_in_list", "message": "Value not in list", "details": "clip_name: 't5xxl_fp8_e4m3fn.safetensors' not in ['mistral_3_small_flux2_bf16.safetensors', 'qwen_3_4b.safetensors', 'umt5_xxl_fp8_e4m3fn_scaled.safetensors']", "extra_info": {"input_name": "clip_name", "input_config": [["mistral_3_small_flux2_bf16.safetensors", "qwen_3_4b.safetensors", "umt5_xxl_fp8_e4m3fn_scaled.safetensors"], {}], "received_value": "t
+f"/prompt {r.status_code}: {r.text[:600]}")
+app.services.comfyui_client.ComfyUIError: /prompt 400: {"error": {"type": "prompt_outputs_failed_validation", "message": "Prompt outputs failed validation", "details": "", "extra_info": {}}, "node_errors": {"14": {"errors": [{"type": "value_not_in_list", "message": "Value not in list", "details": "clip_name: 't5xxl_fp8_e4m3fn.safetensors' not in ['mistral_3_small_flux2_bf16.safetensors', 'qwen_3_4b.safetensors', 'umt5_xxl_fp8_e4m3fn_scaled.safetensors']", "extra_info": {"input_name": "clip_name", "input_config": [["mistral_3_small_flux2_bf16.safetensors", "qwen_3_4b.safetensors", "umt5_xxl_fp8_e4m3fn_scaled.safetensors"], {}], "received_value": "t
+
+[03:27:19] _gen_safe cut=5 attempt=2 → primary.generate() 호출
+[03:27:20] _gen_safe cut=5 attempt=2 PRIMARY FAILED: ComfyUIError: /prompt 400: {"error": {"type": "prompt_outputs_failed_validation", "message": "Prompt outputs failed validation", "details": "", "extra_info": {}}, "node_errors": {"14": {"errors": [{"type": "value_not_in_list", "message": "Value not in list", "details": "clip_name: 't5xxl_fp8_e4m3fn.safetensors' not in ['mistral_3_small_flux2_bf16.safetensors', 'qwen_3_4b.safetensors', 'umt5_xxl_fp8_e4m3fn_scaled.safetensors']", "extra_info": {"input_name": "clip_name", "input_config": [["mistral_3_small_flux2_bf16.safetensors", "qwen_3_4b.safetensors", "umt5_xxl_fp8_e4m3fn_scaled.safetensors"], {}], "received_value": "t
+f"/prompt {r.status_code}: {r.text[:600]}")
+app.services.comfyui_client.ComfyUIError: /prompt 400: {"error": {"type": "prompt_outputs_failed_validation", "message": "Prompt outputs failed validation", "details": "", "extra_info": {}}, "node_errors": {"14": {"errors": [{"type": "value_not_in_list", "message": "Value not in list", "details": "clip_name: 't5xxl_fp8_e4m3fn.safetensors' not in ['mistral_3_small_flux2_bf16.safetensors', 'qwen_3_4b.safetensors', 'umt5_xxl_fp8_e4m3fn_scaled.safetensors']", "extra_info": {"input_name": "clip_name", "input_config": [["mistral_3_small_flux2_bf16.safetensors", "qwen_3_4b.safetensors", "umt5_xxl_fp8_e4m3fn_scaled.safetensors"], {}], "received_value": "t
+
+[03:27:30] _gen_safe cut=5 attempt=3 → primary.generate() 호출
+[03:27:31] _gen_safe cut=5 attempt=3 PRIMARY FAILED: ComfyUIError: /prompt 400: {"error": {"type": "prompt_outputs_failed_validation", "message": "Prompt outputs failed validation", "details": "", "extra_info": {}}, "node_errors": {"14": {"errors": [{"type": "value_not_in_list", "message": "Value not in list", "details": "clip_name: 't5xxl_fp8_e4m3fn.safetensors' not in ['mistral_3_small_flux2_bf16.safetensors', 'qwen_3_4b.safetensors', 'umt5_xxl_fp8_e4m3fn_scaled.safetensors']", "extra_info": {"input_name": "clip_name", "input_config": [["mistral_3_small_flux2_bf16.safetensors", "qwen_3_4b.safetensors", "umt5_xxl_fp8_e4m3fn_scaled.safetensors"], {}], "received_value": "t
+f"/prompt {r.status_code}: {r.text[:600]}")
+app.services.comfyui_client.ComfyUIError: /prompt 400: {"error": {"type": "prompt_outputs_failed_validation", "message": "Prompt outputs failed validation", "details": "", "extra_info": {}}, "node_errors": {"14": {"errors": [{"type": "value_not_in_list", "message": "Value not in list", "details": "clip_name: 't5xxl_fp8_e4m3fn.safetensors' not in ['mistral_3_small_flux2_bf16.safetensors', 'qwen_3_4b.safetensors', 'umt5_xxl_fp8_e4m3fn_scaled.safetensors']", "extra_info": {"input_name": "clip_name", "input_config": [["mistral_3_small_flux2_bf16.safetensors", "qwen_3_4b.safetensors", "umt5_xxl_fp8_e4m3fn_scaled.safetensors"], {}], "received_value": "t
+
+[03:31:13] === generate_all_videos_async called project=65552077 cut_count=5 ===
+[03:31:13] _run ENTER project=65552077
+[03:31:13] _run config loaded model=comfyui-ltxv-13b aspect=16:9 selection=all ai_first_n=5
+[03:31:13] _run preflight force_full_fallback=False reason=not_fal
+[03:31:13] _run primary_service=ComfyUIVideoService
+[03:31:13] _run loaded 5 cuts from DB
+[03:31:13] _worker ENTER cut=1 state.status=running
+[03:31:13] _gen_safe cut=1 primary=ComfyUIVideoService max_retries=3
+[03:31:13] _gen_safe cut=1 attempt=1 → primary.generate() 호출
+[03:31:14] _worker ENTER cut=2 state.status=running
+[03:31:14] _worker ENTER cut=3 state.status=running
+[03:31:14] _worker ENTER cut=4 state.status=running
+[03:31:14] _worker ENTER cut=5 state.status=running
+[03:31:14] _gen_safe cut=1 attempt=1 PRIMARY FAILED: ComfyUIError: /prompt 400: {"error": {"type": "prompt_outputs_failed_validation", "message": "Prompt outputs failed validation", "details": "", "extra_info": {}}, "node_errors": {"14": {"errors": [{"type": "value_not_in_list", "message": "Value not in list", "details": "clip_name: 't5xxl_fp8_e4m3fn.safetensors' not in ['ltxv-13b-0.9.8-distilled-fp8.safetensors', 'mistral_3_small_flux2_bf16.safetensors', 'qwen_3_4b.safetensors', 'umt5_xxl_fp8_e4m3fn_scaled.safetensors']", "extra_info": {"input_name": "clip_name", "input_config": [["ltxv-13b-0.9.8-distilled-fp8.safetensors", "mistral_3_small_flux2_bf16.safetensors", "qwen
+f"/prompt {r.status_code}: {r.text[:600]}")
+app.services.comfyui_client.ComfyUIError: /prompt 400: {"error": {"type": "prompt_outputs_failed_validation", "message": "Prompt outputs failed validation", "details": "", "extra_info": {}}, "node_errors": {"14": {"errors": [{"type": "value_not_in_list", "message": "Value not in list", "details": "clip_name: 't5xxl_fp8_e4m3fn.safetensors' not in ['ltxv-13b-0.9.8-distilled-fp8.safetensors', 'mistral_3_small_flux2_bf16.safetensors', 'qwen_3_4b.safetensors', 'umt5_xxl_fp8_e4m3fn_scaled.safetensors']", "extra_info": {"input_name": "clip_name", "input_config": [["ltxv-13b-0.9.8-distilled-fp8.safetensors", "mistral_3_small_flux2_bf16.safetensors", "qwen
+
+[03:32:04] === generate_all_videos_async called project=65552077 cut_count=5 ===
+[03:32:04] _run ENTER project=65552077
+[03:32:04] _run config loaded model=comfyui-ltxv-13b aspect=16:9 selection=all ai_first_n=5
+[03:32:04] _run preflight force_full_fallback=False reason=not_fal
+[03:32:04] _run primary_service=ComfyUIVideoService
+[03:32:04] _run loaded 5 cuts from DB
+[03:32:04] _worker ENTER cut=1 state.status=running
+[03:32:04] _gen_safe cut=1 primary=ComfyUIVideoService max_retries=3
+[03:32:04] _gen_safe cut=1 attempt=1 → primary.generate() 호출
+[03:32:04] _worker ENTER cut=2 state.status=running
+[03:32:04] _worker ENTER cut=3 state.status=running
+[03:32:04] _worker ENTER cut=4 state.status=running
+[03:32:04] _worker ENTER cut=5 state.status=running
+[03:32:05] _gen_safe cut=1 attempt=1 PRIMARY FAILED: ComfyUIError: /prompt 400: {"error": {"type": "prompt_outputs_failed_validation", "message": "Prompt outputs failed validation", "details": "", "extra_info": {}}, "node_errors": {"14": {"errors": [{"type": "value_not_in_list", "message": "Value not in list", "details": "clip_name: 't5xxl_fp8_e4m3fn.safetensors' not in ['ltxv-13b-0.9.8-distilled-fp8.safetensors', 'mistral_3_small_flux2_bf16.safetensors', 'qwen_3_4b.safetensors', 'umt5_xxl_fp8_e4m3fn_scaled.safetensors']", "extra_info": {"input_name": "clip_name", "input_config": [["ltxv-13b-0.9.8-distilled-fp8.safetensors", "mistral_3_small_flux2_bf16.safetensors", "qwen
+f"/prompt {r.status_code}: {r.text[:600]}")
+app.services.comfyui_client.ComfyUIError: /prompt 400: {"error": {"type": "prompt_outputs_failed_validation", "message": "Prompt outputs failed validation", "details": "", "extra_info": {}}, "node_errors": {"14": {"errors": [{"type": "value_not_in_list", "message": "Value not in list", "details": "clip_name: 't5xxl_fp8_e4m3fn.safetensors' not in ['ltxv-13b-0.9.8-distilled-fp8.safetensors', 'mistral_3_small_flux2_bf16.safetensors', 'qwen_3_4b.safetensors', 'umt5_xxl_fp8_e4m3fn_scaled.safetensors']", "extra_info": {"input_name": "clip_name", "input_config": [["ltxv-13b-0.9.8-distilled-fp8.safetensors", "mistral_3_small_flux2_bf16.safetensors", "qwen
+
+[03:32:10] _gen_safe cut=1 attempt=2 → primary.generate() 호출
+[03:32:10] _gen_safe cut=1 attempt=2 PRIMARY FAILED: ComfyUIError: /prompt 400: {"error": {"type": "prompt_outputs_failed_validation", "message": "Prompt outputs failed validation", "details": "", "extra_info": {}}, "node_errors": {"14": {"errors": [{"type": "value_not_in_list", "message": "Value not in list", "details": "clip_name: 't5xxl_fp8_e4m3fn.safetensors' not in ['ltxv-13b-0.9.8-distilled-fp8.safetensors', 'mistral_3_small_flux2_bf16.safetensors', 'qwen_3_4b.safetensors', 'umt5_xxl_fp8_e4m3fn_scaled.safetensors']", "extra_info": {"input_name": "clip_name", "input_config": [["ltxv-13b-0.9.8-distilled-fp8.safetensors", "mistral_3_small_flux2_bf16.safetensors", "qwen
+f"/prompt {r.status_code}: {r.text[:600]}")
+app.services.comfyui_client.ComfyUIError: /prompt 400: {"error": {"type": "prompt_outputs_failed_validation", "message": "Prompt outputs failed validation", "details": "", "extra_info": {}}, "node_errors": {"14": {"errors": [{"type": "value_not_in_list", "message": "Value not in list", "details": "clip_name: 't5xxl_fp8_e4m3fn.safetensors' not in ['ltxv-13b-0.9.8-distilled-fp8.safetensors', 'mistral_3_small_flux2_bf16.safetensors', 'qwen_3_4b.safetensors', 'umt5_xxl_fp8_e4m3fn_scaled.safetensors']", "extra_info": {"input_name": "clip_name", "input_config": [["ltxv-13b-0.9.8-distilled-fp8.safetensors", "mistral_3_small_flux2_bf16.safetensors", "qwen
+
+[03:32:20] _gen_safe cut=1 attempt=3 → primary.generate() 호출
+[03:32:21] _gen_safe cut=1 attempt=3 PRIMARY FAILED: ComfyUIError: /prompt 400: {"error": {"type": "prompt_outputs_failed_validation", "message": "Prompt outputs failed validation", "details": "", "extra_info": {}}, "node_errors": {"14": {"errors": [{"type": "value_not_in_list", "message": "Value not in list", "details": "clip_name: 't5xxl_fp8_e4m3fn.safetensors' not in ['ltxv-13b-0.9.8-distilled-fp8.safetensors', 'mistral_3_small_flux2_bf16.safetensors', 'qwen_3_4b.safetensors', 'umt5_xxl_fp8_e4m3fn_scaled.safetensors']", "extra_info": {"input_name": "clip_name", "input_config": [["ltxv-13b-0.9.8-distilled-fp8.safetensors", "mistral_3_small_flux2_bf16.safetensors", "qwen
+f"/prompt {r.status_code}: {r.text[:600]}")
+app.services.comfyui_client.ComfyUIError: /prompt 400: {"error": {"type": "prompt_outputs_failed_validation", "message": "Prompt outputs failed validation", "details": "", "extra_info": {}}, "node_errors": {"14": {"errors": [{"type": "value_not_in_list", "message": "Value not in list", "details": "clip_name: 't5xxl_fp8_e4m3fn.safetensors' not in ['ltxv-13b-0.9.8-distilled-fp8.safetensors', 'mistral_3_small_flux2_bf16.safetensors', 'qwen_3_4b.safetensors', 'umt5_xxl_fp8_e4m3fn_scaled.safetensors']", "extra_info": {"input_name": "clip_name", "input_config": [["ltxv-13b-0.9.8-distilled-fp8.safetensors", "mistral_3_small_flux2_bf16.safetensors", "qwen
+
+[03:32:21] _gen_safe cut=2 primary=ComfyUIVideoService max_retries=3
+[03:32:21] _gen_safe cut=2 attempt=1 → primary.generate() 호출
+[03:32:22] _gen_safe cut=2 attempt=1 PRIMARY FAILED: ComfyUIError: /prompt 400: {"error": {"type": "prompt_outputs_failed_validation", "message": "Prompt outputs failed validation", "details": "", "extra_info": {}}, "node_errors": {"14": {"errors": [{"type": "value_not_in_list", "message": "Value not in list", "details": "clip_name: 't5xxl_fp8_e4m3fn.safetensors' not in ['ltxv-13b-0.9.8-distilled-fp8.safetensors', 'mistral_3_small_flux2_bf16.safetensors', 'qwen_3_4b.safetensors', 'umt5_xxl_fp8_e4m3fn_scaled.safetensors']", "extra_info": {"input_name": "clip_name", "input_config": [["ltxv-13b-0.9.8-distilled-fp8.safetensors", "mistral_3_small_flux2_bf16.safetensors", "qwen
+f"/prompt {r.status_code}: {r.text[:600]}")
+app.services.comfyui_client.ComfyUIError: /prompt 400: {"error": {"type": "prompt_outputs_failed_validation", "message": "Prompt outputs failed validation", "details": "", "extra_info": {}}, "node_errors": {"14": {"errors": [{"type": "value_not_in_list", "message": "Value not in list", "details": "clip_name: 't5xxl_fp8_e4m3fn.safetensors' not in ['ltxv-13b-0.9.8-distilled-fp8.safetensors', 'mistral_3_small_flux2_bf16.safetensors', 'qwen_3_4b.safetensors', 'umt5_xxl_fp8_e4m3fn_scaled.safetensors']", "extra_info": {"input_name": "clip_name", "input_config": [["ltxv-13b-0.9.8-distilled-fp8.safetensors", "mistral_3_small_flux2_bf16.safetensors", "qwen
+
+[03:32:27] _gen_safe cut=2 attempt=2 → primary.generate() 호출
+[03:32:28] _gen_safe cut=2 attempt=2 PRIMARY FAILED: ComfyUIError: /prompt 400: {"error": {"type": "prompt_outputs_failed_validation", "message": "Prompt outputs failed validation", "details": "", "extra_info": {}}, "node_errors": {"14": {"errors": [{"type": "value_not_in_list", "message": "Value not in list", "details": "clip_name: 't5xxl_fp8_e4m3fn.safetensors' not in ['ltxv-13b-0.9.8-distilled-fp8.safetensors', 'mistral_3_small_flux2_bf16.safetensors', 'qwen_3_4b.safetensors', 'umt5_xxl_fp8_e4m3fn_scaled.safetensors']", "extra_info": {"input_name": "clip_name", "input_config": [["ltxv-13b-0.9.8-distilled-fp8.safetensors", "mistral_3_small_flux2_bf16.safetensors", "qwen
+f"/prompt {r.status_code}: {r.text[:600]}")
+app.services.comfyui_client.ComfyUIError: /prompt 400: {"error": {"type": "prompt_outputs_failed_validation", "message": "Prompt outputs failed validation", "details": "", "extra_info": {}}, "node_errors": {"14": {"errors": [{"type": "value_not_in_list", "message": "Value not in list", "details": "clip_name: 't5xxl_fp8_e4m3fn.safetensors' not in ['ltxv-13b-0.9.8-distilled-fp8.safetensors', 'mistral_3_small_flux2_bf16.safetensors', 'qwen_3_4b.safetensors', 'umt5_xxl_fp8_e4m3fn_scaled.safetensors']", "extra_info": {"input_name": "clip_name", "input_config": [["ltxv-13b-0.9.8-distilled-fp8.safetensors", "mistral_3_small_flux2_bf16.safetensors", "qwen
+
+[03:33:23] === generate_all_videos_async called project=65552077 cut_count=5 ===
+[03:33:23] _run ENTER project=65552077
+[03:33:23] _run config loaded model=seedance-lite aspect=16:9 selection=all ai_first_n=5
+[03:33:24] _run preflight force_full_fallback=False reason=ok:key_valid
+[03:33:24] _run primary_service=FalVideoService
+[03:33:24] _run loaded 5 cuts from DB
+[03:33:24] _worker ENTER cut=1 state.status=running
+[03:33:24] _gen_safe cut=1 primary=FalVideoService max_retries=3
+[03:33:24] _gen_safe cut=1 attempt=1 → primary.generate() 호출
+[03:33:25] _worker ENTER cut=2 state.status=running
+[03:33:25] _gen_safe cut=2 primary=FalVideoService max_retries=3
+[03:33:25] _gen_safe cut=2 attempt=1 → primary.generate() 호출
+[03:33:25] _worker ENTER cut=3 state.status=running
+[03:33:25] _gen_safe cut=3 primary=FalVideoService max_retries=3
+[03:33:25] _gen_safe cut=3 attempt=1 → primary.generate() 호출
+[03:33:25] _worker ENTER cut=4 state.status=running
+[03:33:25] _gen_safe cut=4 primary=FalVideoService max_retries=3
+[03:33:25] _gen_safe cut=4 attempt=1 → primary.generate() 호출
+[03:33:26] _worker ENTER cut=5 state.status=running
+[03:34:05] _gen_safe cut=1 attempt=1 PRIMARY SUCCESS
+[03:34:05] _gen_safe cut=5 primary=FalVideoService max_retries=3
+[03:34:05] _gen_safe cut=5 attempt=1 → primary.generate() 호출
+[03:34:07] _gen_safe cut=3 attempt=1 PRIMARY SUCCESS
+[03:34:11] _gen_safe cut=2 attempt=1 PRIMARY SUCCESS
+[03:34:12] _gen_safe cut=4 attempt=1 PRIMARY SUCCESS
+[03:38:22] === generate_all_videos_async called project=65552077 cut_count=5 ===
+[03:38:22] _run ENTER project=65552077
+[03:38:22] _run config loaded model=seedance-lite aspect=16:9 selection=all ai_first_n=5
+[03:38:23] _run preflight force_full_fallback=False reason=ok:key_valid
+[03:38:23] _run primary_service=FalVideoService
+[03:38:23] _run loaded 5 cuts from DB
+[03:38:23] _worker ENTER cut=1 state.status=running
+[03:38:23] _worker cut=1 waiting sem
+[03:38:23] _worker cut=1 acquired sem state.status=running
+[03:38:23] _gen_safe cut=1 primary=FalVideoService max_retries=3
+[03:38:23] _gen_safe cut=1 attempt=1 → primary.generate() 호출
+[03:38:23] _worker ENTER cut=2 state.status=running
+[03:38:23] _worker cut=2 waiting sem
+[03:38:23] _worker cut=2 acquired sem state.status=running
+[03:38:23] _gen_safe cut=2 primary=FalVideoService max_retries=3
+[03:38:23] _gen_safe cut=2 attempt=1 → primary.generate() 호출
+[03:38:23] _worker ENTER cut=3 state.status=running
+[03:38:23] _worker cut=3 waiting sem
+[03:38:23] _worker cut=3 acquired sem state.status=running
+[03:38:23] _gen_safe cut=3 primary=FalVideoService max_retries=3
+[03:38:23] _gen_safe cut=3 attempt=1 → primary.generate() 호출
+[03:38:23] _worker ENTER cut=4 state.status=running
+[03:38:23] _worker cut=4 waiting sem
+[03:38:23] _worker cut=4 acquired sem state.status=running
+[03:38:23] _gen_safe cut=4 primary=FalVideoService max_retries=3
+[03:38:23] _gen_safe cut=4 attempt=1 → primary.generate() 호출
+[03:38:24] _worker ENTER cut=5 state.status=running
+[03:38:24] _worker cut=5 waiting sem
+[03:39:01] === generate_all_videos_async called project=65552077 cut_count=5 ===
+[03:39:01] _run ENTER project=65552077
+[03:39:01] _run config loaded model=comfyui-ltxv-13b aspect=16:9 selection=all ai_first_n=5
+[03:39:01] _run preflight force_full_fallback=False reason=not_fal
+[03:39:01] _run primary_service=ComfyUIVideoService
+[03:39:01] _run loaded 5 cuts from DB
+[03:39:01] _worker ENTER cut=1 state.status=running
+[03:39:01] _worker cut=1 waiting sem
+[03:39:01] _worker cut=1 acquired sem state.status=running
+[03:39:01] _gen_safe cut=1 primary=ComfyUIVideoService max_retries=3
+[03:39:01] _gen_safe cut=1 attempt=1 → primary.generate() 호출
+[03:39:02] _worker ENTER cut=2 state.status=running
+[03:39:02] _worker cut=2 waiting sem
+[03:39:02] _worker ENTER cut=3 state.status=running
+[03:39:02] _worker cut=3 waiting sem
+[03:39:02] _worker ENTER cut=4 state.status=running
+[03:39:02] _worker cut=4 waiting sem
+[03:39:02] _worker ENTER cut=5 state.status=running
+[03:39:02] _worker cut=5 waiting sem
+[03:39:58] _gen_safe cut=1 attempt=1 PRIMARY SUCCESS
+[03:39:58] _worker cut=2 acquired sem state.status=running
+[03:39:58] _gen_safe cut=2 primary=ComfyUIVideoService max_retries=3
+[03:39:58] _gen_safe cut=2 attempt=1 → primary.generate() 호출
+[03:40:48] _gen_safe cut=2 attempt=1 PRIMARY SUCCESS
+[03:40:48] _worker cut=3 acquired sem state.status=running
+[03:40:48] _gen_safe cut=3 primary=ComfyUIVideoService max_retries=3
+[03:40:48] _gen_safe cut=3 attempt=1 → primary.generate() 호출
+[03:41:22] _gen_safe cut=3 attempt=1 PRIMARY SUCCESS
+[03:41:22] _worker cut=4 acquired sem state.status=running
+[03:41:22] _gen_safe cut=4 primary=ComfyUIVideoService max_retries=3
+[03:41:22] _gen_safe cut=4 attempt=1 → primary.generate() 호출
+[03:46:27] === generate_all_videos_async called project=65552077 cut_count=5 ===
+[03:46:27] _run ENTER project=65552077
+[03:46:27] _run config loaded model=comfyui-ltxv-13b aspect=16:9 selection=all ai_first_n=5
+[03:46:27] _run preflight force_full_fallback=False reason=not_fal
+[03:46:27] _run primary_service=ComfyUIVideoService
+[03:46:27] _run loaded 5 cuts from DB
+[03:46:27] _worker ENTER cut=1 state.status=running
+[03:46:27] _worker cut=1 waiting sem
+[03:46:27] _worker cut=1 acquired sem state.status=running
+[03:46:27] _gen_safe cut=1 primary=ComfyUIVideoService max_retries=3
+[03:46:27] _gen_safe cut=1 attempt=1 → primary.generate() 호출
+[03:46:27] _worker ENTER cut=2 state.status=running
+[03:46:27] _worker cut=2 waiting sem
+[03:46:27] _worker ENTER cut=3 state.status=running
+[03:46:27] _worker cut=3 waiting sem
+[03:46:27] _worker ENTER cut=4 state.status=running
+[03:46:27] _worker cut=4 waiting sem
+[03:46:27] _worker ENTER cut=5 state.status=running
+[03:46:27] _worker cut=5 waiting sem
+[03:47:25] _gen_safe cut=1 attempt=1 PRIMARY SUCCESS
+[03:47:25] _worker cut=2 acquired sem state.status=running
+[03:47:25] _gen_safe cut=2 primary=ComfyUIVideoService max_retries=3
+[03:47:25] _gen_safe cut=2 attempt=1 → primary.generate() 호출
+[03:48:11] _gen_safe cut=2 attempt=1 PRIMARY SUCCESS
+[03:48:11] _worker cut=3 acquired sem state.status=running
+[03:48:11] _gen_safe cut=3 primary=ComfyUIVideoService max_retries=3
+[03:48:11] _gen_safe cut=3 attempt=1 → primary.generate() 호출
+[03:48:48] _gen_safe cut=3 attempt=1 PRIMARY SUCCESS
+[03:48:48] _worker cut=4 acquired sem state.status=running
+[03:48:48] _gen_safe cut=4 primary=ComfyUIVideoService max_retries=3
+[03:48:48] _gen_safe cut=4 attempt=1 → primary.generate() 호출
+[03:50:10] === resume_videos_async called project=65552077 ===
+[03:50:10] _gen_safe cut=0 primary=ComfyUIVideoService max_retries=1
+[03:50:10] _gen_safe cut=0 attempt=1 → primary.generate() 호출
+[03:50:53] _gen_safe cut=0 attempt=1 PRIMARY SUCCESS
+[03:50:53] _gen_safe cut=0 primary=ComfyUIVideoService max_retries=1
+[03:50:53] _gen_safe cut=0 attempt=1 → primary.generate() 호출
+[03:51:30] _gen_safe cut=0 attempt=1 PRIMARY SUCCESS
+[11:11:48] === generate_all_videos_async called project=65552077 cut_count=5 ===
+[11:11:48] _run ENTER project=65552077
+[11:11:48] _run config loaded model=ffmpeg-kenburns aspect=16:9 selection=all ai_first_n=5
+[11:11:48] _run preflight force_full_fallback=False reason=not_fal
+[11:11:48] _run primary_service=FFmpegService
+[11:11:48] _run loaded 5 cuts from DB
+[11:11:48] _worker ENTER cut=1 state.status=running
+[11:11:48] _worker cut=1 waiting sem
+[11:11:48] _worker cut=1 acquired sem state.status=running
+[11:11:48] _gen_safe cut=1 primary=FFmpegService max_retries=3
+[11:11:48] _gen_safe cut=1 attempt=1 → primary.generate() 호출
+[11:11:48] _worker ENTER cut=2 state.status=running
+[11:11:48] _worker cut=2 waiting sem
+[11:11:48] _worker cut=2 acquired sem state.status=running
+[11:11:48] _gen_safe cut=2 primary=FFmpegService max_retries=3
+[11:11:48] _gen_safe cut=2 attempt=1 → primary.generate() 호출
+[11:11:48] _worker ENTER cut=3 state.status=running
+[11:11:48] _worker cut=3 SKIP missing_path img=False aud=True
+[11:11:48] _worker ENTER cut=4 state.status=running
+[11:11:48] _worker cut=4 waiting sem
+[11:11:48] _worker cut=4 acquired sem state.status=running
+[11:11:48] _gen_safe cut=4 primary=FFmpegService max_retries=3
+[11:11:48] _gen_safe cut=4 attempt=1 → primary.generate() 호출
+[11:11:48] _worker ENTER cut=5 state.status=running
+[11:11:48] _worker cut=5 waiting sem
+[11:11:48] _worker cut=5 acquired sem state.status=running
+[11:11:48] _gen_safe cut=5 primary=FFmpegService max_retries=3
+[11:11:48] _gen_safe cut=5 attempt=1 → primary.generate() 호출
+[11:11:50] _gen_safe cut=5 attempt=1 PRIMARY SUCCESS
+[11:11:50] _gen_safe cut=1 attempt=1 PRIMARY SUCCESS
+[11:11:50] _gen_safe cut=4 attempt=1 PRIMARY SUCCESS
+[11:11:50] _gen_safe cut=2 attempt=1 PRIMARY SUCCESS
+[12:15:27] === generate_all_videos_async called project=딸깍_전자레인지의_발명이야기_260416-1 cut_count=60 ===
+[12:15:27] _run ENTER project=딸깍_전자레인지의_발명이야기_260416-1
+[12:15:27] _run config loaded model=seedance-lite aspect=16:9 selection=every_3 ai_first_n=5
+[12:15:28] _run preflight force_full_fallback=False reason=ok:key_valid
+[12:15:28] _run primary_service=FalVideoService
+[12:15:28] _run loaded 60 cuts from DB
+[12:15:28] _worker ENTER cut=1 state.status=running
+[12:15:28] _worker cut=1 waiting sem
+[12:15:28] _worker cut=1 acquired sem state.status=running
+[12:15:28] _gen_safe cut=1 primary=FalVideoService max_retries=3
+[12:15:28] _gen_safe cut=1 attempt=1 → primary.generate() 호출
+[12:15:28] _worker ENTER cut=2 state.status=running
+[12:15:28] _worker cut=2 waiting sem
+[12:15:28] _worker cut=2 acquired sem state.status=running
+[12:15:28] _gen_safe cut=2 primary=FalVideoService max_retries=3
+[12:15:28] _gen_safe cut=2 attempt=1 → primary.generate() 호출
+[12:15:29] _worker ENTER cut=3 state.status=running
+[12:15:29] _worker cut=3 waiting sem
+[12:15:29] _worker cut=3 acquired sem state.status=running
+[12:15:29] _gen_safe cut=3 primary=FalVideoService max_retries=3
+[12:15:29] _gen_safe cut=3 attempt=1 → primary.generate() 호출
+[12:15:29] _worker ENTER cut=4 state.status=running
+[12:15:29] _worker cut=4 waiting sem
+[12:15:29] _worker cut=4 acquired sem state.status=running
+[12:15:29] _gen_safe cut=4 primary=FalVideoService max_retries=3
+[12:15:29] _gen_safe cut=4 attempt=1 → primary.generate() 호출
+[12:15:29] _worker ENTER cut=5 state.status=running
+[12:15:29] _worker cut=5 waiting sem
+[12:15:29] _worker ENTER cut=6 state.status=running
+[12:15:29] _worker cut=6 waiting sem
+[12:15:29] _worker ENTER cut=7 state.status=running
+[12:15:29] _worker cut=7 waiting sem
+[12:15:29] _worker ENTER cut=8 state.status=running
+[12:15:29] _worker cut=8 waiting sem
+[12:15:29] _worker ENTER cut=9 state.status=running
+[12:15:29] _worker cut=9 waiting sem
+[12:15:29] _worker ENTER cut=10 state.status=running
+[12:15:29] _worker cut=10 waiting sem
+[12:15:29] _worker ENTER cut=11 state.status=running
+[12:15:29] _worker cut=11 waiting sem
+[12:15:29] _worker ENTER cut=12 state.status=running
+[12:15:29] _worker cut=12 waiting sem
+[12:15:29] _worker ENTER cut=13 state.status=running
+[12:15:29] _worker cut=13 waiting sem
+[12:15:29] _worker ENTER cut=14 state.status=running
+[12:15:29] _worker cut=14 waiting sem
+[12:15:29] _worker ENTER cut=15 state.status=running
+[12:15:29] _worker cut=15 waiting sem
+[12:15:29] _worker ENTER cut=16 state.status=running
+[12:15:29] _worker cut=16 waiting sem
+[12:15:29] _worker ENTER cut=17 state.status=running
+[12:15:29] _worker cut=17 waiting sem
+[12:15:29] _worker ENTER cut=18 state.status=running
+[12:15:29] _worker cut=18 waiting sem
+[12:15:29] _worker ENTER cut=19 state.status=running
+[12:15:29] _worker cut=19 waiting sem
+[12:15:29] _worker ENTER cut=20 state.status=running
+[12:15:29] _worker cut=20 waiting sem
+[12:15:29] _worker ENTER cut=21 state.status=running
+[12:15:29] _worker cut=21 waiting sem
+[12:15:29] _worker ENTER cut=22 state.status=running
+[12:15:29] _worker cut=22 waiting sem
+[12:15:29] _worker ENTER cut=23 state.status=running
+[12:15:29] _worker cut=23 waiting sem
+[12:15:29] _worker ENTER cut=24 state.status=running
+[12:15:29] _worker cut=24 waiting sem
+[12:15:29] _worker ENTER cut=25 state.status=running
+[12:15:29] _worker cut=25 waiting sem
+[12:15:29] _worker ENTER cut=26 state.status=running
+[12:15:29] _worker cut=26 waiting sem
+[12:15:29] _worker ENTER cut=27 state.status=running
+[12:15:29] _worker cut=27 waiting sem
+[12:15:29] _worker ENTER cut=28 state.status=running
+[12:15:29] _worker cut=28 waiting sem
+[12:15:29] _worker ENTER cut=29 state.status=running
+[12:15:29] _worker cut=29 waiting sem
+[12:15:29] _worker ENTER cut=30 state.status=running
+[12:15:29] _worker cut=30 waiting sem
+[12:15:29] _worker ENTER cut=31 state.status=running
+[12:15:29] _worker cut=31 waiting sem
+[12:15:29] _worker ENTER cut=32 state.status=running
+[12:15:29] _worker cut=32 waiting sem
+[12:15:29] _worker ENTER cut=33 state.status=running
+[12:15:29] _worker cut=33 waiting sem
+[12:15:29] _worker ENTER cut=34 state.status=running
+[12:15:29] _worker cut=34 waiting sem
+[12:15:29] _worker ENTER cut=35 state.status=running
+[12:15:29] _worker cut=35 waiting sem
+[12:15:29] _worker ENTER cut=36 state.status=running
+[12:15:29] _worker cut=36 waiting sem
+[12:15:29] _worker ENTER cut=37 state.status=running
+[12:15:29] _worker cut=37 waiting sem
+[12:15:29] _worker ENTER cut=38 state.status=running
+[12:15:29] _worker cut=38 waiting sem
+[12:15:29] _worker ENTER cut=39 state.status=running
+[12:15:29] _worker cut=39 waiting sem
+[12:15:29] _worker ENTER cut=40 state.status=running
+[12:15:29] _worker cut=40 waiting sem
+[12:15:29] _worker ENTER cut=41 state.status=running
+[12:15:29] _worker cut=41 waiting sem
+[12:15:29] _worker ENTER cut=42 state.status=running
+[12:15:29] _worker cut=42 waiting sem
+[12:15:29] _worker ENTER cut=43 state.status=running
+[12:15:29] _worker cut=43 waiting sem
+[12:15:29] _worker ENTER cut=44 state.status=running
+[12:15:29] _worker cut=44 waiting sem
+[12:15:29] _worker ENTER cut=45 state.status=running
+[12:15:29] _worker cut=45 waiting sem
+[12:15:29] _worker ENTER cut=46 state.status=running
+[12:15:29] _worker cut=46 waiting sem
+[12:15:29] _worker ENTER cut=47 state.status=running
+[12:15:29] _worker cut=47 waiting sem
+[12:15:29] _worker ENTER cut=48 state.status=running
+[12:15:29] _worker cut=48 waiting sem
+[12:15:29] _worker ENTER cut=49 state.status=running
+[12:15:29] _worker cut=49 waiting sem
+[12:15:29] _worker ENTER cut=50 state.status=running
+[12:15:29] _worker cut=50 waiting sem
+[12:15:29] _worker ENTER cut=51 state.status=running
+[12:15:29] _worker cut=51 waiting sem
+[12:15:29] _worker ENTER cut=52 state.status=running
+[12:15:29] _worker cut=52 waiting sem
+[12:15:29] _worker ENTER cut=53 state.status=running
+[12:15:29] _worker cut=53 waiting sem
+[12:15:29] _worker ENTER cut=54 state.status=running
+[12:15:29] _worker cut=54 waiting sem
+[12:15:29] _worker ENTER cut=55 state.status=running
+[12:15:29] _worker cut=55 waiting sem
+[12:15:29] _worker ENTER cut=56 state.status=running
+[12:15:29] _worker cut=56 waiting sem
+[12:15:29] _worker ENTER cut=57 state.status=running
+[12:15:29] _worker cut=57 waiting sem
+[12:15:29] _worker ENTER cut=58 state.status=running
+[12:15:29] _worker cut=58 waiting sem
+[12:15:29] _worker ENTER cut=59 state.status=running
+[12:15:29] _worker cut=59 waiting sem
+[12:15:29] _worker ENTER cut=60 state.status=running
+[12:15:29] _worker cut=60 waiting sem
+[12:16:05] _gen_safe cut=1 attempt=1 PRIMARY SUCCESS
+[12:16:05] _worker cut=5 acquired sem state.status=running
+[12:16:05] _gen_safe cut=5 primary=FalVideoService max_retries=3
+[12:16:05] _gen_safe cut=5 attempt=1 → primary.generate() 호출
+[12:16:09] _gen_safe cut=4 attempt=1 PRIMARY SUCCESS
+[12:16:09] _worker cut=6 acquired sem state.status=running
+[12:16:10] _worker cut=7 acquired sem state.status=running
+[12:16:10] _gen_safe cut=7 primary=FalVideoService max_retries=1
+[12:16:10] _gen_safe cut=7 attempt=1 → primary.generate() 호출
+[12:16:16] _gen_safe cut=3 attempt=1 PRIMARY SUCCESS
+[12:16:16] _worker cut=8 acquired sem state.status=running
+[12:16:17] _worker cut=9 acquired sem state.status=running
+[12:16:17] _worker cut=10 acquired sem state.status=running
+[12:16:17] _gen_safe cut=10 primary=FalVideoService max_retries=1
+[12:16:17] _gen_safe cut=10 attempt=1 → primary.generate() 호출
+[12:16:21] _gen_safe cut=2 attempt=1 PRIMARY SUCCESS
+[12:16:21] _worker cut=11 acquired sem state.status=running
+[12:16:22] _worker cut=12 acquired sem state.status=running
+[12:16:23] _worker cut=13 acquired sem state.status=running
+[12:16:23] _gen_safe cut=13 primary=FalVideoService max_retries=1
+[12:16:23] _gen_safe cut=13 attempt=1 → primary.generate() 호출
+[12:16:42] _gen_safe cut=5 attempt=1 PRIMARY SUCCESS
+[12:16:42] _worker cut=14 acquired sem state.status=running
+[12:16:43] _worker cut=15 acquired sem state.status=running
+[12:16:44] _worker cut=16 acquired sem state.status=running
+[12:16:44] _gen_safe cut=16 primary=FalVideoService max_retries=1
+[12:16:44] _gen_safe cut=16 attempt=1 → primary.generate() 호출
+[12:16:52] _gen_safe cut=7 attempt=1 PRIMARY SUCCESS
+[12:16:52] _worker cut=17 acquired sem state.status=running
+[12:16:53] _worker cut=18 acquired sem state.status=running
+[12:16:54] _worker cut=19 acquired sem state.status=running
+[12:16:54] _gen_safe cut=19 primary=FalVideoService max_retries=1
+[12:16:54] _gen_safe cut=19 attempt=1 → primary.generate() 호출
+[12:16:54] _gen_safe cut=10 attempt=1 PRIMARY SUCCESS
+[12:16:54] _worker cut=20 acquired sem state.status=running
+[12:16:55] _worker cut=21 acquired sem state.status=running
+[12:16:56] _worker cut=22 acquired sem state.status=running
+[12:16:56] _gen_safe cut=22 primary=FalVideoService max_retries=1
+[12:16:56] _gen_safe cut=22 attempt=1 → primary.generate() 호출
+[12:17:04] _gen_safe cut=13 attempt=1 PRIMARY SUCCESS
+[12:17:04] _worker cut=23 acquired sem state.status=running
+[12:17:04] _worker cut=24 acquired sem state.status=running
+[12:17:05] _worker cut=25 acquired sem state.status=running
+[12:17:05] _gen_safe cut=25 primary=FalVideoService max_retries=1
+[12:17:05] _gen_safe cut=25 attempt=1 → primary.generate() 호출
+[12:17:24] _gen_safe cut=16 attempt=1 PRIMARY SUCCESS
+[12:17:24] _worker cut=26 acquired sem state.status=running
+[12:17:25] _worker cut=27 acquired sem state.status=running
+[12:17:26] _worker cut=28 acquired sem state.status=running
+[12:17:26] _gen_safe cut=28 primary=FalVideoService max_retries=1
+[12:17:26] _gen_safe cut=28 attempt=1 → primary.generate() 호출
+[12:17:29] _gen_safe cut=19 attempt=1 PRIMARY SUCCESS
+[12:17:29] _worker cut=29 acquired sem state.status=running
+[12:17:29] _worker cut=30 acquired sem state.status=running
+[12:17:30] _worker cut=31 acquired sem state.status=running
+[12:17:30] _gen_safe cut=31 primary=FalVideoService max_retries=1
+[12:17:30] _gen_safe cut=31 attempt=1 → primary.generate() 호출
+[12:17:33] _gen_safe cut=22 attempt=1 PRIMARY SUCCESS
+[12:17:33] _worker cut=32 acquired sem state.status=running
+[12:17:33] _worker cut=33 acquired sem state.status=running
+[12:17:34] _worker cut=34 acquired sem state.status=running
+[12:17:34] _gen_safe cut=34 primary=FalVideoService max_retries=1
+[12:17:34] _gen_safe cut=34 attempt=1 → primary.generate() 호출
+[12:17:43] _gen_safe cut=25 attempt=1 PRIMARY SUCCESS
+[12:17:43] _worker cut=35 acquired sem state.status=running
+[12:17:44] _worker cut=36 acquired sem state.status=running
+[12:17:44] _worker cut=37 acquired sem state.status=running
+[12:17:44] _gen_safe cut=37 primary=FalVideoService max_retries=1
+[12:17:44] _gen_safe cut=37 attempt=1 → primary.generate() 호출
+[12:18:07] _gen_safe cut=28 attempt=1 PRIMARY SUCCESS
+[12:18:07] _worker cut=38 acquired sem state.status=running
+[12:18:08] _worker cut=39 acquired sem state.status=running
+[12:18:09] _worker cut=40 acquired sem state.status=running
+[12:18:09] _gen_safe cut=40 primary=FalVideoService max_retries=1
+[12:18:09] _gen_safe cut=40 attempt=1 → primary.generate() 호출
+[12:18:11] _gen_safe cut=31 attempt=1 PRIMARY SUCCESS
+[12:18:11] _worker cut=41 acquired sem state.status=running
+[12:18:12] _worker cut=42 acquired sem state.status=running
+[12:18:13] _worker cut=43 acquired sem state.status=running
+[12:18:13] _gen_safe cut=43 primary=FalVideoService max_retries=1
+[12:18:13] _gen_safe cut=43 attempt=1 → primary.generate() 호출
+[12:18:16] _gen_safe cut=34 attempt=1 PRIMARY SUCCESS
+[12:18:16] _worker cut=44 acquired sem state.status=running
+[12:18:16] _worker cut=45 acquired sem state.status=running
+[12:18:17] _worker cut=46 acquired sem state.status=running
+[12:18:17] _gen_safe cut=46 primary=FalVideoService max_retries=1
+[12:18:17] _gen_safe cut=46 attempt=1 → primary.generate() 호출
+[12:18:20] _gen_safe cut=37 attempt=1 PRIMARY SUCCESS
+[12:18:20] _worker cut=47 acquired sem state.status=running
+[12:18:21] _worker cut=48 acquired sem state.status=running
+[12:18:22] _worker cut=49 acquired sem state.status=running
+[12:18:22] _gen_safe cut=49 primary=FalVideoService max_retries=1
+[12:18:22] _gen_safe cut=49 attempt=1 → primary.generate() 호출
+[12:18:51] _gen_safe cut=40 attempt=1 PRIMARY SUCCESS
+[12:18:51] _worker cut=50 acquired sem state.status=running
+[12:18:52] _worker cut=51 acquired sem state.status=running
+[12:18:52] _worker cut=52 acquired sem state.status=running
+[12:18:52] _gen_safe cut=52 primary=FalVideoService max_retries=1
+[12:18:52] _gen_safe cut=52 attempt=1 → primary.generate() 호출
+[12:18:59] _gen_safe cut=43 attempt=1 PRIMARY SUCCESS
+[12:18:59] _worker cut=53 acquired sem state.status=running
+[12:18:59] _worker cut=54 acquired sem state.status=running
+[12:19:00] _worker cut=55 acquired sem state.status=running
+[12:19:00] _gen_safe cut=55 primary=FalVideoService max_retries=1
+[12:19:00] _gen_safe cut=55 attempt=1 → primary.generate() 호출
+[12:19:04] _gen_safe cut=46 attempt=1 PRIMARY SUCCESS
+[12:19:04] _worker cut=56 acquired sem state.status=running
+[12:19:05] _worker cut=57 acquired sem state.status=running
+[12:19:06] _worker cut=58 acquired sem state.status=running
+[12:19:06] _gen_safe cut=58 primary=FalVideoService max_retries=1
+[12:19:06] _gen_safe cut=58 attempt=1 → primary.generate() 호출
+[12:19:13] _gen_safe cut=49 attempt=1 PRIMARY SUCCESS
+[12:19:13] _worker cut=59 acquired sem state.status=running
+[12:19:14] _worker cut=60 acquired sem state.status=running
+[12:19:42] _gen_safe cut=55 attempt=1 PRIMARY SUCCESS
+[12:19:45] _gen_safe cut=52 attempt=1 PRIMARY SUCCESS
+[12:19:46] _gen_safe cut=58 attempt=1 PRIMARY SUCCESS

@@ -1,0 +1,22 @@
+{
+  "_meta": {
+    "name": "Flux.2 Turbo + Redux (reference style lock)",
+    "notes": "Flux Redux 로 레퍼런스 이미지 스타일/색감을 positive conditioning 에 주입. Flux.2 에서 동작 확인 필요 — Redux 는 원래 Flux.1 용이라 호환성이 완벽하진 않을 수 있음. 동작 안 하면 img2img 로 폴백.",
+    "requires": "models/style_models/flux1-redux-dev.safetensors. models/clip_vision/sigclip_vision_patch14_384.safetensors."
+  },
+  "1": {"class_type": "UNETLoader", "inputs": {"unet_name": "flux2_dev_fp8mixed.safetensors", "weight_dtype": "default"}},
+  "2": {"class_type": "CLIPLoader", "inputs": {"clip_name": "mistral_3_small_flux2_bf16.safetensors", "type": "flux2", "device": "default"}},
+  "3": {"class_type": "VAELoader", "inputs": {"vae_name": "ae.safetensors"}},
+  "4": {"class_type": "LoraLoaderModelOnly", "inputs": {"model": ["1", 0], "lora_name": "Flux_2-Turbo-LoRA_comfyui.safetensors", "strength_model": 1.0}},
+  "5": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": "${PROMPT}"}},
+  "6": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": ""}},
+  "7": {"class_type": "EmptySD3LatentImage", "inputs": {"width": "${WIDTH}", "height": "${HEIGHT}", "batch_size": 1}},
+  "20": {"class_type": "LoadImage", "inputs": {"image": "${REF_IMAGE_NAME}"}},
+  "21": {"class_type": "StyleModelLoader", "inputs": {"style_model_name": "flux1-redux-dev.safetensors"}},
+  "22": {"class_type": "CLIPVisionLoader", "inputs": {"clip_name": "sigclip_vision_patch14_384.safetensors"}},
+  "23": {"class_type": "CLIPVisionEncode", "inputs": {"clip_vision": ["22", 0], "image": ["20", 0], "crop": "center"}},
+  "24": {"class_type": "StyleModelApply", "inputs": {"conditioning": ["5", 0], "style_model": ["21", 0], "clip_vision_output": ["23", 0], "strength": 0.9, "strength_type": "multiply"}},
+  "8": {"class_type": "KSampler", "inputs": {"model": ["4", 0], "positive": ["24", 0], "negative": ["6", 0], "latent_image": ["7", 0], "seed": "${SEED}", "steps": 8, "cfg": 1.0, "sampler_name": "euler", "scheduler": "simple", "denoise": 1.0}},
+  "9": {"class_type": "VAEDecode", "inputs": {"samples": ["8", 0], "vae": ["3", 0]}},
+  "10": {"class_type": "SaveImage", "inputs": {"images": ["9", 0], "filename_prefix": "${PREFIX}"}}
+}

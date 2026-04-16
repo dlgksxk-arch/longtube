@@ -1,0 +1,117 @@
+{
+  "_meta": {
+    "name": "LTX Video 2B 0.9.8 distilled (image-to-video)",
+    "notes": "Lightricks LTXV 2B 증류 버전. 8 steps, cfg 1.0, euler. 12GB VRAM 에 여유롭게 돌아감. 768x512 @ 24fps 네이티브. 해상도는 32 배수. WAN 2.2 5B 대비 훨씬 가벼움 (~3GB VRAM)."
+  },
+  "1": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": {
+      "ckpt_name": "ltxv-2b-0.9.8-distilled.safetensors"
+    }
+  },
+  "2": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "${INPUT_IMAGE_NAME}"
+    }
+  },
+  "3": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": ["1", 1],
+      "text": "${PROMPT}"
+    }
+  },
+  "4": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": ["1", 1],
+      "text": "low quality, worst quality, deformed, distorted, blurry, watermark, text"
+    }
+  },
+  "5": {
+    "class_type": "LTXVImgToVideo",
+    "inputs": {
+      "positive": ["3", 0],
+      "negative": ["4", 0],
+      "vae": ["1", 2],
+      "image": ["2", 0],
+      "width": "${WIDTH}",
+      "height": "${HEIGHT}",
+      "length": "${LENGTH}",
+      "batch_size": 1,
+      "strength": 1.0,
+      "image_noise_scale": 0.15
+    }
+  },
+  "6": {
+    "class_type": "LTXVConditioning",
+    "inputs": {
+      "positive": ["5", 0],
+      "negative": ["5", 1],
+      "frame_rate": 24
+    }
+  },
+  "7": {
+    "class_type": "ModelSamplingLTXV",
+    "inputs": {
+      "model": ["1", 0],
+      "max_shift": 2.05,
+      "base_shift": 0.95
+    }
+  },
+  "8": {
+    "class_type": "LTXVScheduler",
+    "inputs": {
+      "steps": 8,
+      "max_shift": 2.05,
+      "base_shift": 0.95,
+      "stretch": true,
+      "terminal": 0.1,
+      "latent": ["5", 2]
+    }
+  },
+  "9": {
+    "class_type": "KSamplerSelect",
+    "inputs": {
+      "sampler_name": "euler"
+    }
+  },
+  "10": {
+    "class_type": "SamplerCustom",
+    "inputs": {
+      "model": ["7", 0],
+      "add_noise": true,
+      "noise_seed": "${SEED}",
+      "cfg": 1.0,
+      "positive": ["6", 0],
+      "negative": ["6", 1],
+      "sampler": ["9", 0],
+      "sigmas": ["8", 0],
+      "latent_image": ["5", 2]
+    }
+  },
+  "11": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": ["10", 0],
+      "vae": ["1", 2]
+    }
+  },
+  "12": {
+    "class_type": "CreateVideo",
+    "inputs": {
+      "images": ["11", 0],
+      "fps": 24
+    }
+  },
+  "13": {
+    "class_type": "SaveVideo",
+    "inputs": {
+      "video": ["12", 0],
+      "filename_prefix": "${PREFIX}",
+      "format": "mp4",
+      "codec": "h264"
+    }
+  }
+}
