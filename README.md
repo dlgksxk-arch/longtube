@@ -1,4 +1,4 @@
-# LongTube v1.1.63
+# LongTube v2.0.74
 
 유튜브 롱폼 영상을 주제 입력 하나로 자동 생성하는 파이프라인 도구. 1인 사용자 로컬 운용 기준.
 
@@ -32,6 +32,49 @@ start.bat
 - 프론트엔드: http://localhost:3000
 - 백엔드 API: http://localhost:8000
 - API 문서: http://localhost:8000/docs
+
+---
+
+## LAN 에서 다른 PC 로 접속하기 (v2.0.74~)
+
+같은 사무실 네트워크의 다른 PC 에서 호스트 PC 의 LongTube 에 접속할 수 있다.
+**인증 레이어는 아직 없으므로 신뢰된 내부망에서만 사용한다.**
+
+### 호스트 PC 쪽
+
+1. `start.bat` 으로 실행하면 백엔드는 이미 `0.0.0.0:8000` 에 바인딩되고
+   프런트엔드(Next.js dev)도 기본값이 `0.0.0.0:3000` 이다.
+2. Windows 방화벽에서 **TCP 3000, 8000 인바운드 허용 규칙**을 추가한다.
+   PowerShell 관리자 권한으로 1회 실행:
+   ```powershell
+   New-NetFirewallRule -DisplayName "LongTube Frontend" -Direction Inbound -Protocol TCP -LocalPort 3000 -Action Allow
+   New-NetFirewallRule -DisplayName "LongTube Backend"  -Direction Inbound -Protocol TCP -LocalPort 8000 -Action Allow
+   ```
+3. 호스트 PC 의 LAN IP 확인: `ipconfig` → `IPv4 주소` (예: `192.168.0.10`).
+
+### 클라이언트 PC 쪽
+
+브라우저에서 `http://<호스트IP>:3000` 으로 접속한다.
+`api.ts` 가 브라우저의 호스트명을 자동으로 이어받아 `http://<호스트IP>:8000` 으로
+백엔드를 호출하므로 **클라이언트 PC 에는 별도 설정이 필요 없다.**
+
+### 명시적 URL 덮어쓰기 (선택)
+
+프런트와 백엔드가 서로 다른 머신에 있거나 자동 유도가 원치 않을 때만:
+`frontend/.env.local` 을 만들고 아래 두 값을 지정한다.
+
+```
+NEXT_PUBLIC_API_BASE=http://192.168.0.10:8000/api
+NEXT_PUBLIC_ASSET_BASE=http://192.168.0.10:8000
+```
+
+샘플은 `frontend/.env.local.example` 참고.
+
+### CORS 허용 대역
+
+백엔드는 `http://localhost:3000`, `http://127.0.0.1:3000`, 그리고 사설 IP 대역
+(`10.x.x.x`, `172.16~31.x.x`, `192.168.x.x`) 의 `:3000` 포트만 허용한다.
+공인 IP 에서의 접속은 여전히 CORS 에서 차단된다.
 
 ---
 

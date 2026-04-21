@@ -106,13 +106,25 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="LongTube",
     description="YouTube longform video automation pipeline",
-    version="1.1.73",
+    version="2.0.74",
     lifespan=lifespan,
 )
 
+# v2.0.74: 같은 사무실 다른 PC 에서 http://<호스트IP>:3000 으로 들어오는 경우를 허용한다.
+# 사설 IP 대역(10/8, 172.16/12, 192.168/16) + localhost + 127.0.0.1 + :3000 만 화이트리스트.
+# 공인 IP 에서의 접근은 여전히 차단된다(사무실 내부 신뢰 범위 안에서만 허용).
+_LAN_CORS_REGEX = (
+    r"http://("
+    r"localhost"
+    r"|127\.0\.0\.1"
+    r"|10\.\d{1,3}\.\d{1,3}\.\d{1,3}"
+    r"|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}"
+    r"|192\.168\.\d{1,3}\.\d{1,3}"
+    r"):3000"
+)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origin_regex=_LAN_CORS_REGEX,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -146,4 +158,4 @@ app.mount("/assets", StaticFiles(directory=str(DATA_DIR)), name="assets")
 @app.get("/api/health")
 async def health():
     from app.config import COMFYUI_BASE_URL as _CU
-    return {"status": "ok", "version": "1.1.73", "comfyui_base_url": _CU or None}
+    return {"status": "ok", "version": "2.0.74", "comfyui_base_url": _CU or None}

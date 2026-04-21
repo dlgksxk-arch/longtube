@@ -14,7 +14,7 @@ import {
   RefreshCw,
   LogIn,
 } from "lucide-react";
-import { youtubeStudioApi, type StudioAuthStatus } from "@/lib/api";
+import { youtubeApi, youtubeStudioApi, type StudioAuthStatus } from "@/lib/api";
 import { APP_VERSION } from "@/lib/version";
 
 // v1.1.31: YouTube Studio 전역 레이아웃.
@@ -54,13 +54,10 @@ export default function YouTubeStudioLayout({ children }: { children: React.Reac
 
   const startOAuth = async () => {
     // 전역 OAuth 플로우는 기존 /api/youtube/auth 를 그대로 재사용.
+    // v2.0.74: 하드코딩된 http://localhost:8000 제거 — BASE_URL 을 타도록 youtubeApi.authenticate() 사용.
     setLoading(true);
     try {
-      const res = await fetch("http://localhost:8000/api/youtube/auth", { method: "POST" });
-      if (!res.ok) {
-        const t = await res.text();
-        alert(`OAuth 실패: ${t}`);
-      }
+      await youtubeApi.authenticate();
     } catch (e) {
       alert(`OAuth 오류: ${(e as Error).message}`);
     }

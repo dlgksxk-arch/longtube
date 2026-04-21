@@ -12,7 +12,7 @@ import { useState, useEffect, useRef } from "react";
 import { Mic, Volume2, RefreshCw, Wand2, Headphones, Trash2, StopCircle, PlayCircle, Loader2 } from "lucide-react";
 import LoadingButton from "@/components/common/LoadingButton";
 import CostEstimate from "@/components/common/CostEstimate";
-import { voiceApi, modelsApi, scriptApi, taskApi, type Project, type Cut, type ModelInfo } from "@/lib/api";
+import { voiceApi, modelsApi, scriptApi, taskApi, ASSET_BASE, type Project, type Cut, type ModelInfo } from "@/lib/api";
 import GenerationTimer from "@/components/common/GenerationTimer";
 
 interface Props {
@@ -84,7 +84,7 @@ export default function StepVoice({ project, cuts, onUpdate }: Props) {
       const result = await voiceApi.preview(project.id);
       if (result.path) {
         setPreviewPlaying(true);
-        const audio = new Audio(`http://localhost:8000/assets/${project.id}/${result.path}?t=${Date.now()}`);
+        const audio = new Audio(`${ASSET_BASE}/assets/${project.id}/${result.path}?t=${Date.now()}`);
         audio.onended = () => setPreviewPlaying(false);
         audio.onerror = () => setPreviewPlaying(false);
         audio.play().catch(() => setPreviewPlaying(false));
@@ -150,7 +150,7 @@ export default function StepVoice({ project, cuts, onUpdate }: Props) {
       return;
     }
     setPlayingCut(cut.cut_number);
-    const audio = new Audio(`http://localhost:8000/assets/${project.id}/${cut.audio_path}`);
+    const audio = new Audio(`${ASSET_BASE}/assets/${project.id}/${cut.audio_path}`);
     audio.onended = () => setPlayingCut(null);
     audio.play().catch(() => setPlayingCut(null));
   };

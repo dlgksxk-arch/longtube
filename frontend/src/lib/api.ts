@@ -1,4 +1,23 @@
-const BASE_URL = "http://localhost:8000/api";
+// v2.0.74: LAN 접속 지원.
+// 백엔드 호스트는 다음 우선순위로 결정한다:
+//   1) NEXT_PUBLIC_API_BASE 환경변수 (빌드 타임 주입)
+//   2) 브라우저에서 로드된 호스트명 + :8000 (같은 머신에서 프런트/백이 도는 전형적 셋업)
+//   3) 로컬 개발 폴백 http://localhost:8000
+// 2)를 쓰면 192.168.x.x 로 접속한 다른 PC 도 자동으로 그 IP 의 백엔드를 바라본다.
+const _envApi = process.env.NEXT_PUBLIC_API_BASE;
+const _envAsset = process.env.NEXT_PUBLIC_ASSET_BASE;
+function _deriveAssetBase(): string {
+  if (_envAsset) return _envAsset.replace(/\/$/, "");
+  if (typeof window !== "undefined" && window.location?.hostname) {
+    return `${window.location.protocol}//${window.location.hostname}:8000`;
+  }
+  return "http://localhost:8000";
+}
+function _deriveApiBase(): string {
+  if (_envApi) return _envApi.replace(/\/$/, "");
+  return `${_deriveAssetBase()}/api`;
+}
+const BASE_URL = _deriveApiBase();
 
 // v1.1.28: AbortSignal 지원. 호출 측에서 취소할 수 있어야 "긴급중지" 가 가능.
 // v1.1.29: 네트워크 오류 / HTTP 오류 / JSON 파싱 오류를 구분해서 구체적인 메시지로 던진다.
@@ -615,7 +634,8 @@ export const interludeApi = {
 };
 
 // ─── Downloads ───
-export const DOWNLOAD_BASE = "http://localhost:8000/api/downloads";
+// v2.0.74: BASE_URL 과 같은 규칙으로 유도 — env > window host > localhost.
+export const DOWNLOAD_BASE = `${BASE_URL}/downloads`;
 export const downloadUrls = {
   all: (id: string) => `${DOWNLOAD_BASE}/${id}/download-all`,
   step: (id: string, step: string) => `${DOWNLOAD_BASE}/${id}/step/${step}`,
@@ -1213,7 +1233,8 @@ export const oneclickApi = {
 };
 
 // ─── Asset URL helper ───
-export const ASSET_BASE = "http://localhost:8000";
+// v2.0.74: 정적 에셋(/assets/<id>/...) 도 env > window host > localhost 규칙.
+export const ASSET_BASE = _deriveAssetBase();
 export const assetUrl = (projectId: string, relativePath: string) =>
   `${ASSET_BASE}/assets/${projectId}/${relativePath}`;
 
