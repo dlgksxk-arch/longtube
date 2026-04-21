@@ -1,8 +1,39 @@
-# AutoTube - 유튜브 롱폼 영상 자동 생성 파이프라인
+# LongTube — 유튜브 롱폼 영상 자동 생성 파이프라인
 
-## 설계 문서 v2.0
+## ⚠️ 이 문서는 초기 설계 문서입니다 (v2.0, 2025년 작성)
 
-> v2.0 변경사항: 이미지 모델 6종 추가, 대본 AI 모델 선택 (Claude/GPT), 단계별 일시중지·편집·재시작, 전체 결과물 다운로드
+**현재 구현 상태와 맞지 않는 부분이 많습니다.** 실제 동작 기준으로 확인하려면 아래 문서를 참고하세요.
+
+| 용도 | 현행 문서 |
+|------|----------|
+| 전체 요약 · Quick Start | [../README.md](../README.md) |
+| 경로 / 스택 / 주의사항 | [../CONTEXT.md](../CONTEXT.md) |
+| 버전별 변경사항 | [../CHANGELOG.md](../CHANGELOG.md) |
+| 날짜별 개발 노트 | [../DEVLOG.md](../DEVLOG.md) |
+| 세션 인수인계 | [../HANDOFF.md](../HANDOFF.md) |
+
+### 이 문서와 현재 구현의 주요 갭 (v1.1.63 기준)
+
+- **프로젝트명**: "AutoTube" (초기) → **LongTube** (현재)
+- **작업 큐**: "Celery + Redis" (초기 설계) → **asyncio + 인메모리 TaskManager** (실제 구현, Celery/Redis 는 requirements 에만 존재하고 graceful fallback)
+- **대본 모델**: Opus 4.7 (v1.1.63 추가) 누락
+- **이미지 모델**: ComfyUI 로컬 통합 (v1.1.55 도입), `openai-image-1`(gpt-image-1), `openai-dalle3`, `nano-banana-2/3/pro` 누락 — `bbanana API (자체)` 표현은 오기입이며 실제는 fal.ai 경유
+- **영상 모델**: ComfyUI 로컬 워크플로 (LTX Video 2B distilled, HunyuanVideo 1.5 480p) 누락. WAN 2.2 / LTX 13B 는 워크플로 JSON 파일만 있고 체크포인트 미설치로 레지스트리 미등록. Runway/Luma/Pika/Hailuo 는 설계만 되었고 실제 구현 없음
+- **기본값 변경**: 이미지 기본이 "Nano Banana 2" → **OpenAI gpt-image-1** (레퍼런스 이미지 지원 위해)
+- **에셋 경로**: NAS (`C:\Users\Jevis\Desktop\longtube_net\projects\`) 분리 구조가 이 문서에 반영 안 됨
+- **라우터 개수**: 현재 18개 (youtube_studio, api_keys, api_balances, schedule, oneclick 등 추가)
+
+### 여전히 유효한 부분
+
+- 6단계 파이프라인 흐름 (주제 → 대본 → 음성 → 이미지 → 영상 → 자막 → 업로드)
+- 단계별 일시중지 / 수동 편집 / 재시작 원칙
+- 1인 사용자, 로컬 운용, 크레딧/과금 시스템 없음
+- Next.js 14 + FastAPI + SQLite 기본 구성
+- FFmpeg Ken Burns 를 무료 영상 옵션으로 제공하는 방침
+
+---
+
+> 아래는 초기 설계 문서 원문입니다. 역사적 기록 목적으로 보존하며, 현재 구현 기준 문서는 위 표의 링크를 따라가세요.
 
 ---
 

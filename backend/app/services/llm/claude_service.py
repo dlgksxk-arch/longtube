@@ -3,18 +3,21 @@ import json
 import re
 import anthropic
 from app.services.llm.base import BaseLLMService
-from app.config import ANTHROPIC_API_KEY
+from app import config
 
 
 class ClaudeService(BaseLLMService):
     def __init__(self, model_id: str = "claude-sonnet-4-6"):
         self.model_id = model_id
         self.display_name = f"Claude ({model_id})"
-        self.client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
+        # v1.1.63: UI 에서 바꾼 키가 즉시 반영되도록 config 모듈 속성을 참조.
+        # (모듈 레벨에서 값을 import 하면 복사본이라 갱신이 안 보임)
+        self.client = anthropic.AsyncAnthropic(api_key=config.ANTHROPIC_API_KEY)
 
         # model_id → Anthropic API model string
         self._model_map = {
             "claude-sonnet-4-6": "claude-sonnet-4-6",
+            "claude-opus-4-7": "claude-opus-4-7",
             "claude-opus-4-6": "claude-opus-4-6",
             "claude-haiku-4-5": "claude-haiku-4-5-20251001",
         }

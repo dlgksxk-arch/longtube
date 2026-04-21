@@ -5,7 +5,12 @@ from app.services.video.kling_service import KlingService
 from app.services.video.fal_service import FalVideoService
 from app.services.video.comfyui_service import ComfyUIVideoService
 
-# v1.1.62: LTX Video 2B distilled (local i2v) 추가. WAN 2.2 는 모델 미설치로 제외.
+# v1.1.64: 로컬 ComfyUI 영상 모델 전부 레지스트리 미등록.
+#   - LTX Video 2B distilled / HunyuanVideo 1.5 480p — v1.1.64 에서 제거
+#   - WAN 2.2 i2v/ti2v_5b — v1.1.62 이전에 체크포인트 미설치로 제거
+#   - LTX 13B distilled — 튜닝 미완으로 미등록
+# 워크플로 JSON 은 backend/workflows/comfyui/ 에 보존 (복구 시 factory 에 한 줄 추가로 복구 가능).
+# 서비스 클래스 `ComfyUIVideoService` 및 매핑 dict 도 보존 (dead code 상태).
 
 VIDEO_REGISTRY: dict[str, dict] = {
     # --- Local (free) ---
@@ -15,14 +20,6 @@ VIDEO_REGISTRY: dict[str, dict] = {
     # 효과 없는 정지 이미지 영상. 사용자 선택 모델 드롭다운에는 default=False.
     "ffmpeg-static":    {"name": "FFmpeg Static (no motion)", "provider": "local-static",
                          "cost_per_unit": "Free (local)", "cost_value": 0},
-
-    # --- Local ComfyUI (free, GPU) ---
-    "comfyui-ltxv-2b":  {"name": "ComfyUI LTX Video 2B distilled (local, i2v, fast)",
-                         "provider": "comfyui",
-                         "cost_per_unit": "Free (local GPU, ~3GB VRAM)", "cost_value": 0},
-    "comfyui-hunyuan15-480p": {"name": "ComfyUI HunyuanVideo 1.5 480p i2v (local, quality)",
-                         "provider": "comfyui",
-                         "cost_per_unit": "Free (local GPU, ~10GB VRAM)", "cost_value": 0},
 
     # --- Cheapest fal.ai options (added v1.1.11) ---
     "ltx2-fast":        {"name": "LTX Video 2.0 Fast",    "provider": "fal",

@@ -16,47 +16,41 @@ from app.services.video.base import BaseVideoService
 from app.services import comfyui_client
 
 
+# v1.1.64: LTX Video 2B distilled + HunyuanVideo 1.5 480p 를 서비스 매핑에서 제거.
+# factory 에서 제거됨과 동시에 여기도 제거하여 일관성 유지.
+# 남은 3개 (WAN 2.2 2종, LTXV 13B) 는 체크포인트 / 튜닝 이슈로 factory 미등록 상태이지만
+# 서비스 매핑은 보존 — 추후 복구 시 factory 에 한 줄 추가로 활성화 가능.
 _WORKFLOW_FILES = {
     "comfyui-wan22-i2v-fast": "wan22_i2v_fast.json",
     "comfyui-wan22-5b": "wan22_ti2v_5b.json",
-    "comfyui-ltxv-2b": "ltxv_2b_distilled_i2v.json",
     "comfyui-ltxv-13b": "ltxv_13b_distilled_i2v.json",
-    "comfyui-hunyuan15-480p": "hunyuan15_480p_i2v.json",
 }
 
 _DISPLAY_NAMES = {
     "comfyui-wan22-i2v-fast": "ComfyUI WAN 2.2 I2V 14B (local)",
     "comfyui-wan22-5b": "ComfyUI WAN 2.2 TI2V 5B (local)",
-    "comfyui-ltxv-2b": "ComfyUI LTX Video 2B distilled (local, ultra-fast)",
     "comfyui-ltxv-13b": "ComfyUI LTX Video 13B distilled fp8 (local, quality)",
-    "comfyui-hunyuan15-480p": "ComfyUI HunyuanVideo 1.5 480p i2v (local, quality)",
 }
 
-# 모델별 기본 FPS. 14B I2V = 16fps, 5B TI2V = 24fps, LTXV = 24fps, Hunyuan = 24fps.
+# 모델별 기본 FPS. 14B I2V = 16fps, 5B TI2V = 24fps, LTXV 13B = 24fps.
 _FPS_BY_MODEL = {
     "comfyui-wan22-i2v-fast": 16,
     "comfyui-wan22-5b": 24,
-    "comfyui-ltxv-2b": 16,
     "comfyui-ltxv-13b": 24,
-    "comfyui-hunyuan15-480p": 16,
 }
 
 # 해상도 배수 요구사항 (width/height 가 이 값의 배수여야 함).
 _DIM_MULTIPLE = {
     "comfyui-wan22-i2v-fast": 16,
     "comfyui-wan22-5b": 16,
-    "comfyui-ltxv-2b": 32,
     "comfyui-ltxv-13b": 32,
-    "comfyui-hunyuan15-480p": 16,
 }
 
-# LTXV 는 프레임 수도 8n+1 형태 (WAN 은 4n+1, Hunyuan 은 4n+1).
+# LTXV 는 프레임 수도 8n+1 형태 (WAN 은 4n+1).
 _FRAME_QUANTIZE = {
     "comfyui-wan22-i2v-fast": 4,
     "comfyui-wan22-5b": 4,
-    "comfyui-ltxv-2b": 8,
     "comfyui-ltxv-13b": 8,
-    "comfyui-hunyuan15-480p": 4,
 }
 
 
@@ -152,5 +146,77 @@ class ComfyUIVideoService(BaseVideoService):
         await comfyui_client.download_first_output(
             entry, output_path, kinds=("videos", "gifs", "images"),
         )
+
+        # v2.1.1: AI 모델이 요청보다 짧은 영상을 생성하는 경우 → 정확히 duration 에 맞게 슬로모션
+        await self._enforce_duration(output_path, duration)
+
         print(f"[comfyui-video] saved → {output_path}")
         return output_path
+
+    @staticmethod
+    async def _enforce_duration(video_path: str, target_duration: float) -> None:
+        """생성된 영상이 target_duration보다 짧으면 setpts/atempo로 정확히 맞춤."""
+        import os
+        from app.services.video.subprocess_helper import find_ffmpeg, run_subprocess
+
+        try:
+            ffmpeg_bin = find_ffmpeg()
+            ffprobe = ffmpeg_bin.replace("ffmpeg.exe", "ffprobe.exe").replace("ffmpeg", "ffprobe")
+        except RuntimeError:
+            return
+
+        # 현재 영상 길이 측정
+        try:
+            rc, stdout, _ = await run_subprocess(
+                [ffprobe, "-v", "quiet", "-show_entries", "format=duration",
+                 "-of", "csv=p=0", video_path],
+                timeout=30.0, capture_stdout=True, capture_stderr=False,
+            )
+            if rc != 0 or not stdout:
+                return
+            actual_dur = float((stdout or b"").decode().strip())
+        except Exception:
+            return
+
+        if actual_dur <= 0 or actual_dur >= target_duration - 0.1:
+            return  # 이미 충분히 길면 패스
+
+        # 슬로모션 비율: 3.3초 → 5초 = setpts=1.515*PTS, atempo=0.66
+        ratio = target_duration / actual_dur
+        if ratio > 2.5:
+            # 너무 짧으면 슬로모션도 부자연스러움 — 패스 (ensure_min_duration에서 루프 처리)
+            print(f"[comfyui-video] too short ({actual_dur:.1f}s), ratio {ratio:.2f}x — skipping slowmo")
+            return
+
+        setpts = round(ratio, 4)
+        atempo = round(1.0 / ratio, 4)
+        # atempo 범위: 0.5~2.0. 범위 밖이면 체인 필요하지만 여기선 0.4~1.0 범위
+        atempo = max(0.5, atempo)
+
+        tmp_path = video_path + ".slowmo.mp4"
+        cmd = [
+            ffmpeg_bin, "-y", "-i", video_path,
+            "-filter:v", f"setpts={setpts}*PTS",
+            "-filter:a", f"atempo={atempo}",
+            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "20",
+            "-c:a", "aac", "-b:a", "192k",
+            "-t", str(target_duration),
+            "-pix_fmt", "yuv420p",
+            tmp_path,
+        ]
+        try:
+            rc, _, stderr = await run_subprocess(cmd, timeout=120.0, capture_stdout=False, capture_stderr=True)
+            if rc == 0 and os.path.exists(tmp_path) and os.path.getsize(tmp_path) > 100:
+                os.replace(tmp_path, video_path)
+                print(f"[comfyui-video] slowmo applied: {actual_dur:.1f}s → {target_duration:.1f}s (x{setpts})")
+            else:
+                err = (stderr or b"").decode(errors="replace")[-200:]
+                print(f"[comfyui-video] slowmo failed rc={rc}: {err}")
+        except Exception as e:
+            print(f"[comfyui-video] slowmo exception: {e}")
+        finally:
+            if os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass

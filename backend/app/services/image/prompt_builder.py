@@ -36,19 +36,46 @@ REFERENCE_STYLE_PREFIX = (
     "Change ONLY composition, subject, pose, and action as described below. || "
 )
 
+# v1.1.72: 모든 이미지 생성 경로에 공통으로 붙는 "문자 금지" 지시.
+# 이미지 생성 모델이 그리는 문자는 거의 항상 깨져 나와 영상 완성도를
+# 깎아먹으므로, 긍정 프롬프트(positive) 에서 강하게 차단한다.
+# - ComfyUI 로컬은 추가로 DEFAULT_NEGATIVE_PROMPT 에서도 걸린다 (이중 차단).
+# - OpenAI Image / Nano Banana 등 API 모델은 negative 가 없으므로 이 지시가 유일한 방벽.
+# 맨 끝 " || " 로 분리해서 기존 프롬프트 뒤에 붙는다.
+NO_TEXT_DIRECTIVE = (
+    " || ★ HARD CONSTRAINT — ABSOLUTELY NO TEXT, NO LETTERS, NO WORDS, NO NUMBERS, "
+    "NO WRITING, NO TYPOGRAPHY, NO CAPTIONS, NO LABELS, NO SIGNS WITH READABLE "
+    "CHARACTERS, NO BOOK PAGES, NO NEWSPAPERS, NO BILLBOARDS WITH COPY, NO "
+    "SCREEN TEXT, NO SUBTITLES, NO WATERMARKS anywhere in the image. All "
+    "surfaces that might normally carry writing (signs, screens, posters, book "
+    "covers, clothing, packaging) must be BLANK or show only abstract non-"
+    "linguistic shapes. This is a hard requirement — any readable glyph is a "
+    "failure."
+)
+
+
+def _append_no_text(prompt: str) -> str:
+    """프롬프트 끝에 NO_TEXT_DIRECTIVE 를 중복 없이 부착."""
+    p = (prompt or "").strip()
+    if not p:
+        return p
+    if "NO TEXT, NO LETTERS" in p:
+        return p
+    return p + NO_TEXT_DIRECTIVE
+
 
 def apply_reference_style_prefix(prompt: str, has_reference: bool) -> str:
     """썸네일/재생성 등 외부 경로용 프리픽스 적용 헬퍼.
 
     이미 프리픽스가 붙어 있으면 중복 부착을 피한다. has_reference=False 이면
-    원문을 그대로 반환한다 (레퍼런스가 없으면 스타일을 강제할 수 없으므로).
+    스타일 프리픽스는 생략하되 **문자 금지 지시는 항상** 뒤에 붙인다
+    (v1.1.72). 레퍼런스 유무와 무관하게 이미지에 텍스트가 끼어드는 걸 차단.
     """
     p = (prompt or "").strip()
-    if not has_reference:
-        return p
-    if "STYLE REFERENCE LOCK" in p or p.startswith("STYLE:"):
-        return p
-    return REFERENCE_STYLE_PREFIX + p
+    if has_reference:
+        if "STYLE REFERENCE LOCK" not in p and not p.startswith("STYLE:"):
+            p = REFERENCE_STYLE_PREFIX + p
+    return _append_no_text(p)
 
 
 # ── 캐릭터 슬롯 규칙 ──
@@ -139,7 +166,8 @@ def build_image_prompt(
         if base:
             parts.append(base)
 
-        return " ".join(parts).strip()
+        # v1.1.72: 모든 컷 프롬프트에 "문자 금지" 지시를 마지막에 강제 append
+        return _append_no_text(" ".join(parts).strip())
 
     else:
         # ── 레퍼런스 없음: global_style 폴백 ──
@@ -157,4 +185,5 @@ def build_image_prompt(
                     "Place the character clearly in frame, pose matching the scene."
                 )
 
-        return " ".join(parts).strip()
+        # v1.1.72: 레퍼런스 없는 경로에도 동일하게 "문자 금지" 지시 강제
+        return _append_no_text(" ".join(parts).strip())

@@ -372,6 +372,24 @@ export default function StepSettings({ project, onUpdate, onNextStep, onDirtyCha
           />
           {/* 주제는 선택 사항 */}
         </div>
+        {/* v1.1.73: 대본 생성 시 LLM 에 "최우선 제약" 으로 주입되는 규칙. 주제 필드에
+            뭉쳐 넣으면 모델이 설명으로 해석하고 무시할 위험이 있어 전용 필드로 분리. */}
+        <div>
+          <label className="block text-xs text-gray-400 mb-1">
+            금칙사항 / 필수사항{" "}
+            <span className="text-[10px] text-gray-500">(대본 생성 시 최우선 규칙으로 주입)</span>
+          </label>
+          <textarea
+            value={config.content_constraints || ""}
+            onChange={(e) => updateConfig("content_constraints", e.target.value)}
+            placeholder={"예:\n환단고기 등 위서 인용 금지\n사료 부족 시 '설이 있다' 로 열어둘 것\n청동기 부족국가 연합의 기억이라는 관점 유지"}
+            rows={4}
+            className="w-full bg-bg-primary border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-accent-primary placeholder:text-gray-600 resize-y"
+          />
+          <p className="text-[10px] text-gray-500 mt-1">
+            한 줄에 하나씩 또는 &quot; / &quot; 로 구분. 비워 두면 기존 동작 그대로입니다.
+          </p>
+        </div>
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="block text-xs text-gray-400 mb-1">
@@ -475,10 +493,35 @@ export default function StepSettings({ project, onUpdate, onNextStep, onDirtyCha
           </button>
         </div>
 
+        {/* v2.1.1: AI 영상 생성 활성화 토글 */}
+        <div className="pt-3 border-t border-border/60">
+          <div className="flex items-center justify-between mb-3">
+            <label className="text-xs text-gray-400">
+              AI 영상 생성
+              <span className="text-gray-500 ml-1">(비활성 시 모든 컷 이미지+줌 효과)</span>
+            </label>
+            <button
+              type="button"
+              onClick={() => updateConfig("enable_ai_video", !config.enable_ai_video)}
+              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+                config.enable_ai_video !== false
+                  ? "bg-accent-secondary"
+                  : "bg-gray-600"
+              }`}
+            >
+              <span
+                className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+                  config.enable_ai_video !== false ? "translate-x-4" : "translate-x-0.5"
+                }`}
+              />
+            </button>
+          </div>
+        </div>
+
         {/* v1.1.36: 영상 제작 대상 — 선택되지 않은 컷은 비용 0 의 ffmpeg-kenburns
             폴백으로 생성. 영상 단계가 전체 비용의 80~90% 를 차지하는 구간이라
             여기서 필터만 걸어도 1/3~1/5 로 감축이 가능. */}
-        <div className="pt-3 border-t border-border/60">
+        {config.enable_ai_video !== false && <div className="pt-3 border-t border-border/60">
           <div className="flex items-center justify-between mb-2">
             <label className="text-xs text-gray-400">
               영상 제작 대상{" "}
@@ -528,7 +571,7 @@ export default function StepSettings({ project, onUpdate, onNextStep, onDirtyCha
               );
             })}
           </div>
-        </div>
+        </div>}
 
         {/* 음성 속도 — OpenAI: 0.25~4.0, ElevenLabs: 0.7~1.2 에서 clamp 됨.
             기본 0.9 로 살짝 느리게. 슬라이더 범위는 공통으로 0.7~1.2. */}

@@ -1,7 +1,7 @@
 {
   "_meta": {
-    "name": "DreamShaper XL Lightning + LongTube Style LoRA",
-    "notes": "DreamShaper XL + 커스텀 LongTube 스타일 LoRA. GPT Image 1 스타일을 학습시킨 LoRA. trigger word: longtube style. LoRA weight 0.85 권장. 8 steps, cfg 2.0, dpmpp_sde/karras."
+    "name": "DreamShaper XL Lightning + LongTube Style LoRA (2000 steps)",
+    "notes": "2000 step checkpoint. 4000보다 덜 과적합될 수 있음."
   },
   "1": {
     "class_type": "CheckpointLoaderSimple",
@@ -14,7 +14,7 @@
     "inputs": {
       "model": ["1", 0],
       "clip": ["1", 1],
-      "lora_name": "longtube_style_v1.safetensors",
+      "lora_name": "longtube_style_v1-step00002000.safetensors",
       "strength_model": 1.0,
       "strength_clip": 1.0
     }

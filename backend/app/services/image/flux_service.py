@@ -3,7 +3,7 @@ import asyncio
 import json
 import httpx
 from app.services.image.base import BaseImageService
-from app.config import FAL_KEY
+from app import config
 
 FAL_BASE = "https://queue.fal.run"
 
@@ -46,13 +46,15 @@ class FluxService(BaseImageService):
                 "드롭된 레퍼런스 %d 장.",
                 self.model_id, len(reference_images),
             )
-        if not FAL_KEY:
+        # v1.1.63: UI 에서 바꾼 키가 즉시 반영되도록 매 호출마다 config 에서 읽음.
+        fal_key = config.FAL_KEY
+        if not fal_key:
             raise RuntimeError(
                 "FAL_KEY 환경변수가 설정돼 있지 않습니다. .env 에 FAL_KEY 를 "
                 "넣거나 이미지 모델을 OpenAI / Grok 등으로 바꿔주세요."
             )
 
-        headers = {"Authorization": f"Key {FAL_KEY}", "Content-Type": "application/json"}
+        headers = {"Authorization": f"Key {fal_key}", "Content-Type": "application/json"}
 
         async with httpx.AsyncClient(timeout=180, follow_redirects=True) as client:
             # Submit

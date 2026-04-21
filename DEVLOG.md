@@ -5,6 +5,91 @@
 
 ---
 
+## 2026-04-20 (v1.1.63 — Opus 4.7 추가 + UI API 키 즉시 반영)
+
+### 사용자 체감 문제
+
+1. 대본 모델 드롭다운에 Claude Opus 4.7 이 없어서 최신 모델을 못 쓴다.
+2. (잠재 버그 — Jerome 은 아직 UI 에서 키를 안 바꿔봐서 체감 전) 설정 화면에서
+   API 키를 바꿔도 실제 호출은 옛 키가 사용돼서 서버 재시작이 필요한 구조.
+
+### 원인 진단 및 수정
+
+**(1) Opus 4.7 미등록.**
+
+Anthropic 이 2026-04-16 GA 로 출시. 레지스트리와 서비스 매핑 두 군데에 추가.
+API model string 은 `claude-opus-4-7` (Haiku 와 달리 날짜 suffix 없음 —
+공식 docs 로 확인). 가격 input $5 / output $25 per 1M tokens.
+
+- `backend/app/services/llm/factory.py` — `LLM_REGISTRY` 엔트리 추가.
+- `backend/app/services/llm/claude_service.py` — `_model_map` 매핑 추가.
+
+**(2) 스테일 임포트로 인한 API 키 교체 실패.**
+
+`/api/api-keys/save` 는 `.env` 저장 + `os.environ` 갱신 + `app.config` 모듈 속성
+갱신까지 제대로 하고 있었다. 문제는 서비스 쪽이 `from app.config import
+ANTHROPIC_API_KEY` 형식으로 **값을 자기 네임스페이스에 복사**해뒀다는 것.
+파이썬의 `from X import Y` 는 "객체 바인딩" 이라, 원본 변수가 이후에 재할당
+되어도 import 해둔 네임스페이스의 이름은 예전 값을 계속 가리킨다. 그래서
+config 모듈 속성을 갱신해봐야 서비스가 못 본다.
+
+수정 패턴: `from app import config` 로 바꾸고 사용처를 `config.XXX_KEY` 로 변경.
+서비스 인스턴스는 `get_llm_service()` 등 팩토리에서 매 요청마다 새로 만들어
+지므로, `__init__` 에서 `config.XXX` 를 참조하면 다음 요청부터 최신 키가 반영된다.
+
+서비스 10개 + 라우터 2개 + 태스크 1개 = 총 13개 파일 수정. 문법 에러 0건,
+스테일 임포트 잔존 0건 Grep 으로 확인.
+
+**(3) ElevenLabs 의 `self.headers` 는 `__init__` 에서 dict 를 만들어 재사용하는
+구조라 단순히 `config.X` 로 바꿔도 인스턴스 수명 동안 고정됐다. `@property`
+로 변환해 매 접근마다 최신 키로 dict 를 다시 만들도록 함.**
+
+**(4) `routers/voice.py`, `routers/script.py`, `tasks/pipeline_tasks.py` 는
+함수 내부에서 `config` 라는 파라미터/변수를 이미 쓰고 있어서 이름 충돌 회피를
+위해 `from app import config as app_config` 별칭 사용.**
+
+### 부가 작업
+
+- `.gitignore` 에 `*.log`, `backend/logs/`, `*.tsbuildinfo` 추가 (런타임 로그와
+  TypeScript 빌드 캐시는 추적 대상 아님).
+- 버전 표기 4곳 통일: `main.py`, `version.ts`, `package.json`, `package-lock.json`
+  모두 `1.1.63`. frontend 가 1.1.55 에서 멈춰있던 갭 정리.
+- `CONTEXT.md` 전면 재작성 (Phase 2 완료 시점 2026-04-09 → 현재 v1.1.63 기준).
+  "FastAPI + Celery + Redis" 오기를 "FastAPI + asyncio, Celery/Redis 는 graceful
+  fallback" 으로 정정. 라우터 10개 → 18개, 이미지 서비스 5종 → 7종 반영.
+
+### 수정 파일
+
+- `backend/app/services/llm/factory.py` — Opus 4.7 레지스트리 추가
+- `backend/app/services/llm/claude_service.py` — Opus 4.7 매핑 + 스테일 임포트
+- `backend/app/services/llm/gpt_service.py` — 스테일 임포트
+- `backend/app/services/tts/openai_tts_service.py` — 스테일 임포트
+- `backend/app/services/tts/elevenlabs_service.py` — 스테일 임포트 + headers → @property
+- `backend/app/services/image/openai_image_service.py` — 스테일 임포트
+- `backend/app/services/image/nano_banana_service.py` — 스테일 임포트
+- `backend/app/services/image/midjourney_service.py` — 스테일 임포트
+- `backend/app/services/image/grok_service.py` — 스테일 임포트
+- `backend/app/services/image/flux_service.py` — 스테일 임포트
+- `backend/app/services/image/fal_generic_service.py` — 스테일 임포트
+- `backend/app/routers/voice.py` — 스테일 임포트 (3곳)
+- `backend/app/routers/script.py` — 스테일 임포트 (2곳)
+- `backend/app/tasks/pipeline_tasks.py` — 스테일 임포트
+- `backend/app/main.py` — version 1.1.63
+- `frontend/src/lib/version.ts` — APP_VERSION 1.1.63
+- `frontend/package.json`, `frontend/package-lock.json` — 1.1.63
+- `.gitignore` — logs / tsbuildinfo 추가
+- `CONTEXT.md` — 전면 재작성
+
+### 남은 과제
+
+- v1.1.56 ~ v1.1.62 사이 실제 변경 내용 정리 (코드 주석 단서: v1.1.61 image
+  factory DreamShaper 정리, v1.1.62 video factory LTX/HunyuanVideo 추가).
+- README.md (v1.1.2 표기, 전면 재작성 필요) / docs/ARCHITECTURE.md (옛 이름
+  "AutoTube" + v2.0 설계문서) 현행화.
+- git 미커밋 34개 파일 + untracked 2개 정리.
+
+---
+
 ## 2026-04-14 (v1.1.54 — TTS 3초 버그 + 중지 즉시 반영 + 썸네일 안정화)
 
 ### 사용자 체감 문제

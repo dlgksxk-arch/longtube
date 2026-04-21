@@ -31,7 +31,7 @@ import httpx
 
 from app.services.image.base import BaseImageService
 from app.services.image.flux_service import FluxService
-from app.config import FAL_KEY
+from app import config
 
 FAL_BASE = "https://queue.fal.run"
 
@@ -108,7 +108,9 @@ class NanoBananaService(BaseImageService):
         output_path: str,
         reference_images: Optional[list[str]] = None,
     ) -> str:
-        if not FAL_KEY:
+        # v1.1.63: UI 에서 바꾼 키가 즉시 반영되도록 매 호출마다 config 에서 읽음.
+        fal_key = config.FAL_KEY
+        if not fal_key:
             raise RuntimeError(
                 f"{self.display_name} 은(는) fal.ai 가 호스팅하는 "
                 f"Gemini Flash Image 엔드포인트를 사용합니다. FAL_KEY 환경변수가 "
@@ -161,7 +163,7 @@ class NanoBananaService(BaseImageService):
         if use_edit:
             payload["image_urls"] = ref_data_uris
 
-        headers = {"Authorization": f"Key {FAL_KEY}", "Content-Type": "application/json"}
+        headers = {"Authorization": f"Key {fal_key}", "Content-Type": "application/json"}
 
         try:
             async with httpx.AsyncClient(timeout=240, follow_redirects=True) as client:

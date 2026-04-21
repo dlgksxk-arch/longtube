@@ -308,7 +308,28 @@ def _make_task_record(
         "finished_at": None,
         "created_at": _utcnow_iso(),
         "triggered_by": "manual",   # "manual" | "schedule"
+        # v2.1.2: 제작 로그 — UI 에서 진행 상황/문제를 실시간 확인.
+        # 각 항목: {"ts": "HH:MM:SS", "level": "info"|"warn"|"error", "msg": "..."}
+        "logs": [],
     }
+
+
+# --------------------------------------------------------------------------- #
+# v2.1.2: 제작 로그 헬퍼
+# --------------------------------------------------------------------------- #
+
+def _add_log(task: dict, msg: str, level: str = "info") -> None:
+    """task["logs"] 에 한 줄 추가. 최대 200 줄 유지."""
+    from datetime import datetime as _dt
+    logs = task.setdefault("logs", [])
+    logs.append({
+        "ts": _dt.now().strftime("%H:%M:%S"),
+        "level": level,
+        "msg": msg,
+    })
+    # 너무 길어지면 앞쪽 잘라내기
+    if len(logs) > 200:
+        task["logs"] = logs[-200:]
 
 
 # --------------------------------------------------------------------------- #
@@ -906,11 +927,27 @@ def _run_sync_pipeline(task: dict, project_id: str, config: dict, resume_from) -
         task["current_step"] = step_num
         task["current_step_name"] = label
         task["step_states"][str(step_num)] = "running"
+        # v2.1.2: 제작 로그 — 스텝 시작 시 사용 모델 기록
+        _model_for_step = {
+            2: ("script", config.get("script_model", "")),
+            3: ("tts", f"{config.get('tts_model', '')} / {config.get('tts_voice_id', '')}"),
+            4: ("image", config.get("image_model", "")),
+            5: ("video", config.get("video_model", "")),
+        }
+        model_label = ""
+        if step_num in _model_for_step:
+            kind, mid = _model_for_step[step_num]
+            model_label = f" [{mid}]" if mid else ""
+        _add_log(task, f"▶ {label} 시작{model_label}")
         try:
             init_progress(project_id, step_num)
         except Exception:
             pass
+        import time as _time
+        _t0 = _time.monotonic()
         func(project_id, config)
+        _elapsed = _time.monotonic() - _t0
+        _add_log(task, f"✓ {label} 완료 ({_elapsed:.1f}초)")
         task["step_states"][str(step_num)] = "completed"
         _save_tasks_to_disk()
 
@@ -924,6 +961,7 @@ def _run_sync_pipeline(task: dict, project_id: str, config: dict, resume_from) -
     def _handle_cancel(step_num, label, e=None):
         msg = e or "사용자 취소"
         print(f"[oneclick] step {label} CANCELLED: {msg}")
+        _add_log(task, f"⏹ {label} 취소: {msg}", "warn")
         task["step_states"][str(step_num)] = "cancelled"
         task["status"] = "cancelled"
         task["error"] = task.get("error") or "사용자 취소"
@@ -937,6 +975,7 @@ def _run_sync_pipeline(task: dict, project_id: str, config: dict, resume_from) -
     def _handle_fail(step_num, label, e):
         tb = traceback.format_exc()
         print(f"[oneclick] step {label} FAILED: {e}\n{tb}")
+        _add_log(task, f"✗ {label} 실패: {type(e).__name__}: {e}", "error")
         task["step_states"][str(step_num)] = "failed"
         task["status"] = "failed"
         task["error"] = f"{label} 실패: {type(e).__name__}: {e}"
@@ -1229,15 +1268,21 @@ async def _run_oneclick_task(task_id: str) -> None:
         task["current_step"] = 6
         task["current_step_name"] = "최종 렌더링"
         task["step_states"]["6"] = "running"
+        _add_log(task, "▶ 최종 렌더링 시작")
         try:
+            import time as _time
+            _t0 = _time.monotonic()
             db = SessionLocal()
             try:
                 await render_video_with_subtitles(project_id, db=db)
             finally:
                 db.close()
+            _elapsed = _time.monotonic() - _t0
+            _add_log(task, f"✓ 최종 렌더링 완료 ({_elapsed:.1f}초)")
         except Exception as e:
             tb = traceback.format_exc()
             print(f"[oneclick] step 최종 렌더링 FAILED: {e}\n{tb}")
+            _add_log(task, f"✗ 최종 렌더링 실패: {type(e).__name__}: {e}", "error")
             task["step_states"]["6"] = "failed"
             task["status"] = "failed"
             task["error"] = f"최종 렌더링 실패: {type(e).__name__}: {e}"
@@ -1267,10 +1312,15 @@ async def _run_oneclick_task(task_id: str) -> None:
         task["current_step"] = 7
         task["current_step_name"] = "유튜브 업로드"
         task["step_states"]["7"] = "running"
+        _ch = task.get("channel") or 1
+        _privacy = config.get("youtube_privacy", "private")
+        _add_log(task, f"▶ 유튜브 업로드 시작 [CH{_ch}, {_privacy}]")
         try:
             await _step_youtube_upload(project_id, config, channel=task.get("channel"))
+            _add_log(task, "✓ 유튜브 업로드 완료")
         except PipelineCancelled as e:
             print(f"[oneclick] step 유튜브 업로드 CANCELLED by user: {e}")
+            _add_log(task, f"⏹ 유튜브 업로드 취소: {e}", "warn")
             task["step_states"]["7"] = "cancelled"
             task["status"] = "cancelled"
             task["error"] = task.get("error") or "사용자 취소"
@@ -1280,6 +1330,7 @@ async def _run_oneclick_task(task_id: str) -> None:
         except Exception as e:
             tb = traceback.format_exc()
             print(f"[oneclick] step 유튜브 업로드 FAILED: {e}\n{tb}")
+            _add_log(task, f"✗ 유튜브 업로드 실패: {type(e).__name__}: {e}", "error")
             task["step_states"]["7"] = "failed"
             task["status"] = "failed"
             task["error"] = f"유튜브 업로드 실패: {type(e).__name__}: {e}"
@@ -1292,6 +1343,15 @@ async def _run_oneclick_task(task_id: str) -> None:
         task["current_step_name"] = None
         task["status"] = "completed"
         task["finished_at"] = _utcnow_iso()
+        # v2.1.2: 전체 소요시간 계산
+        try:
+            from datetime import datetime as _dt
+            _started = _dt.fromisoformat(task.get("started_at", ""))
+            _finished = _dt.fromisoformat(task["finished_at"])
+            _total_sec = (_finished - _started).total_seconds()
+            _add_log(task, f"🎉 제작 완료! 총 {_total_sec/60:.1f}분 소요")
+        except Exception:
+            _add_log(task, "🎉 제작 완료!")
         _update_project_status(project_id, "completed")
         _save_tasks_to_disk()
 
@@ -1625,6 +1685,97 @@ def cancel_task(task_id: str) -> dict:
         task["error"] = task.get("error") or "사용자 취소"
         task["finished_at"] = task.get("finished_at") or _utcnow_iso()
     return task
+
+
+async def emergency_stop_all() -> dict:
+    """v1.1.70 — 비상 정지. 서버에서 실행 중/대기 중인 모든 작업을 강제 중단.
+
+    동기화되지 않은 ComfyUI 와 Python 간 불일치(서버에는 작업이 없는데
+    ComfyUI 는 계속 이미지 생성) 문제를 해결하기 위한 풀 스택 중단.
+
+    순서:
+      1) 모든 running/queued 태스크에 대해 Redis cancel 플래그 설정
+         → pipeline step 내부 루프(_step_voice/image/video)가 다음 컷
+            진입 시 즉시 이탈 (돈줄 차단)
+      2) `_ACTIVE_RUNS` 의 모든 asyncio.Task cancel
+         → `_RUN_LOCK` 즉시 해제, runner coroutine 중단
+      3) DB/메모리 태스크 상태 → cancelled
+         → UI 가 즉시 최신 상태 반영
+      4) ComfyUI `/interrupt` 호출 → 현재 실행 중인 prompt 중단
+      5) ComfyUI `/queue` clear → 대기 큐 비움
+
+    `delete_task` 와 달리 프로젝트 디렉토리(생성된 파일)는 보존한다.
+    사용자가 "이어서 하기" 또는 "라이브러리 확인" 으로 복구할 수 있도록.
+
+    반환값: 중단된 태스크 수 + ComfyUI 호출 결과 + 에러 목록.
+    """
+    from app.tasks.pipeline_tasks import _redis_set
+    from app.services import comfyui_client
+
+    stopped_ids: list[str] = []
+    errors: list[str] = []
+
+    # 1~3) 모든 실행/대기 태스크 중단
+    for task_id, task in list(_TASKS.items()):
+        status = task.get("status")
+        if status not in ("running", "queued", "paused"):
+            continue
+        pid = task.get("project_id")
+
+        # Redis cancel 플래그
+        if pid:
+            try:
+                _redis_set(f"pipeline:cancel:{pid}", "1")
+            except Exception as e:
+                errors.append(f"redis cancel {task_id}: {e}")
+
+        # asyncio task cancel
+        running_task = _ACTIVE_RUNS.get(task_id)
+        if running_task is not None and not running_task.done():
+            try:
+                running_task.cancel()
+            except Exception as e:
+                errors.append(f"asyncio cancel {task_id}: {e}")
+        _ACTIVE_RUNS.pop(task_id, None)
+
+        # 태스크 상태 갱신
+        task["status"] = "cancelled"
+        task["error"] = task.get("error") or "비상 정지"
+        task["finished_at"] = task.get("finished_at") or _utcnow_iso()
+        stopped_ids.append(task_id)
+
+    if stopped_ids:
+        try:
+            _save_tasks_to_disk()
+        except Exception as e:
+            errors.append(f"save tasks: {e}")
+
+    # 4~5) ComfyUI 서버 측 중단
+    comfy_interrupt_ok = False
+    comfy_clear_ok = False
+    try:
+        comfy_interrupt_ok = await comfyui_client.interrupt()
+    except Exception as e:
+        errors.append(f"comfyui interrupt: {e}")
+    try:
+        comfy_clear_ok = await comfyui_client.clear_queue()
+    except Exception as e:
+        errors.append(f"comfyui clear_queue: {e}")
+
+    print(
+        f"[oneclick] EMERGENCY STOP — stopped={len(stopped_ids)} "
+        f"comfy_interrupt={comfy_interrupt_ok} comfy_clear={comfy_clear_ok} "
+        f"errors={len(errors)}"
+    )
+
+    return {
+        "ok": True,
+        "stopped_count": len(stopped_ids),
+        "stopped_task_ids": stopped_ids,
+        "comfyui_interrupt": comfy_interrupt_ok,
+        "comfyui_queue_cleared": comfy_clear_ok,
+        "errors": errors,
+    }
 
 
 def get_task(task_id: str) -> Optional[dict]:

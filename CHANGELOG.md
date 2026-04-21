@@ -1,5 +1,75 @@
 # LongTube Changelog
 
+## v1.1.63 (2026-04-20)
+
+### 새 기능 — Claude Opus 4.7 대본 모델 추가
+
+- **배경**: Anthropic 이 2026-04-16 에 Claude Opus 4.7 을 GA 로 출시. 1M 토큰
+  context / 128k max output / 고해상도 이미지 입력 (2576px / 3.75MP) 지원.
+  가격은 input $5 / output $25 per 1M tokens (Opus 4.6 과 동일).
+- **수정**:
+  - `backend/app/services/llm/factory.py` — `LLM_REGISTRY` 에 `claude-opus-4-7`
+    엔트리 추가. 프론트 `/api/models/llm` 드롭다운에 자동 노출.
+  - `backend/app/services/llm/claude_service.py` — `_model_map` 에 매핑 추가.
+    Anthropic API model string 은 `claude-opus-4-7` (날짜 suffix 없음).
+
+### 버그 수정 — UI 에서 API 키를 바꿔도 반영 안 되던 문제
+
+- **증상**: `/api/api-keys/save` 로 키를 교체하면 `.env` 와 `os.environ` 과
+  `app.config` 모듈 속성은 갱신되는데, 실제 API 호출에는 옛날 키가 계속 사용됨.
+  서버를 재시작해야 반영됨.
+- **원인**: 서비스 파일들이 `from app.config import ANTHROPIC_API_KEY` 같은 형식
+  으로 모듈 레벨에서 값을 자기 네임스페이스에 복사. `from X import Y` 는 "객체
+  바인딩" 이라 원본 변수가 이후에 바뀌어도 복사본은 옛 값을 계속 가리킨다.
+- **수정 패턴**: 각 서비스에서 `from app import config` 로 바꾸고, 사용처를
+  `config.ANTHROPIC_API_KEY` 로 변경. 서비스 인스턴스는 팩토리에서 매 요청마다
+  새로 만들어지므로 `__init__` 에서 `config.XXX` 를 참조하면 최신 키가 즉시 반영된다.
+- **수정 파일** (총 13개):
+  - 서비스 10개: `llm/claude_service`, `llm/gpt_service`, `tts/openai_tts_service`,
+    `tts/elevenlabs_service`, `image/openai_image_service`, `image/nano_banana_service`,
+    `image/midjourney_service`, `image/grok_service`, `image/flux_service`,
+    `image/fal_generic_service`
+  - 라우터/태스크 3개: `routers/voice.py` (3곳), `routers/script.py` (2곳),
+    `tasks/pipeline_tasks.py` (1곳) — 로컬 변수 `config` 와 충돌 회피 위해
+    `from app import config as app_config` 별칭 사용.
+- **특이 사항**: `ElevenLabsService.headers` 는 `__init__` 에서 dict 를 만들어
+  재사용하던 구조라 `@property` 로 변환, 매 접근마다 최신 키를 조합.
+- **하위 호환**: `.env` 기반 실행 경로는 그대로 유지. 기존 동작 회귀 없음.
+
+### 유지보수 — 런타임 로그 / 빌드 캐시 추적 중단
+
+- `.gitignore` 에 `*.log`, `backend/logs/`, `*.tsbuildinfo` 추가.
+- 기존 추적 중이던 `backend/logs/image_async.log`, `backend/logs/video_async.log`,
+  `frontend/tsconfig.tsbuildinfo` 는 `git rm --cached` 로 인덱스에서 제거 (파일은 유지).
+
+### 유지보수 — 버전 표기 4곳 통일
+
+- `backend/app/main.py` (FastAPI metadata + `/api/health` 응답)
+- `frontend/src/lib/version.ts` (`APP_VERSION`)
+- `frontend/package.json`, `frontend/package-lock.json`
+- 이전에는 frontend 만 1.1.55 에 멈춰있었고 backend 코드 주석은 v1.1.61 / v1.1.62
+  까지 진행된 상태여서 표기 갭이 있었다. 이번 릴리스에서 전부 1.1.63 으로 통일.
+
+### 유지보수 — 팩토리 주석 & README 모델 목록 교정
+
+- `backend/app/services/image/factory.py` — 주석 "DreamShaper XL 하나만 유지"
+  를 실제 상태로 교정. 현재는 DreamShaper XL 베이스 5종 (기본 / Vector /
+  LongTube 2K·3K·4K) + Qwen-Image-Edit 2509 fp8 레퍼런스 모델 총 6개가 등록됨.
+- `backend/app/services/video/factory.py` — 주석 갱신. LTX Video 2B distilled
+  + HunyuanVideo 1.5 480p 가 현재 등록된 ComfyUI 영상 모델. WAN 2.2 및
+  LTX 13B distilled 는 워크플로 JSON 만 `workflows/comfyui/` 에 남아있고
+  체크포인트 미설치 상태라 레지스트리 미등록 (사용 불가).
+  - 참고: WAN 2.2 는 v1.1.55 에서 `comfyui-wan22-i2v-fast` 로 최초 등록됐으나,
+    이후 체크포인트 문제로 레지스트리에서 제거됨. 정확한 제거 시점은
+    v1.1.56 ~ v1.1.62 사이 (커밋 로그 별도 확인 필요).
+- `README.md` — ComfyUI 이미지·영상 모델 표에서 "DreamShaper XL 등", "WAN 2.2
+  등" 같은 모호/허위 기재를 현재 등록된 모델 정확 목록으로 교체.
+- `docs/ARCHITECTURE.md` — 최상단에 "초기 설계 문서, 현재 구현과 갭 있음" 표시
+  + 현행 문서 링크 테이블 + 주요 갭 요약 섹션 추가. 987줄 본문은 역사적 기록
+  으로 보존 (추상적 재작성 회피).
+
+---
+
 ## v1.1.55 (2026-04-15)
 
 ### 새 기능 — 같은 네트워크 ComfyUI 서버로 이미지·영상 생성 위임 (비용 0)

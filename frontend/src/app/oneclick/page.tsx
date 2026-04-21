@@ -131,6 +131,8 @@ export default function QueuePage() {
   // v1.1.56: 프로젝트 복구
   const [recoverInput, setRecoverInput] = useState("");
   const [recovering, setRecovering] = useState(false);
+  // v1.1.67: 채널별 탭 필터 — 'all' | '1' | '2' | '3' | '4'
+  const [channelFilter, setChannelFilter] = useState<"all" | "1" | "2" | "3" | "4">("all");
 
   const addBusy = (id: string) => setBusyIds((s) => new Set(s).add(id));
   const removeBusy = (id: string) => setBusyIds((s) => { const n = new Set(s); n.delete(id); return n; });
@@ -188,14 +190,36 @@ export default function QueuePage() {
   }, [hasActive, load]);
 
   // 통계
-  const activeTasks = tasks.filter((t) => ["prepared", "queued", "running"].includes(t.status));
-  const completedTasks = tasks
+  const activeTasksAll = tasks.filter((t) => ["prepared", "queued", "running"].includes(t.status));
+  const completedTasksAll = tasks
     .filter((t) => t.status === "completed")
     .sort((a, b) =>
       new Date(b.finished_at || b.created_at).getTime() -
       new Date(a.finished_at || a.created_at).getTime(),
     );
-  const failedTasks = tasks.filter((t) => t.status === "failed" || t.status === "cancelled" || t.status === "paused");
+  const failedTasksAll = tasks.filter((t) => t.status === "failed" || t.status === "cancelled" || t.status === "paused");
+
+  // v1.1.67: 채널 필터 적용본 — 탭 선택에 따라 필터. 'all' 은 그대로 통과.
+  const matchesCh = (ch: number | undefined | null) =>
+    channelFilter === "all" ? true : (ch || 1) === parseInt(channelFilter);
+  const activeTasks = activeTasksAll.filter((t) => matchesCh(t.channel));
+  const completedTasks = completedTasksAll.filter((t) => matchesCh(t.channel));
+  const failedTasks = failedTasksAll.filter((t) => matchesCh(t.channel));
+  const filteredQueue = queue.filter((q) => matchesCh(q.channel));
+
+  // v1.1.67: 각 채널별 건수(탭 배지용). 'all' 은 전체 합.
+  const countForCh = (ch: "all" | "1" | "2" | "3" | "4") => {
+    if (ch === "all") {
+      return activeTasksAll.length + failedTasksAll.length + completedTasksAll.length + queue.length;
+    }
+    const n = parseInt(ch);
+    return (
+      activeTasksAll.filter((t) => (t.channel || 1) === n).length +
+      failedTasksAll.filter((t) => (t.channel || 1) === n).length +
+      completedTasksAll.filter((t) => (t.channel || 1) === n).length +
+      queue.filter((q) => (q.channel || 1) === n).length
+    );
+  };
 
   // 큐 편집
   const updateItem = (idx: number, patch: Partial<OneClickQueueItem>) => {
@@ -220,9 +244,11 @@ export default function QueuePage() {
     } catch (e) { setErr((e as Error).message || "삭제 저장 실패"); }
   }, [queue, channelTimes]);
   const addItem = () => {
+    // v1.1.68: 현재 선택된 채널 탭에 주제 추가. '전체' 탭일 때만 기본 CH1.
+    const newChannel = channelFilter === "all" ? 1 : parseInt(channelFilter);
     setQueue((prev) => [
       ...prev,
-      { id: Math.random().toString(36).slice(2, 10), topic: "", template_project_id: null, target_duration: null, channel: 1 },
+      { id: Math.random().toString(36).slice(2, 10), topic: "", template_project_id: null, target_duration: null, channel: newChannel },
     ]);
     setSaved(false);
     dirtyRef.current = true;  // v1.1.52: 폴링 덮어쓰기 방지
@@ -408,7 +434,7 @@ export default function QueuePage() {
           </button>
           <button
             onClick={handleRunNext}
-            disabled={saving || activeTasks.length > 0 || queue.length === 0}
+            disabled={saving || activeTasksAll.length > 0 || queue.length === 0}
             className="flex items-center gap-1.5 text-xs font-semibold bg-accent-primary hover:bg-purple-600 text-white rounded-lg px-4 py-2 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
             <Play size={12} /> 지금 1건 실행
@@ -439,10 +465,10 @@ export default function QueuePage() {
         </div>
       </div>
 
-      {/* 통계 카드 */}
+      {/* 통계 카드 — v1.1.67: 탭에 따라 해당 채널만 카운트 */}
       <div className="grid grid-cols-4 gap-4">
         {[
-          { label: "전체 대기", value: queue.length, color: "text-blue-400" },
+          { label: channelFilter === "all" ? "전체 대기" : `CH ${channelFilter} 대기`, value: filteredQueue.length, color: "text-blue-400" },
           { label: "진행 중", value: activeTasks.length, color: "text-amber-400" },
           { label: "완료", value: completedTasks.length, color: "text-accent-success" },
           { label: "실패", value: failedTasks.length, color: "text-accent-danger" },
@@ -517,6 +543,45 @@ export default function QueuePage() {
       {/* 큐 테이블 */}
       <div className="bg-bg-secondary border border-border rounded-xl overflow-hidden">
         {/* 헤더 */}
+        {/* v1.1.67: 채널별 탭 필터 — 전체/CH1~4. 각 탭에 건수 배지 표시. */}
+        <div className="flex items-center gap-1 px-3 py-2 border-b border-border bg-bg-primary/30 overflow-x-auto">
+          {(["all", "1", "2", "3", "4"] as const).map((ch) => {
+            const isActive = channelFilter === ch;
+            const label = ch === "all" ? "전체" : `CH ${ch}`;
+            const count = countForCh(ch);
+            const chColor =
+              ch === "1"
+                ? "text-blue-400 border-blue-500/40 bg-blue-500/10"
+                : ch === "2"
+                  ? "text-green-400 border-green-500/40 bg-green-500/10"
+                  : ch === "3"
+                    ? "text-amber-400 border-amber-500/40 bg-amber-500/10"
+                    : ch === "4"
+                      ? "text-purple-400 border-purple-500/40 bg-purple-500/10"
+                      : "text-gray-300 border-border bg-bg-tertiary";
+            return (
+              <button
+                key={ch}
+                onClick={() => setChannelFilter(ch)}
+                className={`flex items-center gap-1.5 text-xs font-semibold rounded-md px-3 py-1.5 border transition-colors ${
+                  isActive
+                    ? `${chColor} ring-1 ring-accent-primary`
+                    : "text-gray-500 border-transparent hover:text-gray-300 hover:bg-bg-tertiary/50"
+                }`}
+              >
+                <span>{label}</span>
+                <span
+                  className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
+                    isActive ? "bg-black/30" : "bg-bg-primary text-gray-600"
+                  }`}
+                >
+                  {count}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
         <div className="flex items-center px-4 py-3 text-[11px] font-semibold text-gray-500 uppercase tracking-wider border-b border-border">
           <span className="w-8 shrink-0">#</span>
           <span className="flex-1 min-w-0">주제</span>
@@ -525,9 +590,11 @@ export default function QueuePage() {
           <span className="w-[140px] shrink-0 text-center">액션</span>
         </div>
 
-        {queue.length === 0 && activeTasks.length === 0 && failedTasks.length === 0 ? (
+        {filteredQueue.length === 0 && activeTasks.length === 0 && failedTasks.length === 0 && completedTasks.length === 0 ? (
           <div className="text-center text-sm text-gray-500 py-16">
-            큐가 비어 있습니다. &quot;주제 추가&quot; 버튼으로 시작하세요.
+            {channelFilter === "all"
+              ? "큐가 비어 있습니다. \"주제 추가\" 버튼으로 시작하세요."
+              : `CH ${channelFilter} 에 항목이 없습니다.`}
           </div>
         ) : (
           <>
@@ -749,7 +816,9 @@ export default function QueuePage() {
             })}
 
             {/* ── 대기 큐 ── */}
+            {/* v1.1.67: idx 는 원본 queue 배열 기준 유지(updateItem/removeItem/handleRunItem 가 그 idx 에 의존). 필터는 렌더 단계에서 null 반환으로 처리. */}
             {queue.map((item, idx) => {
+              if (!matchesCh(item.channel)) return null;
               const itemId = item.id || String(idx);
               const isBusy = busyIds.has(itemId);
               return (
@@ -805,9 +874,9 @@ export default function QueuePage() {
                   <div className="w-[140px] shrink-0 flex justify-center gap-1.5">
                     <button
                       onClick={() => handleRunItem(idx)}
-                      disabled={isBusy || activeTasks.length > 0}
+                      disabled={isBusy || activeTasksAll.length > 0}
                       className="flex items-center gap-1 px-3 py-1.5 rounded text-[11px] font-medium text-accent-success bg-accent-success/10 border border-accent-success/30 hover:bg-accent-success/20 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-                      title={activeTasks.length > 0 ? "진행 중인 작업 완료 후 실행 가능" : "실행"}
+                      title={activeTasksAll.length > 0 ? "진행 중인 작업 완료 후 실행 가능" : "실행"}
                     >
                       {isBusy ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} />}
                       실행

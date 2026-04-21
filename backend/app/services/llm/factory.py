@@ -6,6 +6,8 @@ from app.services.llm.gpt_service import GPTService
 LLM_REGISTRY: dict[str, dict] = {
     "claude-sonnet-4-6": {"name": "Claude Sonnet 4.6", "provider": "anthropic", "default": True,
                           "cost_per_unit": "$3 / $15 per 1M tokens", "cost_input": 3.0, "cost_output": 15.0},
+    "claude-opus-4-7":   {"name": "Claude Opus 4.7",   "provider": "anthropic",
+                          "cost_per_unit": "$5 / $25 per 1M tokens", "cost_input": 5.0, "cost_output": 25.0},
     "claude-opus-4-6":   {"name": "Claude Opus 4.6",   "provider": "anthropic",
                           "cost_per_unit": "$5 / $25 per 1M tokens", "cost_input": 5.0, "cost_output": 25.0},
     "claude-haiku-4-5":  {"name": "Claude Haiku 4.5",  "provider": "anthropic",

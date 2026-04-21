@@ -79,11 +79,12 @@ async def generate_script(project_id: str, db: Session = Depends(get_db)):
     model_id = project.config.get("script_model", "claude-sonnet-4-6")
 
     # API 키 확인
-    from app.config import ANTHROPIC_API_KEY, OPENAI_API_KEY
+    # v1.1.63: UI 에서 바꾼 키가 즉시 반영되도록 config 모듈 속성을 참조.
+    from app import config as app_config
     provider = "anthropic" if "claude" in model_id else "openai"
-    if provider == "anthropic" and not ANTHROPIC_API_KEY:
+    if provider == "anthropic" and not app_config.ANTHROPIC_API_KEY:
         raise HTTPException(400, "ANTHROPIC_API_KEY not set. Add it to backend/.env file.")
-    if provider == "openai" and not OPENAI_API_KEY:
+    if provider == "openai" and not app_config.OPENAI_API_KEY:
         raise HTTPException(400, "OPENAI_API_KEY not set. Add it to backend/.env file.")
 
     llm_service = get_llm_service(model_id)
@@ -163,11 +164,12 @@ async def generate_script_async(project_id: str, db: Session = Depends(get_db)):
     model_id = project.config.get("script_model", "claude-sonnet-4-6")
 
     # API 키 확인
-    from app.config import ANTHROPIC_API_KEY, OPENAI_API_KEY
+    # v1.1.63: UI 에서 바꾼 키가 즉시 반영되도록 config 모듈 속성을 참조.
+    from app import config as app_config
     provider = "anthropic" if "claude" in model_id else "openai"
-    if provider == "anthropic" and not ANTHROPIC_API_KEY:
+    if provider == "anthropic" and not app_config.ANTHROPIC_API_KEY:
         raise HTTPException(400, "ANTHROPIC_API_KEY not set. Add it to backend/.env file.")
-    if provider == "openai" and not OPENAI_API_KEY:
+    if provider == "openai" and not app_config.OPENAI_API_KEY:
         raise HTTPException(400, "OPENAI_API_KEY not set. Add it to backend/.env file.")
 
     # 대본은 단일 LLM 호출. 예상 시간: 설정의 예상치 또는 기본 60초

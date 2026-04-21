@@ -95,6 +95,26 @@ def cancel(task_id: str):
         raise HTTPException(status_code=404, detail="task not found")
 
 
+@router.post("/emergency-stop")
+async def emergency_stop():
+    """v1.1.70 — 비상 정지. 서버에서 진행/대기 중인 모든 작업 강제 중단.
+
+    Python asyncio 태스크 + Redis cancel 플래그 + ComfyUI `/interrupt` +
+    ComfyUI `/queue` clear 를 한번에 호출한다. UI 에 큐가 비어 보이는데
+    ComfyUI 는 계속 이미지를 뱉는 desync 상황을 해소하기 위한 수단.
+
+    생성된 파일(프로젝트 디렉토리)은 건드리지 않는다. 필요하면 라이브러리
+    에서 개별 삭제.
+    """
+    try:
+        return await oneclick_service.emergency_stop_all()
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"emergency stop 실패: {type(e).__name__}: {e}",
+        )
+
+
 @router.get("/running")
 def get_running():
     """v1.1.58: 현재 실행 중인 태스크 정보. 없으면 null."""
@@ -220,12 +240,15 @@ async def regenerate_thumbnail(task_id: str, body: ThumbnailRegenRequest = Thumb
             seen.add(p)
             combined_refs.append(p)
 
-    # v1.1.55: 레퍼런스 미지원 모델이면 nano-banana-3 폴백
+    # v2.1.2: 레퍼런스 미지원 모델이면 폴백. ComfyUI 로컬 모델은 API 폴백 방지.
     if combined_refs:
-        from app.services.image.factory import get_image_service
+        from app.services.image.factory import get_image_service, IMAGE_REGISTRY as _IMG_REG
         _probe = get_image_service(image_model)
         if not getattr(_probe, "supports_reference_images", False):
-            image_model = "nano-banana-3"
+            if _IMG_REG.get(image_model, {}).get("provider") == "comfyui":
+                combined_refs = []
+            else:
+                image_model = "nano-banana-3"
 
     # v1.1.55: 공통 REFERENCE_STYLE_PREFIX 사용 — 컷/썸네일/재생성 문구 통일
     if combined_refs and thumb_prompt:

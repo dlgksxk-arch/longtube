@@ -55,5 +55,5 @@ CUT_VIDEO_DURATION = 5.0
 TTS_MAX_DURATION = 4.5
 
 # v1.1.53: TTS 음성 최소 허용 길이. 이보다 짧으면 atempo 감속으로 늘린다.
-# 4.0~4.5초 범위를 목표로 한다.
-TTS_MIN_DURATION = 4.0
+# v2.1.1: 3.0으로 낮춤 — 감속 보정이 어색함의 원인이었음. 대본에서 글자 수를 정확히 맞추도록 강화.
+TTS_MIN_DURATION = 3.0

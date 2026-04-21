@@ -39,3 +39,10 @@ token.json
 client_secret*.json
 *.db
 data/
+
+# Logs (v1.1.63: 런타임 로그는 추적 대상이 아님)
+*.log
+backend/logs/
+
+# TypeScript build cache
+*.tsbuildinfo

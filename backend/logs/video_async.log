@@ -640,3 +640,1172 @@ app.services.comfyui_client.ComfyUIError: /prompt 400: {"error": {"type": "promp
 [12:19:42] _gen_safe cut=55 attempt=1 PRIMARY SUCCESS
 [12:19:45] _gen_safe cut=52 attempt=1 PRIMARY SUCCESS
 [12:19:46] _gen_safe cut=58 attempt=1 PRIMARY SUCCESS
+[16:56:31] === generate_all_videos_async called project=65552077 cut_count=5 ===
+[16:56:31] _run ENTER project=65552077
+[16:56:31] _run config loaded model=ffmpeg-kenburns aspect=16:9 selection=all ai_first_n=5
+[16:56:31] _run preflight force_full_fallback=False reason=not_fal
+[16:56:31] _run primary_service=FFmpegService
+[16:56:31] _run loaded 5 cuts from DB
+[16:56:31] _worker ENTER cut=1 state.status=running
+[16:56:31] _worker cut=1 waiting sem
+[16:56:31] _worker cut=1 acquired sem state.status=running
+[16:56:31] _gen_safe cut=1 primary=FFmpegService max_retries=3
+[16:56:31] _gen_safe cut=1 attempt=1 → primary.generate() 호출
+[16:56:31] _worker ENTER cut=2 state.status=running
+[16:56:31] _worker cut=2 waiting sem
+[16:56:31] _worker cut=2 acquired sem state.status=running
+[16:56:31] _gen_safe cut=2 primary=FFmpegService max_retries=3
+[16:56:31] _gen_safe cut=2 attempt=1 → primary.generate() 호출
+[16:56:31] _worker ENTER cut=3 state.status=running
+[16:56:31] _worker cut=3 waiting sem
+[16:56:31] _worker cut=3 acquired sem state.status=running
+[16:56:31] _gen_safe cut=3 primary=FFmpegService max_retries=3
+[16:56:31] _gen_safe cut=3 attempt=1 → primary.generate() 호출
+[16:56:31] _worker ENTER cut=4 state.status=running
+[16:56:31] _worker cut=4 waiting sem
+[16:56:31] _worker cut=4 acquired sem state.status=running
+[16:56:31] _gen_safe cut=4 primary=FFmpegService max_retries=3
+[16:56:31] _gen_safe cut=4 attempt=1 → primary.generate() 호출
+[16:56:31] _worker ENTER cut=5 state.status=running
+[16:56:31] _worker cut=5 waiting sem
+[16:56:33] _gen_safe cut=2 attempt=1 PRIMARY SUCCESS
+[16:56:33] _worker cut=5 acquired sem state.status=running
+[16:56:33] _gen_safe cut=5 primary=FFmpegService max_retries=3
+[16:56:33] _gen_safe cut=5 attempt=1 → primary.generate() 호출
+[16:56:33] _gen_safe cut=4 attempt=1 PRIMARY SUCCESS
+[16:56:33] _gen_safe cut=3 attempt=1 PRIMARY SUCCESS
+[16:56:33] _gen_safe cut=1 attempt=1 PRIMARY SUCCESS
+[16:56:34] _gen_safe cut=5 attempt=1 PRIMARY SUCCESS
+[17:57:50] === generate_all_videos_async called project=65552077 cut_count=5 ===
+[17:57:50] _run ENTER project=65552077
+[17:57:50] _run config loaded model=ffmpeg-kenburns aspect=16:9 selection=all ai_first_n=5
+[17:57:50] _run preflight force_full_fallback=False reason=not_fal
+[17:57:50] _run primary_service=FFmpegService
+[17:57:50] _run loaded 5 cuts from DB
+[17:57:50] _worker ENTER cut=1 state.status=running
+[17:57:50] _worker cut=1 waiting sem
+[17:57:50] _worker cut=1 acquired sem state.status=running
+[17:57:50] _gen_safe cut=1 primary=FFmpegService max_retries=3
+[17:57:50] _gen_safe cut=1 attempt=1 → primary.generate() 호출
+[17:57:50] _worker ENTER cut=2 state.status=running
+[17:57:50] _worker cut=2 waiting sem
+[17:57:50] _worker cut=2 acquired sem state.status=running
+[17:57:50] _gen_safe cut=2 primary=FFmpegService max_retries=3
+[17:57:50] _gen_safe cut=2 attempt=1 → primary.generate() 호출
+[17:57:50] _worker ENTER cut=3 state.status=running
+[17:57:50] _worker cut=3 waiting sem
+[17:57:50] _worker cut=3 acquired sem state.status=running
+[17:57:50] _gen_safe cut=3 primary=FFmpegService max_retries=3
+[17:57:50] _gen_safe cut=3 attempt=1 → primary.generate() 호출
+[17:57:50] _worker ENTER cut=4 state.status=running
+[17:57:50] _worker cut=4 waiting sem
+[17:57:50] _worker cut=4 acquired sem state.status=running
+[17:57:50] _gen_safe cut=4 primary=FFmpegService max_retries=3
+[17:57:50] _gen_safe cut=4 attempt=1 → primary.generate() 호출
+[17:57:50] _worker ENTER cut=5 state.status=running
+[17:57:50] _worker cut=5 waiting sem
+[17:57:52] _gen_safe cut=3 attempt=1 PRIMARY SUCCESS
+[17:57:52] _worker cut=5 acquired sem state.status=running
+[17:57:52] _gen_safe cut=5 primary=FFmpegService max_retries=3
+[17:57:52] _gen_safe cut=5 attempt=1 → primary.generate() 호출
+[17:57:52] _gen_safe cut=4 attempt=1 PRIMARY SUCCESS
+[17:57:52] _gen_safe cut=1 attempt=1 PRIMARY SUCCESS
+[17:57:52] _gen_safe cut=2 attempt=1 PRIMARY SUCCESS
+[17:57:53] _gen_safe cut=5 attempt=1 PRIMARY SUCCESS
+[17:58:03] === generate_all_videos_async called project=65552077 cut_count=5 ===
+[17:58:03] _run ENTER project=65552077
+[17:58:03] _run config loaded model=comfyui-ltxv-2b aspect=16:9 selection=all ai_first_n=5
+[17:58:03] _run preflight force_full_fallback=False reason=not_fal
+[17:58:03] _run primary_service=ComfyUIVideoService
+[17:58:03] _run loaded 5 cuts from DB
+[17:58:03] _worker ENTER cut=1 state.status=running
+[17:58:03] _worker cut=1 waiting sem
+[17:58:03] _worker cut=1 acquired sem state.status=running
+[17:58:03] _gen_safe cut=1 primary=ComfyUIVideoService max_retries=3
+[17:58:03] _gen_safe cut=1 attempt=1 → primary.generate() 호출
+[17:58:03] _worker ENTER cut=2 state.status=running
+[17:58:03] _worker cut=2 waiting sem
+[17:58:03] _worker ENTER cut=3 state.status=running
+[17:58:03] _worker cut=3 waiting sem
+[17:58:03] _worker ENTER cut=4 state.status=running
+[17:58:03] _worker cut=4 waiting sem
+[17:58:03] _worker ENTER cut=5 state.status=running
+[17:58:03] _worker cut=5 waiting sem
+[17:58:07] _gen_safe cut=1 attempt=1 PRIMARY FAILED: ComfyUIError: ComfyUI 실행 실패 (97cf7536-3fea-4ac9-bea6-52a1dfeaa763): [['execution_start', {'prompt_id': '97cf7536-3fea-4ac9-bea6-52a1dfeaa763', 'timestamp': 1776329882896}], ['execution_cached', {'nodes': [], 'prompt_id': '97cf7536-3fea-4ac9-bea6-52a1dfeaa763', 'timestamp': 1776329882904}], ['execution_error', {'prompt_id': '97cf7536-3fea-4ac9-bea6-52a1dfeaa763', 'node_id': '4', 'node_type': 'CLIPTextEncode', 'executed': ['2', '1'], 'exception_message': 'ERROR: clip input is invalid: None\n\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.\n', 'exception_type': 'RuntimeError', 'traceback': ['  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 534, in execute\n    output_data, output_ui, has_subgraph, has_pending_tasks = await get_output_data(prompt_id, unique_id, obj, input_data_all, execution_block_cb=execution_block_cb, pre_execute_cb=pre_execute_cb, v3_data=v3_data)\n                                                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 334, in get_output_data\n    return_values = await _async_map_node_over_list(prompt_id, unique_id, obj, input_data_all, obj.FUNCTION, allow_interrupt=True, execution_block_cb=execution_block_cb, pre_execute_cb=pre_execute_cb, v3_data=v3_data)\n                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 308, in _async_map_node_over_list\n    await process_inputs(input_dict, i)\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 296, in process_inputs\n    result = f(**inputs)\n             ^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\nodes.py", line 78, in encode\n    raise RuntimeError("ERROR: clip input is invalid: None\\n\\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.")\n'], 'current_inputs': {'clip': [None], 'text': ['low quality, worst quality, deformed, distorted, blurry, watermark, text']}, 'current_outputs': ['8', '10', '13', '5', '3', '7', '1', '9', '2', '6', '4', '11', '12'], 'timestamp': 1776329884680}]]
+lgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 296, in process_inputs\n    result = f(**inputs)\n             ^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\nodes.py", line 78, in encode\n    raise RuntimeError("ERROR: clip input is invalid: None\\n\\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.")\n'], 'current_inputs': {'clip': [None], 'text': ['low quality, worst quality, deformed, distorted, blurry, watermark, text']}, 'current_outputs': ['8', '10', '13', '5', '3', '7', '1', '9', '2', '6', '4', '11', '12'], 'timestamp': 1776329884680}]]
+
+[17:58:12] _gen_safe cut=1 attempt=2 → primary.generate() 호출
+[17:58:13] _gen_safe cut=1 attempt=2 PRIMARY FAILED: ComfyUIError: ComfyUI 실행 실패 (e18daf7f-e615-45fd-b814-7cce07757453): [['execution_start', {'prompt_id': 'e18daf7f-e615-45fd-b814-7cce07757453', 'timestamp': 1776329891714}], ['execution_cached', {'nodes': ['1'], 'prompt_id': 'e18daf7f-e615-45fd-b814-7cce07757453', 'timestamp': 1776329891720}], ['execution_error', {'prompt_id': 'e18daf7f-e615-45fd-b814-7cce07757453', 'node_id': '4', 'node_type': 'CLIPTextEncode', 'executed': ['2'], 'exception_message': 'ERROR: clip input is invalid: None\n\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.\n', 'exception_type': 'RuntimeError', 'traceback': ['  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 534, in execute\n    output_data, output_ui, has_subgraph, has_pending_tasks = await get_output_data(prompt_id, unique_id, obj, input_data_all, execution_block_cb=execution_block_cb, pre_execute_cb=pre_execute_cb, v3_data=v3_data)\n                                                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 334, in get_output_data\n    return_values = await _async_map_node_over_list(prompt_id, unique_id, obj, input_data_all, obj.FUNCTION, allow_interrupt=True, execution_block_cb=execution_block_cb, pre_execute_cb=pre_execute_cb, v3_data=v3_data)\n                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 308, in _async_map_node_over_list\n    await process_inputs(input_dict, i)\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 296, in process_inputs\n    result = f(**inputs)\n             ^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\nodes.py", line 78, in encode\n    raise RuntimeError("ERROR: clip input is invalid: None\\n\\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.")\n'], 'current_inputs': {'clip': [None], 'text': ['low quality, worst quality, deformed, distorted, blurry, watermark, text']}, 'current_outputs': ['8', '10', '13', '5', '3', '7', '1', '9', '2', '6', '4', '11', '12'], 'timestamp': 1776329891748}]]
+lgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 296, in process_inputs\n    result = f(**inputs)\n             ^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\nodes.py", line 78, in encode\n    raise RuntimeError("ERROR: clip input is invalid: None\\n\\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.")\n'], 'current_inputs': {'clip': [None], 'text': ['low quality, worst quality, deformed, distorted, blurry, watermark, text']}, 'current_outputs': ['8', '10', '13', '5', '3', '7', '1', '9', '2', '6', '4', '11', '12'], 'timestamp': 1776329891748}]]
+
+[17:58:23] _gen_safe cut=1 attempt=3 → primary.generate() 호출
+[17:58:23] _gen_safe cut=1 attempt=3 PRIMARY FAILED: ComfyUIError: ComfyUI 실행 실패 (f928f58d-a40f-4d16-b9b3-6fa12d941668): [['execution_start', {'prompt_id': 'f928f58d-a40f-4d16-b9b3-6fa12d941668', 'timestamp': 1776329902495}], ['execution_cached', {'nodes': ['1'], 'prompt_id': 'f928f58d-a40f-4d16-b9b3-6fa12d941668', 'timestamp': 1776329902503}], ['execution_error', {'prompt_id': 'f928f58d-a40f-4d16-b9b3-6fa12d941668', 'node_id': '4', 'node_type': 'CLIPTextEncode', 'executed': ['2'], 'exception_message': 'ERROR: clip input is invalid: None\n\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.\n', 'exception_type': 'RuntimeError', 'traceback': ['  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 534, in execute\n    output_data, output_ui, has_subgraph, has_pending_tasks = await get_output_data(prompt_id, unique_id, obj, input_data_all, execution_block_cb=execution_block_cb, pre_execute_cb=pre_execute_cb, v3_data=v3_data)\n                                                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 334, in get_output_data\n    return_values = await _async_map_node_over_list(prompt_id, unique_id, obj, input_data_all, obj.FUNCTION, allow_interrupt=True, execution_block_cb=execution_block_cb, pre_execute_cb=pre_execute_cb, v3_data=v3_data)\n                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 308, in _async_map_node_over_list\n    await process_inputs(input_dict, i)\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 296, in process_inputs\n    result = f(**inputs)\n             ^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\nodes.py", line 78, in encode\n    raise RuntimeError("ERROR: clip input is invalid: None\\n\\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.")\n'], 'current_inputs': {'clip': [None], 'text': ['low quality, worst quality, deformed, distorted, blurry, watermark, text']}, 'current_outputs': ['8', '10', '13', '5', '3', '7', '1', '9', '2', '6', '4', '11', '12'], 'timestamp': 1776329902531}]]
+lgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 296, in process_inputs\n    result = f(**inputs)\n             ^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\nodes.py", line 78, in encode\n    raise RuntimeError("ERROR: clip input is invalid: None\\n\\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.")\n'], 'current_inputs': {'clip': [None], 'text': ['low quality, worst quality, deformed, distorted, blurry, watermark, text']}, 'current_outputs': ['8', '10', '13', '5', '3', '7', '1', '9', '2', '6', '4', '11', '12'], 'timestamp': 1776329902531}]]
+
+[17:58:24] _worker cut=2 acquired sem state.status=running
+[17:58:24] _gen_safe cut=2 primary=ComfyUIVideoService max_retries=3
+[17:58:24] _gen_safe cut=2 attempt=1 → primary.generate() 호출
+[17:58:25] _gen_safe cut=2 attempt=1 PRIMARY FAILED: ComfyUIError: ComfyUI 실행 실패 (d501d265-fd01-412e-ac16-cb5fac813cc4): [['execution_start', {'prompt_id': 'd501d265-fd01-412e-ac16-cb5fac813cc4', 'timestamp': 1776329903931}], ['execution_cached', {'nodes': ['1'], 'prompt_id': 'd501d265-fd01-412e-ac16-cb5fac813cc4', 'timestamp': 1776329903935}], ['execution_error', {'prompt_id': 'd501d265-fd01-412e-ac16-cb5fac813cc4', 'node_id': '4', 'node_type': 'CLIPTextEncode', 'executed': ['2'], 'exception_message': 'ERROR: clip input is invalid: None\n\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.\n', 'exception_type': 'RuntimeError', 'traceback': ['  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 534, in execute\n    output_data, output_ui, has_subgraph, has_pending_tasks = await get_output_data(prompt_id, unique_id, obj, input_data_all, execution_block_cb=execution_block_cb, pre_execute_cb=pre_execute_cb, v3_data=v3_data)\n                                                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 334, in get_output_data\n    return_values = await _async_map_node_over_list(prompt_id, unique_id, obj, input_data_all, obj.FUNCTION, allow_interrupt=True, execution_block_cb=execution_block_cb, pre_execute_cb=pre_execute_cb, v3_data=v3_data)\n                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 308, in _async_map_node_over_list\n    await process_inputs(input_dict, i)\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 296, in process_inputs\n    result = f(**inputs)\n             ^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\nodes.py", line 78, in encode\n    raise RuntimeError("ERROR: clip input is invalid: None\\n\\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.")\n'], 'current_inputs': {'clip': [None], 'text': ['low quality, worst quality, deformed, distorted, blurry, watermark, text']}, 'current_outputs': ['8', '10', '13', '5', '3', '7', '1', '9', '2', '6', '4', '11', '12'], 'timestamp': 1776329903961}]]
+lgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 296, in process_inputs\n    result = f(**inputs)\n             ^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\nodes.py", line 78, in encode\n    raise RuntimeError("ERROR: clip input is invalid: None\\n\\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.")\n'], 'current_inputs': {'clip': [None], 'text': ['low quality, worst quality, deformed, distorted, blurry, watermark, text']}, 'current_outputs': ['8', '10', '13', '5', '3', '7', '1', '9', '2', '6', '4', '11', '12'], 'timestamp': 1776329903961}]]
+
+[17:58:30] _gen_safe cut=2 attempt=2 → primary.generate() 호출
+[17:58:31] _gen_safe cut=2 attempt=2 PRIMARY FAILED: ComfyUIError: ComfyUI 실행 실패 (920d561a-4944-47bf-870b-8d6602aa4310): [['execution_start', {'prompt_id': '920d561a-4944-47bf-870b-8d6602aa4310', 'timestamp': 1776329909741}], ['execution_cached', {'nodes': ['1'], 'prompt_id': '920d561a-4944-47bf-870b-8d6602aa4310', 'timestamp': 1776329909746}], ['execution_error', {'prompt_id': '920d561a-4944-47bf-870b-8d6602aa4310', 'node_id': '4', 'node_type': 'CLIPTextEncode', 'executed': ['2'], 'exception_message': 'ERROR: clip input is invalid: None\n\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.\n', 'exception_type': 'RuntimeError', 'traceback': ['  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 534, in execute\n    output_data, output_ui, has_subgraph, has_pending_tasks = await get_output_data(prompt_id, unique_id, obj, input_data_all, execution_block_cb=execution_block_cb, pre_execute_cb=pre_execute_cb, v3_data=v3_data)\n                                                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 334, in get_output_data\n    return_values = await _async_map_node_over_list(prompt_id, unique_id, obj, input_data_all, obj.FUNCTION, allow_interrupt=True, execution_block_cb=execution_block_cb, pre_execute_cb=pre_execute_cb, v3_data=v3_data)\n                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 308, in _async_map_node_over_list\n    await process_inputs(input_dict, i)\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 296, in process_inputs\n    result = f(**inputs)\n             ^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\nodes.py", line 78, in encode\n    raise RuntimeError("ERROR: clip input is invalid: None\\n\\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.")\n'], 'current_inputs': {'clip': [None], 'text': ['low quality, worst quality, deformed, distorted, blurry, watermark, text']}, 'current_outputs': ['8', '10', '13', '5', '3', '7', '1', '9', '2', '6', '4', '11', '12'], 'timestamp': 1776329909773}]]
+lgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\execution.py", line 296, in process_inputs\n    result = f(**inputs)\n             ^^^^^^^^^^^\n', '  File "C:\\Users\\dlgks\\AppData\\Local\\Programs\\ComfyUI\\resources\\ComfyUI\\nodes.py", line 78, in encode\n    raise RuntimeError("ERROR: clip input is invalid: None\\n\\nIf the clip is from a checkpoint loader node your checkpoint does not contain a valid clip or text encoder model.")\n'], 'current_inputs': {'clip': [None], 'text': ['low quality, worst quality, deformed, distorted, blurry, watermark, text']}, 'current_outputs': ['8', '10', '13', '5', '3', '7', '1', '9', '2', '6', '4', '11', '12'], 'timestamp': 1776329909773}]]
+
+[18:38:36] === generate_all_videos_async called project=65552077 cut_count=5 ===
+[18:38:36] _run ENTER project=65552077
+[18:38:36] _run config loaded model=comfyui-ltxv-2b aspect=16:9 selection=all ai_first_n=5
+[18:38:36] _run preflight force_full_fallback=False reason=not_fal
+[18:38:36] _run primary_service=ComfyUIVideoService
+[18:38:36] _run loaded 5 cuts from DB
+[18:38:36] _worker ENTER cut=1 state.status=running
+[18:38:36] _worker cut=1 waiting sem
+[18:38:36] _worker cut=1 acquired sem state.status=running
+[18:38:36] _gen_safe cut=1 primary=ComfyUIVideoService max_retries=3
+[18:38:36] _gen_safe cut=1 attempt=1 → primary.generate() 호출
+[18:38:36] _worker ENTER cut=2 state.status=running
+[18:38:36] _worker cut=2 waiting sem
+[18:38:36] _worker ENTER cut=3 state.status=running
+[18:38:36] _worker cut=3 waiting sem
+[18:38:36] _worker ENTER cut=4 state.status=running
+[18:38:36] _worker cut=4 waiting sem
+[18:38:36] _worker ENTER cut=5 state.status=running
+[18:38:36] _worker cut=5 waiting sem
+[19:01:50] === generate_all_videos_async called project=65552077 cut_count=5 ===
+[19:01:50] _run ENTER project=65552077
+[19:01:50] _run config loaded model=comfyui-ltxv-2b aspect=16:9 selection=all ai_first_n=5
+[19:01:50] _run preflight force_full_fallback=False reason=not_fal
+[19:01:50] _run primary_service=ComfyUIVideoService
+[19:01:50] _run loaded 5 cuts from DB
+[19:01:50] _worker ENTER cut=1 state.status=running
+[19:01:50] _worker cut=1 waiting sem
+[19:01:50] _worker cut=1 acquired sem state.status=running
+[19:01:50] _gen_safe cut=1 primary=ComfyUIVideoService max_retries=3
+[19:01:50] _gen_safe cut=1 attempt=1 → primary.generate() 호출
+[19:01:50] _worker ENTER cut=2 state.status=running
+[19:01:50] _worker cut=2 waiting sem
+[19:01:50] _worker ENTER cut=3 state.status=running
+[19:01:50] _worker cut=3 waiting sem
+[19:01:50] _worker ENTER cut=4 state.status=running
+[19:01:50] _worker cut=4 waiting sem
+[19:01:50] _worker ENTER cut=5 state.status=running
+[19:01:50] _worker cut=5 waiting sem
+[19:02:21] _gen_safe cut=1 attempt=1 PRIMARY FAILED: WriteTimeout: 
+in _send_single_request
+    response = await transport.handle_async_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Jevis\AppData\Local\Programs\Python\Python312\Lib\site-packages\httpx\_transports\default.py", line 372, in handle_async_request
+    with map_httpcore_exceptions():
+         ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Jevis\AppData\Local\Programs\Python\Python312\Lib\contextlib.py", line 158, in __exit__
+    self.gen.throw(value)
+  File "C:\Users\Jevis\AppData\Local\Programs\Python\Python312\Lib\site-packages\httpx\_transports\default.py", line 86, in map_httpcore_exceptions
+    raise mapped_exc(message) from exc
+httpx.WriteTimeout
+
+[19:02:26] _gen_safe cut=1 attempt=2 → primary.generate() 호출
+[19:02:47] _gen_safe cut=1 attempt=2 PRIMARY SUCCESS
+[19:02:47] _worker cut=2 acquired sem state.status=running
+[19:02:47] _gen_safe cut=2 primary=ComfyUIVideoService max_retries=3
+[19:02:47] _gen_safe cut=2 attempt=1 → primary.generate() 호출
+[19:03:03] _gen_safe cut=2 attempt=1 PRIMARY SUCCESS
+[19:03:03] _worker cut=3 acquired sem state.status=running
+[19:03:03] _gen_safe cut=3 primary=ComfyUIVideoService max_retries=3
+[19:03:03] _gen_safe cut=3 attempt=1 → primary.generate() 호출
+[19:03:18] _gen_safe cut=3 attempt=1 PRIMARY SUCCESS
+[19:03:18] _worker cut=4 acquired sem state.status=running
+[19:03:18] _gen_safe cut=4 primary=ComfyUIVideoService max_retries=3
+[19:03:18] _gen_safe cut=4 attempt=1 → primary.generate() 호출
+[19:03:33] _gen_safe cut=4 attempt=1 PRIMARY SUCCESS
+[19:03:33] _worker cut=5 acquired sem state.status=running
+[19:03:33] _gen_safe cut=5 primary=ComfyUIVideoService max_retries=3
+[19:03:33] _gen_safe cut=5 attempt=1 → primary.generate() 호출
+[19:03:49] _gen_safe cut=5 attempt=1 PRIMARY SUCCESS
+[19:09:38] === generate_all_videos_async called project=65552077 cut_count=5 ===
+[19:09:38] _run ENTER project=65552077
+[19:09:38] _run config loaded model=comfyui-ltxv-2b aspect=16:9 selection=all ai_first_n=5
+[19:09:38] _run preflight force_full_fallback=False reason=not_fal
+[19:09:38] _run primary_service=ComfyUIVideoService
+[19:09:38] _run loaded 5 cuts from DB
+[19:09:38] _worker ENTER cut=1 state.status=running
+[19:09:38] _worker cut=1 waiting sem
+[19:09:38] _worker cut=1 acquired sem state.status=running
+[19:09:38] _gen_safe cut=1 primary=ComfyUIVideoService max_retries=3
+[19:09:38] _gen_safe cut=1 attempt=1 → primary.generate() 호출
+[19:09:38] _worker ENTER cut=2 state.status=running
+[19:09:38] _worker cut=2 waiting sem
+[19:09:38] _worker ENTER cut=3 state.status=running
+[19:09:38] _worker cut=3 waiting sem
+[19:09:38] _worker ENTER cut=4 state.status=running
+[19:09:38] _worker cut=4 waiting sem
+[19:09:38] _worker ENTER cut=5 state.status=running
+[19:09:38] _worker cut=5 waiting sem
+[19:09:54] _gen_safe cut=1 attempt=1 PRIMARY SUCCESS
+[19:09:54] _worker cut=2 acquired sem state.status=running
+[19:09:54] _gen_safe cut=2 primary=ComfyUIVideoService max_retries=3
+[19:09:54] _gen_safe cut=2 attempt=1 → primary.generate() 호출
+[19:10:11] _gen_safe cut=2 attempt=1 PRIMARY SUCCESS
+[19:10:11] _worker cut=3 acquired sem state.status=running
+[19:10:11] _gen_safe cut=3 primary=ComfyUIVideoService max_retries=3
+[19:10:11] _gen_safe cut=3 attempt=1 → primary.generate() 호출
+[19:12:33] === generate_all_videos_async called project=65552077 cut_count=5 ===
+[19:12:33] _run ENTER project=65552077
+[19:12:33] _run config loaded model=comfyui-ltxv-2b aspect=16:9 selection=all ai_first_n=5
+[19:12:33] _run preflight force_full_fallback=False reason=not_fal
+[19:12:33] _run primary_service=ComfyUIVideoService
+[19:12:33] _run loaded 5 cuts from DB
+[19:12:33] _worker ENTER cut=1 state.status=running
+[19:12:33] _worker cut=1 waiting sem
+[19:12:33] _worker cut=1 acquired sem state.status=running
+[19:12:33] _gen_safe cut=1 primary=ComfyUIVideoService max_retries=3
+[19:12:33] _gen_safe cut=1 attempt=1 → primary.generate() 호출
+[19:12:33] _worker ENTER cut=2 state.status=running
+[19:12:33] _worker cut=2 waiting sem
+[19:12:33] _worker ENTER cut=3 state.status=running
+[19:12:33] _worker cut=3 waiting sem
+[19:12:33] _worker ENTER cut=4 state.status=running
+[19:12:33] _worker cut=4 waiting sem
+[19:12:33] _worker ENTER cut=5 state.status=running
+[19:12:33] _worker cut=5 waiting sem
+[19:12:52] _gen_safe cut=1 attempt=1 PRIMARY SUCCESS
+[19:12:52] _worker cut=2 acquired sem state.status=running
+[19:12:52] _gen_safe cut=2 primary=ComfyUIVideoService max_retries=3
+[19:12:52] _gen_safe cut=2 attempt=1 → primary.generate() 호출
+[19:13:10] _gen_safe cut=2 attempt=1 PRIMARY SUCCESS
+[19:13:10] _worker cut=3 acquired sem state.status=running
+[19:13:10] _gen_safe cut=3 primary=ComfyUIVideoService max_retries=3
+[19:13:10] _gen_safe cut=3 attempt=1 → primary.generate() 호출
+[19:13:26] _gen_safe cut=3 attempt=1 PRIMARY SUCCESS
+[19:13:26] _worker cut=4 acquired sem state.status=running
+[19:13:26] _gen_safe cut=4 primary=ComfyUIVideoService max_retries=3
+[19:13:26] _gen_safe cut=4 attempt=1 → primary.generate() 호출
+[19:13:44] _gen_safe cut=4 attempt=1 PRIMARY SUCCESS
+[19:13:44] _worker cut=5 acquired sem state.status=running
+[19:13:44] _gen_safe cut=5 primary=ComfyUIVideoService max_retries=3
+[19:13:44] _gen_safe cut=5 attempt=1 → primary.generate() 호출
+[19:14:02] _gen_safe cut=5 attempt=1 PRIMARY SUCCESS
+[19:15:04] === generate_all_videos_async called project=65552077 cut_count=5 ===
+[19:15:04] _run ENTER project=65552077
+[19:15:04] _run config loaded model=ltx2-fast aspect=16:9 selection=all ai_first_n=5
+[19:15:05] _run preflight force_full_fallback=False reason=ok:key_valid
+[19:15:05] _run primary_service=FalVideoService
+[19:15:05] _run loaded 5 cuts from DB
+[19:15:05] _worker ENTER cut=1 state.status=running
+[19:15:05] _worker cut=1 waiting sem
+[19:15:05] _worker cut=1 acquired sem state.status=running
+[19:15:05] _gen_safe cut=1 primary=FalVideoService max_retries=3
+[19:15:05] _gen_safe cut=1 attempt=1 → primary.generate() 호출
+[19:15:05] _worker ENTER cut=2 state.status=running
+[19:15:05] _worker cut=2 waiting sem
+[19:15:05] _worker cut=2 acquired sem state.status=running
+[19:15:05] _gen_safe cut=2 primary=FalVideoService max_retries=3
+[19:15:05] _gen_safe cut=2 attempt=1 → primary.generate() 호출
+[19:15:06] _worker ENTER cut=3 state.status=running
+[19:15:06] _worker cut=3 waiting sem
+[19:15:06] _worker cut=3 acquired sem state.status=running
+[19:15:06] _gen_safe cut=3 primary=FalVideoService max_retries=3
+[19:15:06] _gen_safe cut=3 attempt=1 → primary.generate() 호출
+[19:15:06] _worker ENTER cut=4 state.status=running
+[19:15:06] _worker cut=4 waiting sem
+[19:15:06] _worker cut=4 acquired sem state.status=running
+[19:15:06] _gen_safe cut=4 primary=FalVideoService max_retries=3
+[19:15:06] _gen_safe cut=4 attempt=1 → primary.generate() 호출
+[19:15:06] _worker ENTER cut=5 state.status=running
+[19:15:06] _worker cut=5 waiting sem
+[19:15:13] _gen_safe cut=1 attempt=1 PRIMARY FAILED: RuntimeError: Fal result HTTP 422: {"detail":[{"type":"literal_error","loc":["body","duration"],"msg":"Input should be 6, 8, 10, 12, 14, 16, 18 or 20","input":"5","ctx":{"expected":"6, 8, 10, 12, 14, 16, 18 or 20"}}]}
+Traceback (most recent call last):
+  File "C:\Users\Jevis\Desktop\longtube\backend\app\routers\video.py", line 359, in _generate_one_cut_safe
+    await primary_service.generate(
+  File "C:\Users\Jevis\Desktop\longtube\backend\app\services\video\fal_service.py", line 331, in generate
+    raise RuntimeError(f"Fal result HTTP {rcode}: {rbody}")
+RuntimeError: Fal result HTTP 422: {"detail":[{"type":"literal_error","loc":["body","duration"],"msg":"Input should be 6, 8, 10, 12, 14, 16, 18 or 20","input":"5","ctx":{"expected":"6, 8, 10, 12, 14, 16, 18 or 20"}}]}
+
+[19:15:13] _gen_safe cut=3 attempt=1 PRIMARY FAILED: RuntimeError: Fal result HTTP 422: {"detail":[{"type":"literal_error","loc":["body","duration"],"msg":"Input should be 6, 8, 10, 12, 14, 16, 18 or 20","input":"5","ctx":{"expected":"6, 8, 10, 12, 14, 16, 18 or 20"}}]}
+Traceback (most recent call last):
+  File "C:\Users\Jevis\Desktop\longtube\backend\app\routers\video.py", line 359, in _generate_one_cut_safe
+    await primary_service.generate(
+  File "C:\Users\Jevis\Desktop\longtube\backend\app\services\video\fal_service.py", line 331, in generate
+    raise RuntimeError(f"Fal result HTTP {rcode}: {rbody}")
+RuntimeError: Fal result HTTP 422: {"detail":[{"type":"literal_error","loc":["body","duration"],"msg":"Input should be 6, 8, 10, 12, 14, 16, 18 or 20","input":"5","ctx":{"expected":"6, 8, 10, 12, 14, 16, 18 or 20"}}]}
+
+[19:15:13] _gen_safe cut=2 attempt=1 PRIMARY FAILED: RuntimeError: Fal result HTTP 422: {"detail":[{"type":"literal_error","loc":["body","duration"],"msg":"Input should be 6, 8, 10, 12, 14, 16, 18 or 20","input":"5","ctx":{"expected":"6, 8, 10, 12, 14, 16, 18 or 20"}}]}
+Traceback (most recent call last):
+  File "C:\Users\Jevis\Desktop\longtube\backend\app\routers\video.py", line 359, in _generate_one_cut_safe
+    await primary_service.generate(
+  File "C:\Users\Jevis\Desktop\longtube\backend\app\services\video\fal_service.py", line 331, in generate
+    raise RuntimeError(f"Fal result HTTP {rcode}: {rbody}")
+RuntimeError: Fal result HTTP 422: {"detail":[{"type":"literal_error","loc":["body","duration"],"msg":"Input should be 6, 8, 10, 12, 14, 16, 18 or 20","input":"5","ctx":{"expected":"6, 8, 10, 12, 14, 16, 18 or 20"}}]}
+
+[19:15:13] _gen_safe cut=4 attempt=1 PRIMARY FAILED: RuntimeError: Fal result HTTP 422: {"detail":[{"type":"literal_error","loc":["body","duration"],"msg":"Input should be 6, 8, 10, 12, 14, 16, 18 or 20","input":"5","ctx":{"expected":"6, 8, 10, 12, 14, 16, 18 or 20"}}]}
+Traceback (most recent call last):
+  File "C:\Users\Jevis\Desktop\longtube\backend\app\routers\video.py", line 359, in _generate_one_cut_safe
+    await primary_service.generate(
+  File "C:\Users\Jevis\Desktop\longtube\backend\app\services\video\fal_service.py", line 331, in generate
+    raise RuntimeError(f"Fal result HTTP {rcode}: {rbody}")
+RuntimeError: Fal result HTTP 422: {"detail":[{"type":"literal_error","loc":["body","duration"],"msg":"Input should be 6, 8, 10, 12, 14, 16, 18 or 20","input":"5","ctx":{"expected":"6, 8, 10, 12, 14, 16, 18 or 20"}}]}
+
+[19:15:18] _gen_safe cut=1 attempt=2 → primary.generate() 호출
+[19:15:18] _gen_safe cut=3 attempt=2 → primary.generate() 호출
+[19:15:19] _gen_safe cut=4 attempt=2 → primary.generate() 호출
+[19:15:19] _gen_safe cut=2 attempt=2 → primary.generate() 호출
+[19:15:26] _gen_safe cut=1 attempt=2 PRIMARY FAILED: RuntimeError: Fal result HTTP 422: {"detail":[{"type":"literal_error","loc":["body","duration"],"msg":"Input should be 6, 8, 10, 12, 14, 16, 18 or 20","input":"5","ctx":{"expected":"6, 8, 10, 12, 14, 16, 18 or 20"}}]}
+Traceback (most recent call last):
+  File "C:\Users\Jevis\Desktop\longtube\backend\app\routers\video.py", line 359, in _generate_one_cut_safe
+    await primary_service.generate(
+  File "C:\Users\Jevis\Desktop\longtube\backend\app\services\video\fal_service.py", line 331, in generate
+    raise RuntimeError(f"Fal result HTTP {rcode}: {rbody}")
+RuntimeError: Fal result HTTP 422: {"detail":[{"type":"literal_error","loc":["body","duration"],"msg":"Input should be 6, 8, 10, 12, 14, 16, 18 or 20","input":"5","ctx":{"expected":"6, 8, 10, 12, 14, 16, 18 or 20"}}]}
+
+[19:15:26] _gen_safe cut=3 attempt=2 PRIMARY FAILED: RuntimeError: Fal result HTTP 422: {"detail":[{"type":"literal_error","loc":["body","duration"],"msg":"Input should be 6, 8, 10, 12, 14, 16, 18 or 20","input":"5","ctx":{"expected":"6, 8, 10, 12, 14, 16, 18 or 20"}}]}
+Traceback (most recent call last):
+  File "C:\Users\Jevis\Desktop\longtube\backend\app\routers\video.py", line 359, in _generate_one_cut_safe
+    await primary_service.generate(
+  File "C:\Users\Jevis\Desktop\longtube\backend\app\services\video\fal_service.py", line 331, in generate
+    raise RuntimeError(f"Fal result HTTP {rcode}: {rbody}")
+RuntimeError: Fal result HTTP 422: {"detail":[{"type":"literal_error","loc":["body","duration"],"msg":"Input should be 6, 8, 10, 12, 14, 16, 18 or 20","input":"5","ctx":{"expected":"6, 8, 10, 12, 14, 16, 18 or 20"}}]}
+
+[19:15:26] _gen_safe cut=2 attempt=2 PRIMARY FAILED: RuntimeError: Fal result HTTP 422: {"detail":[{"type":"literal_error","loc":["body","duration"],"msg":"Input should be 6, 8, 10, 12, 14, 16, 18 or 20","input":"5","ctx":{"expected":"6, 8, 10, 12, 14, 16, 18 or 20"}}]}
+Traceback (most recent call last):
+  File "C:\Users\Jevis\Desktop\longtube\backend\app\routers\video.py", line 359, in _generate_one_cut_safe
+    await primary_service.generate(
+  File "C:\Users\Jevis\Desktop\longtube\backend\app\services\video\fal_service.py", line 331, in generate
+    raise RuntimeError(f"Fal result HTTP {rcode}: {rbody}")
+RuntimeError: Fal result HTTP 422: {"detail":[{"type":"literal_error","loc":["body","duration"],"msg":"Input should be 6, 8, 10, 12, 14, 16, 18 or 20","input":"5","ctx":{"expected":"6, 8, 10, 12, 14, 16, 18 or 20"}}]}
+
+[19:15:26] _gen_safe cut=4 attempt=2 PRIMARY FAILED: RuntimeError: Fal result HTTP 422: {"detail":[{"type":"literal_error","loc":["body","duration"],"msg":"Input should be 6, 8, 10, 12, 14, 16, 18 or 20","input":"5","ctx":{"expected":"6, 8, 10, 12, 14, 16, 18 or 20"}}]}
+Traceback (most recent call last):
+  File "C:\Users\Jevis\Desktop\longtube\backend\app\routers\video.py", line 359, in _generate_one_cut_safe
+    await primary_service.generate(
+  File "C:\Users\Jevis\Desktop\longtube\backend\app\services\video\fal_service.py", line 331, in generate
+    raise RuntimeError(f"Fal result HTTP {rcode}: {rbody}")
+RuntimeError: Fal result HTTP 422: {"detail":[{"type":"literal_error","loc":["body","duration"],"msg":"Input should be 6, 8, 10, 12, 14, 16, 18 or 20","input":"5","ctx":{"expected":"6, 8, 10, 12, 14, 16, 18 or 20"}}]}
+
+[19:15:36] _gen_safe cut=1 attempt=3 → primary.generate() 호출
+[19:15:36] _gen_safe cut=3 attempt=3 → primary.generate() 호출
+[19:15:36] _gen_safe cut=2 attempt=3 → primary.generate() 호출
+[19:15:37] _gen_safe cut=4 attempt=3 → primary.generate() 호출
+[19:15:43] _gen_safe cut=1 attempt=3 PRIMARY FAILED: RuntimeError: Fal result HTTP 422: {"detail":[{"type":"literal_error","loc":["body","duration"],"msg":"Input should be 6, 8, 10, 12, 14, 16, 18 or 20","input":"5","ctx":{"expected":"6, 8, 10, 12, 14, 16, 18 or 20"}}]}
+Traceback (most recent call last):
+  File "C:\Users\Jevis\Desktop\longtube\backend\app\routers\video.py", line 359, in _generate_one_cut_safe
+    await primary_service.generate(
+  File "C:\Users\Jevis\Desktop\longtube\backend\app\services\video\fal_service.py", line 331, in generate
+    raise RuntimeError(f"Fal result HTTP {rcode}: {rbody}")
+RuntimeError: Fal result HTTP 422: {"detail":[{"type":"literal_error","loc":["body","duration"],"msg":"Input should be 6, 8, 10, 12, 14, 16, 18 or 20","input":"5","ctx":{"expected":"6, 8, 10, 12, 14, 16, 18 or 20"}}]}
+
+[19:15:44] _gen_safe cut=3 attempt=3 PRIMARY FAILED: RuntimeError: Fal result HTTP 422: {"detail":[{"type":"literal_error","loc":["body","duration"],"msg":"Input should be 6, 8, 10, 12, 14, 16, 18 or 20","input":"5","ctx":{"expected":"6, 8, 10, 12, 14, 16, 18 or 20"}}]}
+Traceback (most recent call last):
+  File "C:\Users\Jevis\Desktop\longtube\backend\app\routers\video.py", line 359, in _generate_one_cut_safe
+    await primary_service.generate(
+  File "C:\Users\Jevis\Desktop\longtube\backend\app\services\video\fal_service.py", line 331, in generate
+    raise RuntimeError(f"Fal result HTTP {rcode}: {rbody}")
+RuntimeError: Fal result HTTP 422: {"detail":[{"type":"literal_error","loc":["body","duration"],"msg":"Input should be 6, 8, 10, 12, 14, 16, 18 or 20","input":"5","ctx":{"expected":"6, 8, 10, 12, 14, 16, 18 or 20"}}]}
+
+[19:15:44] _gen_safe cut=2 attempt=3 PRIMARY FAILED: RuntimeError: Fal result HTTP 422: {"detail":[{"type":"literal_error","loc":["body","duration"],"msg":"Input should be 6, 8, 10, 12, 14, 16, 18 or 20","input":"5","ctx":{"expected":"6, 8, 10, 12, 14, 16, 18 or 20"}}]}
+Traceback (most recent call last):
+  File "C:\Users\Jevis\Desktop\longtube\backend\app\routers\video.py", line 359, in _generate_one_cut_safe
+    await primary_service.generate(
+  File "C:\Users\Jevis\Desktop\longtube\backend\app\services\video\fal_service.py", line 331, in generate
+    raise RuntimeError(f"Fal result HTTP {rcode}: {rbody}")
+RuntimeError: Fal result HTTP 422: {"detail":[{"type":"literal_error","loc":["body","duration"],"msg":"Input should be 6, 8, 10, 12, 14, 16, 18 or 20","input":"5","ctx":{"expected":"6, 8, 10, 12, 14, 16, 18 or 20"}}]}
+
+[19:15:44] _gen_safe cut=4 attempt=3 PRIMARY FAILED: RuntimeError: Fal result HTTP 422: {"detail":[{"type":"literal_error","loc":["body","duration"],"msg":"Input should be 6, 8, 10, 12, 14, 16, 18 or 20","input":"5","ctx":{"expected":"6, 8, 10, 12, 14, 16, 18 or 20"}}]}
+Traceback (most recent call last):
+  File "C:\Users\Jevis\Desktop\longtube\backend\app\routers\video.py", line 359, in _generate_one_cut_safe
+    await primary_service.generate(
+  File "C:\Users\Jevis\Desktop\longtube\backend\app\services\video\fal_service.py", line 331, in generate
+    raise RuntimeError(f"Fal result HTTP {rcode}: {rbody}")
+RuntimeError: Fal result HTTP 422: {"detail":[{"type":"literal_error","loc":["body","duration"],"msg":"Input should be 6, 8, 10, 12, 14, 16, 18 or 20","input":"5","ctx":{"expected":"6, 8, 10, 12, 14, 16, 18 or 20"}}]}
+
+[19:15:44] _worker cut=5 acquired sem state.status=running
+[19:15:44] _gen_safe cut=5 primary=FalVideoService max_retries=3
+[19:15:44] _gen_safe cut=5 attempt=1 → primary.generate() 호출
+[19:15:52] _gen_safe cut=5 attempt=1 PRIMARY FAILED: RuntimeError: Fal result HTTP 422: {"detail":[{"type":"literal_error","loc":["body","duration"],"msg":"Input should be 6, 8, 10, 12, 14, 16, 18 or 20","input":"5","ctx":{"expected":"6, 8, 10, 12, 14, 16, 18 or 20"}}]}
+Traceback (most recent call last):
+  File "C:\Users\Jevis\Desktop\longtube\backend\app\routers\video.py", line 359, in _generate_one_cut_safe
+    await primary_service.generate(
+  File "C:\Users\Jevis\Desktop\longtube\backend\app\services\video\fal_service.py", line 331, in generate
+    raise RuntimeError(f"Fal result HTTP {rcode}: {rbody}")
+RuntimeError: Fal result HTTP 422: {"detail":[{"type":"literal_error","loc":["body","duration"],"msg":"Input should be 6, 8, 10, 12, 14, 16, 18 or 20","input":"5","ctx":{"expected":"6, 8, 10, 12, 14, 16, 18 or 20"}}]}
+
+[19:15:57] _gen_safe cut=5 attempt=2 → primary.generate() 호출
+[19:16:04] _gen_safe cut=5 attempt=2 PRIMARY FAILED: RuntimeError: Fal result HTTP 422: {"detail":[{"type":"literal_error","loc":["body","duration"],"msg":"Input should be 6, 8, 10, 12, 14, 16, 18 or 20","input":"5","ctx":{"expected":"6, 8, 10, 12, 14, 16, 18 or 20"}}]}
+Traceback (most recent call last):
+  File "C:\Users\Jevis\Desktop\longtube\backend\app\routers\video.py", line 359, in _generate_one_cut_safe
+    await primary_service.generate(
+  File "C:\Users\Jevis\Desktop\longtube\backend\app\services\video\fal_service.py", line 331, in generate
+    raise RuntimeError(f"Fal result HTTP {rcode}: {rbody}")
+RuntimeError: Fal result HTTP 422: {"detail":[{"type":"literal_error","loc":["body","duration"],"msg":"Input should be 6, 8, 10, 12, 14, 16, 18 or 20","input":"5","ctx":{"expected":"6, 8, 10, 12, 14, 16, 18 or 20"}}]}
+
+[19:16:14] _gen_safe cut=5 attempt=3 → primary.generate() 호출
+[19:16:21] _gen_safe cut=5 attempt=3 PRIMARY FAILED: RuntimeError: Fal result HTTP 422: {"detail":[{"type":"literal_error","loc":["body","duration"],"msg":"Input should be 6, 8, 10, 12, 14, 16, 18 or 20","input":"5","ctx":{"expected":"6, 8, 10, 12, 14, 16, 18 or 20"}}]}
+Traceback (most recent call last):
+  File "C:\Users\Jevis\Desktop\longtube\backend\app\routers\video.py", line 359, in _generate_one_cut_safe
+    await primary_service.generate(
+  File "C:\Users\Jevis\Desktop\longtube\backend\app\services\video\fal_service.py", line 331, in generate
+    raise RuntimeError(f"Fal result HTTP {rcode}: {rbody}")
+RuntimeError: Fal result HTTP 422: {"detail":[{"type":"literal_error","loc":["body","duration"],"msg":"Input should be 6, 8, 10, 12, 14, 16, 18 or 20","input":"5","ctx":{"expected":"6, 8, 10, 12, 14, 16, 18 or 20"}}]}
+
+[19:20:18] === generate_all_videos_async called project=65552077 cut_count=5 ===
+[19:20:18] _run ENTER project=65552077
+[19:20:18] _run config loaded model=ltx2-fast aspect=16:9 selection=all ai_first_n=5
+[19:20:18] _run preflight force_full_fallback=False reason=ok:key_valid
+[19:20:18] _run primary_service=FalVideoService
+[19:20:18] _run loaded 5 cuts from DB
+[19:20:18] _worker ENTER cut=1 state.status=running
+[19:20:18] _worker cut=1 waiting sem
+[19:20:18] _worker cut=1 acquired sem state.status=running
+[19:20:18] _gen_safe cut=1 primary=FalVideoService max_retries=3
+[19:20:18] _gen_safe cut=1 attempt=1 → primary.generate() 호출
+[19:20:19] _worker ENTER cut=2 state.status=running
+[19:20:19] _worker cut=2 waiting sem
+[19:20:19] _worker cut=2 acquired sem state.status=running
+[19:20:19] _gen_safe cut=2 primary=FalVideoService max_retries=3
+[19:20:19] _gen_safe cut=2 attempt=1 → primary.generate() 호출
+[19:20:19] _worker ENTER cut=3 state.status=running
+[19:20:19] _worker cut=3 waiting sem
+[19:20:19] _worker cut=3 acquired sem state.status=running
+[19:20:19] _gen_safe cut=3 primary=FalVideoService max_retries=3
+[19:20:19] _gen_safe cut=3 attempt=1 → primary.generate() 호출
+[19:20:19] _worker ENTER cut=4 state.status=running
+[19:20:19] _worker cut=4 waiting sem
+[19:20:19] _worker cut=4 acquired sem state.status=running
+[19:20:19] _gen_safe cut=4 primary=FalVideoService max_retries=3
+[19:20:19] _gen_safe cut=4 attempt=1 → primary.generate() 호출
+[19:20:20] _worker ENTER cut=5 state.status=running
+[19:20:20] _worker cut=5 waiting sem
+[19:20:27] _gen_safe cut=2 attempt=1 PRIMARY FAILED: RuntimeError: Fal result HTTP 422: {"detail":[{"type":"literal_error","loc":["body","duration"],"msg":"Input should be 6, 8, 10, 12, 14, 16, 18 or 20","input":"5","ctx":{"expected":"6, 8, 10, 12, 14, 16, 18 or 20"}}]}
+Traceback (most recent call last):
+  File "C:\Users\Jevis\Desktop\longtube\backend\app\routers\video.py", line 359, in _generate_one_cut_safe
+    await primary_service.generate(
+  File "C:\Users\Jevis\Desktop\longtube\backend\app\services\video\fal_service.py", line 331, in generate
+    raise RuntimeError(f"Fal result HTTP {rcode}: {rbody}")
+RuntimeError: Fal result HTTP 422: {"detail":[{"type":"literal_error","loc":["body","duration"],"msg":"Input should be 6, 8, 10, 12, 14, 16, 18 or 20","input":"5","ctx":{"expected":"6, 8, 10, 12, 14, 16, 18 or 20"}}]}
+
+[19:20:27] _gen_safe cut=4 attempt=1 PRIMARY FAILED: RuntimeError: Fal result HTTP 422: {"detail":[{"type":"literal_error","loc":["body","duration"],"msg":"Input should be 6, 8, 10, 12, 14, 16, 18 or 20","input":"5","ctx":{"expected":"6, 8, 10, 12, 14, 16, 18 or 20"}}]}
+Traceback (most recent call last):
+  File "C:\Users\Jevis\Desktop\longtube\backend\app\routers\video.py", line 359, in _generate_one_cut_safe
+    await primary_service.generate(
+  File "C:\Users\Jevis\Desktop\longtube\backend\app\services\video\fal_service.py", line 331, in generate
+    raise RuntimeError(f"Fal result HTTP {rcode}: {rbody}")
+RuntimeError: Fal result HTTP 422: {"detail":[{"type":"literal_error","loc":["body","duration"],"msg":"Input should be 6, 8, 10, 12, 14, 16, 18 or 20","input":"5","ctx":{"expected":"6, 8, 10, 12, 14, 16, 18 or 20"}}]}
+
+[19:20:27] _gen_safe cut=1 attempt=1 PRIMARY FAILED: RuntimeError: Fal result HTTP 422: {"detail":[{"type":"literal_error","loc":["body","duration"],"msg":"Input should be 6, 8, 10, 12, 14, 16, 18 or 20","input":"5","ctx":{"expected":"6, 8, 10, 12, 14, 16, 18 or 20"}}]}
+Traceback (most recent call last):
+  File "C:\Users\Jevis\Desktop\longtube\backend\app\routers\video.py", line 359, in _generate_one_cut_safe
+    await primary_service.generate(
+  File "C:\Users\Jevis\Desktop\longtube\backend\app\services\video\fal_service.py", line 331, in generate
+    raise RuntimeError(f"Fal result HTTP {rcode}: {rbody}")
+RuntimeError: Fal result HTTP 422: {"detail":[{"type":"literal_error","loc":["body","duration"],"msg":"Input should be 6, 8, 10, 12, 14, 16, 18 or 20","input":"5","ctx":{"expected":"6, 8, 10, 12, 14, 16, 18 or 20"}}]}
+
+[19:20:28] _gen_safe cut=3 attempt=1 PRIMARY FAILED: RuntimeError: Fal result HTTP 422: {"detail":[{"type":"literal_error","loc":["body","duration"],"msg":"Input should be 6, 8, 10, 12, 14, 16, 18 or 20","input":"5","ctx":{"expected":"6, 8, 10, 12, 14, 16, 18 or 20"}}]}
+Traceback (most recent call last):
+  File "C:\Users\Jevis\Desktop\longtube\backend\app\routers\video.py", line 359, in _generate_one_cut_safe
+    await primary_service.generate(
+  File "C:\Users\Jevis\Desktop\longtube\backend\app\services\video\fal_service.py", line 331, in generate
+    raise RuntimeError(f"Fal result HTTP {rcode}: {rbody}")
+RuntimeError: Fal result HTTP 422: {"detail":[{"type":"literal_error","loc":["body","duration"],"msg":"Input should be 6, 8, 10, 12, 14, 16, 18 or 20","input":"5","ctx":{"expected":"6, 8, 10, 12, 14, 16, 18 or 20"}}]}
+
+[19:20:32] _gen_safe cut=4 attempt=2 → primary.generate() 호출
+[19:20:32] _gen_safe cut=2 attempt=2 → primary.generate() 호출
+[19:20:32] _gen_safe cut=1 attempt=2 → primary.generate() 호출
+[19:20:33] _gen_safe cut=3 attempt=2 → primary.generate() 호출
+[19:20:39] _gen_safe cut=2 attempt=2 PRIMARY FAILED: RuntimeError: Fal result HTTP 422: {"detail":[{"type":"literal_error","loc":["body","duration"],"msg":"Input should be 6, 8, 10, 12, 14, 16, 18 or 20","input":"5","ctx":{"expected":"6, 8, 10, 12, 14, 16, 18 or 20"}}]}
+Traceback (most recent call last):
+  File "C:\Users\Jevis\Desktop\longtube\backend\app\routers\video.py", line 359, in _generate_one_cut_safe
+    await primary_service.generate(
+  File "C:\Users\Jevis\Desktop\longtube\backend\app\services\video\fal_service.py", line 331, in generate
+    raise RuntimeError(f"Fal result HTTP {rcode}: {rbody}")
+RuntimeError: Fal result HTTP 422: {"detail":[{"type":"literal_error","loc":["body","duration"],"msg":"Input should be 6, 8, 10, 12, 14, 16, 18 or 20","input":"5","ctx":{"expected":"6, 8, 10, 12, 14, 16, 18 or 20"}}]}
+
+[19:20:39] _gen_safe cut=4 attempt=2 PRIMARY FAILED: RuntimeError: Fal result HTTP 422: {"detail":[{"type":"literal_error","loc":["body","duration"],"msg":"Input should be 6, 8, 10, 12, 14, 16, 18 or 20","input":"5","ctx":{"expected":"6, 8, 10, 12, 14, 16, 18 or 20"}}]}
+Traceback (most recent call last):
+  File "C:\Users\Jevis\Desktop\longtube\backend\app\routers\video.py", line 359, in _generate_one_cut_safe
+    await primary_service.generate(
+  File "C:\Users\Jevis\Desktop\longtube\backend\app\services\video\fal_service.py", line 331, in generate
+    raise RuntimeError(f"Fal result HTTP {rcode}: {rbody}")
+RuntimeError: Fal result HTTP 422: {"detail":[{"type":"literal_error","loc":["body","duration"],"msg":"Input should be 6, 8, 10, 12, 14, 16, 18 or 20","input":"5","ctx":{"expected":"6, 8, 10, 12, 14, 16, 18 or 20"}}]}
+
+[19:20:39] _gen_safe cut=1 attempt=2 PRIMARY FAILED: RuntimeError: Fal result HTTP 422: {"detail":[{"type":"literal_error","loc":["body","duration"],"msg":"Input should be 6, 8, 10, 12, 14, 16, 18 or 20","input":"5","ctx":{"expected":"6, 8, 10, 12, 14, 16, 18 or 20"}}]}
+Traceback (most recent call last):
+  File "C:\Users\Jevis\Desktop\longtube\backend\app\routers\video.py", line 359, in _generate_one_cut_safe
+    await primary_service.generate(
+  File "C:\Users\Jevis\Desktop\longtube\backend\app\services\video\fal_service.py", line 331, in generate
+    raise RuntimeError(f"Fal result HTTP {rcode}: {rbody}")
+RuntimeError: Fal result HTTP 422: {"detail":[{"type":"literal_error","loc":["body","duration"],"msg":"Input should be 6, 8, 10, 12, 14, 16, 18 or 20","input":"5","ctx":{"expected":"6, 8, 10, 12, 14, 16, 18 or 20"}}]}
+
+[19:20:40] _gen_safe cut=3 attempt=2 PRIMARY FAILED: RuntimeError: Fal result HTTP 422: {"detail":[{"type":"literal_error","loc":["body","duration"],"msg":"Input should be 6, 8, 10, 12, 14, 16, 18 or 20","input":"5","ctx":{"expected":"6, 8, 10, 12, 14, 16, 18 or 20"}}]}
+Traceback (most recent call last):
+  File "C:\Users\Jevis\Desktop\longtube\backend\app\routers\video.py", line 359, in _generate_one_cut_safe
+    await primary_service.generate(
+  File "C:\Users\Jevis\Desktop\longtube\backend\app\services\video\fal_service.py", line 331, in generate
+    raise RuntimeError(f"Fal result HTTP {rcode}: {rbody}")
+RuntimeError: Fal result HTTP 422: {"detail":[{"type":"literal_error","loc":["body","duration"],"msg":"Input should be 6, 8, 10, 12, 14, 16, 18 or 20","input":"5","ctx":{"expected":"6, 8, 10, 12, 14, 16, 18 or 20"}}]}
+
+[19:20:51] === generate_all_videos_async called project=65552077 cut_count=5 ===
+[19:20:51] _run ENTER project=65552077
+[19:20:51] _run config loaded model=comfyui-ltxv-2b aspect=16:9 selection=all ai_first_n=5
+[19:20:51] _run preflight force_full_fallback=False reason=not_fal
+[19:20:51] _run primary_service=ComfyUIVideoService
+[19:20:51] _run loaded 5 cuts from DB
+[19:20:51] _worker ENTER cut=1 state.status=running
+[19:20:51] _worker cut=1 waiting sem
+[19:20:51] _worker cut=1 acquired sem state.status=running
+[19:20:51] _gen_safe cut=1 primary=ComfyUIVideoService max_retries=3
+[19:20:51] _gen_safe cut=1 attempt=1 → primary.generate() 호출
+[19:20:51] _worker ENTER cut=2 state.status=running
+[19:20:51] _worker cut=2 waiting sem
+[19:20:51] _worker ENTER cut=3 state.status=running
+[19:20:51] _worker cut=3 waiting sem
+[19:20:51] _worker ENTER cut=4 state.status=running
+[19:20:51] _worker cut=4 waiting sem
+[19:20:51] _worker ENTER cut=5 state.status=running
+[19:20:51] _worker cut=5 waiting sem
+[19:21:45] _gen_safe cut=1 attempt=1 PRIMARY SUCCESS
+[19:21:45] _worker cut=2 acquired sem state.status=running
+[19:21:45] _gen_safe cut=2 primary=ComfyUIVideoService max_retries=3
+[19:21:45] _gen_safe cut=2 attempt=1 → primary.generate() 호출
+[19:22:39] _gen_safe cut=2 attempt=1 PRIMARY SUCCESS
+[19:22:39] _worker cut=3 acquired sem state.status=running
+[19:22:39] _gen_safe cut=3 primary=ComfyUIVideoService max_retries=3
+[19:22:39] _gen_safe cut=3 attempt=1 → primary.generate() 호출
+[19:23:33] _gen_safe cut=3 attempt=1 PRIMARY SUCCESS
+[19:23:33] _worker cut=4 acquired sem state.status=running
+[19:23:33] _gen_safe cut=4 primary=ComfyUIVideoService max_retries=3
+[19:23:33] _gen_safe cut=4 attempt=1 → primary.generate() 호출
+[19:24:02] === generate_all_videos_async called project=65552077 cut_count=5 ===
+[19:24:02] _run ENTER project=65552077
+[19:24:02] _run config loaded model=comfyui-ltxv-2b aspect=16:9 selection=all ai_first_n=5
+[19:24:02] _run preflight force_full_fallback=False reason=not_fal
+[19:24:02] _run primary_service=ComfyUIVideoService
+[19:24:02] _run loaded 5 cuts from DB
+[19:24:02] _worker ENTER cut=1 state.status=running
+[19:24:02] _worker cut=1 waiting sem
+[19:24:02] _worker cut=1 acquired sem state.status=running
+[19:24:02] _gen_safe cut=1 primary=ComfyUIVideoService max_retries=3
+[19:24:02] _gen_safe cut=1 attempt=1 → primary.generate() 호출
+[19:24:02] _worker ENTER cut=2 state.status=running
+[19:24:02] _worker cut=2 waiting sem
+[19:24:02] _worker ENTER cut=3 state.status=running
+[19:24:02] _worker cut=3 waiting sem
+[19:24:02] _worker ENTER cut=4 state.status=running
+[19:24:02] _worker cut=4 waiting sem
+[19:24:02] _worker ENTER cut=5 state.status=running
+[19:24:02] _worker cut=5 waiting sem
+[19:25:19] _gen_safe cut=1 attempt=1 PRIMARY SUCCESS
+[19:25:19] _worker cut=2 acquired sem state.status=running
+[19:25:19] _gen_safe cut=2 primary=ComfyUIVideoService max_retries=3
+[19:25:19] _gen_safe cut=2 attempt=1 → primary.generate() 호출
+[19:33:24] === generate_all_videos_async called project=65552077 cut_count=6 ===
+[19:33:24] _run ENTER project=65552077
+[19:33:24] _run config loaded model=comfyui-ltxv-2b aspect=16:9 selection=all ai_first_n=5
+[19:33:24] _run preflight force_full_fallback=False reason=not_fal
+[19:33:24] _run primary_service=ComfyUIVideoService
+[19:33:24] _run loaded 6 cuts from DB
+[19:33:24] _worker ENTER cut=1 state.status=running
+[19:33:24] _worker cut=1 waiting sem
+[19:33:24] _worker cut=1 acquired sem state.status=running
+[19:33:24] _gen_safe cut=1 primary=ComfyUIVideoService max_retries=3
+[19:33:24] _gen_safe cut=1 attempt=1 → primary.generate() 호출
+[19:33:24] _worker ENTER cut=2 state.status=running
+[19:33:24] _worker cut=2 waiting sem
+[19:33:24] _worker ENTER cut=3 state.status=running
+[19:33:24] _worker cut=3 waiting sem
+[19:33:24] _worker ENTER cut=4 state.status=running
+[19:33:24] _worker cut=4 waiting sem
+[19:33:24] _worker ENTER cut=5 state.status=running
+[19:33:24] _worker cut=5 waiting sem
+[19:33:24] _worker ENTER cut=6 state.status=running
+[19:33:24] _worker cut=6 waiting sem
+[19:34:22] _gen_safe cut=1 attempt=1 PRIMARY SUCCESS
+[19:34:22] _worker cut=2 acquired sem state.status=running
+[19:34:22] _gen_safe cut=2 primary=ComfyUIVideoService max_retries=3
+[19:34:22] _gen_safe cut=2 attempt=1 → primary.generate() 호출
+[19:35:13] _gen_safe cut=2 attempt=1 PRIMARY SUCCESS
+[19:35:13] _worker cut=3 acquired sem state.status=running
+[19:35:13] _gen_safe cut=3 primary=ComfyUIVideoService max_retries=3
+[19:35:13] _gen_safe cut=3 attempt=1 → primary.generate() 호출
+[19:36:02] _gen_safe cut=3 attempt=1 PRIMARY SUCCESS
+[19:36:02] _worker cut=4 acquired sem state.status=running
+[19:36:02] _gen_safe cut=4 primary=ComfyUIVideoService max_retries=3
+[19:36:02] _gen_safe cut=4 attempt=1 → primary.generate() 호출
+[19:50:14] === generate_all_videos_async called project=65552077 cut_count=6 ===
+[19:50:14] _run ENTER project=65552077
+[19:50:14] _run config loaded model=comfyui-hunyuan15-480p aspect=16:9 selection=all ai_first_n=5
+[19:50:14] _run preflight force_full_fallback=False reason=not_fal
+[19:50:14] _run primary_service=ComfyUIVideoService
+[19:50:14] _run loaded 6 cuts from DB
+[19:50:14] _worker ENTER cut=1 state.status=running
+[19:50:14] _worker cut=1 waiting sem
+[19:50:14] _worker cut=1 acquired sem state.status=running
+[19:50:14] _gen_safe cut=1 primary=ComfyUIVideoService max_retries=3
+[19:50:14] _gen_safe cut=1 attempt=1 → primary.generate() 호출
+[19:50:14] _worker ENTER cut=2 state.status=running
+[19:50:14] _worker cut=2 waiting sem
+[19:50:14] _worker ENTER cut=3 state.status=running
+[19:50:14] _worker cut=3 waiting sem
+[19:50:14] _worker ENTER cut=4 state.status=running
+[19:50:14] _worker cut=4 waiting sem
+[19:50:14] _worker ENTER cut=5 state.status=running
+[19:50:14] _worker cut=5 waiting sem
+[19:50:14] _worker ENTER cut=6 state.status=running
+[19:50:14] _worker cut=6 waiting sem
+[19:57:38] _gen_safe cut=1 attempt=1 PRIMARY SUCCESS
+[19:57:38] _worker cut=2 acquired sem state.status=running
+[19:57:38] _gen_safe cut=2 primary=ComfyUIVideoService max_retries=3
+[19:57:38] _gen_safe cut=2 attempt=1 → primary.generate() 호출
+[20:08:04] === generate_all_videos_async called project=65552077 cut_count=6 ===
+[20:08:04] _run ENTER project=65552077
+[20:08:04] _run config loaded model=comfyui-ltxv-2b aspect=16:9 selection=all ai_first_n=5
+[20:08:04] _run preflight force_full_fallback=False reason=not_fal
+[20:08:04] _run primary_service=ComfyUIVideoService
+[20:08:04] _run loaded 6 cuts from DB
+[20:08:04] _worker ENTER cut=1 state.status=running
+[20:08:04] _worker cut=1 waiting sem
+[20:08:04] _worker cut=1 acquired sem state.status=running
+[20:08:04] _gen_safe cut=1 primary=ComfyUIVideoService max_retries=3
+[20:08:04] _gen_safe cut=1 attempt=1 → primary.generate() 호출
+[20:08:04] _worker ENTER cut=2 state.status=running
+[20:08:04] _worker cut=2 waiting sem
+[20:08:04] _worker ENTER cut=3 state.status=running
+[20:08:04] _worker cut=3 waiting sem
+[20:08:04] _worker ENTER cut=4 state.status=running
+[20:08:04] _worker cut=4 waiting sem
+[20:08:04] _worker ENTER cut=5 state.status=running
+[20:08:04] _worker cut=5 waiting sem
+[20:08:04] _worker ENTER cut=6 state.status=running
+[20:08:04] _worker cut=6 waiting sem
+[20:08:59] _gen_safe cut=1 attempt=1 PRIMARY SUCCESS
+[20:08:59] _worker cut=2 acquired sem state.status=running
+[20:08:59] _gen_safe cut=2 primary=ComfyUIVideoService max_retries=3
+[20:08:59] _gen_safe cut=2 attempt=1 → primary.generate() 호출
+[20:09:49] _gen_safe cut=2 attempt=1 PRIMARY SUCCESS
+[20:09:49] _worker cut=3 acquired sem state.status=running
+[20:09:49] _gen_safe cut=3 primary=ComfyUIVideoService max_retries=3
+[20:09:49] _gen_safe cut=3 attempt=1 → primary.generate() 호출
+[20:12:27] === resume_videos_async called project=65552077 ===
+[20:12:28] _gen_safe cut=0 primary=FalVideoService max_retries=1
+[20:12:28] _gen_safe cut=0 attempt=1 → primary.generate() 호출
+[20:12:28] _gen_safe cut=0 primary=FalVideoService max_retries=1
+[20:12:28] _gen_safe cut=0 attempt=1 → primary.generate() 호출
+[20:12:28] _gen_safe cut=0 primary=FalVideoService max_retries=1
+[20:12:28] _gen_safe cut=0 attempt=1 → primary.generate() 호출
+[20:12:29] _gen_safe cut=0 primary=FalVideoService max_retries=1
+[20:12:29] _gen_safe cut=0 attempt=1 → primary.generate() 호출
+[20:13:20] _gen_safe cut=0 attempt=1 PRIMARY SUCCESS
+[20:22:18] === generate_all_videos_async called project=65552077 cut_count=6 ===
+[20:22:18] _run ENTER project=65552077
+[20:22:18] _run config loaded model=seedance-lite aspect=16:9 selection=all ai_first_n=5
+[20:22:19] _run preflight force_full_fallback=False reason=ok:key_valid
+[20:22:19] _run primary_service=FalVideoService
+[20:22:19] _run loaded 6 cuts from DB
+[20:22:19] _worker ENTER cut=1 state.status=running
+[20:22:19] _worker cut=1 SKIP missing_path img=True aud=False
+[20:22:19] _worker ENTER cut=2 state.status=running
+[20:22:19] _worker cut=2 SKIP missing_path img=True aud=False
+[20:22:19] _worker ENTER cut=3 state.status=running
+[20:22:19] _worker cut=3 SKIP missing_path img=True aud=False
+[20:22:19] _worker ENTER cut=4 state.status=running
+[20:22:19] _worker cut=4 SKIP missing_path img=True aud=False
+[20:22:19] _worker ENTER cut=5 state.status=running
+[20:22:19] _worker cut=5 SKIP missing_path img=True aud=False
+[20:22:19] _worker ENTER cut=6 state.status=running
+[20:22:19] _worker cut=6 SKIP missing_path img=True aud=False
+[20:22:33] === generate_all_videos_async called project=65552077 cut_count=6 ===
+[20:22:33] _run ENTER project=65552077
+[20:22:33] _run config loaded model=comfyui-ltxv-2b aspect=16:9 selection=all ai_first_n=5
+[20:22:33] _run preflight force_full_fallback=False reason=not_fal
+[20:22:33] _run primary_service=ComfyUIVideoService
+[20:22:33] _run loaded 6 cuts from DB
+[20:22:33] _worker ENTER cut=1 state.status=running
+[20:22:33] _worker cut=1 SKIP missing_path img=True aud=False
+[20:22:33] _worker ENTER cut=2 state.status=running
+[20:22:33] _worker cut=2 SKIP missing_path img=True aud=False
+[20:22:33] _worker ENTER cut=3 state.status=running
+[20:22:33] _worker cut=3 SKIP missing_path img=True aud=False
+[20:22:33] _worker ENTER cut=4 state.status=running
+[20:22:33] _worker cut=4 SKIP missing_path img=True aud=False
+[20:22:33] _worker ENTER cut=5 state.status=running
+[20:22:33] _worker cut=5 SKIP missing_path img=True aud=False
+[20:22:33] _worker ENTER cut=6 state.status=running
+[20:22:33] _worker cut=6 SKIP missing_path img=True aud=False
+[20:22:39] === generate_all_videos_async called project=65552077 cut_count=6 ===
+[20:22:39] _run ENTER project=65552077
+[20:22:39] _run config loaded model=comfyui-ltxv-2b aspect=16:9 selection=all ai_first_n=5
+[20:22:39] _run preflight force_full_fallback=False reason=not_fal
+[20:22:39] _run primary_service=ComfyUIVideoService
+[20:22:39] _run loaded 6 cuts from DB
+[20:22:39] _worker ENTER cut=1 state.status=running
+[20:22:39] _worker cut=1 SKIP missing_path img=True aud=False
+[20:22:39] _worker ENTER cut=2 state.status=running
+[20:22:39] _worker cut=2 SKIP missing_path img=True aud=False
+[20:22:39] _worker ENTER cut=3 state.status=running
+[20:22:39] _worker cut=3 SKIP missing_path img=True aud=False
+[20:22:39] _worker ENTER cut=4 state.status=running
+[20:22:39] _worker cut=4 SKIP missing_path img=True aud=False
+[20:22:39] _worker ENTER cut=5 state.status=running
+[20:22:39] _worker cut=5 SKIP missing_path img=True aud=False
+[20:22:39] _worker ENTER cut=6 state.status=running
+[20:22:39] _worker cut=6 SKIP missing_path img=True aud=False
+[20:23:08] === generate_all_videos_async called project=65552077 cut_count=6 ===
+[20:23:08] _run ENTER project=65552077
+[20:23:08] _run config loaded model=comfyui-ltxv-2b aspect=16:9 selection=all ai_first_n=5
+[20:23:08] _run preflight force_full_fallback=False reason=not_fal
+[20:23:08] _run primary_service=ComfyUIVideoService
+[20:23:08] _run loaded 6 cuts from DB
+[20:23:08] _worker ENTER cut=1 state.status=running
+[20:23:08] _worker cut=1 waiting sem
+[20:23:08] _worker cut=1 acquired sem state.status=running
+[20:23:08] _gen_safe cut=1 primary=ComfyUIVideoService max_retries=3
+[20:23:08] _gen_safe cut=1 attempt=1 → primary.generate() 호출
+[20:23:08] _worker ENTER cut=2 state.status=running
+[20:23:08] _worker cut=2 waiting sem
+[20:23:08] _worker ENTER cut=3 state.status=running
+[20:23:08] _worker cut=3 waiting sem
+[20:23:08] _worker ENTER cut=4 state.status=running
+[20:23:08] _worker cut=4 waiting sem
+[20:23:08] _worker ENTER cut=5 state.status=running
+[20:23:08] _worker cut=5 waiting sem
+[20:23:08] _worker ENTER cut=6 state.status=running
+[20:23:08] _worker cut=6 waiting sem
+[20:23:58] _gen_safe cut=1 attempt=1 PRIMARY SUCCESS
+[20:23:58] _worker cut=2 acquired sem state.status=running
+[20:23:58] _gen_safe cut=2 primary=ComfyUIVideoService max_retries=3
+[20:23:58] _gen_safe cut=2 attempt=1 → primary.generate() 호출
+[20:24:47] _gen_safe cut=2 attempt=1 PRIMARY SUCCESS
+[20:24:47] _worker cut=3 acquired sem state.status=running
+[20:24:47] _gen_safe cut=3 primary=ComfyUIVideoService max_retries=3
+[20:24:47] _gen_safe cut=3 attempt=1 → primary.generate() 호출
+[20:25:37] _gen_safe cut=3 attempt=1 PRIMARY SUCCESS
+[20:25:37] _worker cut=4 acquired sem state.status=running
+[20:25:37] _gen_safe cut=4 primary=ComfyUIVideoService max_retries=3
+[20:25:37] _gen_safe cut=4 attempt=1 → primary.generate() 호출
+[20:26:28] _gen_safe cut=4 attempt=1 PRIMARY SUCCESS
+[20:26:28] _worker cut=5 acquired sem state.status=running
+[20:26:28] _gen_safe cut=5 primary=ComfyUIVideoService max_retries=3
+[20:26:28] _gen_safe cut=5 attempt=1 → primary.generate() 호출
+[20:27:18] _gen_safe cut=5 attempt=1 PRIMARY SUCCESS
+[20:27:18] _worker cut=6 acquired sem state.status=running
+[20:27:18] _gen_safe cut=6 primary=ComfyUIVideoService max_retries=1
+[20:27:18] _gen_safe cut=6 attempt=1 → primary.generate() 호출
+[20:28:09] _gen_safe cut=6 attempt=1 PRIMARY SUCCESS
+[20:29:58] === generate_all_videos_async called project=65552077 cut_count=6 ===
+[20:29:58] _run ENTER project=65552077
+[20:29:58] _run config loaded model=seedance-lite aspect=16:9 selection=all ai_first_n=5
+[20:29:59] _run preflight force_full_fallback=False reason=ok:key_valid
+[20:29:59] _run primary_service=FalVideoService
+[20:29:59] _run loaded 6 cuts from DB
+[20:29:59] _worker ENTER cut=1 state.status=running
+[20:29:59] _worker cut=1 waiting sem
+[20:29:59] _worker cut=1 acquired sem state.status=running
+[20:29:59] _gen_safe cut=1 primary=FalVideoService max_retries=3
+[20:29:59] _gen_safe cut=1 attempt=1 → primary.generate() 호출
+[20:29:59] _worker ENTER cut=2 state.status=running
+[20:29:59] _worker cut=2 waiting sem
+[20:29:59] _worker cut=2 acquired sem state.status=running
+[20:29:59] _gen_safe cut=2 primary=FalVideoService max_retries=3
+[20:29:59] _gen_safe cut=2 attempt=1 → primary.generate() 호출
+[20:30:00] _worker ENTER cut=3 state.status=running
+[20:30:00] _worker cut=3 waiting sem
+[20:30:00] _worker cut=3 acquired sem state.status=running
+[20:30:00] _gen_safe cut=3 primary=FalVideoService max_retries=3
+[20:30:00] _gen_safe cut=3 attempt=1 → primary.generate() 호출
+[20:30:00] _worker ENTER cut=4 state.status=running
+[20:30:00] _worker cut=4 waiting sem
+[20:30:00] _worker cut=4 acquired sem state.status=running
+[20:30:00] _gen_safe cut=4 primary=FalVideoService max_retries=3
+[20:30:00] _gen_safe cut=4 attempt=1 → primary.generate() 호출
+[20:30:00] _worker ENTER cut=5 state.status=running
+[20:30:00] _worker cut=5 waiting sem
+[20:30:00] _worker ENTER cut=6 state.status=running
+[20:30:00] _worker cut=6 waiting sem
+[20:30:40] _gen_safe cut=3 attempt=1 PRIMARY SUCCESS
+[20:30:40] _worker cut=5 acquired sem state.status=running
+[20:30:40] _gen_safe cut=5 primary=FalVideoService max_retries=3
+[20:30:40] _gen_safe cut=5 attempt=1 → primary.generate() 호출
+[20:30:45] _gen_safe cut=1 attempt=1 PRIMARY SUCCESS
+[20:30:45] _worker cut=6 acquired sem state.status=running
+[20:30:45] _gen_safe cut=6 primary=FalVideoService max_retries=1
+[20:30:45] _gen_safe cut=6 attempt=1 → primary.generate() 호출
+[20:30:45] _gen_safe cut=2 attempt=1 PRIMARY SUCCESS
+[20:30:47] _gen_safe cut=4 attempt=1 PRIMARY SUCCESS
+[20:31:21] _gen_safe cut=5 attempt=1 PRIMARY SUCCESS
+[20:31:36] _gen_safe cut=6 attempt=1 PRIMARY SUCCESS
+[20:42:05] === generate_all_videos_async called project=65552077 cut_count=6 ===
+[20:42:05] _run ENTER project=65552077
+[20:42:05] _run config loaded model=comfyui-ltxv-2b aspect=16:9 selection=all ai_first_n=5
+[20:42:05] _run preflight force_full_fallback=False reason=not_fal
+[20:42:05] _run primary_service=ComfyUIVideoService
+[20:42:05] _run loaded 6 cuts from DB
+[20:42:05] _worker ENTER cut=1 state.status=running
+[20:42:05] _worker cut=1 waiting sem
+[20:42:05] _worker cut=1 acquired sem state.status=running
+[20:42:05] _gen_safe cut=1 primary=ComfyUIVideoService max_retries=3
+[20:42:05] _gen_safe cut=1 attempt=1 → primary.generate() 호출
+[20:42:06] _worker ENTER cut=2 state.status=running
+[20:42:06] _worker cut=2 waiting sem
+[20:42:06] _worker ENTER cut=3 state.status=running
+[20:42:06] _worker cut=3 waiting sem
+[20:42:06] _worker ENTER cut=4 state.status=running
+[20:42:06] _worker cut=4 waiting sem
+[20:42:06] _worker ENTER cut=5 state.status=running
+[20:42:06] _worker cut=5 waiting sem
+[20:42:06] _worker ENTER cut=6 state.status=running
+[20:42:06] _worker cut=6 waiting sem
+[20:42:25] _gen_safe cut=1 attempt=1 PRIMARY SUCCESS
+[20:42:25] _worker cut=2 acquired sem state.status=running
+[20:42:25] _gen_safe cut=2 primary=ComfyUIVideoService max_retries=3
+[20:42:25] _gen_safe cut=2 attempt=1 → primary.generate() 호출
+[20:42:43] _gen_safe cut=2 attempt=1 PRIMARY SUCCESS
+[20:42:43] _worker cut=3 acquired sem state.status=running
+[20:42:43] _gen_safe cut=3 primary=ComfyUIVideoService max_retries=3
+[20:42:43] _gen_safe cut=3 attempt=1 → primary.generate() 호출
+[20:43:01] _gen_safe cut=3 attempt=1 PRIMARY SUCCESS
+[20:43:01] _worker cut=4 acquired sem state.status=running
+[20:43:01] _gen_safe cut=4 primary=ComfyUIVideoService max_retries=3
+[20:43:01] _gen_safe cut=4 attempt=1 → primary.generate() 호출
+[20:43:19] _gen_safe cut=4 attempt=1 PRIMARY SUCCESS
+[20:43:19] _worker cut=5 acquired sem state.status=running
+[20:43:19] _gen_safe cut=5 primary=ComfyUIVideoService max_retries=3
+[20:43:19] _gen_safe cut=5 attempt=1 → primary.generate() 호출
+[20:43:37] _gen_safe cut=5 attempt=1 PRIMARY SUCCESS
+[20:43:37] _worker cut=6 acquired sem state.status=running
+[20:43:37] _gen_safe cut=6 primary=ComfyUIVideoService max_retries=1
+[20:43:37] _gen_safe cut=6 attempt=1 → primary.generate() 호출
+[20:43:56] _gen_safe cut=6 attempt=1 PRIMARY SUCCESS
+[11:24:24] === generate_all_videos_async called project=65552077 cut_count=10 ===
+[11:24:24] _run ENTER project=65552077
+[11:24:24] _run config loaded model=comfyui-ltxv-2b aspect=16:9 selection=all ai_first_n=5
+[11:24:24] _run preflight force_full_fallback=False reason=not_fal
+[11:24:24] _run primary_service=ComfyUIVideoService
+[11:24:24] _run loaded 10 cuts from DB
+[11:24:24] _worker ENTER cut=1 state.status=running
+[11:24:24] _worker cut=1 SKIP missing_path img=True aud=False
+[11:24:24] _worker ENTER cut=2 state.status=running
+[11:24:24] _worker cut=2 SKIP missing_path img=True aud=False
+[11:24:24] _worker ENTER cut=3 state.status=running
+[11:24:24] _worker cut=3 SKIP missing_path img=True aud=False
+[11:24:24] _worker ENTER cut=4 state.status=running
+[11:24:24] _worker cut=4 SKIP missing_path img=True aud=False
+[11:24:24] _worker ENTER cut=5 state.status=running
+[11:24:24] _worker cut=5 SKIP missing_path img=True aud=False
+[11:24:24] _worker ENTER cut=6 state.status=running
+[11:24:24] _worker cut=6 SKIP missing_path img=True aud=False
+[11:24:24] _worker ENTER cut=7 state.status=running
+[11:24:24] _worker cut=7 SKIP missing_path img=True aud=False
+[11:24:24] _worker ENTER cut=8 state.status=running
+[11:24:24] _worker cut=8 SKIP missing_path img=True aud=False
+[11:24:24] _worker ENTER cut=9 state.status=running
+[11:24:24] _worker cut=9 SKIP missing_path img=True aud=False
+[11:24:24] _worker ENTER cut=10 state.status=running
+[11:24:24] _worker cut=10 SKIP missing_path img=True aud=False
+[11:36:54] === generate_all_videos_async called project=65552077 cut_count=10 ===
+[11:36:54] _run ENTER project=65552077
+[11:36:54] _run config loaded model=comfyui-ltxv-2b aspect=16:9 selection=all ai_first_n=5
+[11:36:54] _run preflight force_full_fallback=False reason=not_fal
+[11:36:54] _run primary_service=ComfyUIVideoService
+[11:36:54] _run loaded 10 cuts from DB
+[11:36:54] _worker ENTER cut=1 state.status=running
+[11:36:54] _worker cut=1 waiting sem
+[11:36:54] _worker cut=1 acquired sem state.status=running
+[11:36:54] _gen_safe cut=1 primary=ComfyUIVideoService max_retries=3
+[11:36:54] _gen_safe cut=1 attempt=1 → primary.generate() 호출
+[11:36:54] _worker ENTER cut=2 state.status=running
+[11:36:54] _worker cut=2 waiting sem
+[11:36:54] _worker ENTER cut=3 state.status=running
+[11:36:54] _worker cut=3 waiting sem
+[11:36:54] _worker ENTER cut=4 state.status=running
+[11:36:54] _worker cut=4 waiting sem
+[11:36:54] _worker ENTER cut=5 state.status=running
+[11:36:54] _worker cut=5 waiting sem
+[11:36:54] _worker ENTER cut=6 state.status=running
+[11:36:54] _worker cut=6 waiting sem
+[11:36:54] _worker ENTER cut=7 state.status=running
+[11:36:54] _worker cut=7 waiting sem
+[11:36:54] _worker ENTER cut=8 state.status=running
+[11:36:54] _worker cut=8 waiting sem
+[11:36:54] _worker ENTER cut=9 state.status=running
+[11:36:54] _worker cut=9 waiting sem
+[11:36:54] _worker ENTER cut=10 state.status=running
+[11:36:54] _worker cut=10 waiting sem
+[11:37:19] _gen_safe cut=1 attempt=1 PRIMARY SUCCESS
+[11:37:19] _worker cut=2 acquired sem state.status=running
+[11:37:19] _gen_safe cut=2 primary=ComfyUIVideoService max_retries=3
+[11:37:19] _gen_safe cut=2 attempt=1 → primary.generate() 호출
+[11:37:39] _gen_safe cut=2 attempt=1 PRIMARY SUCCESS
+[11:37:39] _worker cut=3 acquired sem state.status=running
+[11:37:39] _gen_safe cut=3 primary=ComfyUIVideoService max_retries=3
+[11:37:39] _gen_safe cut=3 attempt=1 → primary.generate() 호출
+[11:37:58] _gen_safe cut=3 attempt=1 PRIMARY SUCCESS
+[11:37:58] _worker cut=4 acquired sem state.status=running
+[11:37:58] _gen_safe cut=4 primary=ComfyUIVideoService max_retries=3
+[11:37:58] _gen_safe cut=4 attempt=1 → primary.generate() 호출
+[11:38:16] _gen_safe cut=4 attempt=1 PRIMARY SUCCESS
+[11:38:16] _worker cut=5 acquired sem state.status=running
+[11:38:16] _gen_safe cut=5 primary=ComfyUIVideoService max_retries=3
+[11:38:16] _gen_safe cut=5 attempt=1 → primary.generate() 호출
+[11:38:34] _gen_safe cut=5 attempt=1 PRIMARY SUCCESS
+[11:38:34] _worker cut=6 acquired sem state.status=running
+[11:38:34] _gen_safe cut=6 primary=ComfyUIVideoService max_retries=1
+[11:38:34] _gen_safe cut=6 attempt=1 → primary.generate() 호출
+[11:38:53] _gen_safe cut=6 attempt=1 PRIMARY SUCCESS
+[11:38:53] _worker cut=7 acquired sem state.status=running
+[11:38:53] _gen_safe cut=7 primary=ComfyUIVideoService max_retries=1
+[11:38:53] _gen_safe cut=7 attempt=1 → primary.generate() 호출
+[11:39:13] _gen_safe cut=7 attempt=1 PRIMARY SUCCESS
+[11:39:13] _worker cut=8 acquired sem state.status=running
+[11:39:13] _gen_safe cut=8 primary=ComfyUIVideoService max_retries=1
+[11:39:13] _gen_safe cut=8 attempt=1 → primary.generate() 호출
+[11:39:32] _gen_safe cut=8 attempt=1 PRIMARY SUCCESS
+[11:39:32] _worker cut=9 acquired sem state.status=running
+[11:39:32] _gen_safe cut=9 primary=ComfyUIVideoService max_retries=1
+[11:39:32] _gen_safe cut=9 attempt=1 → primary.generate() 호출
+[11:48:04] === generate_all_videos_async called project=65552077 cut_count=10 ===
+[11:48:04] _run ENTER project=65552077
+[11:48:04] _run config loaded model=comfyui-ltxv-2b aspect=16:9 selection=all ai_first_n=5
+[11:48:04] _run preflight force_full_fallback=False reason=not_fal
+[11:48:04] _run primary_service=ComfyUIVideoService
+[11:48:04] _run loaded 10 cuts from DB
+[11:48:04] _worker ENTER cut=1 state.status=running
+[11:48:04] _worker cut=1 waiting sem
+[11:48:04] _worker cut=1 acquired sem state.status=running
+[11:48:04] _gen_safe cut=1 primary=ComfyUIVideoService max_retries=3
+[11:48:04] _gen_safe cut=1 attempt=1 → primary.generate() 호출
+[11:48:04] _worker ENTER cut=2 state.status=running
+[11:48:04] _worker cut=2 waiting sem
+[11:48:04] _worker ENTER cut=3 state.status=running
+[11:48:04] _worker cut=3 waiting sem
+[11:48:04] _worker ENTER cut=4 state.status=running
+[11:48:04] _worker cut=4 waiting sem
+[11:48:04] _worker ENTER cut=5 state.status=running
+[11:48:04] _worker cut=5 waiting sem
+[11:48:04] _worker ENTER cut=6 state.status=running
+[11:48:04] _worker cut=6 waiting sem
+[11:48:04] _worker ENTER cut=7 state.status=running
+[11:48:04] _worker cut=7 waiting sem
+[11:48:04] _worker ENTER cut=8 state.status=running
+[11:48:04] _worker cut=8 waiting sem
+[11:48:04] _worker ENTER cut=9 state.status=running
+[11:48:04] _worker cut=9 waiting sem
+[11:48:04] _worker ENTER cut=10 state.status=running
+[11:48:04] _worker cut=10 waiting sem
+[11:48:48] === generate_all_videos_async called project=65552077 cut_count=10 ===
+[11:48:48] _run ENTER project=65552077
+[11:48:48] _run config loaded model=comfyui-ltxv-2b aspect=16:9 selection=all ai_first_n=5
+[11:48:48] _run preflight force_full_fallback=False reason=not_fal
+[11:48:48] _run primary_service=ComfyUIVideoService
+[11:48:48] _run loaded 10 cuts from DB
+[11:48:48] _worker ENTER cut=1 state.status=running
+[11:48:48] _worker cut=1 waiting sem
+[11:48:48] _worker cut=1 acquired sem state.status=running
+[11:48:48] _gen_safe cut=1 primary=ComfyUIVideoService max_retries=3
+[11:48:48] _gen_safe cut=1 attempt=1 → primary.generate() 호출
+[11:48:48] _worker ENTER cut=2 state.status=running
+[11:48:48] _worker cut=2 waiting sem
+[11:48:48] _worker ENTER cut=3 state.status=running
+[11:48:48] _worker cut=3 waiting sem
+[11:48:48] _worker ENTER cut=4 state.status=running
+[11:48:48] _worker cut=4 waiting sem
+[11:48:48] _worker ENTER cut=5 state.status=running
+[11:48:48] _worker cut=5 waiting sem
+[11:48:48] _worker ENTER cut=6 state.status=running
+[11:48:48] _worker cut=6 waiting sem
+[11:48:48] _worker ENTER cut=7 state.status=running
+[11:48:48] _worker cut=7 waiting sem
+[11:48:48] _worker ENTER cut=8 state.status=running
+[11:48:48] _worker cut=8 waiting sem
+[11:48:48] _worker ENTER cut=9 state.status=running
+[11:48:48] _worker cut=9 waiting sem
+[11:48:48] _worker ENTER cut=10 state.status=running
+[11:48:48] _worker cut=10 waiting sem
+[11:49:07] _gen_safe cut=1 attempt=1 PRIMARY SUCCESS
+[11:49:07] _worker cut=2 acquired sem state.status=running
+[11:49:07] _gen_safe cut=2 primary=ComfyUIVideoService max_retries=3
+[11:49:07] _gen_safe cut=2 attempt=1 → primary.generate() 호출
+[11:49:25] _gen_safe cut=2 attempt=1 PRIMARY SUCCESS
+[11:49:25] _worker cut=3 acquired sem state.status=running
+[11:49:25] _gen_safe cut=3 primary=ComfyUIVideoService max_retries=3
+[11:49:25] _gen_safe cut=3 attempt=1 → primary.generate() 호출
+[11:49:43] _gen_safe cut=3 attempt=1 PRIMARY SUCCESS
+[11:49:43] _worker cut=4 acquired sem state.status=running
+[11:49:43] _gen_safe cut=4 primary=ComfyUIVideoService max_retries=3
+[11:49:43] _gen_safe cut=4 attempt=1 → primary.generate() 호출
+[11:50:01] _gen_safe cut=4 attempt=1 PRIMARY SUCCESS
+[11:50:01] _worker cut=5 acquired sem state.status=running
+[11:50:01] _gen_safe cut=5 primary=ComfyUIVideoService max_retries=3
+[11:50:01] _gen_safe cut=5 attempt=1 → primary.generate() 호출
+[11:50:20] _gen_safe cut=5 attempt=1 PRIMARY SUCCESS
+[11:50:21] _worker cut=6 acquired sem state.status=running
+[11:50:21] _gen_safe cut=6 primary=ComfyUIVideoService max_retries=1
+[11:50:21] _gen_safe cut=6 attempt=1 → primary.generate() 호출
+[11:50:40] _gen_safe cut=6 attempt=1 PRIMARY SUCCESS
+[11:50:40] _worker cut=7 acquired sem state.status=running
+[11:50:40] _gen_safe cut=7 primary=ComfyUIVideoService max_retries=1
+[11:50:40] _gen_safe cut=7 attempt=1 → primary.generate() 호출
+[11:51:00] _gen_safe cut=7 attempt=1 PRIMARY SUCCESS
+[11:51:00] _worker cut=8 acquired sem state.status=running
+[11:51:00] _gen_safe cut=8 primary=ComfyUIVideoService max_retries=1
+[11:51:00] _gen_safe cut=8 attempt=1 → primary.generate() 호출
+[11:51:19] _gen_safe cut=8 attempt=1 PRIMARY SUCCESS
+[11:51:19] _worker cut=9 acquired sem state.status=running
+[11:51:19] _gen_safe cut=9 primary=ComfyUIVideoService max_retries=1
+[11:51:19] _gen_safe cut=9 attempt=1 → primary.generate() 호출
+[11:51:39] _gen_safe cut=9 attempt=1 PRIMARY SUCCESS
+[11:51:39] _worker cut=10 acquired sem state.status=running
+[11:51:39] _gen_safe cut=10 primary=ComfyUIVideoService max_retries=1
+[11:51:39] _gen_safe cut=10 attempt=1 → primary.generate() 호출
+[11:52:53] === generate_all_videos_async called project=65552077 cut_count=10 ===
+[11:52:53] _run ENTER project=65552077
+[11:52:53] _run config loaded model=comfyui-hunyuan15-480p aspect=16:9 selection=all ai_first_n=5
+[11:52:53] _run preflight force_full_fallback=False reason=not_fal
+[11:52:53] _run primary_service=ComfyUIVideoService
+[11:52:53] _run loaded 10 cuts from DB
+[11:52:53] _worker ENTER cut=1 state.status=running
+[11:52:53] _worker cut=1 waiting sem
+[11:52:53] _worker cut=1 acquired sem state.status=running
+[11:52:53] _gen_safe cut=1 primary=ComfyUIVideoService max_retries=3
+[11:52:53] _gen_safe cut=1 attempt=1 → primary.generate() 호출
+[11:52:53] _worker ENTER cut=2 state.status=running
+[11:52:53] _worker cut=2 waiting sem
+[11:52:53] _worker ENTER cut=3 state.status=running
+[11:52:53] _worker cut=3 waiting sem
+[11:52:53] _worker ENTER cut=4 state.status=running
+[11:52:53] _worker cut=4 waiting sem
+[11:52:53] _worker ENTER cut=5 state.status=running
+[11:52:53] _worker cut=5 waiting sem
+[11:52:53] _worker ENTER cut=6 state.status=running
+[11:52:53] _worker cut=6 waiting sem
+[11:52:53] _worker ENTER cut=7 state.status=running
+[11:52:53] _worker cut=7 waiting sem
+[11:52:53] _worker ENTER cut=8 state.status=running
+[11:52:53] _worker cut=8 waiting sem
+[11:52:53] _worker ENTER cut=9 state.status=running
+[11:52:53] _worker cut=9 waiting sem
+[11:52:53] _worker ENTER cut=10 state.status=running
+[11:52:53] _worker cut=10 waiting sem
+[11:54:50] _gen_safe cut=1 attempt=1 PRIMARY SUCCESS
+[11:54:50] _worker cut=2 acquired sem state.status=running
+[11:54:50] _gen_safe cut=2 primary=ComfyUIVideoService max_retries=3
+[11:54:50] _gen_safe cut=2 attempt=1 → primary.generate() 호출
+[11:56:34] _gen_safe cut=2 attempt=1 PRIMARY SUCCESS
+[11:56:34] _worker cut=3 acquired sem state.status=running
+[11:56:34] _gen_safe cut=3 primary=ComfyUIVideoService max_retries=3
+[11:56:34] _gen_safe cut=3 attempt=1 → primary.generate() 호출
+[11:58:16] _gen_safe cut=3 attempt=1 PRIMARY SUCCESS
+[11:58:16] _worker cut=4 acquired sem state.status=running
+[11:58:16] _gen_safe cut=4 primary=ComfyUIVideoService max_retries=3
+[11:58:16] _gen_safe cut=4 attempt=1 → primary.generate() 호출
+[12:00:03] _gen_safe cut=4 attempt=1 PRIMARY SUCCESS
+[12:00:03] _worker cut=5 acquired sem state.status=running
+[12:00:03] _gen_safe cut=5 primary=ComfyUIVideoService max_retries=3
+[12:00:03] _gen_safe cut=5 attempt=1 → primary.generate() 호출
+[12:01:48] _gen_safe cut=5 attempt=1 PRIMARY SUCCESS
+[12:01:48] _worker cut=6 acquired sem state.status=running
+[12:01:48] _gen_safe cut=6 primary=ComfyUIVideoService max_retries=1
+[12:01:48] _gen_safe cut=6 attempt=1 → primary.generate() 호출
+[12:03:33] _gen_safe cut=6 attempt=1 PRIMARY SUCCESS
+[12:03:33] _worker cut=7 acquired sem state.status=running
+[12:03:33] _gen_safe cut=7 primary=ComfyUIVideoService max_retries=1
+[12:03:33] _gen_safe cut=7 attempt=1 → primary.generate() 호출
+[12:05:16] _gen_safe cut=7 attempt=1 PRIMARY SUCCESS
+[12:05:16] _worker cut=8 acquired sem state.status=running
+[12:05:16] _gen_safe cut=8 primary=ComfyUIVideoService max_retries=1
+[12:05:16] _gen_safe cut=8 attempt=1 → primary.generate() 호출
+[12:07:01] _gen_safe cut=8 attempt=1 PRIMARY SUCCESS
+[12:07:01] _worker cut=9 acquired sem state.status=running
+[12:07:01] _gen_safe cut=9 primary=ComfyUIVideoService max_retries=1
+[12:07:01] _gen_safe cut=9 attempt=1 → primary.generate() 호출
+[12:08:42] _gen_safe cut=9 attempt=1 PRIMARY SUCCESS
+[12:08:42] _worker cut=10 acquired sem state.status=running
+[12:08:42] _gen_safe cut=10 primary=ComfyUIVideoService max_retries=1
+[12:08:42] _gen_safe cut=10 attempt=1 → primary.generate() 호출
+[12:10:24] _gen_safe cut=10 attempt=1 PRIMARY SUCCESS
+[12:36:37] === generate_all_videos_async called project=65552077 cut_count=20 ===
+[12:36:37] _run ENTER project=65552077
+[12:36:37] _run config loaded model=seedance-lite aspect=16:9 selection=every_5 ai_first_n=5
+[12:36:38] _run preflight force_full_fallback=False reason=ok:key_valid
+[12:36:38] _run primary_service=FalVideoService
+[12:36:38] _run loaded 20 cuts from DB
+[12:36:38] _worker ENTER cut=1 state.status=running
+[12:36:38] _worker cut=1 waiting sem
+[12:36:38] _worker cut=1 acquired sem state.status=running
+[12:36:38] _gen_safe cut=1 primary=FalVideoService max_retries=3
+[12:36:38] _gen_safe cut=1 attempt=1 → primary.generate() 호출
+[12:36:38] _worker ENTER cut=2 state.status=running
+[12:36:38] _worker cut=2 waiting sem
+[12:36:38] _worker cut=2 acquired sem state.status=running
+[12:36:38] _gen_safe cut=2 primary=FalVideoService max_retries=3
+[12:36:38] _gen_safe cut=2 attempt=1 → primary.generate() 호출
+[12:36:38] _worker ENTER cut=3 state.status=running
+[12:36:38] _worker cut=3 waiting sem
+[12:36:38] _worker cut=3 acquired sem state.status=running
+[12:36:38] _gen_safe cut=3 primary=FalVideoService max_retries=3
+[12:36:38] _gen_safe cut=3 attempt=1 → primary.generate() 호출
+[12:36:39] _worker ENTER cut=4 state.status=running
+[12:36:39] _worker cut=4 waiting sem
+[12:36:39] _worker cut=4 acquired sem state.status=running
+[12:36:39] _gen_safe cut=4 primary=FalVideoService max_retries=3
+[12:36:39] _gen_safe cut=4 attempt=1 → primary.generate() 호출
+[12:36:39] _worker ENTER cut=5 state.status=running
+[12:36:39] _worker cut=5 waiting sem
+[12:36:39] _worker ENTER cut=6 state.status=running
+[12:36:39] _worker cut=6 waiting sem
+[12:36:39] _worker ENTER cut=7 state.status=running
+[12:36:39] _worker cut=7 waiting sem
+[12:36:39] _worker ENTER cut=8 state.status=running
+[12:36:39] _worker cut=8 waiting sem
+[12:36:39] _worker ENTER cut=9 state.status=running
+[12:36:39] _worker cut=9 waiting sem
+[12:36:39] _worker ENTER cut=10 state.status=running
+[12:36:39] _worker cut=10 waiting sem
+[12:36:39] _worker ENTER cut=11 state.status=running
+[12:36:39] _worker cut=11 waiting sem
+[12:36:39] _worker ENTER cut=12 state.status=running
+[12:36:39] _worker cut=12 waiting sem
+[12:36:39] _worker ENTER cut=13 state.status=running
+[12:36:39] _worker cut=13 waiting sem
+[12:36:39] _worker ENTER cut=14 state.status=running
+[12:36:39] _worker cut=14 waiting sem
+[12:36:39] _worker ENTER cut=15 state.status=running
+[12:36:39] _worker cut=15 waiting sem
+[12:36:39] _worker ENTER cut=16 state.status=running
+[12:36:39] _worker cut=16 waiting sem
+[12:36:39] _worker ENTER cut=17 state.status=running
+[12:36:39] _worker cut=17 waiting sem
+[12:36:39] _worker ENTER cut=18 state.status=running
+[12:36:39] _worker cut=18 waiting sem
+[12:36:39] _worker ENTER cut=19 state.status=running
+[12:36:39] _worker cut=19 waiting sem
+[12:36:39] _worker ENTER cut=20 state.status=running
+[12:36:39] _worker cut=20 waiting sem
+[12:37:15] _gen_safe cut=4 attempt=1 PRIMARY SUCCESS
+[12:37:15] _worker cut=5 acquired sem state.status=running
+[12:37:15] _gen_safe cut=5 primary=FalVideoService max_retries=3
+[12:37:15] _gen_safe cut=5 attempt=1 → primary.generate() 호출
+[12:37:18] _gen_safe cut=3 attempt=1 PRIMARY SUCCESS
+[12:37:18] _worker cut=6 acquired sem state.status=running
+[12:37:18] _gen_safe cut=6 primary=FalVideoService max_retries=1
+[12:37:18] _gen_safe cut=6 attempt=1 → primary.generate() 호출
+[12:37:19] _gen_safe cut=2 attempt=1 PRIMARY SUCCESS
+[12:37:19] _worker cut=7 acquired sem state.status=running
+[12:37:19] _worker cut=8 acquired sem state.status=running
+[12:37:20] _worker cut=9 acquired sem state.status=running
+[12:37:21] _worker cut=10 acquired sem state.status=running
+[12:37:21] _worker cut=11 acquired sem state.status=running
+[12:37:21] _gen_safe cut=11 primary=FalVideoService max_retries=1
+[12:37:21] _gen_safe cut=11 attempt=1 → primary.generate() 호출
+[12:37:24] _gen_safe cut=1 attempt=1 PRIMARY SUCCESS
+[12:37:24] _worker cut=12 acquired sem state.status=running
+[12:37:25] _worker cut=13 acquired sem state.status=running
+[12:37:26] _worker cut=14 acquired sem state.status=running
+[12:37:26] _worker cut=15 acquired sem state.status=running
+[12:37:27] _worker cut=16 acquired sem state.status=running
+[12:37:27] _gen_safe cut=16 primary=FalVideoService max_retries=1
+[12:37:27] _gen_safe cut=16 attempt=1 → primary.generate() 호출
+[12:38:04] _gen_safe cut=6 attempt=1 PRIMARY SUCCESS
+[12:38:04] _worker cut=17 acquired sem state.status=running
+[12:38:05] _worker cut=18 acquired sem state.status=running
+[12:38:06] _worker cut=19 acquired sem state.status=running
+[12:38:07] _worker cut=20 acquired sem state.status=running
+[12:38:17] _gen_safe cut=5 attempt=1 PRIMARY SUCCESS
+[12:38:24] _gen_safe cut=16 attempt=1 PRIMARY SUCCESS
+[12:38:39] _gen_safe cut=11 attempt=1 PRIMARY SUCCESS

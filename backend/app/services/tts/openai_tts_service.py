@@ -13,7 +13,8 @@ from typing import Optional
 import httpx
 
 from app.services.tts.base import BaseTTSService, _resolve_bins
-from app.config import OPENAI_API_KEY, TTS_MAX_DURATION, TTS_MIN_DURATION
+from app import config
+from app.config import TTS_MAX_DURATION, TTS_MIN_DURATION  # 상수는 고정이라 직접 import OK
 
 TTS_API_URL = "https://api.openai.com/v1/audio/speech"
 
@@ -28,7 +29,9 @@ class OpenAITTSService(BaseTTSService):
     async def generate(self, text: str, voice_id: str, output_path: str, speed: float = 1.0, voice_settings: Optional[dict] = None) -> dict:
         voice = voice_id if voice_id in self.VOICES else "alloy"
 
-        if not OPENAI_API_KEY:
+        # v1.1.63: UI 에서 바꾼 키가 즉시 반영되도록 매 호출마다 config 에서 읽음.
+        api_key = config.OPENAI_API_KEY
+        if not api_key:
             raise ValueError("OPENAI_API_KEY not set")
 
         body = {
@@ -49,7 +52,7 @@ class OpenAITTSService(BaseTTSService):
                     resp = await client.post(
                         TTS_API_URL,
                         headers={
-                            "Authorization": f"Bearer {OPENAI_API_KEY}",
+                            "Authorization": f"Bearer {api_key}",
                             "Content-Type": "application/json",
                         },
                         json=body,

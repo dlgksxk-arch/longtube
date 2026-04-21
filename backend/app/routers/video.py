@@ -80,6 +80,9 @@ def should_generate_ai_video(cut_number: int, selection: str, ai_first_n: int = 
     """
     if cut_number is None or cut_number < 1:
         return False
+    # v2.1.1: "none" → AI 영상 생성 완전 비활성화
+    if selection == "none":
+        return False
     # v1.1.55: 앞 N 컷은 무조건 AI — selection 보다 우선
     try:
         n = int(ai_first_n)
@@ -600,8 +603,10 @@ async def generate_all_videos(project_id: str, db: Session = Depends(get_db)):
 
     video_model = project.config.get("video_model", "ffmpeg-kenburns")
     aspect_ratio = project.config.get("aspect_ratio", "16:9")
-    selection = (project.config or {}).get("video_target_selection", "all")
-    ai_first_n = int((project.config or {}).get("ai_video_first_n", 5) or 0)
+    # v2.1.1: enable_ai_video=False → 모든 컷 Ken Burns 폴백
+    enable_ai_video = bool((project.config or {}).get("enable_ai_video", True))
+    selection = (project.config or {}).get("video_target_selection", "all") if enable_ai_video else "none"
+    ai_first_n = int((project.config or {}).get("ai_video_first_n", 5) or 0) if enable_ai_video else 0
     total_cuts = len(cuts)
 
     primary_service = get_video_service(video_model)
@@ -790,8 +795,9 @@ async def generate_all_videos_async(project_id: str, db: Session = Depends(get_d
             proj_config = dict(proj.config or {})
             video_model = proj_config.get("video_model", "ffmpeg-kenburns")
             aspect_ratio = proj_config.get("aspect_ratio", "16:9")
-            selection = proj_config.get("video_target_selection", "all")
-            ai_first_n = int(proj_config.get("ai_video_first_n", 5) or 0)
+            enable_ai_video = bool(proj_config.get("enable_ai_video", True))
+            selection = proj_config.get("video_target_selection", "all") if enable_ai_video else "none"
+            ai_first_n = int(proj_config.get("ai_video_first_n", 5) or 0) if enable_ai_video else 0
 
             print(
                 f"[video-async] START project={project_id} model={video_model} "
@@ -1072,6 +1078,27 @@ async def generate_all_videos_async(project_id: str, db: Session = Depends(get_d
                             f"[video-async] interlude auto-compose FAILED "
                             f"(non-fatal): {ie}\n{traceback.format_exc()}"
                         )
+
+                # v2.1.1: 영상 생성 완료 후 자동 렌더링 (자막 번인 포함)
+                _auto_render_log = str(DATA_DIR / project_id / "auto_render.log")
+                try:
+                    from app.routers.subtitle import render_video_with_subtitles
+                    from app.models.database import SessionLocal
+                    with open(_auto_render_log, "w") as _lf:
+                        _lf.write("auto-render START\n")
+                    render_db = SessionLocal()
+                    try:
+                        result = await render_video_with_subtitles(project_id, db=render_db)
+                        with open(_auto_render_log, "a") as _lf:
+                            _lf.write(f"auto-render DONE: {result}\n")
+                    finally:
+                        render_db.close()
+                except Exception as re:
+                    import traceback
+                    tb = traceback.format_exc()
+                    with open(_auto_render_log, "a") as _lf:
+                        _lf.write(f"auto-render FAILED: {re}\n{tb}\n")
+                    print(f"[video-async] auto-render FAILED (non-fatal): {re}")
             else:
                 ss["5"] = "failed"
                 proj.step_states = ss
@@ -1163,8 +1190,9 @@ async def resume_videos_async(project_id: str, db: Session = Depends(get_db)):
             proj_config = dict(proj.config or {})
             video_model = proj_config.get("video_model", "ffmpeg-kenburns")
             aspect_ratio = proj_config.get("aspect_ratio", "16:9")
-            selection = proj_config.get("video_target_selection", "all")
-            ai_first_n = int(proj_config.get("ai_video_first_n", 5) or 0)
+            enable_ai_video = bool(proj_config.get("enable_ai_video", True))
+            selection = proj_config.get("video_target_selection", "all") if enable_ai_video else "none"
+            ai_first_n = int(proj_config.get("ai_video_first_n", 5) or 0) if enable_ai_video else 0
 
             print(
                 f"[video-resume] START project={project_id} model={video_model} "
@@ -1405,6 +1433,27 @@ async def resume_videos_async(project_id: str, db: Session = Depends(get_db)):
                         f"[video-resume] interlude auto-compose FAILED "
                         f"(non-fatal): {ie}\n{traceback.format_exc()}"
                     )
+
+                # v2.1.1: 영상 생성 완료 후 자동 렌더링 (자막 번인 포함)
+                _auto_render_log = str(DATA_DIR / project_id / "auto_render.log")
+                try:
+                    from app.routers.subtitle import render_video_with_subtitles
+                    from app.models.database import SessionLocal
+                    with open(_auto_render_log, "w") as _lf:
+                        _lf.write("auto-render START (resume)\n")
+                    render_db = SessionLocal()
+                    try:
+                        result = await render_video_with_subtitles(project_id, db=render_db)
+                        with open(_auto_render_log, "a") as _lf:
+                            _lf.write(f"auto-render DONE: {result}\n")
+                    finally:
+                        render_db.close()
+                except Exception as re:
+                    import traceback
+                    tb = traceback.format_exc()
+                    with open(_auto_render_log, "a") as _lf:
+                        _lf.write(f"auto-render FAILED: {re}\n{tb}\n")
+                    print(f"[video-resume] auto-render FAILED (non-fatal): {re}")
             else:
                 ss["5"] = "failed"
                 proj.step_states = ss

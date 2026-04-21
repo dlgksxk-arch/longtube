@@ -355,6 +355,47 @@ class FFmpegService(BaseVideoService):
         return output_path
 
     @staticmethod
+    async def prepend_silent_fade_in(
+        input_path: str,
+        output_path: str,
+        silent_seconds: float = 0.5,
+        fade_seconds: float = 0.15,
+        resolution: str = "1920x1080",
+    ) -> str:
+        """영상 맨 앞에 ``silent_seconds`` 초의 무음 + 정지 프레임을 붙이고,
+        그 중 처음 ``fade_seconds`` 초 동안 검정→첫 프레임 페이드 인 한다.
+
+        v1.1.71: 롱폼 시작의 "재생 누르자마자 바로 본문이 때리는" 어색함을
+        완화. 0.5 초 뜸을 들여 시청자가 화면에 안착하도록 유도.
+
+        비디오: `tpad=start_duration=SILENT:start_mode=clone` 로 첫 프레임을
+        앞으로 SILENT 초만큼 복제 + `fade=t=in:st=0:d=FADE` 로 검정→프레임
+        페이드. FADE 이후 (SILENT - FADE) 초는 첫 프레임 그대로 정지.
+        오디오: `adelay=MS|MS` 로 전단에 MS 만큼 무음을 삽입 (오디오 delay).
+        """
+        pad_wh = resolution.replace("x", ":")
+        adelay_ms = int(round(silent_seconds * 1000))
+        vf = (
+            f"scale={resolution}:force_original_aspect_ratio=decrease,"
+            f"pad={pad_wh}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30,"
+            f"tpad=start_duration={silent_seconds}:start_mode=clone,"
+            f"fade=t=in:st=0:d={fade_seconds}"
+        )
+        af = f"adelay={adelay_ms}|{adelay_ms}"
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", input_path,
+            "-vf", vf,
+            "-af", af,
+            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "20",
+            "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
+            output_path,
+        ]
+        await FFmpegService._run_ffmpeg(cmd, timeout=600.0)
+        return output_path
+
+    @staticmethod
     async def burn_subtitles(video_path: str, subtitle_path: str, output_path: str) -> str:
         """영상에 자막 삽입"""
         # libass on Windows resolves the ASS file path relative to cwd. Pass

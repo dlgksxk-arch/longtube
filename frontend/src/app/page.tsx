@@ -206,6 +206,21 @@ export default function Dashboard() {
                     />
                   </div>
                 )}
+                {/* v1.1.64: 파이프라인 사용 단계 배지 */}
+                {s.used_in_steps && s.used_in_steps.length > 0 && (
+                  <div className="mt-1.5 flex flex-wrap gap-1">
+                    {s.used_in_steps.map((u) => (
+                      <span
+                        key={u.step}
+                        title={`${u.label} 단계에서 사용 — ${u.models.join(", ")}`}
+                        className="inline-flex items-center gap-0.5 px-1.5 py-[1px] rounded border border-border bg-bg-tertiary text-[9px] text-gray-300"
+                      >
+                        <span className="text-[8px] text-gray-500">{u.step}</span>
+                        <span>{u.label}</span>
+                      </span>
+                    ))}
+                  </div>
+                )}
               </button>
             );
           })}

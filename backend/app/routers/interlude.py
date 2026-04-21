@@ -395,35 +395,76 @@ async def build_interlude_sequence(
     if not (opening or intermission or ending):
         return {"status": "skipped", "reason": "no interlude clips uploaded"}
 
-    # 컷 클립과 업로드 영상은 코덱/해상도가 다를 수 있다. merge_videos 는 우선
-    # stream copy 로 이어붙이려 하고 실패하면 재인코딩하도록 되어 있는데, 이
-    # 호환성 문제는 FFmpegService.merge_videos 쪽에서 처리한다. 여기서는
-    # 시퀀스만 구성한다.
-    sequence: list[str] = []
-    if opening:
-        sequence.append(opening)
+    # 컷 클립과 업로드 영상은 코덱/해상도가 다를 수 있다.
+    # v2.1.1: 오프닝 뒤 / 엔딩 앞에 0.5초 크로스페이드 적용.
+    # 1) 본편 시퀀스 구성
+    body_sequence: list[str] = []
 
     accumulated = 0.0
     for idx, (path, dur) in enumerate(cut_entries):
-        sequence.append(path)
+        body_sequence.append(path)
         accumulated += dur
         is_last = idx == len(cut_entries) - 1
         if intermission and not is_last and accumulated >= every:
-            sequence.append(intermission)
+            body_sequence.append(intermission)
             accumulated = 0.0
 
-    if ending:
-        sequence.append(ending)
+    if not body_sequence:
+        return {"status": "skipped", "reason": "no body clips"}
 
-    output_path = _output_dir(project_id) / "final_with_interludes.mp4"
+    # 2) 본편을 먼저 stream copy 병합
+    output_dir = _output_dir(project_id)
+    body_path = str(output_dir / "body_merged.mp4")
     ff = FFmpegService()
-    await ff.merge_videos(sequence, str(output_path))
+    await ff.merge_videos(body_sequence, body_path)
+
+    # 3) 오프닝 + 본편을 크로스페이드로 이어붙이기
+    FADE_SEC = 0.5
+    aspect_ratio = (project.config or {}).get("aspect_ratio", "16:9")
+    if aspect_ratio == "9:16":
+        resolution = "1080x1920"
+    elif aspect_ratio == "1:1":
+        resolution = "1080x1080"
+    else:
+        resolution = "1920x1080"
+
+    current = body_path
+    if opening:
+        opening_body_path = str(output_dir / "opening_body.mp4")
+        await ff.merge_with_crossfade(
+            opening, current, opening_body_path,
+            fade_seconds=FADE_SEC, resolution=resolution,
+        )
+        current = opening_body_path
+
+    # 4) 현재까지 결과 + 엔딩을 크로스페이드로 이어붙이기
+    if ending:
+        with_ending_path = str(output_dir / "with_ending.mp4")
+        await ff.merge_with_crossfade(
+            current, ending, with_ending_path,
+            fade_seconds=FADE_SEC, resolution=resolution,
+        )
+        current = with_ending_path
+
+    # 5) 최종 파일 이름으로 이동
+    output_path = output_dir / "final_with_interludes.mp4"
+    import shutil as _shutil
+    _shutil.move(current, str(output_path))
+
+    # 임시 파일 정리
+    for tmp_name in ("body_merged.mp4", "opening_body.mp4", "with_ending.mp4"):
+        tmp = output_dir / tmp_name
+        if tmp.exists() and str(tmp) != str(output_path):
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
 
     return {
         "status": "composed",
         "project_id": project_id,
         "output_path": _to_rel(project_id, str(output_path)),
-        "total_clips": len(sequence),
+        "total_clips": len(body_sequence) + (1 if opening else 0) + (1 if ending else 0),
         "cuts_used": len(cut_entries),
         "opening_used": bool(opening),
         "intermission_used": bool(intermission),

@@ -7,7 +7,7 @@ import base64
 from pathlib import Path
 from typing import Optional
 from app.services.image.base import BaseImageService
-from app.config import OPENAI_API_KEY
+from app import config
 
 
 class OpenAIImageService(BaseImageService):
@@ -33,7 +33,8 @@ class OpenAIImageService(BaseImageService):
         output_path: str,
         reference_images: Optional[list[str]] = None,
     ) -> str:
-        if not OPENAI_API_KEY:
+        # v1.1.63: UI 에서 바꾼 키가 즉시 반영되도록 매 호출마다 config 에서 읽음.
+        if not config.OPENAI_API_KEY:
             raise ValueError("OPENAI_API_KEY not set")
 
         openai_model = self._model_map.get(self.model_id, "gpt-image-1")
@@ -55,7 +56,7 @@ class OpenAIImageService(BaseImageService):
     ) -> str:
         """Standard text-to-image generation."""
         headers = {
-            "Authorization": f"Bearer {OPENAI_API_KEY}",
+            "Authorization": f"Bearer {config.OPENAI_API_KEY}",
             "Content-Type": "application/json",
         }
 
@@ -122,7 +123,7 @@ class OpenAIImageService(BaseImageService):
         v1.1.54: 재시도 로직 추가 + /edits 3회 실패 시 표준 생성 폴백.
         """
         headers = {
-            "Authorization": f"Bearer {OPENAI_API_KEY}",
+            "Authorization": f"Bearer {config.OPENAI_API_KEY}",
         }
 
         # Build multipart form data

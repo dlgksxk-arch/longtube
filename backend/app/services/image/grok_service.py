@@ -11,7 +11,7 @@ v1.1.55: 모델명 grok-2-image → grok-imagine-image 변경 (xAI API 업데이
 import asyncio
 import httpx
 from app.services.image.base import BaseImageService
-from app.config import XAI_API_KEY
+from app import config
 
 XAI_BASE = "https://api.x.ai/v1"
 
@@ -28,13 +28,15 @@ class GrokImageService(BaseImageService):
         self.display_name = "Grok Imagine Image"
 
     async def generate(self, prompt: str, width: int, height: int, output_path: str, reference_images=None) -> str:
-        if not XAI_API_KEY:
+        # v1.1.63: UI 에서 바꾼 키가 즉시 반영되도록 매 호출마다 config 에서 읽음.
+        xai_key = config.XAI_API_KEY
+        if not xai_key:
             raise RuntimeError(
                 "XAI_API_KEY 환경변수가 설정돼 있지 않습니다. .env 에 XAI_API_KEY "
                 "를 넣거나 이미지 모델을 OpenAI (openai-image-1) 로 바꿔주세요."
             )
 
-        headers = {"Authorization": f"Bearer {XAI_API_KEY}", "Content-Type": "application/json"}
+        headers = {"Authorization": f"Bearer {xai_key}", "Content-Type": "application/json"}
         full_prompt = f"cinematic, high quality, {prompt}"
         if len(full_prompt) > _PROMPT_CHAR_LIMIT:
             full_prompt = full_prompt[: _PROMPT_CHAR_LIMIT - 3] + "..."

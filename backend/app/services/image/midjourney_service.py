@@ -4,7 +4,7 @@ NOTE: Midjourney 공식 API가 없으므로 프록시 서비스(예: goapi.ai, i
 """
 import httpx
 from app.services.image.base import BaseImageService
-from app.config import MIDJOURNEY_API_KEY
+from app import config
 
 
 class MidjourneyService(BaseImageService):
@@ -13,7 +13,8 @@ class MidjourneyService(BaseImageService):
         self.display_name = "Midjourney"
 
     async def generate(self, prompt: str, width: int, height: int, output_path: str, reference_images=None) -> str:
-        if not MIDJOURNEY_API_KEY:
+        # v1.1.63: UI 에서 바꾼 키가 즉시 반영되도록 매 호출마다 config 에서 읽음.
+        if not config.MIDJOURNEY_API_KEY:
             raise ValueError("Midjourney API key not configured. Set MIDJOURNEY_API_KEY in .env")
 
         # TODO: 프록시 서비스 선택 후 실제 구현

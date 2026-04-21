@@ -35,6 +35,8 @@ DEFAULT_CONFIG = {
     "script_model": "claude-sonnet-4-6",
     "image_model": "openai-image-1",
     "video_model": "ffmpeg-kenburns",
+    # v2.1.1: AI 영상 생성 활성화 여부. False 면 모든 컷이 Ken Burns 폴백 (비용 0, GPU 0)
+    "enable_ai_video": True,
     # v1.1.36: 영상 제작 대상 — 선택되지 않은 컷은 ffmpeg-kenburns 폴백(비용 0)
     # "all" | "every_3" | "every_4" | "every_5" | "character_only"
     "video_target_selection": "all",
@@ -48,7 +50,7 @@ DEFAULT_CONFIG = {
     "tts_voice_id": "alloy",
     # 음성 속도: 1.0=기본, <1.0=느리게, >1.0=빠르게.
     # OpenAI TTS: 0.25~4.0, ElevenLabs: 0.7~1.2 에서 clamp.
-    "tts_speed": 0.9,
+    "tts_speed": 1.0,
     "language": "ko",
     "auto_pause_after_step": True,
     # v1.1.55: YouTube 공개 범위 — 프리셋 설정에서 관리

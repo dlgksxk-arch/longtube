@@ -392,6 +392,11 @@ function StepIcon({ state }: { state: "done" | "active" | "pending" | "failed" }
 
 export default function LivePage() {
   const [task, setTask] = useState<OneClickTask | null>(null);
+  // v1.1.65: 동시/대기 중 task 전체 목록. 화면에 "진행 중 N건" 스트립으로 노출.
+  // 백엔드는 _RUN_LOCK 으로 한 번에 1건만 실행하지만 사용자가 여러 건을 시작하거나
+  // 큐 스케줄러(_queue_loop)가 여러 채널을 동시에 fire 하면 prepared/queued/running
+  // 이 여러 개 쌓일 수 있다. 기존 .find() 1건 표시로는 가려지던 상태.
+  const [activeTasks, setActiveTasks] = useState<OneClickTask[]>([]);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [pollFails, setPollFails] = useState(0);
@@ -401,6 +406,8 @@ export default function LivePage() {
   const lastPctChangeRef = useRef<number>(Date.now());
   const lastPctValueRef = useRef<number>(0);
   const [stalled, setStalled] = useState(false);
+  // v2.1.2: 서버 측 로그 동기화 카운터
+  const serverLogCountRef = useRef<number>(0);
 
   const timeStr = () =>
     new Date().toLocaleTimeString("ko-KR", {
@@ -424,12 +431,24 @@ export default function LivePage() {
       .list()
       .then(({ tasks }) => {
         if (cancelled) return;
-        const active = (tasks || []).find((t) =>
-          ["prepared", "queued", "running"].includes(t.status),
-        );
+        // v1.1.65: running 을 맨 앞으로 정렬 — "진행 중" 을 우선 선택/표시
+        const activeList = (tasks || [])
+          .filter((t) => ["prepared", "queued", "running"].includes(t.status))
+          .sort((a, b) => {
+            const order: Record<string, number> = { running: 0, queued: 1, prepared: 2 };
+            return (order[a.status] ?? 9) - (order[b.status] ?? 9);
+          });
+        setActiveTasks(activeList);
+        const active = activeList[0];
         if (active) {
           setTask(active);
           addLog(`[시스템] 활성 태스크 감지: ${active.topic}`, "info");
+          if (activeList.length > 1) {
+            addLog(
+              `[시스템] 동시 진행/대기 중 ${activeList.length}건 — 상단 스트립에서 전환 가능`,
+              "warn",
+            );
+          }
           if (active.current_step_name) {
             addLog(
               `[${active.current_step_name}] 진행 중 (${Math.round(active.progress_pct)}%)`,
@@ -558,6 +577,22 @@ export default function LivePage() {
           }
         }
 
+        // v2.1.2: 서버 측 제작 로그 (task.logs) 를 프론트 로그에 합류
+        if (fresh.logs && fresh.logs.length > 0) {
+          const serverLogs = fresh.logs;
+          const lastSynced = serverLogCountRef.current;
+          if (serverLogs.length > lastSynced) {
+            const newEntries = serverLogs.slice(lastSynced);
+            for (const sl of newEntries) {
+              const lvl: LogEntry["level"] =
+                sl.level === "error" ? "error" :
+                sl.level === "warn" ? "warn" : "info";
+              addLog(`[서버] ${sl.msg}`, lvl);
+            }
+            serverLogCountRef.current = serverLogs.length;
+          }
+        }
+
         // 멈춤 감지: 진행률이 90초 이상 변하지 않으면 경고
         if (fresh.progress_pct !== lastPctValueRef.current) {
           lastPctValueRef.current = fresh.progress_pct;
@@ -603,6 +638,48 @@ export default function LivePage() {
       const t = await oneclickApi.cancel(task.task_id);
       setTask(t);
     } catch {}
+  };
+
+  // v1.1.70: 전체 비상 정지 — Python asyncio + Redis cancel + ComfyUI /interrupt + /queue clear
+  const [emergencyStopping, setEmergencyStopping] = useState(false);
+  const handleEmergencyStop = async () => {
+    if (
+      !confirm(
+        "서버에서 실행/대기 중인 모든 작업을 강제 중단합니다.\n" +
+          "ComfyUI 에 남아있는 현재 prompt + 대기 큐도 함께 비웁니다.\n" +
+          "생성된 파일은 삭제되지 않습니다. 계속하시겠습니까?",
+      )
+    )
+      return;
+    setEmergencyStopping(true);
+    try {
+      const r = await oneclickApi.emergencyStop();
+      addLog(
+        `[비상 정지] 태스크 ${r.stopped_count}건 중단 · ComfyUI interrupt=${r.comfyui_interrupt} · queue clear=${r.comfyui_queue_cleared}`,
+        "warn",
+      );
+      if (r.errors?.length) {
+        for (const e of r.errors) addLog(`[비상 정지 경고] ${e}`, "error");
+      }
+      // 목록 재조회
+      const { tasks } = await oneclickApi.list();
+      const activeList = (tasks || [])
+        .filter((t) => ["prepared", "queued", "running"].includes(t.status))
+        .sort((a, b) => {
+          const order: Record<string, number> = { running: 0, queued: 1, prepared: 2 };
+          return (order[a.status] ?? 9) - (order[b.status] ?? 9);
+        });
+      setActiveTasks(activeList);
+      if (task) {
+        try {
+          const fresh = await oneclickApi.get(task.task_id);
+          setTask(fresh);
+        } catch {}
+      }
+    } catch (e: any) {
+      addLog(`[오류] 비상 정지 실패: ${e?.message || e}`, "error");
+    }
+    setEmergencyStopping(false);
   };
 
   // v1.1.52: 특정 단계 생성물 삭제
@@ -663,12 +740,21 @@ export default function LivePage() {
     setLoading(true);
     try {
       const { tasks } = await oneclickApi.list();
-      const active = (tasks || []).find((t) =>
-        ["prepared", "queued", "running"].includes(t.status),
-      );
+      // v1.1.65: running 우선 정렬로 activeTasks 갱신
+      const activeList = (tasks || [])
+        .filter((t) => ["prepared", "queued", "running"].includes(t.status))
+        .sort((a, b) => {
+          const order: Record<string, number> = { running: 0, queued: 1, prepared: 2 };
+          return (order[a.status] ?? 9) - (order[b.status] ?? 9);
+        });
+      setActiveTasks(activeList);
+      const active = activeList[0];
       if (active) {
         setTask(active);
         addLog(`[시스템] 태스크 재연결: ${active.topic} (${Math.round(active.progress_pct)}%)`, "info");
+        if (activeList.length > 1) {
+          addLog(`[시스템] 동시 진행/대기 중인 작업 ${activeList.length}건 감지`, "warn");
+        }
         lastPctValueRef.current = active.progress_pct;
         lastPctChangeRef.current = Date.now();
         setPollFails(0);
@@ -681,6 +767,33 @@ export default function LivePage() {
     }
     setLoading(false);
   };
+
+  // v1.1.65: 리스트 자동 새로고침 — 5초마다 activeTasks 만 갱신(상세 뷰엔 영향 X).
+  // 기존 2초 단일-task 폴링은 그대로 유지되고, 이건 별도 주기로 전체 목록만 점검해
+  // 새로 생긴 queued/prepared 를 스트립에 반영한다.
+  useEffect(() => {
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const { tasks } = await oneclickApi.list();
+        if (cancelled) return;
+        const activeList = (tasks || [])
+          .filter((t) => ["prepared", "queued", "running"].includes(t.status))
+          .sort((a, b) => {
+            const order: Record<string, number> = { running: 0, queued: 1, prepared: 2 };
+            return (order[a.status] ?? 9) - (order[b.status] ?? 9);
+          });
+        setActiveTasks(activeList);
+      } catch {
+        // 네트워크 실패는 단일-task 폴링 쪽에서 이미 감지/로그. 여기선 조용히 무시.
+      }
+    };
+    const id = setInterval(tick, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, []);
 
   const isRunning =
     task && ["prepared", "queued", "running"].includes(task.status);
@@ -794,6 +907,16 @@ export default function LivePage() {
               초기화
             </button>
           )}
+          {/* v1.1.70: 비상 정지 — 서버 + ComfyUI 전체 중단. 항상 표시. */}
+          <button
+            onClick={handleEmergencyStop}
+            disabled={emergencyStopping}
+            className="flex items-center gap-1.5 text-xs font-semibold bg-red-600 text-white hover:bg-red-500 border border-red-500/60 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            title="서버 + ComfyUI 의 모든 작업을 강제 중단합니다. 생성 파일은 보존."
+          >
+            <AlertTriangle size={14} className={emergencyStopping ? "animate-pulse" : ""} />
+            {emergencyStopping ? "중단 중..." : "모든 작업 중단"}
+          </button>
         </div>
         {isRunning && task && (
           <div className="flex items-center gap-2.5 bg-amber-400/10 text-amber-400 text-sm font-semibold rounded-lg px-4 py-2">
@@ -817,6 +940,93 @@ export default function LivePage() {
           </div>
         )}
       </div>
+
+      {/* v1.1.66: 대기열 스트립 — 항상 표시. 다음 5개까지. 비어있으면 플레이스홀더.
+          백엔드 _RUN_LOCK 으로 실제 실행은 1건씩 직렬이므로 prepared/queued 는 사실상
+          대기열. 칩 클릭 시 상세 뷰 전환. */}
+      {(() => {
+        const MAX_VISIBLE = 5;
+        const running = activeTasks.filter((t) => t.status === "running");
+        const waiting = activeTasks.filter(
+          (t) => t.status === "queued" || t.status === "prepared",
+        );
+        const visible = activeTasks.slice(0, MAX_VISIBLE);
+        const overflow = Math.max(0, activeTasks.length - MAX_VISIBLE);
+        return (
+          <div className="flex-shrink-0 bg-bg-secondary border border-border rounded-xl p-3">
+            <div className="flex items-center gap-2 mb-2 flex-wrap">
+              <Activity size={14} className="text-gray-400" />
+              <span className="text-xs font-semibold text-gray-300">대기열</span>
+              <span className="text-[10px] text-gray-500">
+                진행 {running.length} · 대기 {waiting.length}
+                {activeTasks.length > 0
+                  ? ` · 총 ${activeTasks.length}건 (최대 ${MAX_VISIBLE}개 표시)`
+                  : ""}
+              </span>
+              <span className="text-[10px] text-gray-600">
+                · 한 번에 1건만 실행 (백엔드 직렬화)
+              </span>
+            </div>
+            {activeTasks.length === 0 ? (
+              <div className="text-[11px] text-gray-500 px-1 py-1.5">비어있음</div>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {visible.map((t) => {
+                  const selected = task?.task_id === t.task_id;
+                  const statusClass =
+                    t.status === "running"
+                      ? "border-amber-400/60 text-amber-300 bg-amber-400/10"
+                      : t.status === "queued"
+                        ? "border-gray-600 text-gray-300 bg-bg-tertiary"
+                        : "border-sky-500/50 text-sky-300 bg-sky-500/10";
+                  const statusLabel =
+                    t.status === "running"
+                      ? "진행"
+                      : t.status === "queued"
+                        ? "대기"
+                        : "준비";
+                  return (
+                    <button
+                      key={t.task_id}
+                      onClick={() => {
+                        setTask(t);
+                        lastPctValueRef.current = t.progress_pct;
+                        lastPctChangeRef.current = Date.now();
+                        setStalled(false);
+                      }}
+                      className={`flex items-center gap-1.5 text-xs rounded-lg px-2.5 py-1 border transition-colors hover:opacity-80 ${statusClass} ${
+                        selected ? "ring-2 ring-accent-primary" : ""
+                      }`}
+                      title={`${t.topic} — ${Math.round(t.progress_pct)}%${
+                        t.current_step_name ? ` · ${t.current_step_name}` : ""
+                      }`}
+                    >
+                      <span className="text-[9px] font-bold uppercase tracking-wide">
+                        {statusLabel}
+                      </span>
+                      {t.channel ? (
+                        <span className="text-[9px] text-gray-500">ch{t.channel}</span>
+                      ) : null}
+                      <span className="max-w-[240px] truncate">{t.topic}</span>
+                      <span className="text-[10px] text-gray-400 tabular-nums">
+                        {Math.round(t.progress_pct)}%
+                      </span>
+                    </button>
+                  );
+                })}
+                {overflow > 0 && (
+                  <span
+                    className="flex items-center text-[10px] text-gray-500 px-2 py-1"
+                    title={`화면엔 ${MAX_VISIBLE}개까지만 노출. 나머지 ${overflow}건은 가려져 있음`}
+                  >
+                    +{overflow} 건 더
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* 에러/멈춤 경고 배너 */}
       {isFailed && task?.error && (

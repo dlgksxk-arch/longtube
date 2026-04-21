@@ -136,15 +136,16 @@ async def generate_all_voices_async(project_id: str, db: Session = Depends(get_d
             voice_id = proj.config.get("tts_voice_id", "alloy")
             voice_preset = proj.config.get("tts_voice_preset", "ko-child-boy")
 
-            from app.config import ELEVENLABS_API_KEY, OPENAI_API_KEY
-            if tts_model == "elevenlabs" and not ELEVENLABS_API_KEY:
-                if OPENAI_API_KEY:
+            # v1.1.63: UI 에서 바꾼 키가 즉시 반영되도록 config 모듈 속성을 참조.
+            from app import config as app_config
+            if tts_model == "elevenlabs" and not app_config.ELEVENLABS_API_KEY:
+                if app_config.OPENAI_API_KEY:
                     tts_model = "openai-tts"
                     voice_id = "alloy"
                 else:
                     raise ValueError("No TTS API key configured (neither ElevenLabs nor OpenAI)")
 
-            if tts_model == "openai-tts" and not OPENAI_API_KEY:
+            if tts_model == "openai-tts" and not app_config.OPENAI_API_KEY:
                 raise ValueError("OPENAI_API_KEY not set for OpenAI TTS")
 
             tts_service = get_tts_service(tts_model)
@@ -290,9 +291,10 @@ async def resume_voices_async(project_id: str, db: Session = Depends(get_db)):
             voice_id = proj.config.get("tts_voice_id", "alloy")
             voice_preset = proj.config.get("tts_voice_preset", "ko-child-boy")
 
-            from app.config import ELEVENLABS_API_KEY, OPENAI_API_KEY
-            if tts_model == "elevenlabs" and not ELEVENLABS_API_KEY:
-                if OPENAI_API_KEY:
+            # v1.1.63: UI 에서 바꾼 키가 즉시 반영되도록 config 모듈 속성을 참조.
+            from app import config as app_config
+            if tts_model == "elevenlabs" and not app_config.ELEVENLABS_API_KEY:
+                if app_config.OPENAI_API_KEY:
                     tts_model = "openai-tts"
                     voice_id = "alloy"
 
@@ -471,9 +473,10 @@ async def preview_voice(
     voice_lang = pick("tts_voice_lang", "ko")
 
     # API key check — fallback to openai-tts if elevenlabs key is missing
-    from app.config import ELEVENLABS_API_KEY, OPENAI_API_KEY
-    if tts_model == "elevenlabs" and not ELEVENLABS_API_KEY:
-        if OPENAI_API_KEY:
+    # v1.1.63: UI 에서 바꾼 키가 즉시 반영되도록 config 모듈 속성을 참조.
+    from app import config as app_config
+    if tts_model == "elevenlabs" and not app_config.ELEVENLABS_API_KEY:
+        if app_config.OPENAI_API_KEY:
             tts_model = "openai-tts"
             voice_id = "alloy"
         else:

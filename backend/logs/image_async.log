@@ -2175,3 +2175,572 @@ For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/St
 [12:10:54] _gen_one cut=60 SUCCESS in 27.6s → C:\Users\Jevis\Desktop\longtube_net\projects\딸깍_전자레인지의_발명이야기_260416-1\images\cut_60.png
 [12:10:54] === all tasks gathered. done_count=60 ===
 [12:10:54] === post-check: 60/60 images on disk ===
+[16:55:27] >>> generate-async ENDPOINT HIT project=65552077
+[16:55:27] === generate_all_images project=65552077 model=comfyui-dreamshaper-xl-vector refs=1 chars=0 cut_specs=5 ===
+[16:55:27] _gen_one cut=1 call generate() refs=1 svc=ComfyUIImageService
+[16:55:42] _gen_one cut=1 SUCCESS in 14.5s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_1.png
+[16:55:42] _gen_one cut=2 call generate() refs=1 svc=ComfyUIImageService
+[16:55:53] _gen_one cut=2 SUCCESS in 11.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_2.png
+[16:55:53] _gen_one cut=3 call generate() refs=1 svc=ComfyUIImageService
+[16:56:04] _gen_one cut=3 SUCCESS in 11.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_3.png
+[16:56:04] _gen_one cut=4 call generate() refs=1 svc=ComfyUIImageService
+[16:56:16] _gen_one cut=4 SUCCESS in 11.4s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_4.png
+[16:56:16] _gen_one cut=5 call generate() refs=1 svc=ComfyUIImageService
+[16:56:27] _gen_one cut=5 SUCCESS in 11.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_5.png
+[16:56:27] === all tasks gathered. done_count=5 ===
+[16:56:27] === post-check: 5/5 images on disk ===
+[19:07:48] >>> generate-async ENDPOINT HIT project=65552077
+[19:07:48] === generate_all_images project=65552077 model=openai-image-1 refs=1 chars=0 cut_specs=5 ===
+[19:07:48] _gen_one cut=1 call generate() refs=1 svc=OpenAIImageService
+[19:07:48] _gen_one cut=2 call generate() refs=1 svc=OpenAIImageService
+[19:07:48] _gen_one cut=3 call generate() refs=1 svc=OpenAIImageService
+[19:07:48] _gen_one cut=4 call generate() refs=1 svc=OpenAIImageService
+[19:08:15] _gen_one cut=4 SUCCESS in 26.4s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_4.png
+[19:08:15] _gen_one cut=5 call generate() refs=1 svc=OpenAIImageService
+[19:08:18] _gen_one cut=1 SUCCESS in 30.1s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_1.png
+[19:08:18] _gen_one cut=2 SUCCESS in 30.6s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_2.png
+[19:08:19] _gen_one cut=3 SUCCESS in 31.1s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_3.png
+[19:08:43] _gen_one cut=5 SUCCESS in 28.6s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_5.png
+[19:08:43] === all tasks gathered. done_count=5 ===
+[19:08:43] === post-check: 5/5 images on disk ===
+[19:11:08] >>> generate-async ENDPOINT HIT project=65552077
+[19:11:08] === generate_all_images project=65552077 model=comfyui-dreamshaper-xl refs=1 chars=0 cut_specs=5 ===
+[19:11:08] _gen_one cut=1 call generate() refs=1 svc=ComfyUIImageService
+[19:11:28] _gen_one cut=1 SUCCESS in 20.4s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_1.png
+[19:11:28] _gen_one cut=2 call generate() refs=1 svc=ComfyUIImageService
+[19:11:40] _gen_one cut=2 SUCCESS in 11.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_2.png
+[19:11:40] _gen_one cut=3 call generate() refs=1 svc=ComfyUIImageService
+[19:11:51] _gen_one cut=3 SUCCESS in 11.4s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_3.png
+[19:11:51] _gen_one cut=4 call generate() refs=1 svc=ComfyUIImageService
+[19:12:02] _gen_one cut=4 SUCCESS in 11.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_4.png
+[19:12:02] _gen_one cut=5 call generate() refs=1 svc=ComfyUIImageService
+[19:12:14] _gen_one cut=5 SUCCESS in 11.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_5.png
+[19:12:14] === all tasks gathered. done_count=5 ===
+[19:12:14] === post-check: 5/5 images on disk ===
+[19:31:54] >>> generate-async ENDPOINT HIT project=65552077
+[19:31:54] === generate_all_images project=65552077 model=comfyui-dreamshaper-xl refs=1 chars=0 cut_specs=6 ===
+[19:31:54] _gen_one cut=1 call generate() refs=1 svc=ComfyUIImageService
+[19:32:16] _gen_one cut=1 SUCCESS in 22.0s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_1.png
+[19:32:16] _gen_one cut=2 call generate() refs=1 svc=ComfyUIImageService
+[19:32:27] _gen_one cut=2 SUCCESS in 11.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_2.png
+[19:32:27] _gen_one cut=3 call generate() refs=1 svc=ComfyUIImageService
+[19:32:38] _gen_one cut=3 SUCCESS in 11.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_3.png
+[19:32:39] _gen_one cut=4 call generate() refs=1 svc=ComfyUIImageService
+[19:32:50] _gen_one cut=4 SUCCESS in 11.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_4.png
+[19:32:50] _gen_one cut=5 call generate() refs=1 svc=ComfyUIImageService
+[19:33:01] _gen_one cut=5 SUCCESS in 11.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_5.png
+[19:33:01] _gen_one cut=6 call generate() refs=1 svc=ComfyUIImageService
+[19:33:12] _gen_one cut=6 SUCCESS in 11.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_6.png
+[19:33:12] === all tasks gathered. done_count=6 ===
+[19:33:12] === post-check: 6/6 images on disk ===
+[20:07:03] >>> generate-async ENDPOINT HIT project=65552077
+[20:07:03] === generate_all_images project=65552077 model=comfyui-dreamshaper-xl refs=1 chars=0 cut_specs=6 ===
+[20:07:03] _gen_one cut=1 call generate() refs=1 svc=ComfyUIImageService
+[20:07:23] _gen_one cut=1 SUCCESS in 20.5s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_1.png
+[20:07:23] _gen_one cut=2 call generate() refs=1 svc=ComfyUIImageService
+[20:07:35] _gen_one cut=2 SUCCESS in 11.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_2.png
+[20:07:35] _gen_one cut=3 call generate() refs=1 svc=ComfyUIImageService
+[20:07:46] _gen_one cut=3 SUCCESS in 11.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_3.png
+[20:07:46] _gen_one cut=4 call generate() refs=1 svc=ComfyUIImageService
+[20:14:37] >>> generate-async ENDPOINT HIT project=65552077
+[20:14:37] === generate_all_images project=65552077 model=comfyui-dreamshaper-xl refs=1 chars=0 cut_specs=6 ===
+[20:14:38] _gen_one cut=1 call generate() refs=1 svc=ComfyUIImageService
+[20:14:53] _gen_one cut=1 SUCCESS in 15.9s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_1.png
+[20:14:53] _gen_one cut=2 call generate() refs=1 svc=ComfyUIImageService
+[20:15:05] _gen_one cut=2 SUCCESS in 11.4s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_2.png
+[20:15:05] _gen_one cut=3 call generate() refs=1 svc=ComfyUIImageService
+[20:15:16] _gen_one cut=3 SUCCESS in 11.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_3.png
+[20:15:16] _gen_one cut=4 call generate() refs=1 svc=ComfyUIImageService
+[20:16:10] >>> generate-async ENDPOINT HIT project=65552077
+[20:16:10] === generate_all_images project=65552077 model=comfyui-dreamshaper-xl refs=1 chars=0 cut_specs=6 ===
+[20:16:10] _gen_one cut=1 call generate() refs=1 svc=ComfyUIImageService
+[20:16:22] _gen_one cut=1 SUCCESS in 11.4s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_1.png
+[20:16:22] _gen_one cut=2 call generate() refs=1 svc=ComfyUIImageService
+[20:16:33] _gen_one cut=2 SUCCESS in 11.2s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_2.png
+[20:16:33] _gen_one cut=3 call generate() refs=1 svc=ComfyUIImageService
+[20:16:44] _gen_one cut=3 SUCCESS in 11.4s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_3.png
+[20:16:44] _gen_one cut=4 call generate() refs=1 svc=ComfyUIImageService
+[20:16:56] _gen_one cut=4 SUCCESS in 11.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_4.png
+[20:16:56] _gen_one cut=5 call generate() refs=1 svc=ComfyUIImageService
+[20:17:07] _gen_one cut=5 SUCCESS in 11.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_5.png
+[20:17:07] _gen_one cut=6 call generate() refs=1 svc=ComfyUIImageService
+[20:17:18] _gen_one cut=6 SUCCESS in 11.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_6.png
+[20:17:18] === all tasks gathered. done_count=6 ===
+[20:17:18] === post-check: 6/6 images on disk ===
+[20:20:41] >>> generate-async ENDPOINT HIT project=65552077
+[20:20:41] === generate_all_images project=65552077 model=comfyui-dreamshaper-xl refs=1 chars=0 cut_specs=6 ===
+[20:20:41] _gen_one cut=1 call generate() refs=1 svc=ComfyUIImageService
+[20:20:55] _gen_one cut=1 SUCCESS in 14.4s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_1.png
+[20:20:55] _gen_one cut=2 call generate() refs=1 svc=ComfyUIImageService
+[20:21:07] _gen_one cut=2 SUCCESS in 11.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_2.png
+[20:21:07] _gen_one cut=3 call generate() refs=1 svc=ComfyUIImageService
+[20:21:18] _gen_one cut=3 SUCCESS in 11.4s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_3.png
+[20:21:18] _gen_one cut=4 call generate() refs=1 svc=ComfyUIImageService
+[20:21:29] _gen_one cut=4 SUCCESS in 11.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_4.png
+[20:21:29] _gen_one cut=5 call generate() refs=1 svc=ComfyUIImageService
+[20:21:41] _gen_one cut=5 SUCCESS in 11.2s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_5.png
+[20:21:41] _gen_one cut=6 call generate() refs=1 svc=ComfyUIImageService
+[20:21:52] _gen_one cut=6 SUCCESS in 11.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_6.png
+[20:21:52] === all tasks gathered. done_count=6 ===
+[20:21:52] === post-check: 6/6 images on disk ===
+[20:40:23] >>> generate-async ENDPOINT HIT project=65552077
+[20:40:23] === generate_all_images project=65552077 model=openai-image-1 refs=1 chars=0 cut_specs=6 ===
+[20:40:23] _gen_one cut=1 call generate() refs=1 svc=OpenAIImageService
+[20:40:23] _gen_one cut=2 call generate() refs=1 svc=OpenAIImageService
+[20:40:24] _gen_one cut=3 call generate() refs=1 svc=OpenAIImageService
+[20:40:24] _gen_one cut=4 call generate() refs=1 svc=OpenAIImageService
+[20:40:51] _gen_one cut=4 SUCCESS in 27.0s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_4.png
+[20:40:51] _gen_one cut=5 call generate() refs=1 svc=OpenAIImageService
+[20:40:52] _gen_one cut=2 SUCCESS in 28.1s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_2.png
+[20:40:52] _gen_one cut=6 call generate() refs=1 svc=OpenAIImageService
+[20:40:53] _gen_one cut=3 SUCCESS in 29.2s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_3.png
+[20:40:53] _gen_one cut=1 SUCCESS in 30.0s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_1.png
+[20:41:18] _gen_one cut=5 SUCCESS in 27.1s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_5.png
+[20:41:20] _gen_one cut=6 SUCCESS in 28.5s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_6.png
+[20:41:20] === all tasks gathered. done_count=6 ===
+[20:41:20] === post-check: 6/6 images on disk ===
+[20:54:04] >>> generate-async ENDPOINT HIT project=65552077
+[20:54:04] === generate_all_images project=65552077 model=openai-image-1 refs=1 chars=0 cut_specs=60 ===
+[20:54:04] _gen_one cut=1 call generate() refs=1 svc=OpenAIImageService
+[20:54:04] _gen_one cut=2 call generate() refs=1 svc=OpenAIImageService
+[20:54:04] _gen_one cut=3 call generate() refs=1 svc=OpenAIImageService
+[20:54:04] _gen_one cut=4 call generate() refs=1 svc=OpenAIImageService
+[20:54:31] _gen_one cut=4 SUCCESS in 26.2s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_4.png
+[20:54:31] _gen_one cut=5 call generate() refs=1 svc=OpenAIImageService
+[20:54:32] _gen_one cut=2 SUCCESS in 27.9s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_2.png
+[20:54:32] _gen_one cut=6 call generate() refs=1 svc=OpenAIImageService
+[20:54:32] _gen_one cut=1 SUCCESS in 28.5s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_1.png
+[20:54:32] _gen_one cut=7 call generate() refs=1 svc=OpenAIImageService
+[20:54:39] _gen_one cut=3 SUCCESS in 35.0s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_3.png
+[20:54:39] _gen_one cut=8 call generate() refs=1 svc=OpenAIImageService
+[20:55:00] _gen_one cut=5 SUCCESS in 29.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_5.png
+[20:55:00] _gen_one cut=9 call generate() refs=1 svc=OpenAIImageService
+[20:55:07] _gen_one cut=6 SUCCESS in 35.2s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_6.png
+[20:55:07] _gen_one cut=10 call generate() refs=1 svc=OpenAIImageService
+[20:55:07] _gen_one cut=7 SUCCESS in 35.2s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_7.png
+[20:55:07] _gen_one cut=11 call generate() refs=1 svc=OpenAIImageService
+[20:55:15] _gen_one cut=8 SUCCESS in 35.8s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_8.png
+[20:55:15] _gen_one cut=12 call generate() refs=1 svc=OpenAIImageService
+[20:55:30] _gen_one cut=9 SUCCESS in 30.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_9.png
+[20:55:30] _gen_one cut=13 call generate() refs=1 svc=OpenAIImageService
+[20:55:35] _gen_one cut=11 SUCCESS in 28.0s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_11.png
+[20:55:35] _gen_one cut=14 call generate() refs=1 svc=OpenAIImageService
+[20:55:37] _gen_one cut=10 SUCCESS in 30.1s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_10.png
+[20:55:37] _gen_one cut=15 call generate() refs=1 svc=OpenAIImageService
+[20:55:43] _gen_one cut=12 SUCCESS in 27.8s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_12.png
+[20:55:43] _gen_one cut=16 call generate() refs=1 svc=OpenAIImageService
+[20:56:03] _gen_one cut=14 SUCCESS in 27.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_14.png
+[20:56:03] _gen_one cut=17 call generate() refs=1 svc=OpenAIImageService
+[20:56:05] _gen_one cut=13 SUCCESS in 34.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_13.png
+[20:56:05] _gen_one cut=18 call generate() refs=1 svc=OpenAIImageService
+[20:56:09] _gen_one cut=15 SUCCESS in 31.6s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_15.png
+[20:56:09] _gen_one cut=19 call generate() refs=1 svc=OpenAIImageService
+[20:56:13] _gen_one cut=16 SUCCESS in 30.5s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_16.png
+[20:56:13] _gen_one cut=20 call generate() refs=1 svc=OpenAIImageService
+[20:56:32] _gen_one cut=17 SUCCESS in 29.7s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_17.png
+[20:56:32] _gen_one cut=21 call generate() refs=1 svc=OpenAIImageService
+[20:56:33] _gen_one cut=18 SUCCESS in 28.1s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_18.png
+[20:56:33] _gen_one cut=22 call generate() refs=1 svc=OpenAIImageService
+[20:56:39] _gen_one cut=19 SUCCESS in 30.0s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_19.png
+[20:56:39] _gen_one cut=23 call generate() refs=1 svc=OpenAIImageService
+[20:56:42] _gen_one cut=20 SUCCESS in 28.2s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_20.png
+[20:56:42] _gen_one cut=24 call generate() refs=1 svc=OpenAIImageService
+[20:56:59] _gen_one cut=21 SUCCESS in 26.8s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_21.png
+[20:56:59] _gen_one cut=25 call generate() refs=1 svc=OpenAIImageService
+[20:57:01] _gen_one cut=22 SUCCESS in 28.1s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_22.png
+[20:57:01] _gen_one cut=26 call generate() refs=1 svc=OpenAIImageService
+[20:57:07] _gen_one cut=23 SUCCESS in 28.1s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_23.png
+[20:57:07] _gen_one cut=27 call generate() refs=1 svc=OpenAIImageService
+[20:57:10] _gen_one cut=24 SUCCESS in 28.6s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_24.png
+[20:57:10] _gen_one cut=28 call generate() refs=1 svc=OpenAIImageService
+[20:57:28] _gen_one cut=26 SUCCESS in 27.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_26.png
+[20:57:28] _gen_one cut=29 call generate() refs=1 svc=OpenAIImageService
+[20:57:34] _gen_one cut=25 SUCCESS in 34.5s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_25.png
+[20:57:34] _gen_one cut=30 call generate() refs=1 svc=OpenAIImageService
+[20:57:37] _gen_one cut=27 SUCCESS in 30.1s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_27.png
+[20:57:37] _gen_one cut=31 call generate() refs=1 svc=OpenAIImageService
+[20:57:43] _gen_one cut=28 SUCCESS in 32.9s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_28.png
+[20:57:43] _gen_one cut=32 call generate() refs=1 svc=OpenAIImageService
+[21:22:40] >>> resume-async ENDPOINT HIT project=65552077
+[21:22:40] resume-async pending=32 of 60 project=65552077
+[21:22:40] resume _run service=OpenAIImageService model=openai-image-1 aspect=16:9
+[21:22:40] resume _run pending=32 refs=1 chars=0
+[21:22:40] resume _gen_one cut=29 call generate() refs=1
+[21:22:40] resume _gen_one cut=30 call generate() refs=1
+[21:22:40] resume _gen_one cut=31 call generate() refs=1
+[21:22:40] resume _gen_one cut=32 call generate() refs=1
+[21:23:06] resume _gen_one cut=30 SUCCESS in 25.7s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_30.png
+[21:23:06] resume _gen_one cut=33 call generate() refs=1
+[21:23:09] resume _gen_one cut=31 SUCCESS in 29.1s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_31.png
+[21:23:09] resume _gen_one cut=34 call generate() refs=1
+[21:23:10] resume _gen_one cut=29 SUCCESS in 29.9s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_29.png
+[21:23:10] resume _gen_one cut=35 call generate() refs=1
+[21:23:11] resume _gen_one cut=32 SUCCESS in 30.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_32.png
+[21:23:11] resume _gen_one cut=36 call generate() refs=1
+[21:23:36] resume _gen_one cut=33 SUCCESS in 30.0s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_33.png
+[21:23:36] resume _gen_one cut=37 call generate() refs=1
+[21:23:36] resume _gen_one cut=34 SUCCESS in 26.7s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_34.png
+[21:23:36] resume _gen_one cut=38 call generate() refs=1
+[21:23:36] resume _gen_one cut=35 SUCCESS in 26.7s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_35.png
+[21:23:36] resume _gen_one cut=39 call generate() refs=1
+[21:23:41] resume _gen_one cut=36 SUCCESS in 29.9s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_36.png
+[21:23:41] resume _gen_one cut=40 call generate() refs=1
+[21:23:58] resume _gen_one cut=38 SUCCESS in 21.7s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_38.png
+[21:23:58] resume _gen_one cut=41 call generate() refs=1
+[21:24:04] resume _gen_one cut=37 SUCCESS in 28.4s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_37.png
+[21:24:04] resume _gen_one cut=42 call generate() refs=1
+[21:24:05] resume _gen_one cut=39 SUCCESS in 28.5s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_39.png
+[21:24:05] resume _gen_one cut=43 call generate() refs=1
+[21:24:08] resume _gen_one cut=40 SUCCESS in 27.0s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_40.png
+[21:24:08] resume _gen_one cut=44 call generate() refs=1
+[21:24:25] resume _gen_one cut=41 SUCCESS in 27.7s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_41.png
+[21:24:25] resume _gen_one cut=45 call generate() refs=1
+[21:24:29] resume _gen_one cut=42 SUCCESS in 24.4s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_42.png
+[21:24:29] resume _gen_one cut=46 call generate() refs=1
+[21:24:35] resume _gen_one cut=43 SUCCESS in 29.8s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_43.png
+[21:24:35] resume _gen_one cut=47 call generate() refs=1
+[21:24:41] resume _gen_one cut=44 SUCCESS in 33.0s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_44.png
+[21:24:41] resume _gen_one cut=48 call generate() refs=1
+[21:24:56] resume _gen_one cut=45 SUCCESS in 30.9s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_45.png
+[21:24:56] resume _gen_one cut=49 call generate() refs=1
+[21:24:57] resume _gen_one cut=46 SUCCESS in 28.2s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_46.png
+[21:24:57] resume _gen_one cut=50 call generate() refs=1
+[21:25:02] resume _gen_one cut=47 SUCCESS in 27.6s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_47.png
+[21:25:02] resume _gen_one cut=51 call generate() refs=1
+[21:25:09] resume _gen_one cut=48 SUCCESS in 28.4s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_48.png
+[21:25:09] resume _gen_one cut=52 call generate() refs=1
+[21:25:24] resume _gen_one cut=49 SUCCESS in 27.8s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_49.png
+[21:25:24] resume _gen_one cut=53 call generate() refs=1
+[21:25:28] resume _gen_one cut=50 SUCCESS in 31.7s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_50.png
+[21:25:28] resume _gen_one cut=54 call generate() refs=1
+[21:25:37] resume _gen_one cut=51 SUCCESS in 34.6s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_51.png
+[21:25:37] resume _gen_one cut=55 call generate() refs=1
+[21:25:40] resume _gen_one cut=52 SUCCESS in 31.1s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_52.png
+[21:25:40] resume _gen_one cut=56 call generate() refs=1
+[10:49:31] >>> resume-async ENDPOINT HIT project=65552077
+[10:49:31] resume-async pending=8 of 60 project=65552077
+[10:49:31] resume _run service=ComfyUIImageService model=comfyui-dreamshaper-xl-longtube aspect=16:9
+[10:49:31] resume _run pending=8 refs=1 chars=0
+[10:49:31] resume _gen_one cut=53 call generate() refs=1
+[10:49:49] resume _gen_one cut=53 SUCCESS in 17.7s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_53.png
+[10:49:49] resume _gen_one cut=54 call generate() refs=1
+[10:49:56] resume _gen_one cut=54 SUCCESS in 7.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_54.png
+[10:49:56] resume _gen_one cut=55 call generate() refs=1
+[10:50:04] resume _gen_one cut=55 SUCCESS in 7.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_55.png
+[10:50:04] resume _gen_one cut=56 call generate() refs=1
+[10:50:11] resume _gen_one cut=56 SUCCESS in 7.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_56.png
+[10:50:11] resume _gen_one cut=57 call generate() refs=1
+[10:50:18] resume _gen_one cut=57 SUCCESS in 7.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_57.png
+[10:50:18] resume _gen_one cut=58 call generate() refs=1
+[10:50:26] resume _gen_one cut=58 SUCCESS in 7.4s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_58.png
+[10:50:26] resume _gen_one cut=59 call generate() refs=1
+[10:50:33] resume _gen_one cut=59 SUCCESS in 7.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_59.png
+[10:50:33] resume _gen_one cut=60 call generate() refs=1
+[10:50:40] resume _gen_one cut=60 SUCCESS in 7.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_60.png
+[10:51:33] >>> generate-async ENDPOINT HIT project=65552077
+[10:51:33] === generate_all_images project=65552077 model=comfyui-dreamshaper-xl-longtube refs=1 chars=0 cut_specs=60 ===
+[10:51:33] _gen_one cut=1 call generate() refs=1 svc=ComfyUIImageService
+[10:51:45] _gen_one cut=1 SUCCESS in 11.8s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_1.png
+[10:51:45] _gen_one cut=2 call generate() refs=1 svc=ComfyUIImageService
+[10:51:53] _gen_one cut=2 SUCCESS in 7.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_2.png
+[10:51:53] _gen_one cut=3 call generate() refs=1 svc=ComfyUIImageService
+[10:52:00] _gen_one cut=3 SUCCESS in 7.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_3.png
+[10:52:00] _gen_one cut=4 call generate() refs=1 svc=ComfyUIImageService
+[10:52:07] _gen_one cut=4 SUCCESS in 7.2s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_4.png
+[10:52:07] _gen_one cut=5 call generate() refs=1 svc=ComfyUIImageService
+[10:52:14] _gen_one cut=5 SUCCESS in 7.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_5.png
+[10:52:14] _gen_one cut=6 call generate() refs=1 svc=ComfyUIImageService
+[10:52:22] _gen_one cut=6 SUCCESS in 7.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_6.png
+[10:52:22] _gen_one cut=7 call generate() refs=1 svc=ComfyUIImageService
+[10:52:29] _gen_one cut=7 SUCCESS in 7.2s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_7.png
+[10:52:29] _gen_one cut=8 call generate() refs=1 svc=ComfyUIImageService
+[10:52:36] _gen_one cut=8 SUCCESS in 7.2s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_8.png
+[10:52:36] _gen_one cut=9 call generate() refs=1 svc=ComfyUIImageService
+[10:52:43] _gen_one cut=9 SUCCESS in 7.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_9.png
+[10:52:43] _gen_one cut=10 call generate() refs=1 svc=ComfyUIImageService
+[10:52:51] _gen_one cut=10 SUCCESS in 7.2s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_10.png
+[10:52:51] _gen_one cut=11 call generate() refs=1 svc=ComfyUIImageService
+[10:52:58] _gen_one cut=11 SUCCESS in 7.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_11.png
+[10:52:58] _gen_one cut=12 call generate() refs=1 svc=ComfyUIImageService
+[10:53:05] _gen_one cut=12 SUCCESS in 7.2s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_12.png
+[10:53:05] _gen_one cut=13 call generate() refs=1 svc=ComfyUIImageService
+[10:53:12] _gen_one cut=13 SUCCESS in 7.2s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_13.png
+[10:53:12] _gen_one cut=14 call generate() refs=1 svc=ComfyUIImageService
+[10:53:20] _gen_one cut=14 SUCCESS in 7.2s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_14.png
+[10:53:20] _gen_one cut=15 call generate() refs=1 svc=ComfyUIImageService
+[10:53:27] _gen_one cut=15 SUCCESS in 7.2s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_15.png
+[10:53:27] _gen_one cut=16 call generate() refs=1 svc=ComfyUIImageService
+[10:53:34] _gen_one cut=16 SUCCESS in 7.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_16.png
+[10:53:34] _gen_one cut=17 call generate() refs=1 svc=ComfyUIImageService
+[10:53:41] _gen_one cut=17 SUCCESS in 7.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_17.png
+[10:53:41] _gen_one cut=18 call generate() refs=1 svc=ComfyUIImageService
+[10:53:49] _gen_one cut=18 SUCCESS in 7.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_18.png
+[10:53:49] _gen_one cut=19 call generate() refs=1 svc=ComfyUIImageService
+[10:53:56] _gen_one cut=19 SUCCESS in 7.2s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_19.png
+[10:53:56] _gen_one cut=20 call generate() refs=1 svc=ComfyUIImageService
+[10:54:03] _gen_one cut=20 SUCCESS in 7.2s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_20.png
+[10:54:03] _gen_one cut=21 call generate() refs=1 svc=ComfyUIImageService
+[10:54:10] _gen_one cut=21 SUCCESS in 7.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_21.png
+[10:54:10] _gen_one cut=22 call generate() refs=1 svc=ComfyUIImageService
+[10:54:18] _gen_one cut=22 SUCCESS in 7.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_22.png
+[10:54:18] _gen_one cut=23 call generate() refs=1 svc=ComfyUIImageService
+[10:54:25] _gen_one cut=23 SUCCESS in 7.2s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_23.png
+[10:54:25] _gen_one cut=24 call generate() refs=1 svc=ComfyUIImageService
+[10:54:32] _gen_one cut=24 SUCCESS in 7.2s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_24.png
+[10:54:32] _gen_one cut=25 call generate() refs=1 svc=ComfyUIImageService
+[10:54:39] _gen_one cut=25 SUCCESS in 7.2s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_25.png
+[10:54:39] _gen_one cut=26 call generate() refs=1 svc=ComfyUIImageService
+[10:54:47] _gen_one cut=26 SUCCESS in 7.2s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_26.png
+[10:54:47] _gen_one cut=27 call generate() refs=1 svc=ComfyUIImageService
+[10:54:54] _gen_one cut=27 SUCCESS in 7.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_27.png
+[10:54:54] _gen_one cut=28 call generate() refs=1 svc=ComfyUIImageService
+[10:55:01] _gen_one cut=28 SUCCESS in 7.2s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_28.png
+[10:55:01] _gen_one cut=29 call generate() refs=1 svc=ComfyUIImageService
+[10:55:09] _gen_one cut=29 SUCCESS in 7.2s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_29.png
+[10:55:09] _gen_one cut=30 call generate() refs=1 svc=ComfyUIImageService
+[10:55:16] _gen_one cut=30 SUCCESS in 7.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_30.png
+[10:55:16] _gen_one cut=31 call generate() refs=1 svc=ComfyUIImageService
+[10:55:23] _gen_one cut=31 SUCCESS in 7.2s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_31.png
+[10:55:23] _gen_one cut=32 call generate() refs=1 svc=ComfyUIImageService
+[10:55:30] _gen_one cut=32 SUCCESS in 7.2s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_32.png
+[10:55:30] _gen_one cut=33 call generate() refs=1 svc=ComfyUIImageService
+[10:56:48] >>> resume-async ENDPOINT HIT project=65552077
+[10:56:48] resume-async pending=28 of 60 project=65552077
+[10:56:48] resume _run service=ComfyUIImageService model=comfyui-dreamshaper-xl-longtube aspect=16:9
+[10:56:48] resume _run pending=28 refs=1 chars=0
+[10:56:48] resume _gen_one cut=33 call generate() refs=1
+[10:57:01] resume _gen_one cut=33 SUCCESS in 12.8s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_33.png
+[10:57:01] resume _gen_one cut=34 call generate() refs=1
+[10:57:12] resume _gen_one cut=34 SUCCESS in 11.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_34.png
+[10:57:12] resume _gen_one cut=35 call generate() refs=1
+[10:57:23] resume _gen_one cut=35 SUCCESS in 11.2s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_35.png
+[10:57:23] resume _gen_one cut=36 call generate() refs=1
+[10:57:35] resume _gen_one cut=36 SUCCESS in 11.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_36.png
+[10:57:35] resume _gen_one cut=37 call generate() refs=1
+[10:57:46] resume _gen_one cut=37 SUCCESS in 11.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_37.png
+[10:57:46] resume _gen_one cut=38 call generate() refs=1
+[10:57:57] resume _gen_one cut=38 SUCCESS in 11.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_38.png
+[10:57:57] resume _gen_one cut=39 call generate() refs=1
+[10:58:09] resume _gen_one cut=39 SUCCESS in 11.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_39.png
+[10:58:09] resume _gen_one cut=40 call generate() refs=1
+[10:58:20] resume _gen_one cut=40 SUCCESS in 11.4s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_40.png
+[10:58:20] resume _gen_one cut=41 call generate() refs=1
+[10:58:31] resume _gen_one cut=41 SUCCESS in 11.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_41.png
+[10:58:31] resume _gen_one cut=42 call generate() refs=1
+[10:58:43] resume _gen_one cut=42 SUCCESS in 11.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_42.png
+[10:58:43] resume _gen_one cut=43 call generate() refs=1
+[10:58:54] resume _gen_one cut=43 SUCCESS in 11.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_43.png
+[10:58:54] resume _gen_one cut=44 call generate() refs=1
+[10:59:05] resume _gen_one cut=44 SUCCESS in 11.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_44.png
+[10:59:05] resume _gen_one cut=45 call generate() refs=1
+[10:59:17] resume _gen_one cut=45 SUCCESS in 11.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_45.png
+[10:59:17] resume _gen_one cut=46 call generate() refs=1
+[11:00:41] >>> generate-async ENDPOINT HIT project=65552077
+[11:00:41] === generate_all_images project=65552077 model=comfyui-dreamshaper-xl-longtube refs=1 chars=0 cut_specs=10 ===
+[11:00:41] _gen_one cut=1 call generate() refs=1 svc=ComfyUIImageService
+[11:00:52] _gen_one cut=1 SUCCESS in 11.4s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_1.png
+[11:00:52] _gen_one cut=2 call generate() refs=1 svc=ComfyUIImageService
+[11:01:04] _gen_one cut=2 SUCCESS in 11.4s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_2.png
+[11:01:04] _gen_one cut=3 call generate() refs=1 svc=ComfyUIImageService
+[11:01:15] _gen_one cut=3 SUCCESS in 11.4s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_3.png
+[11:01:15] _gen_one cut=4 call generate() refs=1 svc=ComfyUIImageService
+[11:01:26] _gen_one cut=4 SUCCESS in 11.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_4.png
+[11:01:26] _gen_one cut=5 call generate() refs=1 svc=ComfyUIImageService
+[11:01:38] _gen_one cut=5 SUCCESS in 11.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_5.png
+[11:01:38] _gen_one cut=6 call generate() refs=1 svc=ComfyUIImageService
+[11:01:49] _gen_one cut=6 SUCCESS in 11.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_6.png
+[11:01:49] _gen_one cut=7 call generate() refs=1 svc=ComfyUIImageService
+[11:02:00] _gen_one cut=7 SUCCESS in 11.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_7.png
+[11:02:00] _gen_one cut=8 call generate() refs=1 svc=ComfyUIImageService
+[11:02:12] _gen_one cut=8 SUCCESS in 11.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_8.png
+[11:02:12] _gen_one cut=9 call generate() refs=1 svc=ComfyUIImageService
+[11:02:23] _gen_one cut=9 SUCCESS in 11.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_9.png
+[11:02:23] _gen_one cut=10 call generate() refs=1 svc=ComfyUIImageService
+[11:02:34] _gen_one cut=10 SUCCESS in 11.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_10.png
+[11:02:34] === all tasks gathered. done_count=10 ===
+[11:02:34] === post-check: 10/10 images on disk ===
+[11:06:33] >>> generate-async ENDPOINT HIT project=65552077
+[11:06:33] === generate_all_images project=65552077 model=comfyui-dreamshaper-xl-longtube-2k refs=1 chars=0 cut_specs=10 ===
+[11:06:33] _gen_one cut=1 call generate() refs=1 svc=ComfyUIImageService
+[11:06:47] _gen_one cut=1 SUCCESS in 14.4s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_1.png
+[11:06:47] _gen_one cut=2 call generate() refs=1 svc=ComfyUIImageService
+[11:06:59] _gen_one cut=2 SUCCESS in 11.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_2.png
+[11:06:59] _gen_one cut=3 call generate() refs=1 svc=ComfyUIImageService
+[11:07:10] _gen_one cut=3 SUCCESS in 11.4s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_3.png
+[11:07:10] _gen_one cut=4 call generate() refs=1 svc=ComfyUIImageService
+[11:07:21] _gen_one cut=4 SUCCESS in 11.4s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_4.png
+[11:07:21] _gen_one cut=5 call generate() refs=1 svc=ComfyUIImageService
+[11:07:33] _gen_one cut=5 SUCCESS in 11.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_5.png
+[11:07:33] _gen_one cut=6 call generate() refs=1 svc=ComfyUIImageService
+[11:07:44] _gen_one cut=6 SUCCESS in 11.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_6.png
+[11:07:44] _gen_one cut=7 call generate() refs=1 svc=ComfyUIImageService
+[11:08:30] >>> resume-async ENDPOINT HIT project=65552077
+[11:08:30] resume-async pending=4 of 10 project=65552077
+[11:08:30] resume _run service=ComfyUIImageService model=comfyui-dreamshaper-xl-longtube-2k aspect=16:9
+[11:08:30] resume _run pending=4 refs=1 chars=0
+[11:08:30] resume _gen_one cut=7 call generate() refs=1
+[11:08:41] resume _gen_one cut=7 SUCCESS in 11.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_7.png
+[11:08:41] resume _gen_one cut=8 call generate() refs=1
+[11:08:52] resume _gen_one cut=8 SUCCESS in 11.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_8.png
+[11:08:52] resume _gen_one cut=9 call generate() refs=1
+[11:09:03] resume _gen_one cut=9 SUCCESS in 11.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_9.png
+[11:09:03] resume _gen_one cut=10 call generate() refs=1
+[11:09:15] resume _gen_one cut=10 SUCCESS in 11.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_10.png
+[11:09:23] >>> generate-async ENDPOINT HIT project=65552077
+[11:09:23] === generate_all_images project=65552077 model=comfyui-dreamshaper-xl-longtube-2k refs=1 chars=0 cut_specs=10 ===
+[11:09:23] _gen_one cut=1 call generate() refs=1 svc=ComfyUIImageService
+[11:09:37] _gen_one cut=1 SUCCESS in 14.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_1.png
+[11:09:37] _gen_one cut=2 call generate() refs=1 svc=ComfyUIImageService
+[11:09:49] _gen_one cut=2 SUCCESS in 11.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_2.png
+[11:09:49] _gen_one cut=3 call generate() refs=1 svc=ComfyUIImageService
+[11:10:00] _gen_one cut=3 SUCCESS in 11.2s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_3.png
+[11:10:00] _gen_one cut=4 call generate() refs=1 svc=ComfyUIImageService
+[11:10:11] _gen_one cut=4 SUCCESS in 11.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_4.png
+[11:10:11] _gen_one cut=5 call generate() refs=1 svc=ComfyUIImageService
+[11:10:22] _gen_one cut=5 SUCCESS in 11.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_5.png
+[11:10:22] _gen_one cut=6 call generate() refs=1 svc=ComfyUIImageService
+[11:10:34] _gen_one cut=6 SUCCESS in 11.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_6.png
+[11:10:34] _gen_one cut=7 call generate() refs=1 svc=ComfyUIImageService
+[11:10:45] _gen_one cut=7 SUCCESS in 11.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_7.png
+[11:10:45] _gen_one cut=8 call generate() refs=1 svc=ComfyUIImageService
+[11:10:56] _gen_one cut=8 SUCCESS in 11.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_8.png
+[11:10:56] _gen_one cut=9 call generate() refs=1 svc=ComfyUIImageService
+[11:11:08] _gen_one cut=9 SUCCESS in 11.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_9.png
+[11:11:08] _gen_one cut=10 call generate() refs=1 svc=ComfyUIImageService
+[11:11:13] >>> generate-async ENDPOINT HIT project=65552077
+[11:11:14] === generate_all_images project=65552077 model=comfyui-dreamshaper-xl-longtube refs=1 chars=0 cut_specs=10 ===
+[11:11:14] _gen_one cut=1 call generate() refs=1 svc=ComfyUIImageService
+[11:11:32] _gen_one cut=1 SUCCESS in 18.8s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_1.png
+[11:11:32] _gen_one cut=2 call generate() refs=1 svc=ComfyUIImageService
+[11:11:44] _gen_one cut=2 SUCCESS in 11.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_2.png
+[11:11:44] _gen_one cut=3 call generate() refs=1 svc=ComfyUIImageService
+[11:11:55] _gen_one cut=3 SUCCESS in 11.4s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_3.png
+[11:11:55] _gen_one cut=4 call generate() refs=1 svc=ComfyUIImageService
+[11:12:06] _gen_one cut=4 SUCCESS in 11.4s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_4.png
+[11:12:06] _gen_one cut=5 call generate() refs=1 svc=ComfyUIImageService
+[11:12:18] _gen_one cut=5 SUCCESS in 11.4s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_5.png
+[11:12:18] _gen_one cut=6 call generate() refs=1 svc=ComfyUIImageService
+[11:12:29] _gen_one cut=6 SUCCESS in 11.4s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_6.png
+[11:12:29] _gen_one cut=7 call generate() refs=1 svc=ComfyUIImageService
+[11:12:41] _gen_one cut=7 SUCCESS in 11.4s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_7.png
+[11:12:41] _gen_one cut=8 call generate() refs=1 svc=ComfyUIImageService
+[11:12:52] _gen_one cut=8 SUCCESS in 11.4s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_8.png
+[11:12:52] _gen_one cut=9 call generate() refs=1 svc=ComfyUIImageService
+[11:13:03] _gen_one cut=9 SUCCESS in 11.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_9.png
+[11:13:03] _gen_one cut=10 call generate() refs=1 svc=ComfyUIImageService
+[11:13:48] >>> generate-async ENDPOINT HIT project=65552077
+[11:13:48] === generate_all_images project=65552077 model=comfyui-dreamshaper-xl-longtube refs=1 chars=0 cut_specs=10 ===
+[11:13:48] _gen_one cut=1 call generate() refs=1 svc=ComfyUIImageService
+[11:14:08] _gen_one cut=1 SUCCESS in 20.4s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_1.png
+[11:14:08] _gen_one cut=2 call generate() refs=1 svc=ComfyUIImageService
+[11:14:29] _gen_one cut=2 SUCCESS in 20.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_2.png
+[11:14:29] _gen_one cut=3 call generate() refs=1 svc=ComfyUIImageService
+[11:14:49] _gen_one cut=3 SUCCESS in 20.4s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_3.png
+[11:14:49] _gen_one cut=4 call generate() refs=1 svc=ComfyUIImageService
+[11:15:09] _gen_one cut=4 SUCCESS in 20.4s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_4.png
+[11:15:09] _gen_one cut=5 call generate() refs=1 svc=ComfyUIImageService
+[11:15:31] _gen_one cut=5 SUCCESS in 21.8s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_5.png
+[11:15:31] _gen_one cut=6 call generate() refs=1 svc=ComfyUIImageService
+[11:15:52] _gen_one cut=6 SUCCESS in 20.4s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_6.png
+[11:15:52] _gen_one cut=7 call generate() refs=1 svc=ComfyUIImageService
+[11:16:12] _gen_one cut=7 SUCCESS in 20.5s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_7.png
+[11:16:12] _gen_one cut=8 call generate() refs=1 svc=ComfyUIImageService
+[11:16:33] _gen_one cut=8 SUCCESS in 20.5s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_8.png
+[11:16:33] _gen_one cut=9 call generate() refs=1 svc=ComfyUIImageService
+[11:16:53] _gen_one cut=9 SUCCESS in 20.5s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_9.png
+[11:16:53] _gen_one cut=10 call generate() refs=1 svc=ComfyUIImageService
+[11:17:14] _gen_one cut=10 SUCCESS in 20.6s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_10.png
+[11:17:14] === all tasks gathered. done_count=10 ===
+[11:17:14] === post-check: 10/10 images on disk ===
+[11:18:05] >>> generate-async ENDPOINT HIT project=65552077
+[11:18:05] === generate_all_images project=65552077 model=comfyui-dreamshaper-xl-longtube refs=1 chars=0 cut_specs=10 ===
+[11:18:05] _gen_one cut=1 call generate() refs=1 svc=ComfyUIImageService
+[11:18:36] _gen_one cut=1 SUCCESS in 30.9s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_1.png
+[11:18:36] _gen_one cut=2 call generate() refs=1 svc=ComfyUIImageService
+[11:19:04] _gen_one cut=2 SUCCESS in 28.0s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_2.png
+[11:19:04] _gen_one cut=3 call generate() refs=1 svc=ComfyUIImageService
+[11:19:32] _gen_one cut=3 SUCCESS in 27.9s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_3.png
+[11:19:32] _gen_one cut=4 call generate() refs=1 svc=ComfyUIImageService
+[11:20:00] _gen_one cut=4 SUCCESS in 27.9s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_4.png
+[11:20:00] _gen_one cut=5 call generate() refs=1 svc=ComfyUIImageService
+[11:20:28] _gen_one cut=5 SUCCESS in 27.9s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_5.png
+[11:20:28] _gen_one cut=6 call generate() refs=1 svc=ComfyUIImageService
+[11:20:56] _gen_one cut=6 SUCCESS in 27.9s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_6.png
+[11:20:56] _gen_one cut=7 call generate() refs=1 svc=ComfyUIImageService
+[11:21:24] _gen_one cut=7 SUCCESS in 27.9s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_7.png
+[11:21:24] _gen_one cut=8 call generate() refs=1 svc=ComfyUIImageService
+[11:21:52] _gen_one cut=8 SUCCESS in 27.9s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_8.png
+[11:21:52] _gen_one cut=9 call generate() refs=1 svc=ComfyUIImageService
+[11:22:20] _gen_one cut=9 SUCCESS in 27.9s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_9.png
+[11:22:20] _gen_one cut=10 call generate() refs=1 svc=ComfyUIImageService
+[11:22:46] _gen_one cut=10 SUCCESS in 26.4s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_10.png
+[11:22:46] === all tasks gathered. done_count=10 ===
+[11:22:46] === post-check: 10/10 images on disk ===
+[11:42:21] >>> generate-async ENDPOINT HIT project=65552077
+[11:42:21] === generate_all_images project=65552077 model=comfyui-dreamshaper-xl-longtube refs=1 chars=0 cut_specs=10 ===
+[11:42:21] _gen_one cut=1 call generate() refs=1 svc=ComfyUIImageService
+[11:42:52] _gen_one cut=1 SUCCESS in 30.9s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_1.png
+[11:42:52] _gen_one cut=2 call generate() refs=1 svc=ComfyUIImageService
+[11:43:18] _gen_one cut=2 SUCCESS in 26.5s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_2.png
+[11:43:18] _gen_one cut=3 call generate() refs=1 svc=ComfyUIImageService
+[11:43:45] _gen_one cut=3 SUCCESS in 26.4s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_3.png
+[11:43:45] _gen_one cut=4 call generate() refs=1 svc=ComfyUIImageService
+[11:44:11] _gen_one cut=4 SUCCESS in 26.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_4.png
+[11:44:11] _gen_one cut=5 call generate() refs=1 svc=ComfyUIImageService
+[11:44:38] _gen_one cut=5 SUCCESS in 26.6s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_5.png
+[11:44:38] _gen_one cut=6 call generate() refs=1 svc=ComfyUIImageService
+[11:45:04] _gen_one cut=6 SUCCESS in 26.4s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_6.png
+[11:45:04] _gen_one cut=7 call generate() refs=1 svc=ComfyUIImageService
+[11:45:31] _gen_one cut=7 SUCCESS in 26.4s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_7.png
+[11:45:31] _gen_one cut=8 call generate() refs=1 svc=ComfyUIImageService
+[11:45:57] _gen_one cut=8 SUCCESS in 26.7s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_8.png
+[11:45:57] _gen_one cut=9 call generate() refs=1 svc=ComfyUIImageService
+[11:46:24] _gen_one cut=9 SUCCESS in 27.2s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_9.png
+[11:46:24] _gen_one cut=10 call generate() refs=1 svc=ComfyUIImageService
+[11:46:51] _gen_one cut=10 SUCCESS in 26.4s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_10.png
+[11:46:51] === all tasks gathered. done_count=10 ===
+[11:46:51] === post-check: 10/10 images on disk ===
+[12:26:21] >>> generate-async ENDPOINT HIT project=65552077
+[12:26:21] === generate_all_images project=65552077 model=comfyui-dreamshaper-xl-longtube refs=1 chars=0 cut_specs=20 ===
+[12:26:21] _gen_one cut=1 call generate() refs=1 svc=ComfyUIImageService
+[12:26:58] _gen_one cut=1 SUCCESS in 37.0s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_1.png
+[12:26:58] _gen_one cut=2 call generate() refs=1 svc=ComfyUIImageService
+[12:27:24] _gen_one cut=2 SUCCESS in 26.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_2.png
+[12:27:24] _gen_one cut=3 call generate() refs=1 svc=ComfyUIImageService
+[12:27:51] _gen_one cut=3 SUCCESS in 26.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_3.png
+[12:27:51] _gen_one cut=4 call generate() refs=1 svc=ComfyUIImageService
+[12:28:17] _gen_one cut=4 SUCCESS in 26.4s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_4.png
+[12:28:17] _gen_one cut=5 call generate() refs=1 svc=ComfyUIImageService
+[12:28:44] _gen_one cut=5 SUCCESS in 26.4s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_5.png
+[12:28:44] _gen_one cut=6 call generate() refs=1 svc=ComfyUIImageService
+[12:29:10] _gen_one cut=6 SUCCESS in 26.6s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_6.png
+[12:29:10] _gen_one cut=7 call generate() refs=1 svc=ComfyUIImageService
+[12:29:37] _gen_one cut=7 SUCCESS in 26.4s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_7.png
+[12:29:37] _gen_one cut=8 call generate() refs=1 svc=ComfyUIImageService
+[12:30:03] _gen_one cut=8 SUCCESS in 26.4s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_8.png
+[12:30:03] _gen_one cut=9 call generate() refs=1 svc=ComfyUIImageService
+[12:30:29] _gen_one cut=9 SUCCESS in 26.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_9.png
+[12:30:29] _gen_one cut=10 call generate() refs=1 svc=ComfyUIImageService
+[12:30:56] _gen_one cut=10 SUCCESS in 26.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_10.png
+[12:30:56] _gen_one cut=11 call generate() refs=1 svc=ComfyUIImageService
+[12:31:22] _gen_one cut=11 SUCCESS in 26.4s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_11.png
+[12:31:22] _gen_one cut=12 call generate() refs=1 svc=ComfyUIImageService
+[12:31:48] _gen_one cut=12 SUCCESS in 26.4s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_12.png
+[12:31:48] _gen_one cut=13 call generate() refs=1 svc=ComfyUIImageService
+[12:32:15] _gen_one cut=13 SUCCESS in 26.4s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_13.png
+[12:32:15] _gen_one cut=14 call generate() refs=1 svc=ComfyUIImageService
+[12:32:41] _gen_one cut=14 SUCCESS in 26.4s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_14.png
+[12:32:41] _gen_one cut=15 call generate() refs=1 svc=ComfyUIImageService
+[12:33:08] _gen_one cut=15 SUCCESS in 26.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_15.png
+[12:33:08] _gen_one cut=16 call generate() refs=1 svc=ComfyUIImageService
+[12:33:34] _gen_one cut=16 SUCCESS in 26.4s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_16.png
+[12:33:34] _gen_one cut=17 call generate() refs=1 svc=ComfyUIImageService
+[12:34:00] _gen_one cut=17 SUCCESS in 26.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_17.png
+[12:34:00] _gen_one cut=18 call generate() refs=1 svc=ComfyUIImageService
+[12:34:27] _gen_one cut=18 SUCCESS in 26.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_18.png
+[12:34:27] _gen_one cut=19 call generate() refs=1 svc=ComfyUIImageService
+[12:34:53] _gen_one cut=19 SUCCESS in 26.3s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_19.png
+[12:34:53] _gen_one cut=20 call generate() refs=1 svc=ComfyUIImageService
+[12:35:19] _gen_one cut=20 SUCCESS in 26.4s → C:\Users\Jevis\Desktop\longtube_net\projects\65552077\images\cut_20.png
+[12:35:19] === all tasks gathered. done_count=20 ===
+[12:35:19] === post-check: 20/20 images on disk ===

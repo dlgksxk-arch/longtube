@@ -2,14 +2,15 @@
 import json
 from openai import AsyncOpenAI
 from app.services.llm.base import BaseLLMService
-from app.config import OPENAI_API_KEY
+from app import config
 
 
 class GPTService(BaseLLMService):
     def __init__(self, model_id: str = "gpt-4o"):
         self.model_id = model_id
         self.display_name = f"GPT ({model_id})"
-        self.client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+        # v1.1.63: UI 에서 바꾼 키가 즉시 반영되도록 config 모듈 속성을 참조.
+        self.client = AsyncOpenAI(api_key=config.OPENAI_API_KEY)
 
     async def generate_script(self, topic: str, config: dict) -> dict:
         # v1.1.32: target_duration 기반 동적 max_tokens (600초=120컷 truncation 방지)

@@ -194,6 +194,58 @@ async def download_first_output(
     return dest_path
 
 
+async def interrupt() -> bool:
+    """ComfyUI 서버의 현재 실행 중 prompt 를 즉시 중단 (`POST /interrupt`).
+
+    v1.1.70: 비상 정지용. 제출된 prompt_id 의 진행 중 실행을 끊는다.
+    대기 큐에 있는 prompt 는 건드리지 않으므로 보통 `clear_queue()` 와
+    함께 호출한다. 실패해도 예외를 올리지 않는다 (베스트 에포트).
+
+    Returns: True on success, False on failure or not configured.
+    """
+    if not COMFYUI_BASE_URL:
+        return False
+    base = COMFYUI_BASE_URL
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.post(f"{base}/interrupt")
+            ok = r.status_code in (200, 204)
+            if ok:
+                print("[comfyui] /interrupt 호출 성공 — 실행 중 prompt 중단")
+            else:
+                print(f"[comfyui] /interrupt 실패 {r.status_code}: {r.text[:200]}")
+            return ok
+    except Exception as e:
+        print(f"[comfyui] /interrupt 예외 (무시): {e}")
+        return False
+
+
+async def clear_queue() -> bool:
+    """ComfyUI 서버의 대기 큐 전체를 비움 (`POST /queue` with `{"clear": true}`).
+
+    v1.1.70: 비상 정지용. 아직 실행 시작 전 대기열에 쌓인 prompt 를 제거한다.
+    현재 실행 중인 prompt 는 영향을 받지 않으므로 `interrupt()` 와 함께 호출.
+    실패해도 예외를 올리지 않는다 (베스트 에포트).
+
+    Returns: True on success, False on failure or not configured.
+    """
+    if not COMFYUI_BASE_URL:
+        return False
+    base = COMFYUI_BASE_URL
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.post(f"{base}/queue", json={"clear": True})
+            ok = r.status_code in (200, 204)
+            if ok:
+                print("[comfyui] /queue clear 호출 성공 — 대기 큐 비움")
+            else:
+                print(f"[comfyui] /queue clear 실패 {r.status_code}: {r.text[:200]}")
+            return ok
+    except Exception as e:
+        print(f"[comfyui] /queue clear 예외 (무시): {e}")
+        return False
+
+
 async def free_memory(*, unload_models: bool = True, free_memory: bool = True) -> bool:
     """ComfyUI /free 엔드포인트 호출 → VRAM 에 올라간 모델/캐시 해제.
 

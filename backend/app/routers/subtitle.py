@@ -435,19 +435,21 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
     if ending_raw:
         print(f"[subtitle/render] ending: {ending_raw}")
 
-    # ── Step 7: 최종 시퀀스 합성 ──
+    # ── Step 7: 최종 시퀀스 합성 (pre_final) ──
     # v1.1.55: 오프닝↔본편 사이 0.5초 크로스페이드, 엔딩은 단순 concat
+    # v1.1.71: Step 7 은 tmp 파일에 쓰고, Step 8 에서 전단 pre-roll 을 얹어 최종 출력을 생성.
     CROSSFADE_SEC = 0.5
+    pre_final_path = str(tmp_dir / "pre_final.mp4")
     try:
         t_final = _t.time()
         if not opening_raw and not ending_raw:
-            # 오프닝/엔딩 없음 → body_sub 를 그대로 최종으로.
+            # 오프닝/엔딩 없음 → body_sub 를 그대로 pre_final 로.
             from shutil import copyfile
-            copyfile(body_sub_path, str(output_path))
+            copyfile(body_sub_path, pre_final_path)
         elif opening_raw and not ending_raw:
             # 오프닝 + 본편 (크로스페이드)
             await FFmpegService.merge_with_crossfade(
-                opening_raw, body_sub_path, str(output_path),
+                opening_raw, body_sub_path, pre_final_path,
                 fade_seconds=CROSSFADE_SEC, resolution=resolution,
             )
         elif opening_raw and ending_raw:
@@ -458,18 +460,48 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
                 fade_seconds=CROSSFADE_SEC, resolution=resolution,
             )
             await FFmpegService.merge_videos_reencode(
-                [crossfaded_path, ending_raw], str(output_path), resolution=resolution,
+                [crossfaded_path, ending_raw], pre_final_path, resolution=resolution,
             )
         else:
             # 엔딩만 있는 경우 (드묾) → 단순 concat
             await FFmpegService.merge_videos_reencode(
-                [body_sub_path, ending_raw], str(output_path), resolution=resolution,
+                [body_sub_path, ending_raw], pre_final_path, resolution=resolution,
             )
         print(f"[subtitle/render] final concat done in {_t.time()-t_final:.1f}s")
     except Exception as e:
         import traceback
         print(f"[subtitle/render] FINAL CONCAT FAILED: {e}\n{traceback.format_exc()}")
         raise HTTPException(500, f"Final concat failed: {type(e).__name__}: {e}")
+
+    # ── Step 8: 전단 0.5초 무음 + 150ms 페이드 인 ──
+    # v1.1.71: 시작이 급작스럽다는 피드백 대응. 재생 직후 0.5초 무음/정지 프레임
+    # 을 삽입하고, 첫 150ms 동안 검정→첫 프레임 페이드 인. 자막은 본편에 이미
+    # 번인돼 있어 타임라인이 같이 밀리므로 별도 조정 불필요.
+    # config 에서 `pre_roll_sec=0` 을 주면 스킵(옛 프로젝트 하위호환).
+    pre_roll_sec = float((project.config or {}).get("pre_roll_sec", 0.5) or 0)
+    pre_roll_fade_sec = float((project.config or {}).get("pre_roll_fade_sec", 0.15) or 0)
+    if pre_roll_sec > 0:
+        try:
+            t_pre = _t.time()
+            await FFmpegService.prepend_silent_fade_in(
+                pre_final_path, str(output_path),
+                silent_seconds=pre_roll_sec,
+                fade_seconds=min(pre_roll_fade_sec, pre_roll_sec),
+                resolution=resolution,
+            )
+            print(
+                f"[subtitle/render] pre-roll {pre_roll_sec:.2f}s "
+                f"(fade {pre_roll_fade_sec:.3f}s) applied in {_t.time()-t_pre:.1f}s"
+            )
+        except Exception as e:
+            import traceback
+            print(f"[subtitle/render] PRE-ROLL FAILED (non-fatal, falling back to no pre-roll): "
+                  f"{e}\n{traceback.format_exc()}")
+            from shutil import copyfile
+            copyfile(pre_final_path, str(output_path))
+    else:
+        from shutil import copyfile
+        copyfile(pre_final_path, str(output_path))
 
     if not output_path.exists():
         raise HTTPException(500, "Final render reported success but output file is missing")

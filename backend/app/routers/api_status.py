@@ -372,4 +372,75 @@ async def check_all_api_status():
     except Exception as e:
         print(f"[api_status] manual balance merge failed: {e}")
 
+    # v1.1.64: provider 별 "사용 단계" 표시. 각 registry 를 읽어 PROVIDER_MAP 으로
+    # 정규 이름으로 환산한 뒤 (step_no, step_label) 리스트를 만든다.
+    # 하드코딩 안 하고 registry 에서 도출하므로 모델 추가/제거 시 자동 반영.
+    try:
+        usage_map = _compute_provider_usage()
+        merged2 = []
+        for r in results:
+            r = dict(r)
+            r["used_in_steps"] = usage_map.get(r.get("provider", ""), [])
+            merged2.append(r)
+        results = merged2
+    except Exception as e:
+        print(f"[api_status] usage_map merge failed: {e}")
+
     return {"apis": list(results)}
+
+
+def _compute_provider_usage() -> dict[str, list[dict]]:
+    """provider 정규 이름 → [{step, label, models:[...]}, ...] 목록 반환.
+
+    각 registry 의 provider 필드를 spend_ledger.PROVIDER_MAP 으로 정규화하면
+    api_balances.ALLOWED_PROVIDERS 와 동일한 이름이 된다. step 번호는 파이프라인
+    실제 단계(2=Script, 3=Voice, 4=Image, 5=Video).
+    """
+    from app.services.spend_ledger import PROVIDER_MAP
+    out: dict[str, dict[int, dict]] = {}  # provider → step_no → {label, models}
+
+    def _add(step_no: int, label: str, prov_token: str, model_id: str):
+        canonical = PROVIDER_MAP.get((prov_token or "").strip().lower())
+        if not canonical:
+            return
+        bucket = out.setdefault(canonical, {})
+        slot = bucket.setdefault(step_no, {"step": step_no, "label": label, "models": []})
+        slot["models"].append(model_id)
+
+    # Step 2 — Script (LLM)
+    try:
+        from app.services.llm.factory import LLM_REGISTRY
+        for mid, meta in LLM_REGISTRY.items():
+            _add(2, "스크립트", meta.get("provider", ""), mid)
+    except Exception:
+        pass
+
+    # Step 3 — Voice (TTS)
+    try:
+        from app.services.tts.factory import TTS_REGISTRY
+        for mid, meta in TTS_REGISTRY.items():
+            _add(3, "음성", meta.get("provider", ""), mid)
+    except Exception:
+        pass
+
+    # Step 4 — Image
+    try:
+        from app.services.image.factory import IMAGE_REGISTRY
+        for mid, meta in IMAGE_REGISTRY.items():
+            _add(4, "이미지", meta.get("provider", ""), mid)
+    except Exception:
+        pass
+
+    # Step 5 — Video
+    try:
+        from app.services.video.factory import VIDEO_REGISTRY
+        for mid, meta in VIDEO_REGISTRY.items():
+            _add(5, "영상", meta.get("provider", ""), mid)
+    except Exception:
+        pass
+
+    # step 번호 오름차순 리스트로 평탄화
+    final: dict[str, list[dict]] = {}
+    for prov, step_dict in out.items():
+        final[prov] = [step_dict[k] for k in sorted(step_dict.keys())]
+    return final

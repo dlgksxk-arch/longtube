@@ -6,7 +6,8 @@ import subprocess
 from typing import Optional
 import httpx
 from app.services.tts.base import BaseTTSService, _resolve_bins
-from app.config import ELEVENLABS_API_KEY, TTS_MAX_DURATION, TTS_MIN_DURATION
+from app import config
+from app.config import TTS_MAX_DURATION, TTS_MIN_DURATION  # 상수는 고정이라 직접 import OK
 
 BASE_URL = "https://api.elevenlabs.io/v1"
 
@@ -21,7 +22,11 @@ class ElevenLabsService(BaseTTSService):
     def __init__(self):
         self.model_id = "elevenlabs"
         self.display_name = "ElevenLabs"
-        self.headers = {"xi-api-key": ELEVENLABS_API_KEY}
+
+    @property
+    def headers(self) -> dict:
+        # v1.1.63: UI 에서 바꾼 키가 즉시 반영되도록 매 접근마다 최신 키를 읽음.
+        return {"xi-api-key": config.ELEVENLABS_API_KEY}
 
     async def generate(self, text: str, voice_id: str, output_path: str, speed: float = 1.0, voice_settings: Optional[dict] = None) -> dict:
         vs = dict(voice_settings or {"stability": 0.5, "similarity_boost": 0.75})

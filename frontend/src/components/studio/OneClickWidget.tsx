@@ -414,6 +414,22 @@ export default function OneClickWidget() {
                     <div className="text-sm text-gray-100 truncate">
                       {task.topic}
                     </div>
+                    {/* v2.1.2: 현재 호출 중인 API/모델 표시 */}
+                    {task.current_step && task.models && (() => {
+                      const modelMap: Record<number, { label: string; value: string }> = {
+                        2: { label: "대본", value: task.models?.script || "" },
+                        3: { label: "TTS", value: [task.models?.tts, task.models?.tts_voice].filter(Boolean).join(" / ") },
+                        4: { label: "이미지", value: task.models?.image || "" },
+                        5: { label: "영상", value: task.models?.video || "" },
+                      };
+                      const m = modelMap[task.current_step];
+                      if (!m || !m.value) return null;
+                      return (
+                        <div className="mt-1 text-[10px] text-accent-primary/80 font-mono truncate">
+                          {m.label}: {m.value}
+                        </div>
+                      );
+                    })()}
                     <div className="mt-2 h-1.5 rounded-full bg-bg-tertiary overflow-hidden">
                       <div
                         className="h-full bg-accent-primary transition-all duration-500"
@@ -424,6 +440,10 @@ export default function OneClickWidget() {
                       <span>
                         {task.current_step_name ||
                           (task.status === "queued" ? "대기 중..." : "실행 중")}
+                        {/* 컷 진행 카운터 */}
+                        {(task.current_step_completed ?? 0) > 0 && task.current_step_total
+                          ? ` (${task.current_step_completed}/${task.current_step_total})`
+                          : ""}
                       </span>
                       <span className="font-mono">{pct.toFixed(1)}%</span>
                     </div>
@@ -434,6 +454,64 @@ export default function OneClickWidget() {
                   >
                     <X size={11} /> 중지
                   </button>
+                </div>
+                {/* v2.1.2: 제작 로그 */}
+                {task.logs && task.logs.length > 0 && (
+                  <div className="mt-2 pt-2 border-t border-accent-primary/20 max-h-28 overflow-y-auto">
+                    <div className="text-[10px] text-gray-500 mb-1">제작 로그</div>
+                    {task.logs.slice(-10).map((log, i) => (
+                      <div
+                        key={i}
+                        className={`text-[10px] font-mono leading-relaxed ${
+                          log.level === "error"
+                            ? "text-red-400"
+                            : log.level === "warn"
+                            ? "text-amber-400"
+                            : "text-gray-400"
+                        }`}
+                      >
+                        <span className="text-gray-600">{log.ts}</span>{" "}
+                        {log.msg}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* v2.1.2: 완료/실패 태스크 로그 (running 아닐 때) */}
+            {!running && task && (task.status === "completed" || task.status === "failed" || task.status === "cancelled") && task.logs && task.logs.length > 0 && (
+              <div className="mx-5 mt-4 rounded border border-border bg-bg-tertiary/50 p-3">
+                <div className="flex items-center justify-between mb-1">
+                  <div className="text-[10px] text-gray-500">
+                    최근 제작 로그 — {task.topic?.slice(0, 30)}
+                    {task.status === "failed" && <span className="ml-1 text-red-400">(실패)</span>}
+                    {task.status === "cancelled" && <span className="ml-1 text-amber-400">(취소)</span>}
+                    {task.status === "completed" && <span className="ml-1 text-emerald-400">(완료)</span>}
+                  </div>
+                  <button
+                    onClick={() => setTask(null)}
+                    className="text-[10px] text-gray-600 hover:text-gray-400"
+                  >
+                    닫기
+                  </button>
+                </div>
+                <div className="max-h-32 overflow-y-auto">
+                  {task.logs.slice(-15).map((log, i) => (
+                    <div
+                      key={i}
+                      className={`text-[10px] font-mono leading-relaxed ${
+                        log.level === "error"
+                          ? "text-red-400"
+                          : log.level === "warn"
+                          ? "text-amber-400"
+                          : "text-gray-400"
+                      }`}
+                    >
+                      <span className="text-gray-600">{log.ts}</span>{" "}
+                      {log.msg}
+                    </div>
+                  ))}
                 </div>
               </div>
             )}

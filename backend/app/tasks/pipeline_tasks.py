@@ -261,7 +261,21 @@ def _step_script(project_id: str, config: dict):
     project = db.query(Project).filter(Project.id == project_id).first()
 
     service = get_llm_service(config["script_model"])
-    script = run_async(service.generate_script(project.topic, config))
+    # v2.1.2: API 500 등 일시적 에러 시 최대 3회 재시도 (5초 간격)
+    import time as _time
+    _max_retries = 3
+    for _attempt in range(1, _max_retries + 1):
+        try:
+            script = run_async(service.generate_script(project.topic, config))
+            break
+        except Exception as _e:
+            _err_str = str(_e)
+            _is_retryable = any(k in _err_str for k in ("500", "502", "503", "529", "overloaded", "timeout", "Timeout"))
+            if _is_retryable and _attempt < _max_retries:
+                print(f"[Script] attempt {_attempt}/{_max_retries} failed ({_err_str[:100]}), retrying in 5s...")
+                _time.sleep(5)
+                continue
+            raise
 
     # v1.1.55: 지출 기록 — LLM 호출 토큰을 근사치로 계산해 원장에 append.
     # 실제 토큰수를 서비스에서 안 돌려주므로 입력(주제) / 출력(대본 전체 텍스트)
@@ -319,15 +333,17 @@ def _step_voice(project_id: str, config: dict):
     voice_id = config.get("tts_voice_id", "alloy")
     voice_preset = config.get("tts_voice_preset", "")
 
-    from app.config import ELEVENLABS_API_KEY, OPENAI_API_KEY
-    if tts_model == "elevenlabs" and not ELEVENLABS_API_KEY:
-        if OPENAI_API_KEY:
+    # v1.1.63: UI 에서 바꾼 키가 즉시 반영되도록 config 모듈 속성을 참조.
+    # (로컬 변수 `config` 와의 이름 충돌을 피하기 위해 별칭 사용)
+    from app import config as app_config
+    if tts_model == "elevenlabs" and not app_config.ELEVENLABS_API_KEY:
+        if app_config.OPENAI_API_KEY:
             print(f"[Voice] ElevenLabs API 키 없음 → OpenAI TTS 폴백")
             tts_model = "openai-tts"
             voice_id = "alloy"
         else:
             raise ValueError("No TTS API key configured (neither ElevenLabs nor OpenAI)")
-    if tts_model == "openai-tts" and not OPENAI_API_KEY:
+    if tts_model == "openai-tts" and not app_config.OPENAI_API_KEY:
         raise ValueError("OPENAI_API_KEY not set for OpenAI TTS")
 
     service = get_tts_service(tts_model)
@@ -458,13 +474,18 @@ def _generate_thumbnail_sync(project_id: str, config: dict, script: dict):
             seen.add(p)
             combined_refs.append(p)
 
-    # v1.1.55: 스튜디오와 동일 — 레퍼런스 미지원 모델이면 nano-banana-3 폴백
+    # v2.1.2: 레퍼런스 미지원 모델이면 폴백. ComfyUI 로컬 모델은 API 폴백 방지.
     if combined_refs:
-        from app.services.image.factory import get_image_service as _get_img_svc
+        from app.services.image.factory import get_image_service as _get_img_svc, IMAGE_REGISTRY as _IMG_REG
         _probe = _get_img_svc(image_model)
         if not getattr(_probe, "supports_reference_images", False):
-            print(f"[Thumbnail] {image_model} 는 레퍼런스 미지원 → nano-banana-3 폴백")
-            image_model = "nano-banana-3"
+            _thumb_is_comfyui = _IMG_REG.get(image_model, {}).get("provider") == "comfyui"
+            if _thumb_is_comfyui:
+                print(f"[Thumbnail] {image_model} 는 레퍼런스 미지원이지만 로컬 GPU → 레퍼런스 무시")
+                combined_refs = []
+            else:
+                print(f"[Thumbnail] {image_model} 는 레퍼런스 미지원 → nano-banana-3 폴백")
+                image_model = "nano-banana-3"
 
     # v1.1.55: 공통 REFERENCE_STYLE_PREFIX 사용 — 컷/썸네일/재생성 문구 통일
     if combined_refs and thumb_prompt:
@@ -543,13 +564,24 @@ def _step_image(project_id: str, config: dict):
     # 주입해서, 스타일 레퍼런스에 등장하는 인물이 캐릭터로 차용되는 사고가 난다.
     has_character_anchor = bool(char_images) or bool(character_description)
 
-    # v1.1.55: 스튜디오와 동일 — 레퍼런스가 있는데 모델이 미지원이면 nano-banana-3 폴백
+    # v1.1.55 → v2.1.2: 레퍼런스가 있는데 모델이 미지원이면 폴백.
+    # 단, 사용자가 ComfyUI 로컬 모델을 명시 선택한 경우에는 레퍼런스를
+    # 무시하고 해당 모델을 유지한다 (API 폴백 방지 — GPU 비용 0 우선).
     image_model_id = config["image_model"]
+    _is_local_comfyui = IMAGE_REGISTRY.get(image_model_id, {}).get("provider") == "comfyui"
     if ref_images or char_images:
         _probe = get_image_service(image_model_id)
         if not getattr(_probe, "supports_reference_images", False):
-            print(f"[Image] {image_model_id} 는 레퍼런스 미지원 → nano-banana-3 폴백")
-            image_model_id = "nano-banana-3"
+            if _is_local_comfyui:
+                print(f"[Image] {image_model_id} 는 레퍼런스 미지원이지만 로컬 GPU 모델 → 레퍼런스 무시, 모델 유지")
+                # 레퍼런스/캐릭터 이미지를 비워서 기본 워크플로로 생성
+                ref_images = []
+                char_images = []
+                # 레퍼런스를 안 쓰게 됐으니 global_style 복원
+                global_style = config.get("image_global_prompt", "")
+            else:
+                print(f"[Image] {image_model_id} 는 레퍼런스 미지원 → nano-banana-3 폴백")
+                image_model_id = "nano-banana-3"
 
     service = get_image_service(image_model_id)
     # v1.1.59: 사용자 네거티브 프롬프트 주입 (ComfyUI 만 반영; 그 외 서비스는 무시)

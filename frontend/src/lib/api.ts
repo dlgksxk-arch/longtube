@@ -99,6 +99,9 @@ export interface ProjectConfig {
   auto_pause_after_step: boolean;
   image_global_prompt?: string;
   character_description?: string;
+  /** v1.1.73: 대본 생성 시 LLM 에 "최우선 제약" 으로 주입되는 자유 텍스트.
+   *  예: "환단고기 등 위서 인용 금지 / 사료 부족 시 '설이 있다' 로 열어둘 것". */
+  content_constraints?: string;
   // 레퍼런스 자산 경로 목록 (DB 대신 project.config 에 보관)
   reference_images?: string[];
   character_images?: string[];
@@ -634,6 +637,13 @@ export interface ManualBalance {
   low?: boolean;
 }
 
+// v1.1.64: 어떤 파이프라인 단계에서 사용되는지 표시용 (백엔드 registry 에서 자동 도출)
+export interface ApiUsageStep {
+  step: number;          // 2=Script, 3=Voice, 4=Image, 5=Video
+  label: string;         // "스크립트"/"음성"/"이미지"/"영상"
+  models: string[];      // 이 provider 로 묶이는 model_id 목록
+}
+
 export interface ApiStatusInfo {
   provider: string;
   status: string;
@@ -643,6 +653,7 @@ export interface ApiStatusInfo {
   balance_url?: string;
   manual?: boolean;
   manual_balance?: ManualBalance;
+  used_in_steps?: ApiUsageStep[];
 }
 
 export interface FalVideoProbeResult {
@@ -1078,6 +1089,8 @@ export interface OneClickTask {
   started_at: string | null;
   finished_at: string | null;
   created_at: string;
+  // v2.1.2: 제작 로그
+  logs?: { ts: string; level: "info" | "warn" | "error"; msg: string }[];
 }
 
 // v1.1.54: 완성작 상세 + 라이브러리 통계 타입
@@ -1147,6 +1160,15 @@ export const oneclickApi = {
   start: (taskId: string): Promise<OneClickTask> => api.post(`/oneclick/${taskId}/start`),
   resume: (taskId: string): Promise<OneClickTask> => api.post(`/oneclick/${taskId}/resume`),
   cancel: (taskId: string): Promise<OneClickTask> => api.post(`/oneclick/${taskId}/cancel`),
+  // v1.1.70: 비상 정지 — 서버 + ComfyUI 의 모든 작업 강제 중단
+  emergencyStop: (): Promise<{
+    ok: boolean;
+    stopped_count: number;
+    stopped_task_ids: string[];
+    comfyui_interrupt: boolean;
+    comfyui_queue_cleared: boolean;
+    errors: string[];
+  }> => api.post(`/oneclick/emergency-stop`),
   get: (taskId: string): Promise<OneClickTask> => api.get(`/oneclick/tasks/${taskId}`),
   list: (): Promise<{ tasks: OneClickTask[] }> => api.get(`/oneclick/tasks`),
   deleteTask: (taskId: string): Promise<{ ok: boolean }> => api.delete(`/oneclick/tasks/${taskId}`),

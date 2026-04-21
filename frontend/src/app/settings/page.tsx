@@ -286,6 +286,21 @@ export default function SettingsPage() {
                         · {status.detail}
                       </span>
                     )}
+                    {/* v1.1.64: 파이프라인 사용 단계 배지 */}
+                    {status?.used_in_steps && status.used_in_steps.length > 0 && (
+                      <div className="flex flex-wrap gap-1 ml-1">
+                        {status.used_in_steps.map((u) => (
+                          <span
+                            key={u.step}
+                            title={`${u.label} 단계에서 사용 — ${u.models.join(", ")}`}
+                            className="inline-flex items-center gap-0.5 px-1.5 py-[1px] rounded border border-border bg-bg-tertiary text-[10px] text-gray-300"
+                          >
+                            <span className="text-[9px] text-gray-500">{u.step}</span>
+                            <span>{u.label}</span>
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
                   <a
                     href={CONSOLE_URL[provider] || "#"}

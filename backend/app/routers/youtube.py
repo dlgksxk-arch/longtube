@@ -580,14 +580,21 @@ async def create_thumbnail(
     ref_fallback_reason = None
     if combined_refs:
         try:
-            from app.services.image.factory import get_image_service
+            from app.services.image.factory import get_image_service, IMAGE_REGISTRY as _IMG_REG
             _probe = get_image_service(image_model_id)
             if not getattr(_probe, "supports_reference_images", False):
-                ref_fallback_reason = (
-                    f"{image_model_id} 는 레퍼런스 이미지를 지원하지 않아 "
-                    f"nano-banana-3 로 자동 폴백"
-                )
-                image_model_id = "nano-banana-3"
+                # v2.1.2: ComfyUI 로컬 모델은 API 폴백 방지 — 레퍼런스만 드롭
+                if _IMG_REG.get(image_model_id, {}).get("provider") == "comfyui":
+                    ref_fallback_reason = (
+                        f"{image_model_id} 는 레퍼런스 미지원이지만 로컬 GPU 모델 → 레퍼런스 무시"
+                    )
+                    combined_refs = []
+                else:
+                    ref_fallback_reason = (
+                        f"{image_model_id} 는 레퍼런스 이미지를 지원하지 않아 "
+                        f"nano-banana-3 로 자동 폴백"
+                    )
+                    image_model_id = "nano-banana-3"
         except Exception:
             # 프로브 실패해도 원래 모델로 진행
             pass

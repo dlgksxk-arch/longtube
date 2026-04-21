@@ -272,8 +272,9 @@ def generate_thumbnail(
     # ── 메인 후크: 큰 그림텍스트 ──
     # 박스 없이 크게 — 박스가 먹던 공간이 없으므로 폰트를 확 키움.
     # 후보 사이즈를 높은 것부터 내려가며 2줄 이내, 높이 35% 이내에 맞추기.
-    candidates = (160, 140, 124, 108, 96, 86, 76, 68, 60)
-    max_title_block_h = int(THUMB_H * 0.38)
+    # v2.1.2: 폰트 크기 상향 — 제목이 짧아졌으므로 더 크게 표시
+    candidates = (200, 180, 160, 140, 124, 108, 96, 86, 76, 68)
+    max_title_block_h = int(THUMB_H * 0.45)
 
     def pick_title_font() -> tuple[ImageFont.ImageFont, list[str]]:
         for size in candidates:
