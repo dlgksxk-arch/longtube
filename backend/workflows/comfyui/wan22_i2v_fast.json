@@ -64,7 +64,7 @@
     "class_type": "CLIPTextEncode",
     "inputs": {
       "clip": ["6", 0],
-      "text": "nsfw, low quality, blurry, watermark, text, distorted"
+      "text": "${NEGATIVE}"
     }
   },
   "10": {

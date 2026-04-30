@@ -254,21 +254,21 @@ export default function SchedulePage() {
               <Clock size={14} className="text-gray-500" />
               {(["1","2","3","4"] as const).map((ch) => (
                 <div key={ch} className="flex items-center gap-1">
-                  <span className={`text-[10px] font-bold ${
+                  <span className={`text-sm font-bold ${
                     ch==="1"?"text-blue-400":ch==="2"?"text-green-400":ch==="3"?"text-amber-400":"text-purple-400"
                   }`}>{ch}</span>
                   <input
                     type="time"
                     value={channelTimes[ch] || ""}
                     onChange={(e) => setChannelTimes((p) => ({...p, [ch]: e.target.value}))}
-                    className="text-xs bg-transparent text-white outline-none w-[70px]"
+                    className="text-sm bg-transparent text-white outline-none w-[70px]"
                   />
                 </div>
               ))}
               <button
                 onClick={handleSaveTime}
                 disabled={saving}
-                className="flex items-center gap-1 text-[10px] bg-accent-primary text-white rounded px-2 py-1"
+                className="flex items-center gap-1 text-sm bg-accent-primary text-white rounded px-2 py-1"
               >
                 {saving ? <Loader2 size={10} className="animate-spin" /> : <Save size={10} />}
                 저장
@@ -281,7 +281,7 @@ export default function SchedulePage() {
               className="flex items-center gap-2 bg-bg-secondary border border-border rounded-lg px-3 py-2 hover:bg-bg-tertiary transition-colors"
             >
               <Clock size={14} className="text-gray-500" />
-              <span className="text-xs text-gray-400">채널별 실행:</span>
+              <span className="text-sm text-gray-400">채널별 실행:</span>
               <span className="text-sm font-bold text-accent-primary">
                 {hasAnySchedule ? Object.entries(queue?.channel_times || {}).filter(([,v])=>!!v).map(([k,v])=>`CH${k} ${v}`).join(" / ") : "꺼짐"}
               </span>
@@ -318,7 +318,7 @@ export default function SchedulePage() {
             {DAYS_KO.map((d, i) => (
               <div
                 key={d}
-                className={`text-center text-[11px] font-semibold py-1.5 ${
+                className={`text-center text-sm font-semibold py-1.5 ${
                   i === 0
                     ? "text-accent-danger"
                     : i === 6
@@ -360,7 +360,7 @@ export default function SchedulePage() {
                   }`}
                 >
                   <div
-                    className={`text-xs ${
+                    className={`text-sm ${
                       isToday
                         ? "text-accent-primary font-bold"
                         : "text-gray-300 font-medium"
@@ -369,17 +369,17 @@ export default function SchedulePage() {
                     {day}
                   </div>
                   {status === "completed" && (
-                    <div className="text-[9px] text-accent-success font-medium mt-1">
+                    <div className="text-sm text-accent-success font-medium mt-1">
                       ✓ 완료
                     </div>
                   )}
                   {status === "failed" && (
-                    <div className="text-[9px] text-accent-danger font-medium mt-1">
+                    <div className="text-sm text-accent-danger font-medium mt-1">
                       ✕ 실패
                     </div>
                   )}
                   {status === "running" && (
-                    <div className="text-[9px] text-amber-400 font-medium mt-1">
+                    <div className="text-sm text-amber-400 font-medium mt-1">
                       ▶ 진행 중
                     </div>
                   )}
@@ -389,7 +389,7 @@ export default function SchedulePage() {
                       {channels.map((c) => (
                         <span
                           key={c}
-                          className={`text-[9px] font-bold px-1 py-0.5 rounded ${chColor(c)}`}
+                          className={`text-sm font-bold px-1 py-0.5 rounded ${chColor(c)}`}
                         >
                           CH{c}
                         </span>
@@ -408,7 +408,7 @@ export default function SchedulePage() {
             예정된 업로드
           </h3>
           {upcomingList.length === 0 ? (
-            <div className="text-xs text-gray-500 text-center py-10">
+            <div className="text-sm text-gray-500 text-center py-10">
               예정된 항목이 없습니다.
             </div>
           ) : (
@@ -419,20 +419,20 @@ export default function SchedulePage() {
                   className="bg-bg-primary/50 rounded-lg p-3"
                 >
                   <div className="flex items-center justify-between mb-1.5">
-                    <span className="text-[11px] text-gray-400 font-semibold">
+                    <span className="text-sm text-gray-400 font-semibold">
                       {item.date}
                     </span>
                     <span
-                      className={`text-[10px] font-medium px-2 py-0.5 rounded ${item.color}`}
+                      className={`text-sm font-medium px-2 py-0.5 rounded ${item.color}`}
                     >
                       {item.status}
                     </span>
                   </div>
-                  <div className="text-xs text-gray-200 font-medium">
+                  <div className="text-sm text-gray-200 font-medium">
                     {item.topic}
                   </div>
                   {hasAnySchedule && (
-                    <div className="text-[10px] text-gray-600 mt-1">
+                    <div className="text-sm text-gray-600 mt-1">
                       <span className={`font-bold ${
                         item.channel === 1 ? "text-blue-400" : item.channel === 2 ? "text-green-400" :
                         item.channel === 3 ? "text-amber-400" : "text-purple-400"

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { Film, Wand2, Play, Trash2, StopCircle, PlayCircle, Loader2, Users } from "lucide-react";
+import { Film, Wand2, Play, Trash2, StopCircle, PlayCircle, Loader2, Users, X } from "lucide-react";
 import LoadingButton from "@/components/common/LoadingButton";
 import ModelSelector from "@/components/common/ModelSelector";
 import CostEstimate from "@/components/common/CostEstimate";
@@ -19,6 +19,8 @@ export default function StepVideo({ project, cuts, onUpdate }: Props) {
   const [generating, setGenerating] = useState(false);
   const [waiting, setWaiting] = useState(false);  // 이미지 완료 대기 중
   const [playingCut, setPlayingCut] = useState<number | null>(null);
+  const [previewCut, setPreviewCut] = useState<Cut | null>(null);
+  const [videoError, setVideoError] = useState<string | null>(null);
   const [videoModels, setVideoModels] = useState<ModelInfo[]>([]);
   const [generatingIndex, setGeneratingIndex] = useState(-1);
   const [taskStatus, setTaskStatus] = useState<TaskStatus | null>(null);
@@ -462,24 +464,28 @@ export default function StepVideo({ project, cuts, onUpdate }: Props) {
                         <video
                           src={assetUrl(project.id, cut.video_path)}
                           className="w-full h-full object-cover"
-                          controls={playingCut === cut.cut_number}
+                          preload="metadata"
+                          muted
                           poster={cut.image_path ? assetUrl(project.id, cut.image_path) : undefined}
                           onPlay={() => setPlayingCut(cut.cut_number)}
                           onPause={() => setPlayingCut(null)}
                           onEnded={() => setPlayingCut(null)}
                         />
                         {playingCut !== cut.cut_number && (
-                          <div
+                          <button
+                            type="button"
                             className="absolute inset-0 flex items-center justify-center cursor-pointer"
+                            aria-label={`컷 ${cut.cut_number} 영상 재생`}
                             onClick={() => {
-                              const video = document.querySelector(`video[src="${assetUrl(project.id, cut.video_path!)}"]`) as HTMLVideoElement;
-                              if (video) video.play();
+                              setVideoError(null);
+                              setPlayingCut(cut.cut_number);
+                              setPreviewCut(cut);
                             }}
                           >
                             <div className="w-12 h-12 rounded-full bg-black/60 flex items-center justify-center">
                               <Play size={20} className="text-white ml-0.5" />
                             </div>
-                          </div>
+                          </button>
                         )}
                       </>
                     ) : isCurrentlyGenerating ? (
@@ -549,6 +555,70 @@ export default function StepVideo({ project, cuts, onUpdate }: Props) {
         </div>
       )}
       </div>{/* 스크롤 영역 끝 */}
+      {previewCut?.video_path && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-6"
+          onClick={() => {
+            setPreviewCut(null);
+            setPlayingCut(null);
+            setVideoError(null);
+          }}
+        >
+          <div
+            className="w-full max-w-5xl rounded-2xl border border-border bg-bg-secondary shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-border px-4 py-3">
+              <div>
+                <p className="text-sm font-semibold text-white">컷 {previewCut.cut_number} 영상 미리보기</p>
+                <p className="mt-0.5 text-[11px] text-gray-500">{previewCut.video_model || project.config.video_model}</p>
+              </div>
+              <button
+                type="button"
+                className="rounded-lg p-2 text-gray-400 hover:bg-white/10 hover:text-white"
+                onClick={() => {
+                  setPreviewCut(null);
+                  setPlayingCut(null);
+                  setVideoError(null);
+                }}
+                aria-label="미리보기 닫기"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="p-4">
+              <video
+                key={`${previewCut.cut_number}-${previewCut.video_path}`}
+                src={`${assetUrl(project.id, previewCut.video_path)}?v=${encodeURIComponent(project.updated_at || "")}`}
+                poster={previewCut.image_path ? assetUrl(project.id, previewCut.image_path) : undefined}
+                className="max-h-[72vh] w-full rounded-xl bg-black object-contain"
+                controls
+                autoPlay
+                playsInline
+                onCanPlay={() => setVideoError(null)}
+                onError={(e) => {
+                  const code = e.currentTarget.error?.code ?? "unknown";
+                  setVideoError(`브라우저가 이 영상 파일을 열지 못했습니다. media error=${code}`);
+                }}
+              />
+              {videoError && (
+                <div className="mt-3 rounded-lg border border-accent-danger/50 bg-accent-danger/10 px-3 py-2 text-xs text-accent-danger">
+                  {videoError}
+                </div>
+              )}
+              <p className="mt-3 text-sm text-gray-300">{previewCut.narration}</p>
+              <a
+                href={assetUrl(project.id, previewCut.video_path)}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-2 inline-block text-xs text-accent-primary hover:underline"
+              >
+                새 탭에서 영상 파일 직접 열기
+              </a>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

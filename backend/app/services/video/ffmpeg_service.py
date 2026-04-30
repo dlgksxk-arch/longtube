@@ -267,6 +267,34 @@ class FFmpegService(BaseVideoService):
         return output_path
 
     @staticmethod
+    async def add_fade_in(
+        input_path: str,
+        output_path: str,
+        fade_seconds: float = 0.5,
+        resolution: str = "1920x1080",
+    ) -> str:
+        """Apply an in-place length-preserving fade-in to video and audio."""
+        pad_wh = resolution.replace("x", ":")
+        vf = (
+            f"scale={resolution}:force_original_aspect_ratio=decrease,"
+            f"pad={pad_wh}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30,"
+            f"fade=t=in:st=0:d={fade_seconds}"
+        )
+        af = f"afade=t=in:st=0:d={fade_seconds}"
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", input_path,
+            "-vf", vf,
+            "-af", af,
+            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "20",
+            "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
+            output_path,
+        ]
+        await FFmpegService._run_ffmpeg(cmd, timeout=300.0)
+        return output_path
+
+    @staticmethod
     async def merge_videos_reencode(
         video_paths: list[str],
         output_path: str,
@@ -280,11 +308,49 @@ class FFmpegService(BaseVideoService):
         if not video_paths:
             raise RuntimeError("merge_videos_reencode: empty input list")
 
+        valid_paths = [p for p in video_paths if os.path.exists(p) and os.path.getsize(p) > 0]
+        if not valid_paths:
+            raise RuntimeError("merge_videos_reencode: no valid input files")
+
+        # Windows has a fairly small command-line length limit. The old
+        # filter_complex path passes every clip as a separate "-i", which
+        # breaks for long projects (120 clips) with WinError 206. At this
+        # point callers have already normalized clips to the same format, so
+        # concat demuxer + one output re-encode is equivalent and keeps the
+        # command short.
+        if len(valid_paths) > 20:
+            concat_file = output_path.replace(".mp4", "_concat.txt")
+            os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+            with open(concat_file, "w", encoding="utf-8") as f:
+                for vp in valid_paths:
+                    abs_p = os.path.abspath(vp).replace("\\", "/").replace("'", r"\'")
+                    f.write(f"file '{abs_p}'\n")
+            pad_wh = resolution.replace("x", ":")
+            cmd = [
+                "ffmpeg", "-y",
+                "-f", "concat", "-safe", "0", "-i", concat_file,
+                "-vf",
+                f"scale={resolution}:force_original_aspect_ratio=decrease,"
+                f"pad={pad_wh}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30",
+                "-c:v", "libx264", "-preset", "ultrafast", "-crf", "20",
+                "-pix_fmt", "yuv420p",
+                "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
+                output_path,
+            ]
+            try:
+                await FFmpegService._run_ffmpeg(cmd, timeout=1800.0)
+            finally:
+                try:
+                    os.remove(concat_file)
+                except Exception:
+                    pass
+            return output_path
+
         inputs: list[str] = []
-        for vp in video_paths:
+        for vp in valid_paths:
             inputs += ["-i", vp]
 
-        n = len(video_paths)
+        n = len(valid_paths)
         # v1.1.30: pad 필터는 WxH 지름길을 안 받아서 ``1920:1080`` 로 분리.
         pad_wh = resolution.replace("x", ":")
         filter_parts = []
@@ -433,6 +499,85 @@ class FFmpegService(BaseVideoService):
 # 정지 이미지를 오디오 길이만큼 그대로 보여주기만 하면 됨 — 가장 저렴 + 가장
 # 빠름. zoompan 필터를 빼고 scale/pad 만 태워서 해상도를 정상화한다.
 # --------------------------------------------------------------------------- #
+
+
+class FFmpegSafeMotionService(BaseVideoService):
+    """Source-locked local still video.
+
+    This path never runs a generative video model and does not animate the
+    frame. It simply holds the original image for the clip duration, so it
+    cannot invent people, faces, limbs, props, or background objects.
+    """
+
+    def __init__(self):
+        self.model_id = "ffmpeg-safe-motion"
+        self.display_name = "FFmpeg Safe Static (source locked)"
+
+    @staticmethod
+    def _resolution_for(aspect_ratio: str) -> str:
+        # Match Hunyuan's local output size so mixed clips concatenate cleanly.
+        if aspect_ratio == "9:16":
+            return "384x640"
+        if aspect_ratio == "1:1":
+            return "512x512"
+        if aspect_ratio == "3:4":
+            return "448x576"
+        return "640x384"
+
+    async def generate(
+        self,
+        image_path: str,
+        audio_path: Optional[str] = None,
+        duration: float = 5.0,
+        output_path: str = "",
+        aspect_ratio: str = "16:9",
+        prompt: str = "",
+    ) -> str:
+        if not os.path.exists(image_path):
+            raise FileNotFoundError(f"Image not found: {image_path}")
+        if not output_path:
+            raise ValueError("output_path required")
+
+        resolution = self._resolution_for(aspect_ratio)
+        fps = 16
+        pad_wh = resolution.replace("x", ":")
+
+        # Absolutely no pan/zoom/animation here. This is the safe "do nothing"
+        # path for clips where generative I2V may hallucinate people or faces.
+        vf = (
+            f"[0:v]scale={resolution}:force_original_aspect_ratio=decrease,"
+            f"pad={pad_wh}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p[v]"
+        )
+
+        has_audio = bool(audio_path and os.path.exists(audio_path))
+        if has_audio:
+            cmd = [
+                "ffmpeg", "-y",
+                "-loop", "1", "-i", image_path,
+                "-i", audio_path,
+                "-filter_complex", vf,
+                "-map", "[v]", "-map", "1:a",
+                "-af", "apad",
+                "-c:v", "libx264", "-preset", "ultrafast", "-crf", "22",
+                "-c:a", "aac", "-b:a", "192k",
+                "-t", str(duration),
+                "-pix_fmt", "yuv420p",
+                output_path,
+            ]
+        else:
+            cmd = [
+                "ffmpeg", "-y",
+                "-loop", "1", "-i", image_path,
+                "-filter_complex", vf,
+                "-map", "[v]",
+                "-c:v", "libx264", "-preset", "ultrafast", "-crf", "22",
+                "-t", str(duration),
+                "-pix_fmt", "yuv420p",
+                output_path,
+            ]
+
+        await FFmpegService._run_ffmpeg(cmd, timeout=180.0)
+        return output_path
 
 
 class FFmpegStaticService(BaseVideoService):

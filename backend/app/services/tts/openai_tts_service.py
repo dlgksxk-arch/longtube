@@ -7,12 +7,14 @@ APIConnectionError 가 발생하기 때문이다. httpx.AsyncClient 를 async wi
 즉석 생성하면 루프 불일치 문제가 원천 차단된다.
 """
 import asyncio
+import os
 import subprocess
 from typing import Optional
 
 import httpx
 
 from app.services.tts.base import BaseTTSService, _resolve_bins
+from app.services.cancel_ctx import raise_if_cancelled  # v1.2.25 cancel 방어
 from app import config
 from app.config import TTS_MAX_DURATION, TTS_MIN_DURATION  # 상수는 고정이라 직접 import OK
 
@@ -47,6 +49,8 @@ class OpenAITTSService(BaseTTSService):
         MAX_RETRIES = 3
         last_err = None
         for attempt in range(1, MAX_RETRIES + 1):
+            # v1.2.25: 재시도 루프 안에서 cancel 체크.
+            raise_if_cancelled("openai-tts")
             try:
                 async with httpx.AsyncClient(timeout=60) as client:
                     resp = await client.post(
@@ -83,16 +87,19 @@ class OpenAITTSService(BaseTTSService):
 
         duration = self._get_duration(output_path)
 
-        max_dur = TTS_MAX_DURATION  # 4.5
-        if duration > max_dur:
-            duration = self.enforce_max_duration(output_path, duration, max_dur)
+        # Do not tempo-shift or cut narration. Timing must be solved by text length.
+        if os.path.basename(output_path) != "voice_preview.mp3":
+            try:
+                duration = self.validate_duration_window(
+                    output_path, duration, TTS_MIN_DURATION, TTS_MAX_DURATION
+                )
+            except ValueError:
+                try:
+                    os.remove(output_path)
+                except OSError:
+                    pass
+                raise
 
-        # v1.1.53: 음성이 TTS_MIN_DURATION(4.0초) 미만이면 감속으로 늘림
-        min_dur = TTS_MIN_DURATION  # 4.0
-        if duration < min_dur:
-            duration = self.enforce_min_duration(output_path, duration, min_dur)
-
-        import os
         rel_path = output_path
         if os.path.isabs(output_path):
             parts = output_path.replace("\\", "/").split("/")
@@ -118,7 +125,7 @@ class OpenAITTSService(BaseTTSService):
             _, ffprobe_bin = _resolve_bins()
             result = subprocess.run(
                 [ffprobe_bin, "-v", "quiet", "-show_entries", "format=duration", "-of", "csv=p=0", path],
-                capture_output=True, text=True, timeout=10,
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
             )
             if result.stdout.strip():
                 return float(result.stdout.strip())

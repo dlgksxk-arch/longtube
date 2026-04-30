@@ -1,5 +1,46 @@
 # LongTube 세션 인계 (v1.1.63 기준)
 
+> **2026-04-23 직전 세션 요약 (v1.2.26 까지 진행)**
+>
+> **이번 세션 핵심 작업** — "유령 API 호출" 차단선 완성 + "제작 중단" 버튼 정상화
+>
+> 1. **v1.2.25**: 모든 외부 API 모델(fal.ai 8개 / OpenAI 이미지·TTS / Grok / Flux / Kling / ElevenLabs)
+>    에 thread-local cancel 가드 일반화. `backend/app/services/cancel_ctx.py` 신설 →
+>    `OperationCancelled`, `set_cancel_key/get_cancel_key/is_cancelled/raise_if_cancelled`.
+>    각 서비스 submit / 폴링 / 재시도 진입점에 `raise_if_cancelled(태그)` 박음.
+>    `_step_script` / `_step_voice` / `_generate_thumbnail_sync` 진입 시 `set_cancel_key(pid)` 호출.
+>
+> 2. **v1.2.26**: 사용자 보고 — "제작 중단 버튼 동작 안한다." 원인은 `_step_image` /
+>    `_step_video` 가 `cancel_ctx.set_cancel_key(pid)` 를 호출하지 않아서 외부 API
+>    서비스의 `raise_if_cancelled()` 가드가 영원히 False 였음(thread-local key 가 None).
+>    수정:
+>    - `pipeline_tasks._step_image` / `_step_video` 진입 시 `set_cancel_key(pid)` + 종료 시 `(None)`
+>    - 두 step 의 per-cut `_one()` 안에 `raise_if_cancelled()` 직접 호출 추가
+>    - `oneclick_service._run_sync_pipeline` 의 모든 `except PipelineCancelled` →
+>      `except _CancelTypes`(= `(PipelineCancelled, OperationCancelled)`) 통일
+>    - `cancel_task()` 가 redis/comfyui 정리보다 **먼저** task 상태를 cancelled 로
+>      마킹 (UI 즉시 반응) + "⏹ 사용자 중단 요청" 로그 한 줄
+>
+> **버전**: backend `app/main.py` 두 곳, `frontend/src/lib/version.ts`,
+> `frontend/package.json` 모두 1.2.26.
+>
+> **세션 중 발생한 사고** — Edit 툴이 큰 파이썬 파일 끝부분을 두 번 잘라먹음.
+> `pipeline_tasks.py` (1126줄 print 미닫힘 → git HEAD tail 로 복원),
+> `oneclick_service.py` (`run_queue_top_now` 의 `if loo` 미완 → 재구성).
+> 두 파일 모두 `py_compile` 통과 확인. **다음 세션에서 큰 .py 편집할 때는 Edit 보다
+> bash + python heredoc 권장.** CONTEXT.md / HANDOFF.md 도 같은 사고 → 재구성됨.
+>
+> **남아있는 보류 작업** (이전 세션 priority shift 로 잠시 멈춤):
+> - 진행상태 실시간 세분화 (`sub_status` 필드) — 이미지/영상 컷 단위 "현재 N/M컷
+>   생성 중" 같은 텍스트를 task 에 박아 Live 페이지 stale 60초 경고 대신 살아있는
+>   상태가 보이도록. 백엔드 `oneclick_service` 에 `sub_status` 필드 + helper
+>   (`update_task_sub_status`, `append_task_log`) 는 이미 추가됨. 남은 일:
+>   각 step 안에서 호출 + 프론트 ActivityPanel 에 렌더링 + `frontend/src/lib/api.ts`
+>   `OneClickTask` 타입에 `sub_status` 추가.
+>
+> ---
+
+
 > v1.1.61 시점 작성본을 v1.1.63 에서 전면 재작성. stale 된 ComfyUI 모델 개수,
 > SDXL 해상도, Qwen-Image-Edit 상태 등 교정. 과거 교훈 섹션은 보존.
 
@@ -189,5 +230,5 @@
 
 ---
 
-> 마지막 업데이트: 2026-04-20 (v1.1.63)
+> 마지막 업데이트: 2026-04-23 (v1.2.26)
 > 작성 근거: 이 문서의 모든 기술 서술은 해당 커밋 시점의 실제 소스 코드와 워크플로 JSON 파일을 직접 대조해서 검증함.

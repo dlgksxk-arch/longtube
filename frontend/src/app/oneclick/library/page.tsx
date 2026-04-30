@@ -239,7 +239,7 @@ export default function LibraryPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold text-white">완성작 관리</h1>
-          <p className="text-xs text-gray-500 mt-1">
+          <p className="text-sm text-gray-500 mt-1">
             {completed.length}편 완성 · {uploaded.length}편 업로드
             {stats ? ` · ${stats.total_disk_mb}MB 사용 중` : ""}
           </p>
@@ -247,18 +247,18 @@ export default function LibraryPage() {
         <div className="flex items-center gap-2">
           {selectMode ? (
             <>
-              <span className="text-xs text-gray-400">{selected.size}개 선택</span>
+              <span className="text-sm text-gray-400">{selected.size}개 선택</span>
               <button
                 onClick={handleBulkDelete}
                 disabled={selected.size === 0 || deleting}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-accent-danger/20 text-accent-danger hover:bg-accent-danger/30 disabled:opacity-40 transition-colors"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-accent-danger/20 text-accent-danger hover:bg-accent-danger/30 disabled:opacity-40 transition-colors"
               >
                 {deleting ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
                 일괄 삭제
               </button>
               <button
                 onClick={() => { setSelectMode(false); setSelected(new Set()); }}
-                className="px-3 py-1.5 rounded-lg text-xs font-medium bg-bg-secondary text-gray-400 border border-border hover:text-gray-200"
+                className="px-3 py-1.5 rounded-lg text-sm font-medium bg-bg-secondary text-gray-400 border border-border hover:text-gray-200"
               >
                 취소
               </button>
@@ -266,7 +266,7 @@ export default function LibraryPage() {
           ) : (
             <button
               onClick={() => setSelectMode(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-bg-secondary text-gray-400 border border-border hover:text-gray-200 transition-colors"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-bg-secondary text-gray-400 border border-border hover:text-gray-200 transition-colors"
             >
               <Trash2 size={12} />
               선택 삭제
@@ -287,7 +287,7 @@ export default function LibraryPage() {
             <button
               key={f.key}
               onClick={() => setFilter(f.key)}
-              className={`px-4 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+              className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${
                 filter === f.key
                   ? "bg-accent-primary text-white"
                   : "bg-bg-secondary text-gray-400 border border-border hover:text-gray-200"
@@ -311,7 +311,7 @@ export default function LibraryPage() {
             <button
               key={f.key}
               onClick={() => setChannelFilter(f.key)}
-              className={`px-2.5 py-1 rounded text-[10px] font-bold transition-colors ${
+              className={`px-2.5 py-1 rounded text-sm font-bold transition-colors ${
                 channelFilter === f.key
                   ? `${f.color} bg-white/10 ring-1 ring-white/20`
                   : "text-gray-600 hover:text-gray-400"
@@ -396,7 +396,7 @@ export default function LibraryPage() {
 
                   {/* 컷 수 뱃지 */}
                   {task.total_cuts > 0 && (
-                    <span className="absolute bottom-2 right-2 bg-black/70 text-white text-[10px] font-medium px-1.5 py-0.5 rounded">
+                    <span className="absolute bottom-2 right-2 bg-black/70 text-white text-sm font-medium px-1.5 py-0.5 rounded">
                       {task.total_cuts}컷
                     </span>
                   )}
@@ -408,23 +408,23 @@ export default function LibraryPage() {
                     {task.title || task.topic}
                   </h4>
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-[10px] text-gray-600">{dateLabel}</span>
+                    <span className="text-sm text-gray-600">{dateLabel}</span>
                     {/* v1.1.58: 채널 배지 */}
                     {task.channel ? (
-                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${CH_COLORS[String(task.channel)] || "text-gray-400 bg-gray-400/15"}`}>
+                      <span className={`text-sm font-bold px-1.5 py-0.5 rounded ${CH_COLORS[String(task.channel)] || "text-gray-400 bg-gray-400/15"}`}>
                         CH{task.channel}
                       </span>
                     ) : null}
                     {isFailed ? (
-                      <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-accent-danger/15 text-accent-danger">
+                      <span className="text-sm font-medium px-1.5 py-0.5 rounded bg-accent-danger/15 text-accent-danger">
                         실패
                       </span>
                     ) : hasYT ? (
-                      <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-accent-success/15 text-accent-success">
+                      <span className="text-sm font-medium px-1.5 py-0.5 rounded bg-accent-success/15 text-accent-success">
                         업로드됨
                       </span>
                     ) : (
-                      <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-400/15 text-amber-400">
+                      <span className="text-sm font-medium px-1.5 py-0.5 rounded bg-amber-400/15 text-amber-400">
                         미업로드
                       </span>
                     )}
@@ -529,7 +529,7 @@ function DetailModal({
                 <div className="absolute top-3 left-3 z-10 flex gap-1 bg-black/60 rounded-lg p-1 backdrop-blur-sm">
                   <button
                     onClick={() => setShowVideo(true)}
-                    className={`px-3 py-1 rounded text-[10px] font-medium transition-colors ${
+                    className={`px-3 py-1 rounded text-sm font-medium transition-colors ${
                       showVideo ? "bg-white/20 text-white" : "text-white/50 hover:text-white/80"
                     }`}
                   >
@@ -537,7 +537,7 @@ function DetailModal({
                   </button>
                   <button
                     onClick={() => setShowVideo(false)}
-                    className={`px-3 py-1 rounded text-[10px] font-medium transition-colors ${
+                    className={`px-3 py-1 rounded text-sm font-medium transition-colors ${
                       !showVideo ? "bg-white/20 text-white" : "text-white/50 hover:text-white/80"
                     }`}
                   >
@@ -580,7 +580,7 @@ function DetailModal({
                       <ChevronRight size={16} className="text-white" />
                     </button>
                   )}
-                  <span className="absolute bottom-3 right-3 bg-black/60 text-white text-[10px] px-2 py-0.5 rounded">
+                  <span className="absolute bottom-3 right-3 bg-black/60 text-white text-sm px-2 py-0.5 rounded">
                     {cutIdx + 1} / {cutImages.length}
                   </span>
                 </div>
@@ -598,29 +598,29 @@ function DetailModal({
                 <div className="flex items-center gap-3">
                   {/* v1.1.58: 채널 배지 */}
                   {task.channel ? (
-                    <span className={`text-[10px] font-bold px-2 py-1 rounded ${CH_COLORS[String(task.channel)] || "text-gray-400 bg-gray-400/15"}`}>
+                    <span className={`text-sm font-bold px-2 py-1 rounded ${CH_COLORS[String(task.channel)] || "text-gray-400 bg-gray-400/15"}`}>
                       CH{task.channel}
                     </span>
                   ) : (
-                    <span className="text-[10px] font-bold px-2 py-1 rounded text-gray-500 bg-gray-500/10">
+                    <span className="text-sm font-bold px-2 py-1 rounded text-gray-500 bg-gray-500/10">
                       수동
                     </span>
                   )}
                   {task.status === "failed" ? (
-                    <span className="flex items-center gap-1 text-xs font-medium px-2 py-1 rounded bg-accent-danger/15 text-accent-danger">
+                    <span className="flex items-center gap-1 text-sm font-medium px-2 py-1 rounded bg-accent-danger/15 text-accent-danger">
                       <XCircle size={12} /> 실패
                     </span>
                   ) : hasYT ? (
-                    <span className="flex items-center gap-1 text-xs font-medium px-2 py-1 rounded bg-accent-success/15 text-accent-success">
+                    <span className="flex items-center gap-1 text-sm font-medium px-2 py-1 rounded bg-accent-success/15 text-accent-success">
                       <CheckCircle2 size={12} /> 업로드됨
                     </span>
                   ) : (
-                    <span className="flex items-center gap-1 text-xs font-medium px-2 py-1 rounded bg-amber-400/15 text-amber-400">
+                    <span className="flex items-center gap-1 text-sm font-medium px-2 py-1 rounded bg-amber-400/15 text-amber-400">
                       <Clock size={12} /> 미업로드
                     </span>
                   )}
                   {detail?.error && (
-                    <span className="text-[10px] text-accent-danger truncate max-w-[300px]">
+                    <span className="text-sm text-accent-danger truncate max-w-[300px]">
                       {detail.error}
                     </span>
                   )}
@@ -633,7 +633,7 @@ function DetailModal({
                       href={detail!.youtube_url!}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-blue-500/15 text-blue-400 hover:bg-blue-500/25 transition-colors"
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-blue-500/15 text-blue-400 hover:bg-blue-500/25 transition-colors"
                     >
                       <ExternalLink size={12} /> YouTube
                     </a>
@@ -643,7 +643,7 @@ function DetailModal({
                     <button
                       onClick={onUpload}
                       disabled={uploading}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-accent-primary/20 text-accent-primary hover:bg-accent-primary/30 disabled:opacity-40 transition-colors"
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-accent-primary/20 text-accent-primary hover:bg-accent-primary/30 disabled:opacity-40 transition-colors"
                     >
                       {uploading ? (
                         <Loader2 size={12} className="animate-spin" />
@@ -656,7 +656,7 @@ function DetailModal({
                   {/* 삭제 */}
                   <button
                     onClick={onDelete}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-accent-danger/15 text-accent-danger hover:bg-accent-danger/25 transition-colors"
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-accent-danger/15 text-accent-danger hover:bg-accent-danger/25 transition-colors"
                   >
                     <Trash2 size={12} /> 삭제
                   </button>
@@ -676,10 +676,10 @@ function DetailModal({
               {/* 모델 정보 */}
               {detail?.models && Object.keys(detail.models).length > 0 && (
                 <div className="bg-bg-secondary rounded-lg p-3">
-                  <p className="text-[10px] text-gray-500 mb-2 uppercase tracking-wider">사용 모델</p>
+                  <p className="text-sm text-gray-500 mb-2 uppercase tracking-wider">사용 모델</p>
                   <div className="flex flex-wrap gap-2">
                     {Object.entries(detail.models).map(([key, val]) => (
-                      <span key={key} className="text-[10px] bg-bg-tertiary text-gray-300 px-2 py-0.5 rounded">
+                      <span key={key} className="text-sm bg-bg-tertiary text-gray-300 px-2 py-0.5 rounded">
                         {key}: <span className="text-gray-100">{val}</span>
                       </span>
                     ))}
@@ -688,7 +688,7 @@ function DetailModal({
               )}
 
               {/* 날짜 */}
-              <div className="flex items-center gap-4 text-[10px] text-gray-600">
+              <div className="flex items-center gap-4 text-sm text-gray-600">
                 {detail?.created_at && (
                   <span>생성: {new Date(detail.created_at).toLocaleString("ko-KR")}</span>
                 )}
@@ -714,8 +714,8 @@ function InfoCard({ icon, label, value }: { icon: React.ReactNode; label: string
     <div className="bg-bg-secondary rounded-lg p-3 flex items-center gap-2.5">
       <div className="text-gray-500">{icon}</div>
       <div>
-        <p className="text-[10px] text-gray-500">{label}</p>
-        <p className="text-xs font-semibold text-gray-200">{value}</p>
+        <p className="text-sm text-gray-500">{label}</p>
+        <p className="text-sm font-semibold text-gray-200">{value}</p>
       </div>
     </div>
   );

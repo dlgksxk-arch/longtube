@@ -1,5 +1,6 @@
 """Voice generation router"""
 import json
+from pathlib import Path
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -10,6 +11,12 @@ from app.models.project import Project
 from app.models.cut import Cut
 from app.config import DATA_DIR
 from app.services.tts.factory import get_tts_service
+from app.services.tts.narration_fit import generate_tts_with_auto_narration_fit
+from app.services.tts.voice_profile import (
+    ensure_voice_profile_from_config,
+    get_cached_voice_profile_from_config,
+    profile_key_from_config,
+)
 
 router = APIRouter()
 
@@ -22,6 +29,78 @@ def _load_script(project_id: str) -> dict:
     with open(script_path, "r", encoding="utf-8") as f:
         return json.load(f)
 
+
+def _save_script(project_id: str, script: dict):
+    script_path = DATA_DIR / project_id / "script.json"
+    script_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(script_path, "w", encoding="utf-8") as f:
+        json.dump(script, f, ensure_ascii=False, indent=2)
+
+
+def _audio_file_exists(project_id: str, audio_path: str | None) -> bool:
+    if not audio_path:
+        return False
+    path = Path(audio_path)
+    if not path.is_absolute():
+        path = DATA_DIR / project_id / audio_path
+    try:
+        return path.exists() and path.stat().st_size > 100
+    except OSError:
+        return False
+
+
+def _mark_voice_completed_if_ready(project_id: str, project: Project, db: Session) -> bool:
+    """Clear stale voice failure state once every narrated cut has a real audio file."""
+    cuts = db.query(Cut).filter(Cut.project_id == project_id).order_by(Cut.cut_number).all()
+    narrated_cuts = [c for c in cuts if (c.narration or "").strip()]
+    if not narrated_cuts:
+        return False
+    if not all(_audio_file_exists(project_id, c.audio_path) for c in narrated_cuts):
+        return False
+
+    step_states = dict(project.step_states or {})
+    step_states["3"] = "completed"
+    project.step_states = step_states
+    if project.current_step is not None and project.current_step < 3:
+        project.current_step = 3
+    db.commit()
+
+    try:
+        from app.services.task_manager import complete_task
+        complete_task(project_id, "voice")
+    except Exception as e:
+        print(f"[voice] complete_task skipped: {e}")
+    return True
+
+
+def _sync_cut_narration_after_fit(project_id: str, cut: Cut, cut_data: dict, narration: str) -> bool:
+    final = (narration or "").strip()
+    if not final or final == (cut.narration or "").strip():
+        return False
+
+    cut.narration = final
+    if cut_data is not None:
+        cut_data["narration"] = final
+
+    # Narration/audio changed: old generated video is no longer trustworthy.
+    cut.video_path = None
+    cut.video_model = None
+    for rel in (
+        Path("videos") / f"cut_{cut.cut_number:03d}.mp4",
+        Path("videos") / f"cut_{cut.cut_number}.mp4",
+    ):
+        try:
+            (DATA_DIR / project_id / rel).unlink(missing_ok=True)
+        except OSError:
+            pass
+    return True
+
+
+def _invalidate_voice_dependents(project: Project):
+    step_states = dict(project.step_states or {})
+    for key in ("5", "6", "7"):
+        step_states.pop(key, None)
+    project.step_states = step_states
 
 @router.post("/{project_id}/generate")
 async def generate_all_voices(project_id: str, db: Session = Depends(get_db)):
@@ -43,7 +122,9 @@ async def generate_all_voices(project_id: str, db: Session = Depends(get_db)):
     cut_dict = {c.cut_number: c for c in cuts}
 
     results = []
-    for cut_data in script.get("cuts", []):
+    script_dirty = False
+    script_cuts = script.get("cuts", [])
+    for cut_data in script_cuts:
         cut_number = cut_data["cut_number"]
         narration = cut_data.get("narration", "")
 
@@ -65,12 +146,34 @@ async def generate_all_voices(project_id: str, db: Session = Depends(get_db)):
             audio_dir.mkdir(parents=True, exist_ok=True)
             audio_path = str(audio_dir / f"cut_{cut_number}.wav")
 
-            result = await tts_service.generate(narration, voice_id, audio_path, speed=speed)
+            result = await generate_tts_with_auto_narration_fit(
+                tts_service,
+                narration,
+                voice_id,
+                audio_path,
+                speed=speed,
+                config=project.config,
+                topic=project.topic,
+                language=project.config.get("language", "ko"),
+                cut_number=cut_number,
+                total_cuts=len(script_cuts),
+                cut_data=cut_data,
+                script=script,
+                log=lambda msg: print(f"[Voice] {msg}"),
+            )
+            narration_changed = _sync_cut_narration_after_fit(
+                project_id, cut, cut_data, result.get("narration", narration)
+            )
+            if narration_changed:
+                _invalidate_voice_dependents(project)
+            script_dirty = narration_changed or script_dirty
 
             cut.audio_path = result["path"]
             cut.audio_duration = result.get("duration", 0.0)
             cut.status = "completed"
             db.commit()
+            if script_dirty:
+                _save_script(project_id, script)
 
             results.append({
                 "cut_number": cut_number,
@@ -87,11 +190,14 @@ async def generate_all_voices(project_id: str, db: Session = Depends(get_db)):
                 "error": str(e)
             })
 
-    # Mark step completed
+    # Mark step based on actual voice generation results.
     step_states = dict(project.step_states or {})
-    step_states["3"] = "completed"
+    failed_count = sum(1 for r in results if r["status"] == "failed")
+    step_states["3"] = "failed" if failed_count else "completed"
     project.step_states = step_states
     db.commit()
+    if script_dirty:
+        _save_script(project_id, script)
 
     return {
         "project_id": project_id,
@@ -105,7 +211,15 @@ async def generate_all_voices(project_id: str, db: Session = Depends(get_db)):
 async def generate_all_voices_async(project_id: str, db: Session = Depends(get_db)):
     """Start voice generation in background — returns immediately"""
     import asyncio
-    from app.services.task_manager import start_task, update_task, complete_task, fail_task, register_async_task, is_running
+    from app.services.task_manager import (
+        start_task,
+        update_task,
+        complete_task,
+        fail_task,
+        register_async_task,
+        is_running,
+        record_item_error,
+    )
 
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
@@ -156,9 +270,7 @@ async def generate_all_voices_async(project_id: str, db: Session = Depends(get_d
                 speed = 1.0
             voice_settings = None
             if "child" in voice_preset:
-                if tts_model == "openai-tts":
-                    speed = min(4.0, speed + 0.15)
-                elif tts_model == "elevenlabs":
+                if tts_model == "elevenlabs":
                     voice_settings = {"stability": 0.7, "similarity_boost": 0.85}
 
             cuts = local_db.query(Cut).filter(Cut.project_id == project_id).all()
@@ -167,6 +279,7 @@ async def generate_all_voices_async(project_id: str, db: Session = Depends(get_d
             if not cuts:
                 raise ValueError("No cuts found — generate script first")
 
+            script_dirty = False
             for i, cut_data in enumerate(cut_list):
                 if state.status != "running":
                     break
@@ -185,7 +298,28 @@ async def generate_all_voices_async(project_id: str, db: Session = Depends(get_d
                     audio_dir = DATA_DIR / project_id / "audio"
                     audio_dir.mkdir(parents=True, exist_ok=True)
                     audio_path = str(audio_dir / f"cut_{cut_number}.mp3")
-                    result = await tts_service.generate(narration, voice_id, audio_path, speed=speed, voice_settings=voice_settings)
+                    result = await generate_tts_with_auto_narration_fit(
+                        tts_service,
+                        narration,
+                        voice_id,
+                        audio_path,
+                        speed=speed,
+                        voice_settings=voice_settings,
+                        config=proj.config,
+                        topic=proj.topic,
+                        language=proj.config.get("language", "ko"),
+                        cut_number=cut_number,
+                        total_cuts=len(cut_list),
+                        cut_data=cut_data,
+                        script=script,
+                        log=lambda msg: print(f"[Voice] {msg}"),
+                    )
+                    narration_changed = _sync_cut_narration_after_fit(
+                        project_id, cut, cut_data, result.get("narration", narration)
+                    )
+                    if narration_changed:
+                        _invalidate_voice_dependents(proj)
+                    script_dirty = narration_changed or script_dirty
                     cut.audio_path = result["path"]
                     cut.audio_duration = result.get("duration", 0.0)
                     cut.status = "completed"
@@ -193,30 +327,34 @@ async def generate_all_voices_async(project_id: str, db: Session = Depends(get_d
                     try:
                         from app.services import spend_ledger
                         spend_ledger.record_tts(
-                            tts_model, chars=len(narration),
+                            tts_model, chars=len(result.get("narration", narration)),
                             project_id=project_id, note=f"studio cut_{cut_number}",
                         )
                     except Exception as _le:
                         print(f"[spend_ledger] studio tts record skipped: {_le}")
                     local_db.commit()
+                    if script_dirty:
+                        _save_script(project_id, script)
                 except Exception as e:
                     import traceback
                     print(f"[voice] Cut {cut_number} failed: {e}\n{traceback.format_exc()}")
+                    record_item_error(project_id, "voice", cut_number, str(e))
                     cut.status = "failed"
                     local_db.commit()
 
                 update_task(project_id, "voice", i + 1)
 
             # v1.1.55-fix: 실제 생성된 오디오 수 검증
-            _audio_dir = DATA_DIR / project_id / "audio"
-            _generated_audio = [
-                f for f in _audio_dir.glob("cut_*.mp3")
-                if f.stat().st_size > 100
-            ] if _audio_dir.exists() else []
+            if script_dirty:
+                _save_script(project_id, script)
 
             proj = local_db.query(Project).filter(Project.id == project_id).first()
             ss = dict(proj.step_states or {})
-            if _generated_audio:
+            db_cuts = local_db.query(Cut).filter(Cut.project_id == project_id).all()
+            expected_cuts = [c for c in db_cuts if (c.narration or "").strip()]
+            generated_count = sum(1 for c in expected_cuts if _audio_file_exists(project_id, c.audio_path))
+            expected_count = len(expected_cuts)
+            if expected_count > 0 and generated_count >= expected_count:
                 ss["3"] = "completed"
                 proj.step_states = ss
                 local_db.commit()
@@ -225,8 +363,25 @@ async def generate_all_voices_async(project_id: str, db: Session = Depends(get_d
                 ss["3"] = "failed"
                 proj.step_states = ss
                 local_db.commit()
-                fail_task(project_id, "voice", f"음성 0/{len(cut_list)}개 생성됨 — TTS API 확인 필요")
+                fail_task(
+                    project_id,
+                    "voice",
+                    f"음성 {generated_count}/{expected_count}개 생성됨 — 실패 컷은 시스템이 분량 보정 후 다시 시도합니다",
+                )
         except BaseException as e:
+            import asyncio
+            if isinstance(e, asyncio.CancelledError):
+                print("[voice] Task cancelled by user")
+                try:
+                    proj = local_db.query(Project).filter(Project.id == project_id).first()
+                    if proj:
+                        ss = dict(proj.step_states or {})
+                        ss["3"] = "cancelled"
+                        proj.step_states = ss
+                        local_db.commit()
+                except Exception:
+                    pass
+                return
             import traceback
             print(f"[voice] Task failed: {e}\n{traceback.format_exc()}")
             fail_task(project_id, "voice", str(e))
@@ -251,7 +406,15 @@ async def generate_all_voices_async(project_id: str, db: Session = Depends(get_d
 async def resume_voices_async(project_id: str, db: Session = Depends(get_db)):
     """Resume voice generation — only generate cuts that don't have audio yet"""
     import asyncio
-    from app.services.task_manager import start_task, update_task, complete_task, fail_task, register_async_task, is_running
+    from app.services.task_manager import (
+        start_task,
+        update_task,
+        complete_task,
+        fail_task,
+        register_async_task,
+        is_running,
+        record_item_error,
+    )
 
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
@@ -262,9 +425,18 @@ async def resume_voices_async(project_id: str, db: Session = Depends(get_db)):
 
     # Find cuts missing audio
     cuts = db.query(Cut).filter(Cut.project_id == project_id).order_by(Cut.cut_number).all()
-    pending_cuts = [c for c in cuts if not c.audio_path and c.narration]
+    pending_cuts = [
+        c
+        for c in cuts
+        if (c.narration or "").strip() and not _audio_file_exists(project_id, c.audio_path)
+    ]
     if not pending_cuts:
-        return {"status": "nothing_to_resume", "step": "voice", "total": 0}
+        completed = _mark_voice_completed_if_ready(project_id, project, db)
+        return {
+            "status": "completed" if completed else "nothing_to_resume",
+            "step": "voice",
+            "total": 0,
+        }
 
     script = _load_script(project_id)
     cut_list = script.get("cuts", [])
@@ -306,14 +478,13 @@ async def resume_voices_async(project_id: str, db: Session = Depends(get_db)):
                 speed = 1.0
             voice_settings = None
             if "child" in voice_preset:
-                if tts_model == "openai-tts":
-                    speed = min(4.0, speed + 0.15)
-                elif tts_model == "elevenlabs":
+                if tts_model == "elevenlabs":
                     voice_settings = {"stability": 0.7, "similarity_boost": 0.85}
 
             db_cuts = local_db.query(Cut).filter(Cut.project_id == project_id).all()
             cut_dict = {c.cut_number: c for c in db_cuts}
 
+            script_dirty = False
             for i, cut_data in enumerate(pending_cut_list):
                 if state.status != "running":
                     break
@@ -328,26 +499,77 @@ async def resume_voices_async(project_id: str, db: Session = Depends(get_db)):
                     audio_dir = DATA_DIR / project_id / "audio"
                     audio_dir.mkdir(parents=True, exist_ok=True)
                     audio_path = str(audio_dir / f"cut_{cut_number}.mp3")
-                    result = await tts_service.generate(narration, voice_id, audio_path, speed=speed, voice_settings=voice_settings)
+                    result = await generate_tts_with_auto_narration_fit(
+                        tts_service,
+                        narration,
+                        voice_id,
+                        audio_path,
+                        speed=speed,
+                        voice_settings=voice_settings,
+                        config=proj.config,
+                        topic=proj.topic,
+                        language=proj.config.get("language", "ko"),
+                        cut_number=cut_number,
+                        total_cuts=len(cut_list),
+                        cut_data=cut_data,
+                        script=script,
+                        log=lambda msg: print(f"[Voice] {msg}"),
+                    )
+                    narration_changed = _sync_cut_narration_after_fit(
+                        project_id, cut, cut_data, result.get("narration", narration)
+                    )
+                    if narration_changed:
+                        _invalidate_voice_dependents(proj)
+                    script_dirty = narration_changed or script_dirty
                     cut.audio_path = result["path"]
                     cut.audio_duration = result.get("duration", 0.0)
                     cut.status = "completed"
                     local_db.commit()
+                    if script_dirty:
+                        _save_script(project_id, script)
                 except Exception as e:
                     import traceback
                     print(f"[voice-resume] Cut {cut_number} failed: {e}\n{traceback.format_exc()}")
+                    record_item_error(project_id, "voice", cut_number, str(e))
                     cut.status = "failed"
                     local_db.commit()
 
                 update_task(project_id, "voice", i + 1)
 
+            if script_dirty:
+                _save_script(project_id, script)
+
             proj = local_db.query(Project).filter(Project.id == project_id).first()
             ss = dict(proj.step_states or {})
-            ss["3"] = "completed"
-            proj.step_states = ss
-            local_db.commit()
-            complete_task(project_id, "voice")
+            failed_count = sum(
+                1
+                for c in cut_dict.values()
+                if getattr(c, "status", "") == "failed" and c.cut_number in {x["cut_number"] for x in pending_cut_list}
+            )
+            if failed_count:
+                ss["3"] = "failed"
+                proj.step_states = ss
+                local_db.commit()
+                fail_task(project_id, "voice", f"음성 {failed_count}개 실패 — 실패 컷은 대본 분량을 조정해야 합니다")
+            else:
+                ss["3"] = "completed"
+                proj.step_states = ss
+                local_db.commit()
+                complete_task(project_id, "voice")
         except BaseException as e:
+            import asyncio
+            if isinstance(e, asyncio.CancelledError):
+                print("[voice-resume] Task cancelled by user")
+                try:
+                    proj = local_db.query(Project).filter(Project.id == project_id).first()
+                    if proj:
+                        ss = dict(proj.step_states or {})
+                        ss["3"] = "cancelled"
+                        proj.step_states = ss
+                        local_db.commit()
+                except Exception:
+                    pass
+                return
             import traceback
             print(f"[voice-resume] Task failed: {e}\n{traceback.format_exc()}")
             fail_task(project_id, "voice", str(e))
@@ -404,7 +626,38 @@ async def generate_one_voice(
         audio_dir.mkdir(parents=True, exist_ok=True)
         audio_path = str(audio_dir / f"cut_{cut_number}.wav")
 
-        result = await tts_service.generate(cut.narration, voice_id, audio_path, speed=speed)
+        script = _load_script(project_id)
+        script_cuts = script.get("cuts", [])
+        cut_data = next(
+            (item for item in script_cuts if int(item.get("cut_number", -1)) == cut_number),
+            {
+                "cut_number": cut_number,
+                "narration": cut.narration,
+                "image_prompt": cut.image_prompt,
+                "scene_type": cut.scene_type,
+            },
+        )
+
+        result = await generate_tts_with_auto_narration_fit(
+            tts_service,
+            cut.narration,
+            voice_id,
+            audio_path,
+            speed=speed,
+            config=project.config,
+            topic=project.topic,
+            language=project.config.get("language", "ko"),
+            cut_number=cut_number,
+            total_cuts=len(script_cuts) or 1,
+            cut_data=cut_data,
+            script=script,
+            log=lambda msg: print(f"[Voice] {msg}"),
+        )
+        script_dirty = _sync_cut_narration_after_fit(
+            project_id, cut, cut_data, result.get("narration", cut.narration)
+        )
+        if script_dirty:
+            _invalidate_voice_dependents(project)
 
         cut.audio_path = result["path"]
         cut.audio_duration = result.get("duration", 0.0)
@@ -419,6 +672,9 @@ async def generate_one_voice(
         except Exception as _le:
             print(f"[spend_ledger] studio single tts record skipped: {_le}")
         db.commit()
+        if script_dirty:
+            _save_script(project_id, script)
+        _mark_voice_completed_if_ready(project_id, project, db)
 
         return {
             "cut_number": cut_number,
@@ -430,6 +686,55 @@ async def generate_one_voice(
         cut.status = "failed"
         db.commit()
         raise HTTPException(500, f"Voice generation failed: {str(e)}")
+
+
+@router.get("/{project_id}/profile")
+async def get_voice_profile(project_id: str, db: Session = Depends(get_db)):
+    """Return cached TTS pacing profile for the project's selected voice."""
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(404, "Project not found")
+
+    key = profile_key_from_config(project.config)
+    profile = get_cached_voice_profile_from_config(project.config)
+    return {
+        "status": "ok" if profile else "missing",
+        "key": key,
+        "profile": profile,
+    }
+
+
+@router.post("/{project_id}/profile")
+async def profile_voice(
+    project_id: str,
+    force: bool = Query(False, description="Re-measure even when a cached profile exists."),
+    db: Session = Depends(get_db),
+):
+    """Measure selected ElevenLabs voice speed and cache it for script generation."""
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(404, "Project not found")
+
+    try:
+        profile = await ensure_voice_profile_from_config(project.config, force=force, log=print)
+    except Exception as e:
+        raise HTTPException(500, f"Voice profile failed: {str(e)}")
+
+    if not profile:
+        raise HTTPException(400, "Voice profiling is only available for configured ElevenLabs voices.")
+
+    cfg = dict(project.config or {})
+    cfg["tts_voice_profile_key"] = profile.get("key")
+    cfg["tts_chars_per_sec"] = profile.get("chars_per_sec")
+    cfg["tts_words_per_sec"] = profile.get("words_per_sec")
+    cfg["tts_voice_profile_updated_at"] = profile.get("updated_at")
+    project.config = cfg
+    db.commit()
+
+    return {
+        "status": "ok",
+        "profile": profile,
+    }
 
 
 class PreviewOverride(BaseModel):
@@ -472,15 +777,21 @@ async def preview_voice(
     voice_id = pick("tts_voice_id", "alloy")
     voice_lang = pick("tts_voice_lang", "ko")
 
-    # API key check — fallback to openai-tts if elevenlabs key is missing
-    # v1.1.63: UI 에서 바꾼 키가 즉시 반영되도록 config 모듈 속성을 참조.
+    # v1.2.20: ElevenLabs → OpenAI 폴백 제거. 사용자 요구 — 선택 모델 API 가
+    # 없으면 알림으로 띄우고 다른 모델로 갈아치우지 않는다.
     from app import config as app_config
     if tts_model == "elevenlabs" and not app_config.ELEVENLABS_API_KEY:
-        if app_config.OPENAI_API_KEY:
-            tts_model = "openai-tts"
-            voice_id = "alloy"
-        else:
-            raise HTTPException(400, "TTS API 키가 설정되지 않았습니다. 대시보드에서 API 키를 입력해주세요.")
+        raise HTTPException(
+            400,
+            "ElevenLabs 가 선택되어 있는데 ELEVENLABS_API_KEY 가 비어있습니다. "
+            "키를 등록하거나 TTS 모델을 OpenAI 로 바꾸세요. (폴백 비활성화)",
+        )
+    if tts_model == "openai-tts" and not app_config.OPENAI_API_KEY:
+        raise HTTPException(
+            400,
+            "OpenAI TTS 가 선택되어 있는데 OPENAI_API_KEY 가 비어있습니다. "
+            "키를 등록하거나 TTS 모델을 ElevenLabs 로 바꾸세요.",
+        )
 
     tts_service = get_tts_service(tts_model)
     voice_preset = pick("tts_voice_preset", "ko-child-boy")
@@ -501,10 +812,7 @@ async def preview_voice(
     voice_settings = None
     is_child = "child" in voice_preset
     if is_child:
-        if tts_model == "openai-tts":
-            # OpenAI: speed up slightly to sound younger
-            speed = min(4.0, speed + 0.15)
-        elif tts_model == "elevenlabs":
+        if tts_model == "elevenlabs":
             # ElevenLabs: higher stability for child-like consistency
             voice_settings = {"stability": 0.7, "similarity_boost": 0.85}
 

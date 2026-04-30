@@ -22,12 +22,15 @@ v1.1.43
     PUT  /api/oneclick/queue          — 큐 전체 교체 (저장)
     POST /api/oneclick/queue/run-next — 큐 맨 위 1건 즉시 실행 (pop)
 """
+from pathlib import Path
 from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+from fastapi.responses import FileResponse
 
 from app.services import oneclick_service
+from app.config import BASE_DIR
 
 router = APIRouter()
 
@@ -38,6 +41,17 @@ class PrepareRequest(BaseModel):
     title: Optional[str] = None
     # v1.1.42: 모달 "시간" 입력. None 이면 템플릿/기본값 유지.
     target_duration: Optional[int] = None
+    target_cuts: Optional[int] = None
+    # v1.2.9: 에피소드 상세. 프론트의 "지금 실행" 경로에서도 전달된다.
+    openings: Optional[List[str]] = None
+    endings: Optional[List[str]] = None
+    core_content: Optional[str] = None
+    # v1.2.10: 시리즈 연속성.
+    episode_number: Optional[int] = None
+    next_episode_preview: Optional[str] = None
+    # v1.2.29: 채널 번호(1-4). 지정되면 project_id 에 CH{n} prefix 가 박히고
+    # config["channel"] 에도 기록된다. None 이면 레거시 동작.
+    channel: Optional[int] = None
 
 
 @router.post("/prepare")
@@ -51,6 +65,12 @@ def prepare(req: PrepareRequest):
             topic=topic,
             title=req.title,
             target_duration=req.target_duration,
+            episode_openings=req.openings,
+            episode_endings=req.endings,
+            episode_core_content=req.core_content,
+            episode_number=req.episode_number,
+            next_episode_preview=req.next_episode_preview,
+            channel=req.channel,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"prepare 실패: {type(e).__name__}: {e}")
@@ -115,6 +135,60 @@ async def emergency_stop():
         )
 
 
+@router.post("/comfyui-reset")
+async def comfyui_reset():
+    """v1.2.27 — ComfyUI 큐만 리셋 (태스크는 건드리지 않음).
+
+    stall 감지(3분 이상 진행률 변화 없음) 시 프런트가 자동 호출하는 복구 수단.
+    파이프라인은 그대로 두고 ComfyUI 쪽 현재 prompt interrupt + 대기 큐 clear 만
+    보낸다. 그러면 wait_for 폴링 루프가 에러를 받아 다음 컷으로 넘어간다
+    (또는 서비스 레벨 재시도 로직이 다시 제출).
+
+    응답 상한 3초. ComfyUI 가 응답 못 주면 fire-and-forget.
+    """
+    import asyncio as _asyncio
+    from app.services import comfyui_client
+
+    errors: list[str] = []
+    ok_interrupt = False
+    ok_clear = False
+
+    async def _both():
+        return await _asyncio.gather(
+            comfyui_client.interrupt(),
+            comfyui_client.clear_queue(),
+            return_exceptions=True,
+        )
+
+    try:
+        r_int, r_clr = await _asyncio.wait_for(_both(), timeout=3.0)
+        if isinstance(r_int, Exception):
+            errors.append(f"interrupt: {r_int}")
+        else:
+            ok_interrupt = bool(r_int)
+        if isinstance(r_clr, Exception):
+            errors.append(f"clear_queue: {r_clr}")
+        else:
+            ok_clear = bool(r_clr)
+    except _asyncio.TimeoutError:
+        errors.append("timeout 3s — 백그라운드로 전환")
+        try:
+            loop = _asyncio.get_running_loop()
+            loop.create_task(comfyui_client.interrupt())
+            loop.create_task(comfyui_client.clear_queue())
+        except Exception as e:
+            errors.append(f"fire-and-forget: {e}")
+    except Exception as e:
+        errors.append(f"{type(e).__name__}: {e}")
+
+    return {
+        "ok": True,
+        "comfyui_interrupt": ok_interrupt,
+        "comfyui_queue_cleared": ok_clear,
+        "errors": errors,
+    }
+
+
 @router.get("/running")
 def get_running():
     """v1.1.58: 현재 실행 중인 태스크 정보. 없으면 null."""
@@ -140,6 +214,40 @@ def delete_task(task_id: str):
     if not ok:
         raise HTTPException(status_code=404, detail="task not found or still running")
     return {"ok": True, "task_id": task_id}
+
+
+@router.post("/tasks/{task_id}/requeue")
+def requeue_task_endpoint(task_id: str):
+    """v1.2.23 — 실패/취소 태스크를 "초기화 + 대기 큐 복귀" 한다.
+
+    프로젝트 폴더 전체를 삭제하고 해당 주제를 채널의 대기 큐 맨 뒤에
+    다시 올린다. 에피소드 상세(오프닝/엔딩/본문/번호)는 보존된다.
+    """
+    try:
+        return oneclick_service.requeue_task(task_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="task not found")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"requeue failed: {type(e).__name__}: {e}",
+        )
+
+
+@router.post("/tasks/requeue-channel")
+def requeue_channel_endpoint(channel: int):
+    """v1.2.23 — 해당 채널의 실패/취소 태스크를 일괄 큐 복귀."""
+    try:
+        return oneclick_service.requeue_channel_failed(channel)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"requeue-channel failed: {type(e).__name__}: {e}",
+        )
 
 
 @router.post("/{task_id}/clear-step/{step}")
@@ -205,16 +313,23 @@ async def regenerate_thumbnail(task_id: str, body: ThumbnailRegenRequest = Thumb
 
     from app.tasks.pipeline_tasks import load_script, build_thumbnail_prompt, _redis_set
     from app.services.image.prompt_builder import collect_reference_images, collect_character_images
-    from app.services.thumbnail_service import generate_ai_thumbnail
-    from app.config import DATA_DIR
-    from pathlib import Path
+    from app.services.thumbnail_service import (
+        generate_ai_thumbnail,
+        extract_thumbnail_text_parts,
+        normalize_episode_label,
+    )
+    from app.config import resolve_project_dir
     import re
 
     script = load_script(project_id)
     thumb_prompt = build_thumbnail_prompt(script)
 
-    image_model = config.get("thumbnail_model") or config.get("image_model") or "openai-image-1"
-    thumb_path = Path(DATA_DIR) / project_id / "output" / "thumbnail.png"
+    from app.services.image.factory import resolve_image_model
+
+    image_model = resolve_image_model(
+        config.get("thumbnail_model") or config.get("image_model")
+    )
+    thumb_path = resolve_project_dir(project_id) / "output" / "thumbnail.png"
     thumb_path.parent.mkdir(parents=True, exist_ok=True)
 
     # 기존 썸네일 삭제
@@ -226,9 +341,10 @@ async def regenerate_thumbnail(task_id: str, body: ThumbnailRegenRequest = Thumb
 
     _redis_set(f"thumbnail:status:{project_id}", "generating")
 
-    # 메인 후크 텍스트: title 에서 "EP. N · " 접두사 제거
     title = (script.get("title") or "").strip()
-    overlay_title = re.sub(r"^EP\.\s*\d+\s*[·\-]\s*", "", title).strip() or title
+    overlay_title, extracted_episode_label = extract_thumbnail_text_parts(title, None)
+    episode_no = config.get("episode_number")
+    overlay_episode_label = normalize_episode_label(str(episode_no)) if episode_no else extracted_episode_label
 
     # 레퍼런스 + 캐릭터 이미지 수집 — 스튜디오와 동일
     char_paths = collect_character_images(project_id, config)
@@ -240,15 +356,26 @@ async def regenerate_thumbnail(task_id: str, body: ThumbnailRegenRequest = Thumb
             seen.add(p)
             combined_refs.append(p)
 
-    # v2.1.2: 레퍼런스 미지원 모델이면 폴백. ComfyUI 로컬 모델은 API 폴백 방지.
+    # v2.1.2 → v1.2.20: ComfyUI 로컬 모델만 레퍼런스 무시. API 모델이 레퍼런스
+    # 미지원이면 폴백 금지 — 명시적 HTTPException 으로 알림.
     if combined_refs:
-        from app.services.image.factory import get_image_service, IMAGE_REGISTRY as _IMG_REG
+        from app.services.image.factory import (
+            get_image_service,
+            IMAGE_REGISTRY as _IMG_REG,
+            resolve_image_model,
+        )
+        image_model = resolve_image_model(image_model)
         _probe = get_image_service(image_model)
         if not getattr(_probe, "supports_reference_images", False):
             if _IMG_REG.get(image_model, {}).get("provider") == "comfyui":
                 combined_refs = []
             else:
-                image_model = "nano-banana-3"
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"선택한 썸네일 모델 '{image_model}' 은(는) 레퍼런스 이미지를 "
+                           f"지원하지 않습니다. 폴백 비활성화 — 모델을 nano-banana 계열로 "
+                           f"바꾸거나 레퍼런스를 제거하세요.",
+                )
 
     # v1.1.55: 공통 REFERENCE_STYLE_PREFIX 사용 — 컷/썸네일/재생성 문구 통일
     if combined_refs and thumb_prompt:
@@ -263,7 +390,7 @@ async def regenerate_thumbnail(task_id: str, body: ThumbnailRegenRequest = Thumb
             image_model_id=image_model,
             overlay_title_text=overlay_title,
             overlay_subtitle=None,
-            overlay_episode_label=None,
+            overlay_episode_label=overlay_episode_label,
             output_path=str(thumb_path),
             reference_images=combined_refs or None,
         )
@@ -367,6 +494,21 @@ class QueueItemModel(BaseModel):
     target_duration: Optional[int] = None
     # v1.1.57: 채널 번호 (1~4). None/0 이면 채널 1.
     channel: Optional[int] = None
+    # v1.2.9: 에피소드 상세 — 스크립트 프롬프트에 주입.
+    # 길이 5 고정이 기대되지만 짧거나 길어도 normalize 에서 맞춘다.
+    openings: Optional[List[str]] = None
+    endings: Optional[List[str]] = None
+    core_content: Optional[str] = None
+    # v1.2.10: 시리즈 연속성.
+    episode_number: Optional[int] = None
+    next_episode_preview: Optional[str] = None
+    # v1.2.30: 큐 등록 경로/시각 메타. UI 에서 "자동 실행 HH:MM",
+    # "수동 등록", "복구" 같은 대기 사유를 표시할 때 쓴다.
+    queued_source: Optional[str] = None
+    queued_at: Optional[str] = None
+    queued_note: Optional[str] = None
+    requeued_from_task_id: Optional[str] = None
+    restored_from_project_id: Optional[str] = None
 
 
 class QueueStateModel(BaseModel):
@@ -374,16 +516,22 @@ class QueueStateModel(BaseModel):
     # 채널별 스케줄은 channel_times 로 관리.
     daily_time: Optional[str] = None  # 레거시 — channel_times["1"] 로 마이그레이션
     channel_times: Optional[dict] = None  # {"1": "07:00", "2": "12:00", ...}
+    # v1.2.14: 채널별 기본 프리셋. {"1": "preset_id", ...}
+    channel_presets: Optional[dict] = None
+    # Internal automation lock. UI saves omit this, so service preserves existing dates.
+    last_run_dates: Optional[dict] = None
     items: List[QueueItemModel] = []
 
 
 @router.get("/queue")
 def get_queue():
+    """v1.1.43 — 주제 큐 상태 조회."""
     return oneclick_service.get_queue()
 
 
 @router.put("/queue")
 def put_queue(state: QueueStateModel):
+    """v1.1.43 — 주제 큐 전체 저장 (스케줄 시각 + 채널별 프리셋 + 아이템)."""
     try:
         return oneclick_service.set_queue(state.model_dump())
     except Exception as e:
@@ -393,15 +541,40 @@ def put_queue(state: QueueStateModel):
         )
 
 
+@router.post("/queue/wake-timers/sync")
+def sync_queue_wake_timers():
+    """Sync Windows wake timers from current channel schedule."""
+    result = oneclick_service.sync_wake_timers_now()
+    if result is None:
+        raise HTTPException(status_code=500, detail="wake timer sync failed")
+    return result
+
+
+@router.get("/queue-template")
+def download_queue_template():
+    """채널 편집 엑셀 업로드용 기본 템플릿 다운로드."""
+    template_path = BASE_DIR / "docs" / "oneclick_queue_template.xlsx"
+    if not template_path.exists():
+        raise HTTPException(status_code=404, detail="queue template not found")
+    return FileResponse(
+        path=Path(template_path),
+        filename="oneclick_queue_template.xlsx",
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
 @router.post("/queue/run-next")
-async def run_queue_next():
-    """큐 맨 위 1 건을 즉시 pop 해 실행. 없으면 204.
+async def run_queue_next(channel: Optional[int] = None):
+    """v1.2.12 — 해당 채널의 큐 맨 위 1건 즉시 실행. channel 미지정 시 채널 1.
 
     async def 로 선언해서 FastAPI 이벤트 루프에서 직접 호출되게 함.
-    `start_task` 내부에서 `asyncio.get_running_loop()` 가 필요하기 때문.
+    `run_queue_top_now` 내부에서 asyncio.get_event_loop() 가 필요하기 때문.
     """
+    ch = int(channel) if channel else 1
     try:
-        task = oneclick_service.run_queue_top_now()
+        task = oneclick_service.run_queue_top_now(ch)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(
             status_code=500,
@@ -410,3 +583,51 @@ async def run_queue_next():
     if task is None:
         raise HTTPException(status_code=404, detail="queue is empty")
     return task
+
+
+# --------------------------------------------------------------------------- #
+# v1.2.28 — 고아 프로젝트 (_TASKS 에 없는 디스크 잔존 프로젝트) 관리 엔드포인트
+# --------------------------------------------------------------------------- #
+
+
+@router.get("/orphan-projects")
+def list_orphans(channel: Optional[int] = None):
+    """_TASKS 에 없지만 DB/디스크에 남은 딸깍 프로젝트를 나열.
+
+    v1.2.28 — 프론트 채널 편집 패널의 "고아 프로젝트" 섹션이 호출.
+    `channel` 이 주어지면 해당 채널(1~4)만, 없으면 전체 반환.
+    """
+    try:
+        items = oneclick_service.list_orphan_projects(channel)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"orphan-projects list failed: {type(e).__name__}: {e}",
+        )
+    return {"ok": True, "channel": channel, "count": len(items), "items": items}
+
+
+class OrphanRequeueRequest(BaseModel):
+    project_ids: List[str]
+    target_channel: Optional[int] = None
+
+
+@router.post("/orphan-projects/requeue")
+def requeue_orphans(body: OrphanRequeueRequest):
+    """선택한 고아 프로젝트를 "폴더 삭제 + 큐 재등록" 한다.
+
+    v1.2.28 — "선택 N건 복구" 버튼이 호출. target_channel 을 주면 그 채널로,
+    비우면 각 프로젝트의 config.channel(또는 1) 로 편입된다.
+    """
+    if not body.project_ids:
+        raise HTTPException(status_code=400, detail="project_ids 가 비어 있습니다")
+    try:
+        return oneclick_service.requeue_orphan_projects(
+            list(body.project_ids),
+            target_channel=body.target_channel,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"orphan-projects requeue failed: {type(e).__name__}: {e}",
+        )

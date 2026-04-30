@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 from app.models.database import get_db
 from app.models.project import Project
 from app.models.cut import Cut
-from app.config import DATA_DIR
+from app.config import DATA_DIR, resolve_project_dir
 from app.services.youtube_service import (
     YouTubeUploader,
     YouTubeAuthError,
@@ -33,7 +33,10 @@ from app.services.thumbnail_service import (
     generate_thumbnail,
     generate_ai_thumbnail,
     ThumbnailError,
+    extract_thumbnail_text_parts,
+    normalize_episode_label,
 )
+from app.services.image.factory import resolve_image_model
 from app.services.llm.factory import get_llm_service
 from app.services.llm.base import BaseLLMService
 
@@ -144,21 +147,21 @@ def _final_video_path(project_id: str) -> Optional[Path]:
       2. 자막 번인 영상 (`final_with_subtitles.mp4`)
       3. 컷 병합 영상 (`merged.mp4`)
     """
-    output_dir = Path(DATA_DIR) / project_id / "output"
+    output_dir = resolve_project_dir(project_id) / "output"
     with_interludes = output_dir / "final_with_interludes.mp4"
     if with_interludes.exists():
         return with_interludes
     with_subs = output_dir / "final_with_subtitles.mp4"
     if with_subs.exists():
         return with_subs
-    merged = Path(DATA_DIR) / project_id / "videos" / "merged.mp4"
+    merged = resolve_project_dir(project_id) / "videos" / "merged.mp4"
     if merged.exists():
         return merged
     return None
 
 
 def _thumbnail_path(project_id: str) -> Path:
-    return Path(DATA_DIR) / project_id / "output" / "thumbnail.png"
+    return resolve_project_dir(project_id) / "output" / "thumbnail.png"
 
 
 def _extract_video_id(url_or_id: Optional[str]) -> Optional[str]:
@@ -198,7 +201,7 @@ def _resolve_cut_image(project_id: str, image_path: Optional[str]) -> Optional[s
         return None
     p = Path(image_path)
     if not p.is_absolute():
-        p = Path(DATA_DIR) / project_id / image_path
+        p = resolve_project_dir(project_id) / image_path
     if p.exists():
         return str(p)
     return None
@@ -294,6 +297,27 @@ def _validate_channel(ch: int) -> int:
     if ch not in (1, 2, 3, 4):
         raise HTTPException(400, "channel 은 1~4 만 허용됩니다.")
     return ch
+
+
+def _project_channel_id(project: Project) -> Optional[int]:
+    cfg = project.config or {}
+    raw = cfg.get("youtube_channel", cfg.get("channel"))
+    try:
+        ch = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return ch if ch in (1, 2, 3, 4) else None
+
+
+def _uploader_for_project(project: Project) -> YouTubeUploader:
+    ch = _project_channel_id(project)
+    if ch is not None:
+        return YouTubeUploader(channel_id=ch)
+
+    project_uploader = YouTubeUploader(project_id=project.id)
+    if project_uploader.is_authenticated():
+        return project_uploader
+    return YouTubeUploader()
 
 
 @router.get("/auth/channel/{ch}/status")
@@ -471,7 +495,8 @@ async def create_thumbnail(
             "썸네일 메인 후크 텍스트가 비어있습니다. 프론트에서 직접 입력하거나 'AI 전체 추천' 을 먼저 누르세요.",
         )
     subtitle = (body.subtitle or "").strip() or None
-    episode_label = (body.episode_label or "").strip() or None
+    title, extracted_episode_label = extract_thumbnail_text_parts(title, body.episode_label)
+    episode_label = normalize_episode_label(body.episode_label) or extracted_episode_label
     config = project.config or {}
     asset_url = f"/assets/{project_id}/output/thumbnail.png"
 
@@ -502,7 +527,9 @@ async def create_thumbnail(
 
     # ─── 모드 2/3: AI 기반 ───
     # image 모델 결정
-    image_model_id = body.image_model or config.get("image_model") or "openai-image-1"
+    image_model_id = resolve_image_model(
+        body.image_model or config.get("image_model")
+    )
 
     # 프롬프트 결정 (사용자 override → LLM → 템플릿 폴백)
     image_prompt = (body.prompt or "").strip() or None
@@ -544,7 +571,7 @@ async def create_thumbnail(
     # 레퍼런스 + 캐릭터 이미지 경로 수집 — 이미지 모델이 스타일을 따라가도록
     # 프로젝트 설정에 등록된 레퍼런스 이미지를 썸네일 생성에도 그대로 넘김.
     # 캐릭터 이미지를 우선으로 (메인 주인공) 넣고, 그 뒤에 스타일 레퍼런스.
-    project_dir = Path(DATA_DIR) / project_id
+    project_dir = resolve_project_dir(project_id)
 
     def _resolve_asset_list(rels) -> list[str]:
         out: list[str] = []
@@ -573,31 +600,31 @@ async def create_thumbnail(
     missing_refs = max(0, registered_ref_count - len(ref_image_paths))
     missing_chars = max(0, registered_char_count - len(char_image_paths))
 
-    # 레퍼런스 이미지가 있는데 선택한 이미지 모델이 레퍼런스를 지원하지 않으면
-    # 레퍼런스 스타일을 지원하는 모델(nano-banana-3) 로 자동 폴백한다.
-    # flux / seedream / z-image / grok / midjourney / dall-e-3 등은 레퍼런스를
-    # 그냥 드롭하기 때문에 프로젝트 설정의 스타일과 완전히 다른 이미지가 나옴.
+    # v1.2.20: 폴백 제거. 사용자 요구 — "API 이용할 때 설정된 모델의 API 연결
+    # 안되있을때 알림창 띄우고 풀백으로 처리하지마." ComfyUI 로컬 모델만 레퍼런스
+    # 무시(GPU 비용 0). API 모델이 레퍼런스 미지원이면 명시적 HTTPException.
     ref_fallback_reason = None
     if combined_refs:
+        from app.services.image.factory import get_image_service, IMAGE_REGISTRY as _IMG_REG
         try:
-            from app.services.image.factory import get_image_service, IMAGE_REGISTRY as _IMG_REG
             _probe = get_image_service(image_model_id)
-            if not getattr(_probe, "supports_reference_images", False):
-                # v2.1.2: ComfyUI 로컬 모델은 API 폴백 방지 — 레퍼런스만 드롭
-                if _IMG_REG.get(image_model_id, {}).get("provider") == "comfyui":
-                    ref_fallback_reason = (
-                        f"{image_model_id} 는 레퍼런스 미지원이지만 로컬 GPU 모델 → 레퍼런스 무시"
-                    )
-                    combined_refs = []
-                else:
-                    ref_fallback_reason = (
-                        f"{image_model_id} 는 레퍼런스 이미지를 지원하지 않아 "
-                        f"nano-banana-3 로 자동 폴백"
-                    )
-                    image_model_id = "nano-banana-3"
+            _supports = getattr(_probe, "supports_reference_images", False)
         except Exception:
-            # 프로브 실패해도 원래 모델로 진행
-            pass
+            _probe = None
+            _supports = True  # 프로브 자체 실패면 일단 진행
+        if _probe is not None and not _supports:
+            if _IMG_REG.get(image_model_id, {}).get("provider") == "comfyui":
+                ref_fallback_reason = (
+                    f"{image_model_id} 는 레퍼런스 미지원이지만 로컬 GPU 모델 → 레퍼런스 무시"
+                )
+                combined_refs = []
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"선택한 이미지 모델 '{image_model_id}' 은(는) 레퍼런스 이미지를 "
+                           f"지원하지 않습니다. 폴백 비활성화 — 모델을 nano-banana 계열로 "
+                           f"바꾸거나 레퍼런스를 제거하세요.",
+                )
 
     # v1.1.55: 공통 REFERENCE_STYLE_PREFIX 사용 — 컷/썸네일/재생성 문구 통일.
     # 이미지 모델 서비스 레벨에서도 붙이지만, 서비스에 따라 다르게 붙을 수 있어
@@ -987,7 +1014,7 @@ async def upload_to_youtube(
     if not body.description and not _cfg_desc:
         try:
             import json
-            _script_path = Path(DATA_DIR) / project_id / "script.json"
+            _script_path = resolve_project_dir(project_id) / "script.json"
             if _script_path.exists():
                 with open(_script_path, "r", encoding="utf-8") as _sf:
                     _script_data = json.load(_sf)
@@ -1003,12 +1030,7 @@ async def upload_to_youtube(
         if tp.exists():
             thumb_path = str(tp)
 
-    # 프로젝트별 인증이 있으면 그걸 우선 사용, 없으면 전역 토큰으로 fallback.
-    project_uploader = YouTubeUploader(project_id=project_id)
-    if project_uploader.is_authenticated():
-        uploader = project_uploader
-    else:
-        uploader = YouTubeUploader()  # legacy 전역 토큰
+    uploader = _uploader_for_project(project)
 
     # 동기 서비스를 이벤트 루프 블로킹 없이 실행
     try:
@@ -1094,12 +1116,7 @@ async def delete_uploaded_video(
             "URL 을 직접 넘겨주세요.",
         )
 
-    # 프로젝트별 인증 우선, 없으면 전역 토큰으로 폴백
-    project_uploader = YouTubeUploader(project_id=project_id)
-    if project_uploader.is_authenticated():
-        uploader = project_uploader
-    else:
-        uploader = YouTubeUploader()
+    uploader = _uploader_for_project(project)
 
     try:
         await asyncio.to_thread(uploader.delete_video, video_id)

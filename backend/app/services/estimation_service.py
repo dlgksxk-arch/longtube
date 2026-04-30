@@ -13,9 +13,9 @@ from __future__ import annotations
 from typing import Any
 
 from app.services.llm.factory import LLM_REGISTRY
-from app.services.image.factory import IMAGE_REGISTRY
+from app.services.image.factory import IMAGE_REGISTRY, resolve_image_model
 from app.services.tts.factory import TTS_REGISTRY
-from app.services.video.factory import VIDEO_REGISTRY
+from app.services.video.factory import DEFAULT_VIDEO_MODEL, VIDEO_REGISTRY, resolve_video_model
 
 
 # --------------------------------------------------------------------------- #
@@ -39,6 +39,12 @@ TTS_CHARS_PER_CUT = 24
 # 모델별 실측 평균 처리 시간 (초). 순차 호출 기준, 네트워크 지연 포함.
 # "없으면 기본값" 원칙 — dict 에 없으면 IMAGE_DEFAULT_SEC 사용.
 IMAGE_SEC_PER_CUT = {
+    "comfyui-dreamshaper-xl": 20.0,
+    "comfyui-dreamshaper-xl-vector": 20.0,
+    "comfyui-dreamshaper-xl-longtube": 20.0,
+    "comfyui-dreamshaper-xl-longtube-2k": 20.0,
+    "comfyui-dreamshaper-xl-longtube-3k": 20.0,
+    "comfyui-qwen-image-edit-2509": 25.0,
     "openai-image-1":  18.0,
     "openai-dalle3":   22.0,
     "nano-banana-3":   12.0,
@@ -65,6 +71,8 @@ TTS_DEFAULT_SEC = 2.5
 VIDEO_SEC_PER_CUT = {
     "ffmpeg-kenburns":  0.8,   # 로컬 FFmpeg Ken Burns 효과 — 매우 빠름
     "ffmpeg-static":    0.6,   # v1.1.40: 효과 없음 — Ken Burns 보다 살짝 더 빠름
+    "comfyui-hunyuan15-480p": 70.0,  # 로컬 Hunyuan 480p I2V, RTX 3090 실측 약 68~71초/5초 컷
+    "comfyui-wan22-ti2v-5b": 180.0,  # 로컬 Wan2.2 TI2V-5B, 640x384/16fps/20 steps 보수 추정
     "ltx2-fast":        20.0,
     "ltx2-pro":         30.0,
     "seedance-lite":    35.0,
@@ -150,6 +158,9 @@ def _safe_int(value: Any, default: int) -> int:
 
 
 def _estimated_cuts(config: dict) -> int:
+    target_cuts = _safe_int(config.get("target_cuts"), 0)
+    if target_cuts > 0:
+        return target_cuts
     target_duration = _safe_int(config.get("target_duration"), 300)
     return max(1, target_duration // SECONDS_PER_CUT)
 
@@ -188,6 +199,7 @@ def _estimate_tts_cost_usd(model_id: str, cuts: int) -> float:
 
 
 def _estimate_video_cost_usd(model_id: str, cuts: int) -> float:
+    model_id = resolve_video_model(model_id)
     meta = VIDEO_REGISTRY.get(model_id)
     if not meta:
         return 0.0
@@ -211,6 +223,7 @@ def _estimate_tts_seconds(model_id: str, cuts: int) -> float:
 
 
 def _estimate_video_seconds(model_id: str, cuts: int) -> float:
+    model_id = resolve_video_model(model_id)
     per = VIDEO_SEC_PER_CUT.get(model_id, VIDEO_DEFAULT_SEC)
     return per * cuts
 
@@ -234,12 +247,12 @@ def estimate_project(config: dict | None) -> dict:
     """
     cfg = config or {}
     cuts = _estimated_cuts(cfg)
-    target_duration = _safe_int(cfg.get("target_duration"), 300)
+    target_duration = cuts * SECONDS_PER_CUT if _safe_int(cfg.get("target_cuts"), 0) > 0 else _safe_int(cfg.get("target_duration"), cuts * SECONDS_PER_CUT)
 
     script_model = cfg.get("script_model") or "claude-sonnet-4-6"
-    image_model = cfg.get("image_model") or "openai-image-1"
+    image_model = resolve_image_model(cfg.get("image_model"))
     tts_model = cfg.get("tts_model") or "openai-tts"
-    video_model = cfg.get("video_model") or "ffmpeg-kenburns"
+    video_model = resolve_video_model(cfg.get("video_model") or DEFAULT_VIDEO_MODEL)
     # v1.1.36: 영상 제작 대상 선택 — 미선택 컷은 ffmpeg-kenburns 폴백 (비용 0).
     video_target_selection = cfg.get("video_target_selection") or "all"
     ai_video_first_n = int(cfg.get("ai_video_first_n", 5) or 0)

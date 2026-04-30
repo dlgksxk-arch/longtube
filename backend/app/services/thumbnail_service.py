@@ -18,13 +18,14 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 from pathlib import Path
 from typing import Optional
 
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
-from app.config import DATA_DIR
+from app.config import DATA_DIR, resolve_project_dir
 
 # YouTube 권장 썸네일 해상도
 THUMB_W = 1280
@@ -49,6 +50,44 @@ FONT_CANDIDATES = [
 
 class ThumbnailError(RuntimeError):
     pass
+
+
+def normalize_episode_label(label: Optional[str]) -> Optional[str]:
+    text = (label or "").strip()
+    if not text:
+        return None
+    match = re.search(r"(\d{1,3})", text)
+    if match:
+        return f"EP.{int(match.group(1)):02d}"
+    return text
+
+
+def sanitize_thumbnail_title(text: Optional[str]) -> str:
+    value = (text or "").strip()
+    if not value:
+        return ""
+    value = re.sub(r"\bEP\.?\s*0*\d{1,3}\b", "", value, flags=re.IGNORECASE)
+    value = re.sub(r"\s*[\[\(【][^\]\)】]{1,30}[\]\)】]\s*$", "", value)
+    value = re.sub(r"\s{2,}", " ", value).strip(" -·")
+    return value.strip()
+
+
+def extract_thumbnail_text_parts(
+    title: Optional[str],
+    episode_label: Optional[str] = None,
+) -> tuple[str, Optional[str]]:
+    raw_title = (title or "").strip()
+    raw_label = normalize_episode_label(episode_label)
+
+    extracted_label = None
+    match = re.search(r"\bEP\.?\s*0*(\d{1,3})\b", raw_title, flags=re.IGNORECASE)
+    if match:
+        extracted_label = f"EP.{int(match.group(1)):02d}"
+        raw_title = re.sub(r"\bEP\.?\s*0*\d{1,3}\b", "", raw_title, flags=re.IGNORECASE)
+
+    clean_title = sanitize_thumbnail_title(raw_title)
+    final_label = raw_label or extracted_label
+    return clean_title, final_label
 
 
 def _find_font(size: int) -> ImageFont.ImageFont:
@@ -154,6 +193,18 @@ def _text_size(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont) 
         return len(text) * sz // 2, sz
 
 
+def _text_bbox(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    font: ImageFont.ImageFont,
+) -> tuple[int, int, int, int]:
+    try:
+        return draw.textbbox((0, 0), text, font=font)
+    except Exception:
+        w, h = _text_size(draw, text, font)
+        return (0, 0, w, h)
+
+
 def _fit_font(
     draw: ImageDraw.ImageDraw,
     text: str,
@@ -229,11 +280,12 @@ def generate_thumbnail(
     Returns:
         저장된 파일의 절대 경로 (str).
     """
+    title, episode_label = extract_thumbnail_text_parts(title, episode_label)
     if not title or not title.strip():
         raise ThumbnailError("제목이 비어있습니다.")
 
     if output_path is None:
-        out_dir = Path(DATA_DIR) / project_id / "output"
+        out_dir = resolve_project_dir(project_id) / "output"
         out_dir.mkdir(parents=True, exist_ok=True)
         output_path = str(out_dir / "thumbnail.png")
     else:
@@ -390,13 +442,18 @@ def generate_thumbnail(
 
     # ── 좌상단 EP 배지 ──
     if episode_label:
-        ep = episode_label.strip()
-        ep_font = _fit_font(draw, ep, 200, 72, (64, 56, 48, 42, 36))
-        tw, th = _text_size(draw, ep, ep_font)
-        bx_pad = 18
-        by_pad = 10
-        ep_x0 = pad_x
-        ep_y0 = 36
+        ep = normalize_episode_label(episode_label) or episode_label.strip()
+        # EP 배지는 작고 또렷하게만 보이면 된다.
+        ep_font = _fit_font(draw, ep, 150, 42, (42, 36, 32, 28, 24))
+        bbox = _text_bbox(draw, ep, ep_font)
+        tw = bbox[2] - bbox[0]
+        th = bbox[3] - bbox[1]
+        bx_pad = 14
+        by_pad = 8
+        # 상단 여백이 너무 타이트하면 미리보기/실제 썸네일에서 배지가 잘려 보인다.
+        # 좌측 상단 안쪽으로 조금 더 밀어 넣어 안전 여백을 확보한다.
+        ep_x0 = pad_x + 8
+        ep_y0 = 40
         ep_x1 = ep_x0 + tw + 2 * bx_pad
         ep_y1 = ep_y0 + th + 2 * by_pad
         _draw_rounded_box(
@@ -409,7 +466,7 @@ def generate_thumbnail(
         )
         _draw_stroked_text(
             draw,
-            (ep_x0 + bx_pad, ep_y0 + by_pad - 2),
+            (ep_x0 + bx_pad - bbox[0], ep_y0 + by_pad - bbox[1]),
             ep,
             ep_font,
             fill=(20, 20, 20),
@@ -471,7 +528,7 @@ async def generate_ai_thumbnail(
 
     # 경로 결정
     if output_path is None:
-        out_dir = Path(DATA_DIR) / project_id / "output"
+        out_dir = resolve_project_dir(project_id) / "output"
         out_dir.mkdir(parents=True, exist_ok=True)
         output_path = str(out_dir / "thumbnail.png")
     else:

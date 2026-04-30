@@ -1,4 +1,4 @@
-"""Interlude (오프닝/간지/엔딩 영상) router.
+"""Interlude (오프닝/간지/엔딩 영상) router — v1 프로젝트 범위.
 
 v1.1.29: 생성(generate) 방식 완전 폐기. 사용자가 설정 페이지에서 직접
 업로드한 영상 파일을 오프닝/인터미션/엔딩으로 쓴다. 업로드된 파일은
@@ -9,14 +9,17 @@ v1.1.29: 생성(generate) 방식 완전 폐기. 사용자가 설정 페이지에
 본편 영상 병합(`build_interlude_sequence`) 쪽 로직은 이전과 동일 —
 config 의 video_path 를 읽어서 최종 머지에 끼워 넣는다. 업로드가 돼 있으면
 자동으로 final_with_interludes.mp4 가 생성된다.
+
+v2.4.0: 업로드/삭제/ffprobe 공통 로직을 ``services.interlude_service`` 로
+추출했다. 본 라우터는 DB-연동(프로젝트.config 갱신) + compose 쪽만 전담하고,
+파일 IO 는 서비스 모듈을 호출한다. v2 의 프리셋 범위 라우터도 동일 서비스
+모듈을 재사용한다 — 프로세스 중복 없이 한 곳에서 유지보수.
 """
 from __future__ import annotations
 
-import os
-import shutil
 import traceback
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
@@ -28,22 +31,18 @@ from app.models.cut import Cut
 from app.models.database import get_db
 from app.models.project import Project
 from app.services.video.ffmpeg_service import FFmpegService
-from app.services.video.subprocess_helper import find_ffmpeg, run_subprocess
+from app.services.interlude_service import (
+    VALID_KINDS,
+    DEFAULT_INTERMISSION_EVERY,
+    ffprobe_duration as _ffprobe_duration,
+    save_uploaded_video,
+    delete_uploaded_video,
+)
 
 router = APIRouter()
 
 
-# ---------- 상수 / 헬퍼 ----------
-
-InterludeKind = Literal["opening", "intermission", "ending"]
-VALID_KINDS: tuple[str, ...] = ("opening", "intermission", "ending")
-DEFAULT_INTERMISSION_EVERY = 180  # seconds
-
-# 업로드 허용 확장자 (소문자 비교)
-ALLOWED_VIDEO_EXTS: frozenset[str] = frozenset({
-    ".mp4", ".mov", ".mkv", ".webm", ".m4v", ".avi",
-})
-MAX_UPLOAD_BYTES = 500 * 1024 * 1024  # 500 MB
+# ---------- 헬퍼 ----------
 
 
 def _interlude_dir(project_id: str) -> Path:
@@ -89,34 +88,6 @@ def _save_interlude_config(project: Project, inter: dict, db: Session) -> None:
     # v1.1.29: SQLAlchemy JSON 컬럼 mutation 감지 실패 대응 — 명시적 dirty 마킹.
     flag_modified(project, "config")
     db.commit()
-
-
-# ---------- ffprobe ----------
-
-
-async def _ffprobe_duration(video_path: str) -> float:
-    """Return duration of a video file in seconds via ffprobe.
-
-    ffprobe 가 없거나 실패하면 0.0 반환.
-    """
-    try:
-        ffbin = find_ffmpeg()
-        ffprobe = ffbin.replace("ffmpeg.exe", "ffprobe.exe").replace("ffmpeg", "ffprobe")
-        if not os.path.exists(ffprobe):
-            return 0.0
-        rc, stdout, _ = await run_subprocess(
-            [ffprobe, "-v", "error", "-show_entries", "format=duration",
-             "-of", "default=noprint_wrappers=1:nokey=1", video_path],
-            timeout=30.0,
-            capture_stdout=True,
-            capture_stderr=False,
-        )
-        if rc != 0:
-            return 0.0
-        txt = (stdout or b"").decode(errors="replace").strip()
-        return float(txt) if txt else 0.0
-    except Exception:
-        return 0.0
 
 
 # ---------- Pydantic 스키마 ----------
@@ -201,81 +172,32 @@ async def upload_interlude_video(
 ):
     """오프닝 / 인터미션 / 엔딩 영상 업로드.
 
-    받은 파일을 ``data/{project_id}/interlude/{kind}{ext}`` 로 저장하고
-    project.config["interlude"][kind] 를 갱신한다. 같은 종류에 이전 업로드가
-    있었으면 파일과 메타를 모두 덮어쓴다.
+    파일 IO 는 ``services.interlude_service.save_uploaded_video`` 가 담당하고,
+    본 핸들러는 프로젝트 존재 검증 + 저장된 메타를 ``project.config`` 에
+    기록하는 일만 한다. 용량/확장자 검증은 서비스 쪽에서 HTTPException 으로
+    올라오므로 중복 검사 없음.
     """
-    if kind not in VALID_KINDS:
-        raise HTTPException(400, f"Invalid kind: {kind}. Must be one of {VALID_KINDS}")
-
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(404, "Project not found")
 
-    orig_name = (file.filename or "").strip()
-    ext = Path(orig_name).suffix.lower()
-    if ext not in ALLOWED_VIDEO_EXTS:
-        raise HTTPException(
-            400,
-            f"허용되지 않은 확장자: {ext or '(없음)'}. "
-            f"허용: {sorted(ALLOWED_VIDEO_EXTS)}",
-        )
-
-    # 같은 종류의 이전 업로드 파일은 미리 정리 (확장자만 달라졌을 수 있음)
     inter_dir = _interlude_dir(project_id)
-    for old in inter_dir.glob(f"{kind}.*"):
-        try:
-            old.unlink()
-        except OSError:
-            pass
-
-    dest = inter_dir / f"{kind}{ext}"
-    total = 0
-    try:
-        with open(dest, "wb") as out_f:
-            while True:
-                chunk = await file.read(1024 * 1024)
-                if not chunk:
-                    break
-                total += len(chunk)
-                if total > MAX_UPLOAD_BYTES:
-                    out_f.close()
-                    try:
-                        dest.unlink()
-                    except OSError:
-                        pass
-                    raise HTTPException(
-                        413,
-                        f"업로드 용량 초과: {total} bytes > {MAX_UPLOAD_BYTES} bytes",
-                    )
-                out_f.write(chunk)
-    except HTTPException:
-        raise
-    except Exception as e:
-        try:
-            dest.unlink()
-        except OSError:
-            pass
-        raise HTTPException(500, f"업로드 저장 실패: {type(e).__name__}: {e}")
-
-    if not dest.exists() or dest.stat().st_size == 0:
-        raise HTTPException(500, "업로드 파일이 저장되지 않았습니다.")
-
-    duration = await _ffprobe_duration(str(dest))
+    meta = await save_uploaded_video(inter_dir, kind, file)
 
     inter = _get_interlude_config(project)
     inter[kind] = {
-        "video_path": _to_rel(project_id, str(dest)),
-        "filename": orig_name or dest.name,
-        "size_bytes": dest.stat().st_size,
-        "duration": duration,
-        "source": "upload",
+        "video_path": _to_rel(project_id, meta["video_path"]),
+        "filename": meta["filename"],
+        "size_bytes": meta["size_bytes"],
+        "duration": meta["duration"],
+        "source": meta["source"],
     }
     _save_interlude_config(project, inter, db)
 
     print(
         f"[interlude] uploaded project={project_id} kind={kind} "
-        f"file={orig_name} size={dest.stat().st_size} duration={duration:.2f}s"
+        f"file={meta['filename']} size={meta['size_bytes']} "
+        f"duration={meta['duration']:.2f}s"
     )
 
     return {
@@ -289,16 +211,13 @@ async def upload_interlude_video(
 @router.delete("/{project_id}/{kind}")
 def delete_interlude(project_id: str, kind: str, db: Session = Depends(get_db)):
     """저장된 오프닝/인터미션/엔딩 영상 삭제."""
-    if kind not in VALID_KINDS:
-        raise HTTPException(400, f"Invalid kind: {kind}")
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(404, "Project not found")
 
+    # 파일 삭제 — video_path 에 적힌 것 + 같은 kind 잔존 파일 전부.
     inter = _get_interlude_config(project)
     entry = inter.get(kind) or {}
-
-    # 파일 삭제 — video_path 에 적힌 것 + 같은 kind 로 시작하는 잔존 파일 전부
     vp = entry.get("video_path")
     if vp:
         abs_p = _resolve_under_project(project_id, vp)
@@ -307,12 +226,7 @@ def delete_interlude(project_id: str, kind: str, db: Session = Depends(get_db)):
                 abs_p.unlink()
             except OSError:
                 pass
-    inter_dir = _interlude_dir(project_id)
-    for old in inter_dir.glob(f"{kind}.*"):
-        try:
-            old.unlink()
-        except OSError:
-            pass
+    delete_uploaded_video(_interlude_dir(project_id), kind)
 
     inter.pop(kind, None)
     _save_interlude_config(project, inter, db)

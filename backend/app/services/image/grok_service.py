@@ -11,6 +11,7 @@ v1.1.55: 모델명 grok-2-image → grok-imagine-image 변경 (xAI API 업데이
 import asyncio
 import httpx
 from app.services.image.base import BaseImageService
+from app.services.cancel_ctx import raise_if_cancelled  # v1.2.25 cancel 방어
 from app import config
 
 XAI_BASE = "https://api.x.ai/v1"
@@ -43,6 +44,8 @@ class GrokImageService(BaseImageService):
 
         last_err = None
         for attempt in range(1, MAX_RETRIES + 1):
+            # v1.2.25: 재시도 루프 진입 시마다 cancel 체크.
+            raise_if_cancelled("grok-retry")
             try:
                 async with httpx.AsyncClient(timeout=120) as client:
                     resp = await client.post(

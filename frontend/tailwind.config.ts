@@ -18,7 +18,11 @@ const config: Config = {
           danger: "#EF4444",
         },
         border: {
-          DEFAULT: "#2D2D44",
+          // v2.3.0: #2D2D44 는 bg-primary(#0D0D0D) 대비 1.41:1 로
+          //         WCAG 2.1 AA non-text 3:1 기준에 미달이었다.
+          //         #4B5167 로 올려 3:1 이상 확보.
+          DEFAULT: "#4B5167",
+          subtle: "#2D2D44",
         },
       },
     },

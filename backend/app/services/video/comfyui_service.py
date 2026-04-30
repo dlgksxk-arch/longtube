@@ -1,8 +1,8 @@
-"""v1.1.55 — ComfyUI 영상 생성 서비스 (WAN 2.2 I2V 14B + lightx2v 4-step LoRA)
+"""ComfyUI local image-to-video service.
 
-이미지→영상 (image-to-video) 전용. 컷 이미지를 ComfyUI 에 업로드하고,
-high-noise / low-noise 2단 샘플링을 4스텝으로 끝내는 경량 설정으로
-5초 @ 16fps mp4 를 생성한다. fal.ai Kling/LTX 대비 비용 0 + 퀄리티 준수.
+The Studio API exposes production-ready local ComfyUI video workflows. Older
+removed local IDs are remapped in the factory so saved presets do not
+accidentally launch missing workflows.
 """
 from __future__ import annotations
 
@@ -13,62 +13,93 @@ from typing import Optional
 
 from app.config import COMFYUI_WORKFLOWS_DIR
 from app.services.video.base import BaseVideoService
+from app.services.video.prompt_builder import VIDEO_NEGATIVE_PROMPT
+from app.services.video.wan_control import build_wan_track_coords
 from app.services import comfyui_client
 
 
-# v1.1.64: LTX Video 2B distilled + HunyuanVideo 1.5 480p 를 서비스 매핑에서 제거.
-# factory 에서 제거됨과 동시에 여기도 제거하여 일관성 유지.
-# 남은 3개 (WAN 2.2 2종, LTXV 13B) 는 체크포인트 / 튜닝 이슈로 factory 미등록 상태이지만
-# 서비스 매핑은 보존 — 추후 복구 시 factory 에 한 줄 추가로 활성화 가능.
 _WORKFLOW_FILES = {
-    "comfyui-wan22-i2v-fast": "wan22_i2v_fast.json",
-    "comfyui-wan22-5b": "wan22_ti2v_5b.json",
-    "comfyui-ltxv-13b": "ltxv_13b_distilled_i2v.json",
+    "comfyui-hunyuan15-480p": "hunyuan15_480p_i2v.json",
+    "comfyui-wan22-ti2v-5b": "wan22_ti2v_5b_track_control.json",
 }
 
 _DISPLAY_NAMES = {
-    "comfyui-wan22-i2v-fast": "ComfyUI WAN 2.2 I2V 14B (local)",
-    "comfyui-wan22-5b": "ComfyUI WAN 2.2 TI2V 5B (local)",
-    "comfyui-ltxv-13b": "ComfyUI LTX Video 13B distilled fp8 (local, quality)",
+    "comfyui-hunyuan15-480p": "ComfyUI HunyuanVideo 1.5 480p (local)",
+    "comfyui-wan22-ti2v-5b": "ComfyUI Wan2.2 TI2V-5B (local)",
 }
 
-# 모델별 기본 FPS. 14B I2V = 16fps, 5B TI2V = 24fps, LTXV 13B = 24fps.
+# 모델별 기본 FPS. Wan 5B는 24fps 네이티브보다 16fps가 RTX 3090에서
+# 훨씬 현실적이라, 먼저 안정적인 5초/81프레임 운용으로 붙인다.
 _FPS_BY_MODEL = {
-    "comfyui-wan22-i2v-fast": 16,
-    "comfyui-wan22-5b": 24,
-    "comfyui-ltxv-13b": 24,
+    "comfyui-hunyuan15-480p": 16,
+    "comfyui-wan22-ti2v-5b": 16,
 }
 
 # 해상도 배수 요구사항 (width/height 가 이 값의 배수여야 함).
 _DIM_MULTIPLE = {
-    "comfyui-wan22-i2v-fast": 16,
-    "comfyui-wan22-5b": 16,
-    "comfyui-ltxv-13b": 32,
+    "comfyui-hunyuan15-480p": 16,
+    "comfyui-wan22-ti2v-5b": 32,
 }
 
-# LTXV 는 프레임 수도 8n+1 형태 (WAN 은 4n+1).
+# WAN/Hunyuan 계열은 프레임 수가 4n+1 형태.
 _FRAME_QUANTIZE = {
-    "comfyui-wan22-i2v-fast": 4,
-    "comfyui-wan22-5b": 4,
-    "comfyui-ltxv-13b": 8,
+    "comfyui-hunyuan15-480p": 4,
+    "comfyui-wan22-ti2v-5b": 4,
 }
 
 
 def _wan_dims(aspect_ratio: str, multiple: int = 16) -> tuple[int, int]:
-    """권장 해상도. 12GB VRAM + 속도 우선 → 640x384 계열 (v1.1.56).
-    LTXV 는 32 배수 요구라 640x384 → 그대로 OK (둘 다 32로 나눠짐)."""
+    """권장 해상도.
+
+    640x384는 빠르지만 너무 흐리고 움직임도 약해 보인다. RTX 3090 24GB
+    기준으로 16:9는 768x432 계열을 기본값으로 사용한다.
+    """
     if aspect_ratio == "9:16":
         w, h = 384, 640
     elif aspect_ratio == "1:1":
-        w, h = 512, 512  # 32 배수
+        w, h = 512, 512
     elif aspect_ratio == "3:4":
-        w, h = 448, 576  # 32 배수
+        w, h = 448, 576
     else:  # 16:9
         w, h = 640, 384
     # 배수 보정
     w = (w // multiple) * multiple
     h = (h // multiple) * multiple
     return w, h
+
+
+def _wan22_ti2v_dims(aspect_ratio: str, multiple: int = 32) -> tuple[int, int]:
+    """Wan2.2 TI2V-5B quality-oriented 480p dimensions for RTX 3090."""
+    if aspect_ratio == "9:16":
+        w, h = 480, 864
+    elif aspect_ratio == "1:1":
+        w, h = 512, 512
+    elif aspect_ratio == "3:4":
+        w, h = 480, 640
+    else:  # 16:9
+        w, h = 864, 480
+    w = (w // multiple) * multiple
+    h = (h // multiple) * multiple
+    return w, h
+
+
+def _negative_for_model(model_id: str) -> str:
+    if model_id == "comfyui-hunyuan15-480p":
+        return (
+            VIDEO_NEGATIVE_PROMPT
+            + ", temporal ghost, temporal smear, frame echo, echo frame, onion skin, "
+            + "transparent body copy, faded duplicate, semi-transparent duplicate, "
+            + "overlapping duplicate, duplicate outline, duplicated contour, residual silhouette, "
+            + "motion smear, character smear, face smear, body smear, edge echo, "
+            + "low temporal consistency, inconsistent frame-to-frame identity"
+        )
+    if model_id == "comfyui-wan22-ti2v-5b":
+        return (
+            VIDEO_NEGATIVE_PROMPT
+            + ", walking, running, foot lifting, leg crossing, kicking, stepping forward, "
+            + "distorted gait, broken legs, duplicated limbs, melted legs, large arm swing"
+        )
+    return VIDEO_NEGATIVE_PROMPT
 
 
 def _length_for(duration: float, fps: int, quantize: int = 4) -> int:
@@ -80,10 +111,20 @@ def _length_for(duration: float, fps: int, quantize: int = 4) -> int:
     return max(quantize + 1, frames)
 
 
-class ComfyUIVideoService(BaseVideoService):
-    """WAN 2.2 I2V (local GPU, 4-step lightx2v)."""
+def _target_720_resolution(aspect_ratio: str) -> tuple[int, int]:
+    if aspect_ratio == "9:16":
+        return 720, 1280
+    if aspect_ratio == "1:1":
+        return 720, 720
+    if aspect_ratio == "3:4":
+        return 720, 960
+    return 1280, 720
 
-    def __init__(self, model_id: str = "comfyui-wan22-i2v-fast"):
+
+class ComfyUIVideoService(BaseVideoService):
+    """Local ComfyUI I2V video generation."""
+
+    def __init__(self, model_id: str = "comfyui-hunyuan15-480p"):
         self.model_id = model_id
         self.display_name = _DISPLAY_NAMES.get(model_id, "ComfyUI (local)")
         self.fps = _FPS_BY_MODEL.get(model_id, 16)
@@ -118,21 +159,39 @@ class ComfyUIVideoService(BaseVideoService):
         # 1) 소스 이미지를 ComfyUI 서버에 업로드 → filename 획득
         uploaded_name = await comfyui_client.upload_image(image_path)
 
-        w, h = _wan_dims(aspect_ratio, self.dim_multiple)
+        if self.model_id == "comfyui-wan22-ti2v-5b":
+            w, h = _wan22_ti2v_dims(aspect_ratio, self.dim_multiple)
+        else:
+            w, h = _wan_dims(aspect_ratio, self.dim_multiple)
         length = _length_for(duration, self.fps, self.frame_quantize)
         seed = random.randint(0, 2**31 - 1)
         prefix = f"longtube/{Path(output_path).stem}"
+        track_coords = "[]"
+        track_strength = 1.0
+        if self.model_id == "comfyui-wan22-ti2v-5b":
+            track_coords = build_wan_track_coords(
+                image_path=image_path,
+                width=w,
+                height=h,
+                length=length,
+                prompt=prompt,
+            )
+            track_strength = 1.2
 
         graph = comfyui_client.render_workflow(
             self._template,
             {
                 "INPUT_IMAGE_NAME": uploaded_name,
                 "PROMPT": (prompt or "").strip() or "a cinematic shot",
+                "NEGATIVE": _negative_for_model(self.model_id),
                 "WIDTH": w,
                 "HEIGHT": h,
                 "LENGTH": length,
+                "FPS": self.fps,
                 "SEED": seed,
                 "PREFIX": prefix,
+                "TRACK_COORDS": track_coords,
+                "TRACK_STRENGTH": track_strength,
             },
         )
 
@@ -150,8 +209,63 @@ class ComfyUIVideoService(BaseVideoService):
         # v2.1.1: AI 모델이 요청보다 짧은 영상을 생성하는 경우 → 정확히 duration 에 맞게 슬로모션
         await self._enforce_duration(output_path, duration)
 
+        if self.model_id == "comfyui-hunyuan15-480p":
+            await self._upscale_to_720(output_path, aspect_ratio)
+
         print(f"[comfyui-video] saved → {output_path}")
         return output_path
+
+    @staticmethod
+    async def _upscale_to_720(video_path: str, aspect_ratio: str) -> None:
+        """Scale local Hunyuan output to 720-class delivery resolution."""
+        import os
+        from app.services.video.subprocess_helper import find_ffmpeg, run_subprocess
+
+        if not os.path.exists(video_path):
+            return
+        try:
+            ffmpeg_bin = find_ffmpeg()
+        except RuntimeError:
+            print("[comfyui-video] 720 upscale skipped: ffmpeg not found")
+            return
+
+        w, h = _target_720_resolution(aspect_ratio)
+        tmp_path = video_path + ".720p.mp4"
+        vf = (
+            f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
+            f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30"
+        )
+        cmd = [
+            ffmpeg_bin, "-y",
+            "-i", video_path,
+            "-vf", vf,
+            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "20",
+            "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
+            "-movflags", "+faststart",
+            tmp_path,
+        ]
+        try:
+            rc, _, stderr = await run_subprocess(
+                cmd,
+                timeout=600.0,
+                capture_stdout=False,
+                capture_stderr=True,
+            )
+            if rc == 0 and os.path.exists(tmp_path) and os.path.getsize(tmp_path) > 100:
+                os.replace(tmp_path, video_path)
+                print(f"[comfyui-video] upscaled to {w}x{h} -> {video_path}")
+            else:
+                err = (stderr or b"").decode(errors="replace")[-300:]
+                print(f"[comfyui-video] 720 upscale failed rc={rc}: {err}")
+        except Exception as e:
+            print(f"[comfyui-video] 720 upscale exception: {e}")
+        finally:
+            if os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
 
     @staticmethod
     async def _enforce_duration(video_path: str, target_duration: float) -> None:

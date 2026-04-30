@@ -1,5 +1,8 @@
 """API key status and balance checking router"""
+import asyncio
 import os
+import subprocess
+import time
 from pathlib import Path
 import httpx
 from fastapi import APIRouter
@@ -8,6 +11,7 @@ from app import config as cfg
 router = APIRouter()
 
 ENV_PATH = Path(__file__).resolve().parent.parent.parent / ".env"
+_SYSTEM_STATUS_CACHE: dict = {"ts": 0.0, "data": None}
 
 
 def _read_env_file() -> dict:
@@ -175,6 +179,326 @@ async def _check_xai() -> dict:
                 return {"provider": "xAI (Grok)", "status": "active", "balance": None, "detail": f"키 설정됨 (HTTP {resp.status_code})", "balance_url": "https://console.x.ai/"}
     except Exception as e:
         return {"provider": "xAI (Grok)", "status": "error", "balance": None, "detail": str(e)[:100], "balance_url": "https://console.x.ai/"}
+
+
+async def _check_ltx() -> dict:
+    """로컬 ComfyUI (LTX / WAN / HunyuanVideo 등 로컬 영상 생성) 연결 확인.
+
+    v1.2.21: 사용자 요청으로 "API 연결 상태" 패널에 로컬 영상 생성(LTX 계열,
+    ComfyUI 서버)까지 포함. COMFYUI_BASE_URL 이 비어있으면 not_configured,
+    설정돼 있으면 `/system_stats` 엔드포인트를 10초 타임아웃으로 호출해
+    응답 200 이면 active. 연결 실패 / 타임아웃은 error 로 표시한다.
+
+    provider 이름은 "ComfyUI (Local)" — 대시보드 좌측 사이드바 리스트에서 다른
+    API 타일과 구분되도록.
+    """
+    base = (getattr(cfg, "COMFYUI_BASE_URL", "") or "").rstrip("/")
+    # .env 를 재확인해 키 저장 직후 새 값 반영 (다른 _check_* 와 동일한 패턴).
+    env_base = _read_env_file().get("COMFYUI_BASE_URL", "").strip().rstrip("/")
+    if env_base:
+        base = env_base
+    if not base:
+        return {
+            "provider": "ComfyUI (Local)",
+            "status": "not_configured",
+            "balance": None,
+            "detail": "COMFYUI_BASE_URL 미설정 — backend/.env 에 http://<IP>:<PORT> 추가",
+        }
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(f"{base}/system_stats")
+            if resp.status_code == 200:
+                # GPU 정보가 함께 노출되면 잔액 칸에 짧게 표시 (실제 잔액은 아님).
+                try:
+                    data = resp.json()
+                    devs = data.get("devices") or []
+                    gpu_name = (devs[0] or {}).get("name") if devs else ""
+                    gpu_short = (gpu_name or "").split(":")[0][:16]
+                    balance = f"로컬 {gpu_short}" if gpu_short else "로컬 연결됨"
+                except Exception:
+                    balance = "로컬 연결됨"
+                return {
+                    "provider": "ComfyUI (Local)",
+                    "status": "active",
+                    "balance": balance,
+                    "detail": f"ComfyUI OK @ {base}",
+                }
+            return {
+                "provider": "ComfyUI (Local)",
+                "status": "error",
+                "balance": None,
+                "detail": f"ComfyUI HTTP {resp.status_code} @ {base}",
+            }
+    except httpx.TimeoutException:
+        return {
+            "provider": "ComfyUI (Local)",
+            "status": "error",
+            "balance": None,
+            "detail": f"ComfyUI 응답 없음 (timeout 10s) @ {base}",
+        }
+    except Exception as e:
+        return {
+            "provider": "ComfyUI (Local)",
+            "status": "error",
+            "balance": None,
+            "detail": f"{type(e).__name__}: {str(e)[:100]}",
+        }
+
+
+async def _check_ltx_v2() -> dict:
+    """More forgiving ComfyUI probe for the sidebar status tile.
+
+    Some ComfyUI builds respond slowly on `/system_stats` while still serving
+    `/queue` or even the base page. Treat any successful lightweight probe as
+    active so the local-model provider does not show as broken unnecessarily.
+    """
+    base = (_key("COMFYUI_BASE_URL") or "").rstrip("/")
+    if not base:
+        return {
+            "provider": "ComfyUI (Local)",
+            "status": "not_configured",
+            "balance": None,
+            "detail": "COMFYUI_BASE_URL not set - add http://<IP>:<PORT> to backend/.env",
+        }
+
+    probe_errors: list[str] = []
+    probes = [
+        ("/system_stats", True),
+        ("/queue", False),
+        ("", False),
+    ]
+    timeout = httpx.Timeout(4.0, connect=2.0)
+
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        for path, wants_gpu in probes:
+            label = path or "/"
+            try:
+                resp = await client.get(f"{base}{path}")
+            except httpx.TimeoutException:
+                probe_errors.append(f"{label} timeout")
+                continue
+            except Exception as e:
+                probe_errors.append(f"{label} {type(e).__name__}")
+                continue
+
+            if resp.status_code != 200:
+                probe_errors.append(f"{label} HTTP {resp.status_code}")
+                continue
+
+            balance = "Local ready"
+            if wants_gpu:
+                try:
+                    data = resp.json()
+                    devices = data.get("devices") or []
+                    gpu_name = (devices[0] or {}).get("name") if devices else ""
+                    gpu_short = (gpu_name or "").split(":")[0][:16]
+                    if gpu_short:
+                        balance = f"Local {gpu_short}"
+                except Exception:
+                    pass
+
+            via = "" if label == "/system_stats" else f" via {label}"
+            return {
+                "provider": "ComfyUI (Local)",
+                "status": "active",
+                "balance": balance,
+                "detail": f"ComfyUI OK{via} @ {base}",
+            }
+
+    detail = "; ".join(probe_errors[:3]) if probe_errors else "no response"
+    return {
+        "provider": "ComfyUI (Local)",
+        "status": "error",
+        "balance": None,
+        "detail": f"ComfyUI unreachable @ {base} ({detail})",
+    }
+
+
+async def _check_comfyui_queue(base: str) -> dict:
+    """Return a tiny ComfyUI queue summary for the sidebar service chip."""
+    if not base:
+        return {"queue_running": None, "queue_pending": None}
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(2.5, connect=1.5)) as client:
+            resp = await client.get(f"{base}/queue")
+        if resp.status_code != 200:
+            return {"queue_running": None, "queue_pending": None}
+        data = resp.json()
+        running = data.get("queue_running") or []
+        pending = data.get("queue_pending") or []
+        return {
+            "queue_running": len(running) if isinstance(running, list) else 0,
+            "queue_pending": len(pending) if isinstance(pending, list) else 0,
+        }
+    except Exception:
+        return {"queue_running": None, "queue_pending": None}
+
+
+def _run_status_command(args: list[str], timeout: float = 1.5) -> str:
+    """Run a tiny local status command without popping a console window."""
+    startupinfo = None
+    creationflags = 0
+    if os.name == "nt":
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    proc = subprocess.run(
+        args,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=timeout,
+        startupinfo=startupinfo,
+        creationflags=creationflags,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError((proc.stderr or proc.stdout or "").strip()[:200])
+    return proc.stdout.strip()
+
+
+def _parse_wmic_key_values(raw: str) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for line in (raw or "").replace("\r", "\n").splitlines():
+        line = line.strip()
+        if not line or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        values[key.strip()] = value.strip()
+    return values
+
+
+def _safe_float(value, default=None):
+    try:
+        if value is None or value == "":
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _get_cpu_ram_status() -> dict:
+    try:
+        import psutil  # type: ignore
+
+        cpu_percent = float(psutil.cpu_percent(interval=0.1))
+        mem = psutil.virtual_memory()
+        total_gb = round(float(mem.total) / (1024 ** 3), 1)
+        used_gb = round(float(mem.used) / (1024 ** 3), 1)
+        return {
+            "cpu_percent": round(cpu_percent, 1),
+            "ram_percent": round(float(mem.percent), 1),
+            "ram_used_gb": used_gb,
+            "ram_total_gb": total_gb,
+        }
+    except Exception:
+        pass
+
+    out: dict = {
+        "cpu_percent": None,
+        "ram_percent": None,
+        "ram_used_gb": None,
+        "ram_total_gb": None,
+    }
+
+    try:
+        cpu_raw = _run_status_command(["wmic", "cpu", "get", "loadpercentage", "/value"], timeout=2.0)
+        cpu_data = _parse_wmic_key_values(cpu_raw)
+        out["cpu_percent"] = _safe_float(cpu_data.get("LoadPercentage"))
+        if out["cpu_percent"] is None and os.name == "nt":
+            ps_cpu = _run_status_command(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-Command",
+                    "(Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average).Average",
+                ],
+                timeout=3.0,
+            )
+            out["cpu_percent"] = _safe_float(ps_cpu.strip())
+    except Exception as e:
+        out["cpu_error"] = f"{type(e).__name__}: {str(e)[:80]}"
+
+    try:
+        mem_raw = _run_status_command(
+            ["wmic", "OS", "get", "FreePhysicalMemory,TotalVisibleMemorySize", "/value"],
+            timeout=2.0,
+        )
+        mem_data = _parse_wmic_key_values(mem_raw)
+        free_kb = _safe_float(mem_data.get("FreePhysicalMemory"))
+        total_kb = _safe_float(mem_data.get("TotalVisibleMemorySize"))
+        if total_kb and free_kb is not None:
+            used_kb = max(total_kb - free_kb, 0)
+            out["ram_percent"] = round((used_kb / total_kb) * 100, 1)
+            out["ram_used_gb"] = round(used_kb / (1024 ** 2), 1)
+            out["ram_total_gb"] = round(total_kb / (1024 ** 2), 1)
+    except Exception as e:
+        out["ram_error"] = f"{type(e).__name__}: {str(e)[:80]}"
+
+    return out
+
+
+def _get_gpu_status() -> dict:
+    try:
+        raw = _run_status_command(
+            [
+                "nvidia-smi",
+                "--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu",
+                "--format=csv,noheader,nounits",
+            ],
+            timeout=2.0,
+        )
+    except FileNotFoundError:
+        return {"available": False, "detail": "nvidia-smi not found"}
+    except Exception as e:
+        return {"available": False, "detail": f"{type(e).__name__}: {str(e)[:100]}"}
+
+    gpus: list[dict] = []
+    for line in raw.splitlines():
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) < 5:
+            continue
+        name, util, mem_used, mem_total, temp = parts[:5]
+        used_mb = _safe_float(mem_used)
+        total_mb = _safe_float(mem_total)
+        memory_percent = None
+        if total_mb and used_mb is not None:
+            memory_percent = round((used_mb / total_mb) * 100, 1)
+        gpus.append({
+            "name": name,
+            "load_percent": _safe_float(util),
+            "memory_used_mb": used_mb,
+            "memory_total_mb": total_mb,
+            "memory_percent": memory_percent,
+            "temperature_c": _safe_float(temp),
+        })
+
+    if not gpus:
+        return {"available": False, "detail": "no GPU data"}
+    return {"available": True, "gpus": gpus, "primary": gpus[0]}
+
+
+def _get_local_system_status() -> dict:
+    now = time.monotonic()
+    cached = _SYSTEM_STATUS_CACHE.get("data")
+    if isinstance(cached, dict) and now - float(_SYSTEM_STATUS_CACHE.get("ts") or 0.0) < 5.0:
+        return cached
+
+    status = _get_cpu_ram_status()
+    gpu = _get_gpu_status()
+    ok_cpu = status.get("cpu_percent") is not None
+    ok_ram = status.get("ram_percent") is not None
+    status.update({
+        "provider": "Local PC",
+        "status": "active" if ok_cpu and ok_ram else "partial",
+        "gpu": gpu.get("primary"),
+        "gpus": gpu.get("gpus", []),
+        "gpu_available": bool(gpu.get("available")),
+        "gpu_detail": gpu.get("detail"),
+    })
+    _SYSTEM_STATUS_CACHE["ts"] = now
+    _SYSTEM_STATUS_CACHE["data"] = status
+    return status
 
 
 async def _check_kling() -> dict:
@@ -348,11 +672,13 @@ async def check_all_api_status():
                 _safe(_check_elevenlabs(), "ElevenLabs"),
                 _safe(_check_fal(), "fal.ai"),
                 _safe(_check_xai(), "xAI (Grok)", "https://console.x.ai/"),
+                # v1.2.21: 로컬 영상 생성(LTX/ComfyUI) 연결 상태도 같은 리스트에 포함.
+                _safe(_check_ltx_v2(), "ComfyUI (Local)"),
             ),
             timeout=15.0,
         )
     except asyncio.TimeoutError:
-        results = [{"provider": n, "status": "error", "balance": None, "detail": "overall timeout 15s"} for n in ["Anthropic","OpenAI","ElevenLabs","fal.ai","xAI (Grok)"]]
+        results = [{"provider": n, "status": "error", "balance": None, "detail": "overall timeout 15s"} for n in ["Anthropic","OpenAI","ElevenLabs","fal.ai","xAI (Grok)","ComfyUI (Local)"]]
 
     # v1.1.55: 수동 입력 잔액을 머지. 자동 조회 값(ElevenLabs balance) 은 건드리지 않고,
     # balance 가 비어 있는 타일에만 수동 입력값을 채운다.
@@ -387,6 +713,46 @@ async def check_all_api_status():
         print(f"[api_status] usage_map merge failed: {e}")
 
     return {"apis": list(results)}
+
+
+@router.get("/local-services")
+async def check_local_services():
+    """Lightweight status for the sidebar: backend + local ComfyUI only."""
+    base = (_key("COMFYUI_BASE_URL") or "").rstrip("/")
+    async def _safe_comfy_status() -> dict:
+        try:
+            return await _check_ltx_v2()
+        except Exception as e:
+            return {
+                "provider": "ComfyUI (Local)",
+                "status": "error",
+                "balance": None,
+                "detail": f"{type(e).__name__}: {str(e)[:120]}",
+            }
+
+    comfy, queue, system = await asyncio.gather(
+        _safe_comfy_status(),
+        _check_comfyui_queue(base),
+        asyncio.to_thread(_get_local_system_status),
+    )
+    if not isinstance(comfy, dict):
+        comfy = {
+            "provider": "ComfyUI (Local)",
+            "status": "error",
+            "balance": None,
+            "detail": "ComfyUI status probe failed",
+        }
+    comfy.update(queue if isinstance(queue, dict) else {})
+    return {
+        "backend": {
+            "provider": "Backend",
+            "status": "active",
+            "version": "1.2.29",
+            "detail": "FastAPI OK",
+        },
+        "comfyui": comfy,
+        "system": system if isinstance(system, dict) else {"provider": "Local PC", "status": "error"},
+    }
 
 
 def _compute_provider_usage() -> dict[str, list[dict]]:

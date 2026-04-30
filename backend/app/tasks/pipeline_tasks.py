@@ -5,10 +5,11 @@ import time
 import asyncio
 import redis as redis_lib
 from celery import Celery
-from app.config import REDIS_URL, DATA_DIR, CUT_VIDEO_DURATION
+from app.config import REDIS_URL, DATA_DIR, CUT_VIDEO_DURATION, resolve_project_dir
 from app.models.database import SessionLocal
 from app.models.project import Project
 from app.models.cut import Cut
+from app.services.title_utils import with_episode_prefix
 
 celery_app = Celery("longtube", broker=REDIS_URL, backend=REDIS_URL)
 
@@ -23,32 +24,58 @@ except Exception:
 _progress_mem: dict[str, int | str] = {}
 
 
+def _safe_console(value) -> str:
+    return str(value).encode("ascii", "backslashreplace").decode("ascii")
+
+
 def _redis_set(key, value):
-    if redis_client:
-        redis_client.set(key, value)
-    # 항상 인메모리에도 기록 (OneClick 용 fallback)
+    """v1.2.29: redis 가 중간에 죽어도 예외를 밖으로 올리지 않는다.
+    redis 실패는 무시하고 `_progress_mem` 에 반드시 기록해, 같은 프로세스 안의
+    cancel 체크는 절대 누락되지 않게 한다. (이전엔 redis.set 예외가 호출자의
+    try/except 로 올라가면서 `_progress_mem` 업데이트가 스킵되어, 워커 스레드의
+    cancel 체크가 영원히 False 를 반환하는 사고가 있었음.)
+    """
+    try:
+        if redis_client:
+            redis_client.set(key, value)
+    except Exception:
+        pass
+    # 항상 인메모리에도 기록 (redis 장애 대비 + OneClick 용 fallback)
     try:
         _progress_mem[key] = int(value)
     except (TypeError, ValueError):
         _progress_mem[key] = value
 
 def _redis_get(key):
-    if redis_client:
-        val = redis_client.get(key)
-        if val is not None:
-            return val
+    """v1.2.29: redis 예외 시 조용히 `_progress_mem` 로 떨어진다. None 반환이
+    아니라 실패를 삼키는 이유: cancel 체크 경로에서 예외가 위로 전파되면 is_cancelled
+    가 `except Exception: return False` 로 묵살해 긴급 정지가 무효화됐다.
+    """
+    try:
+        if redis_client:
+            val = redis_client.get(key)
+            if val is not None:
+                return val
+    except Exception:
+        pass
     # Redis 없거나 값 없으면 인메모리 확인
     return _progress_mem.get(key)
 
 def _redis_incr(key):
-    if redis_client:
-        redis_client.incr(key)
+    try:
+        if redis_client:
+            redis_client.incr(key)
+    except Exception:
+        pass
     # 항상 인메모리에도 반영
     _progress_mem[key] = (_progress_mem.get(key, 0) if isinstance(_progress_mem.get(key), int) else 0) + 1
 
 def _redis_delete(*keys):
-    if redis_client:
-        redis_client.delete(*keys)
+    try:
+        if redis_client:
+            redis_client.delete(*keys)
+    except Exception:
+        pass
     for k in keys:
         _progress_mem.pop(k, None)
 
@@ -107,7 +134,7 @@ def update_step_state(project_id: str, step: int, state: str):
 
 
 def load_script(project_id: str) -> dict:
-    path = DATA_DIR / project_id / "script.json"
+    path = resolve_project_dir(project_id) / "script.json"
     # v1.1.37 bugfix: encoding 미지정 시 Windows 에선 기본이 cp949 로 떨어져
     # "UnicodeDecodeError: 'cp949' codec can't decode byte 0xe2 ..." 발생.
     # save_script 가 utf-8 + ensure_ascii=False 로 저장하므로 읽기도 동일하게 맞춘다.
@@ -115,8 +142,26 @@ def load_script(project_id: str) -> dict:
         return json.load(f)
 
 
+def _ensure_project_layout(project_id: str):
+    project_dir = resolve_project_dir(project_id, create=True)
+    project_dir.mkdir(parents=True, exist_ok=True)
+    for sub in ("audio", "images", "videos", "subtitles", "output"):
+        (project_dir / sub).mkdir(parents=True, exist_ok=True)
+    return project_dir
+
+
 def save_script(project_id: str, script: dict):
-    path = DATA_DIR / project_id / "script.json"
+    try:
+        from app.services.shorts_service import annotate_script_shorts
+        script = annotate_script_shorts(script)
+    except Exception:
+        pass
+    for cut_data in script.get("cuts", []) or []:
+        if isinstance(cut_data, dict):
+            cut_data.pop("motion_prompt", None)
+            cut_data.pop("video_motion_prompt", None)
+    project_dir = _ensure_project_layout(project_id)
+    path = project_dir / "script.json"
     with open(path, "w", encoding="utf-8") as f:
         json.dump(script, f, ensure_ascii=False, indent=2)
 
@@ -253,29 +298,63 @@ def _step_script(project_id: str, config: dict):
     이전에는 이 단계에 cancel 체크가 전혀 없어 `중지` 가 먹통처럼 보였다.
     """
     from app.services.llm.factory import get_llm_service
+    from app.services.tts.voice_profile import ensure_voice_profile_from_config
+    # v1.2.25: 서비스 레이어의 raise_if_cancelled() 가 작동하도록
+    # 현재 워커 스레드의 cancel 키 세팅. 함수 끝에서 None 으로 해제.
+    from app.services.cancel_ctx import (
+        OperationCancelled as _OperationCancelled,
+        set_cancel_key as _set_cancel_key,
+    )
+    _set_cancel_key(project_id)
 
     # v1.1.48: LLM 호출 전 취소 확인
     check_pause_or_cancel(project_id, 2)
+    _ensure_project_layout(project_id)
 
     db = SessionLocal()
     project = db.query(Project).filter(Project.id == project_id).first()
 
     service = get_llm_service(config["script_model"])
+    try:
+        run_async(ensure_voice_profile_from_config(config, log=print))
+    except Exception as _e:
+        print(f"[voice-profile] warning: using default timing because profiling failed: {_e}")
     # v2.1.2: API 500 등 일시적 에러 시 최대 3회 재시도 (5초 간격)
     import time as _time
-    _max_retries = 3
-    for _attempt in range(1, _max_retries + 1):
+    _max_api_retries = 3
+    script = None
+
+    def _sleep_with_cancel(seconds: float):
+        deadline = _time.monotonic() + float(seconds)
+        while True:
+            check_pause_or_cancel(project_id, 2)
+            remaining = deadline - _time.monotonic()
+            if remaining <= 0:
+                return
+            _time.sleep(min(0.25, remaining))
+
+    for _attempt in range(1, _max_api_retries + 1):
+        check_pause_or_cancel(project_id, 2)
         try:
             script = run_async(service.generate_script(project.topic, config))
+            check_pause_or_cancel(project_id, 2)
             break
+        except (_OperationCancelled, PipelineCancelled):
+            raise
         except Exception as _e:
             _err_str = str(_e)
-            _is_retryable = any(k in _err_str for k in ("500", "502", "503", "529", "overloaded", "timeout", "Timeout"))
-            if _is_retryable and _attempt < _max_retries:
-                print(f"[Script] attempt {_attempt}/{_max_retries} failed ({_err_str[:100]}), retrying in 5s...")
-                _time.sleep(5)
+            _timed_out = "timed out" in _err_str.lower() or "timeout" in _err_str.lower()
+            _is_retryable = (
+                not _timed_out
+                and any(k in _err_str for k in ("500", "502", "503", "529", "overloaded"))
+            )
+            if _is_retryable and _attempt < _max_api_retries:
+                print(f"[Script] attempt {_attempt}/{_max_api_retries} failed ({_err_str[:100]}), retrying in 5s...")
+                _sleep_with_cancel(5)
                 continue
             raise
+    if script is None:
+        raise RuntimeError("Script generation failed")
 
     # v1.1.55: 지출 기록 — LLM 호출 토큰을 근사치로 계산해 원장에 append.
     # 실제 토큰수를 서비스에서 안 돌려주므로 입력(주제) / 출력(대본 전체 텍스트)
@@ -295,9 +374,13 @@ def _step_script(project_id: str, config: dict):
     except Exception as _e:
         print(f"[spend_ledger] script record skipped: {_e}")
 
-    # v1.1.48: LLM 완료 후에도 확인 — 여기서 raise 되면 저장/컷 생성 스킵
+    # v1.1.48: LLM 완료 후에도 취소 여부 확인
     check_pause_or_cancel(project_id, 2)
 
+    script["title"] = with_episode_prefix(
+        script.get("title") or project.title or project.topic,
+        config.get("episode_number"),
+    )
     save_script(project_id, script)
 
     db.query(Cut).filter(Cut.project_id == project_id).delete()
@@ -321,10 +404,30 @@ def _step_script(project_id: str, config: dict):
     # v1.1.53: 대본 완성 직후 썸네일 생성 — 이미지 단계 전에 미리 만들어 UI에 표시
     _generate_thumbnail_sync(project_id, config, script)
 
+    # v1.2.25: cancel 키 해제 — 다음 step 에서 같은 스레드가 재사용될 때
+    # 이전 project 의 플래그를 오인하지 않도록.
+    try:
+        from app.services.cancel_ctx import set_cancel_key as _set_cancel_key
+        _set_cancel_key(None)
+    except Exception:
+        pass
+
 
 def _step_voice(project_id: str, config: dict):
-    """Step 3: 음성 생성 — 스튜디오(voice.py)와 동일한 로직."""
+    """Step 3: 음성 생성 — 스튜디오(voice.py)와 동일한 로직.
+
+    v1.2.25: ElevenLabs / OpenAI TTS 레이어가 cancel 시 바로 이탈하도록
+    워커 스레드의 cancel 키를 세팅. 함수 끝에서 해제.
+    """
     from app.services.tts.factory import get_tts_service
+    from app.services.tts.narration_fit import generate_tts_with_auto_narration_fit
+    # v1.2.25: TTS 서비스들이 raise_if_cancelled() 를 탈 수 있게 키 세팅.
+    from app.services.cancel_ctx import (
+        OperationCancelled as _OperationCancelled,
+        set_cancel_key as _set_cancel_key,
+    )
+    _set_cancel_key(project_id)
+    project_dir = _ensure_project_layout(project_id)
 
     script = load_script(project_id)
 
@@ -335,16 +438,19 @@ def _step_voice(project_id: str, config: dict):
 
     # v1.1.63: UI 에서 바꾼 키가 즉시 반영되도록 config 모듈 속성을 참조.
     # (로컬 변수 `config` 와의 이름 충돌을 피하기 위해 별칭 사용)
+    # v1.2.20: ElevenLabs → OpenAI TTS 폴백 제거. 사용자 요구 — 선택 모델의
+    # API 가 없으면 다른 모델로 갈아치우지 않고 명시적 에러로 실패.
     from app import config as app_config
     if tts_model == "elevenlabs" and not app_config.ELEVENLABS_API_KEY:
-        if app_config.OPENAI_API_KEY:
-            print(f"[Voice] ElevenLabs API 키 없음 → OpenAI TTS 폴백")
-            tts_model = "openai-tts"
-            voice_id = "alloy"
-        else:
-            raise ValueError("No TTS API key configured (neither ElevenLabs nor OpenAI)")
+        raise RuntimeError(
+            "[Voice] ElevenLabs 가 선택되어 있는데 ELEVENLABS_API_KEY 가 비어있습니다. "
+            "폴백 비활성화 — 키를 등록하거나 TTS 모델을 OpenAI 로 바꾸세요."
+        )
     if tts_model == "openai-tts" and not app_config.OPENAI_API_KEY:
-        raise ValueError("OPENAI_API_KEY not set for OpenAI TTS")
+        raise RuntimeError(
+            "[Voice] OpenAI TTS 가 선택되어 있는데 OPENAI_API_KEY 가 비어있습니다. "
+            "키를 등록하거나 TTS 모델을 ElevenLabs 로 바꾸세요."
+        )
 
     service = get_tts_service(tts_model)
 
@@ -356,15 +462,36 @@ def _step_voice(project_id: str, config: dict):
     # voice_preset 에 따른 보정 (스튜디오와 동일)
     voice_settings = None
     if voice_preset and "child" in voice_preset:
-        if tts_model == "openai-tts":
-            speed = min(4.0, speed + 0.15)
-        elif tts_model == "elevenlabs":
+        if tts_model == "elevenlabs":
             voice_settings = {"stability": 0.7, "similarity_boost": 0.85}
 
-    project_dir = DATA_DIR / project_id
-
     db = SessionLocal()
-    for cut_data in script.get("cuts", []):
+    project = db.query(Project).filter(Project.id == project_id).first()
+    topic = project.topic if project else ""
+
+    def _generate_tts_result(cut_data: dict, output_path: str, total_cuts: int) -> dict:
+        return run_async(
+            generate_tts_with_auto_narration_fit(
+                service,
+                cut_data.get("narration") or "",
+                voice_id,
+                output_path,
+                speed=speed,
+                voice_settings=voice_settings,
+                config=config,
+                topic=topic,
+                language=config.get("language", "ko"),
+                cut_number=int(cut_data.get("cut_number") or 0),
+                total_cuts=total_cuts,
+                cut_data=cut_data,
+                script=script,
+                log=lambda msg: print(f"[Voice] {msg}"),
+            )
+        )
+
+    script_cuts = script.get("cuts", [])
+    script_dirty = False
+    for cut_data in script_cuts:
         check_pause_or_cancel(project_id, 3)
 
         num = cut_data["cut_number"]
@@ -372,13 +499,35 @@ def _step_voice(project_id: str, config: dict):
 
         # v1.1.52: 이미 생성된 파일이 있으면 건너뛴다 (이어하기 지원)
         if os.path.exists(output) and os.path.getsize(output) > 100:
-            print(f"[Voice] Cut {num} 이미 존재 — 건너뜀")
-            track_progress(project_id, 3)
-            continue
+            try:
+                existing_dur = service._get_duration(output)
+                if app_config.TTS_MIN_DURATION <= existing_dur <= app_config.TTS_MAX_DURATION:
+                    print(f"[Voice] Cut {num} 이미 존재 — 길이 OK({existing_dur:.2f}s), 건너뜀")
+                    track_progress(project_id, 3)
+                    continue
+                print(
+                    f"[Voice] Cut {num} 기존 음성 길이 불일치 "
+                    f"({existing_dur:.2f}s, 목표 {app_config.TTS_MIN_DURATION:.1f}~{app_config.TTS_MAX_DURATION:.1f}s) — 재생성"
+                )
+                os.remove(output)
+            except Exception as e:
+                print(f"[Voice] Cut {num} 기존 음성 재생성 필요: {e}")
+                try:
+                    os.remove(output)
+                except OSError:
+                    pass
 
-        result = run_async(
-            service.generate(cut_data["narration"], voice_id, output, speed=speed, voice_settings=voice_settings)
-        )
+        result = _generate_tts_result(cut_data, output, len(script_cuts))
+        final_narration = (result.get("narration") or cut_data.get("narration") or "").strip()
+        narration_changed = False
+        if final_narration and final_narration != (cut_data.get("narration") or "").strip():
+            print(
+                f"[Voice] Cut {num} narration auto-fit: "
+                f"{len(cut_data.get('narration') or '')}ch -> {len(final_narration)}ch"
+            )
+            cut_data["narration"] = final_narration
+            script_dirty = True
+            narration_changed = True
 
         # v1.1.55: 지출 기록 — TTS 는 문자수 * per_1k. 실제 과금 단위와 동일.
         try:
@@ -399,15 +548,26 @@ def _step_voice(project_id: str, config: dict):
 
         cut = db.query(Cut).filter(Cut.project_id == project_id, Cut.cut_number == num).first()
         if cut:
+            if final_narration:
+                cut.narration = final_narration
             cut.audio_path = result["path"]
             cut.audio_duration = result["duration"]
             cut.status = "voice_done"
+            if narration_changed:
+                cut.video_path = None
+                cut.video_model = None
 
         track_progress(project_id, 3)
 
     db.commit()
     db.close()
     save_script(project_id, script)
+
+    # v1.2.25: cancel 키 해제.
+    try:
+        _set_cancel_key(None)
+    except Exception:
+        pass
 
 
 def build_thumbnail_prompt(script: dict) -> str:
@@ -440,9 +600,24 @@ def _generate_thumbnail_sync(project_id: str, config: dict, script: dict):
 
     이미 thumbnail.png 가 있으면 건너뛴다. 실패해도 파이프라인을 막지 않는다.
     Redis 키 `thumbnail:status:{pid}` 에 generating / done / failed 를 기록.
+
+    v1.2.25: 썸네일 이미지 API 호출이 cancel 시 바로 이탈하도록 thread-local
+    cancel 키 세팅. _step_script 경로 안에서는 이미 세팅돼 있지만, 재생성 경로
+    등 단독 호출 시에도 방어선이 서야 하므로 여기서도 한 번 더 건다.
     """
     from app.services.image.prompt_builder import collect_reference_images
-    from app.services.thumbnail_service import generate_ai_thumbnail
+    from app.services.thumbnail_service import (
+        generate_ai_thumbnail,
+        extract_thumbnail_text_parts,
+        normalize_episode_label,
+    )
+    from app.services.image.factory import resolve_image_model
+    # v1.2.25: 썸네일 이미지 모델 호출 중 cancel 감지용.
+    from app.services.cancel_ctx import (
+        OperationCancelled as _OperationCancelled,
+        set_cancel_key as _set_cancel_key,
+    )
+    _set_cancel_key(project_id)
 
     thumb_path = DATA_DIR / project_id / "output" / "thumbnail.png"
     if thumb_path.exists() and thumb_path.stat().st_size > 100:
@@ -456,12 +631,14 @@ def _generate_thumbnail_sync(project_id: str, config: dict, script: dict):
     _redis_set(f"thumbnail:status:{project_id}", "generating")
 
     thumb_prompt = build_thumbnail_prompt(script)
-    image_model = config.get("thumbnail_model") or config.get("image_model") or "openai-image-1"
+    image_model = resolve_image_model(
+        config.get("thumbnail_model") or config.get("image_model")
+    )
 
-    # 메인 후크 텍스트: title 에서 "EP. N · " 접두사 제거
     title = (script.get("title") or "").strip()
-    import re
-    overlay_title = re.sub(r"^EP\.\s*\d+\s*[·\-]\s*", "", title).strip() or title
+    overlay_title, extracted_episode_label = extract_thumbnail_text_parts(title, None)
+    episode_no = config.get("episode_number")
+    overlay_episode_label = normalize_episode_label(str(episode_no)) if episode_no else extracted_episode_label
 
     # 레퍼런스 + 캐릭터 이미지 수집
     from app.services.image.prompt_builder import collect_character_images
@@ -474,7 +651,11 @@ def _generate_thumbnail_sync(project_id: str, config: dict, script: dict):
             seen.add(p)
             combined_refs.append(p)
 
-    # v2.1.2: 레퍼런스 미지원 모델이면 폴백. ComfyUI 로컬 모델은 API 폴백 방지.
+    # v2.1.2 → v1.2.20: 레퍼런스 미지원 모델 처리.
+    # ComfyUI 로컬: 레퍼런스만 무시 (모델 유지) — GPU 비용 0이라 사용자 의도 우선.
+    # API 모델: 폴백 금지. 사용자 요구 — "API 이용할 때 설정된 모델의 API 연결
+    # 안되있을때 알림창 띄우고 풀백으로 처리하지마." 명시적 RuntimeError 로 실패시켜
+    # task.error 에 박힌다.
     if combined_refs:
         from app.services.image.factory import get_image_service as _get_img_svc, IMAGE_REGISTRY as _IMG_REG
         _probe = _get_img_svc(image_model)
@@ -484,8 +665,11 @@ def _generate_thumbnail_sync(project_id: str, config: dict, script: dict):
                 print(f"[Thumbnail] {image_model} 는 레퍼런스 미지원이지만 로컬 GPU → 레퍼런스 무시")
                 combined_refs = []
             else:
-                print(f"[Thumbnail] {image_model} 는 레퍼런스 미지원 → nano-banana-3 폴백")
-                image_model = "nano-banana-3"
+                raise RuntimeError(
+                    f"[Thumbnail] 선택한 모델 '{image_model}' 은(는) 레퍼런스 이미지를 "
+                    f"지원하지 않습니다. 폴백 비활성화 — 모델을 nano-banana 계열로 "
+                    f"바꾸거나 레퍼런스를 제거하세요."
+                )
 
     # v1.1.55: 공통 REFERENCE_STYLE_PREFIX 사용 — 컷/썸네일/재생성 문구 통일
     if combined_refs and thumb_prompt:
@@ -499,7 +683,7 @@ def _generate_thumbnail_sync(project_id: str, config: dict, script: dict):
             image_model_id=image_model,
             overlay_title_text=overlay_title,
             overlay_subtitle=None,
-            overlay_episode_label=None,
+            overlay_episode_label=overlay_episode_label,
             output_path=str(thumb_path),
             reference_images=combined_refs or None,
         ))
@@ -513,13 +697,23 @@ def _generate_thumbnail_sync(project_id: str, config: dict, script: dict):
         except Exception as _e:
             print(f"[spend_ledger] thumbnail record skipped: {_e}")
         _redis_set(f"thumbnail:status:{project_id}", "done")
-        print(f"[Thumbnail] 생성 완료 (overlay={result.get('overlay_applied')}): {result.get('path')}")
+        print(
+            "[Thumbnail] generated "
+            f"(overlay={result.get('overlay_applied')}): {_safe_console(result.get('path'))}"
+        )
     except Exception as e:
         import traceback
         err_detail = f"{type(e).__name__}: {e}"
         _redis_set(f"thumbnail:status:{project_id}", f"failed:{err_detail[:300]}")
-        print(f"[Thumbnail] 생성 실패 (컷 이미지 생성은 계속): {err_detail}")
-        print(f"[Thumbnail] traceback:\n{traceback.format_exc()}")
+        print(f"[Thumbnail] failed; continuing image cuts: {_safe_console(err_detail)}")
+        print(f"[Thumbnail] traceback:\n{_safe_console(traceback.format_exc())}")
+    finally:
+        # v1.2.25: cancel 키 해제. (예외 경로에서도 반드시 돌려놔야 다음
+        # 워커 스레드 재사용 시 오인하지 않는다.)
+        try:
+            _set_cancel_key(None)
+        except Exception:
+            pass
 
 
 def _step_image(project_id: str, config: dict):
@@ -534,7 +728,11 @@ def _step_image(project_id: str, config: dict):
 
     v1.1.49: 동시 4장 병렬 생성.
     """
-    from app.services.image.factory import get_image_service, IMAGE_REGISTRY
+    from app.services.image.factory import (
+        get_image_service,
+        IMAGE_REGISTRY,
+        resolve_image_model,
+    )
     from app.services.image.base import get_size
     from app.services.image.prompt_builder import (
         build_image_prompt,
@@ -544,14 +742,14 @@ def _step_image(project_id: str, config: dict):
     )
 
     # v1.1.56: 로컬 ComfyUI 는 동시 1 로 강제 (GPU 순차 큐).
-    _img_model = config.get("image_model", "")
+    _img_model = resolve_image_model(config.get("image_model"))
     _is_comfy_img = IMAGE_REGISTRY.get(_img_model, {}).get("provider") == "comfyui"
     CONCURRENT = 1 if _is_comfy_img else 4
 
+    project_dir = _ensure_project_layout(project_id)
     script = load_script(project_id)
 
     width, height = get_size(config.get("aspect_ratio", "16:9"))
-    project_dir = DATA_DIR / project_id
 
     # ★ 레퍼런스/캐릭터 수집 — 레퍼런스가 있으면 스타일은 레퍼런스에서만
     ref_images = collect_reference_images(project_id, config)
@@ -564,10 +762,13 @@ def _step_image(project_id: str, config: dict):
     # 주입해서, 스타일 레퍼런스에 등장하는 인물이 캐릭터로 차용되는 사고가 난다.
     has_character_anchor = bool(char_images) or bool(character_description)
 
-    # v1.1.55 → v2.1.2: 레퍼런스가 있는데 모델이 미지원이면 폴백.
-    # 단, 사용자가 ComfyUI 로컬 모델을 명시 선택한 경우에는 레퍼런스를
-    # 무시하고 해당 모델을 유지한다 (API 폴백 방지 — GPU 비용 0 우선).
-    image_model_id = config["image_model"]
+    # v1.1.55 → v2.1.2 → v1.2.20: 레퍼런스 미지원 모델 처리.
+    # ComfyUI 로컬: 레퍼런스만 무시 (모델 유지) — GPU 비용 0 이라 사용자 의도 우선.
+    # API 모델: 폴백 금지. 사용자 요구 — "API 이용할 때 설정된 모델의 API 연결
+    # 안되있을때 알림창 띄우고 풀백으로 처리하지마." 명시적 RuntimeError 로 실패시켜
+    # task.error 에 박힌다.
+    image_model_id = _img_model
+    config["image_model"] = image_model_id
     _is_local_comfyui = IMAGE_REGISTRY.get(image_model_id, {}).get("provider") == "comfyui"
     if ref_images or char_images:
         _probe = get_image_service(image_model_id)
@@ -580,10 +781,35 @@ def _step_image(project_id: str, config: dict):
                 # 레퍼런스를 안 쓰게 됐으니 global_style 복원
                 global_style = config.get("image_global_prompt", "")
             else:
-                print(f"[Image] {image_model_id} 는 레퍼런스 미지원 → nano-banana-3 폴백")
-                image_model_id = "nano-banana-3"
+                raise RuntimeError(
+                    f"[Image] 선택한 모델 '{image_model_id}' 은(는) 레퍼런스 이미지를 "
+                    f"지원하지 않습니다. 폴백 비활성화 — 모델을 nano-banana 계열로 "
+                    f"바꾸거나 레퍼런스/캐릭터 이미지를 제거하세요."
+                )
+
+    # v1.2.16: 이 시점의 실제 사용 모델을 oneclick task["models"]["image"] 에
+    # 반영한다. Live 페이지의 "실제 사용 모델" 라벨이 폴백된 모델까지 반영하도록.
+    # oneclick 이 아닌 Studio(Celery) 경로에서는 해당 task 가 없어 no-op.
+    try:
+        from app.services.oneclick_service import update_task_image_model
+        update_task_image_model(project_id, image_model_id)
+    except Exception:
+        pass
 
     service = get_image_service(image_model_id)
+    is_comfyui_image = IMAGE_REGISTRY.get(image_model_id, {}).get("provider") == "comfyui"
+    if is_comfyui_image:
+        try:
+            from app.services.oneclick_service import append_task_log, update_task_sub_status
+
+            service.progress_log = (
+                lambda msg, level="info": append_task_log(project_id, msg, level)
+            )
+            service.progress_status = (
+                lambda text: update_task_sub_status(project_id, text)
+            )
+        except Exception:
+            pass
     # v1.1.59: 사용자 네거티브 프롬프트 주입 (ComfyUI 만 반영; 그 외 서비스는 무시)
     try:
         service.negative_prompt = (config.get("image_negative_prompt") or "").strip()
@@ -595,19 +821,60 @@ def _step_image(project_id: str, config: dict):
 
     # 커스텀 이미지 또는 이미 생성된 이미지는 건너뛰기
     to_generate = []
+    custom_done_nums: set[int] = set()
     for cut_data in all_cuts:
         num = cut_data["cut_number"]
         cut = db.query(Cut).filter(Cut.project_id == project_id, Cut.cut_number == num).first()
         if cut and cut.is_custom_image:
+            custom_done_nums.add(int(num))
             track_progress(project_id, 4)
             continue
         # v1.1.52: 이미 생성된 파일이 있으면 건너뛴다 (이어하기 지원)
         existing = project_dir / "images" / f"cut_{num:03d}.png"
         if existing.exists() and existing.stat().st_size > 50:
             print(f"[Image] Cut {num} 이미 존재 — 건너뜀")
+            if cut:
+                cut.image_path = f"images/cut_{num:03d}.png"
+                cut.image_model = image_model_id
+                cut.status = "image_done"
             track_progress(project_id, 4)
             continue
         to_generate.append((cut_data, cut))
+
+    # v1.2.24: ComfyUI 호출층 (comfyui_client.submit/wait_for) 이 cancel 을
+    # 감지할 수 있도록 현재 스레드의 cancel 키를 세팅. 워커 스레드가 `_step_image`
+    # 진입시 한번 세팅하면, 같은 스레드 안에서 일어나는 모든 run_async → submit/
+    # wait_for 가 이 키를 통해 `pipeline:cancel:<project_id>` 플래그를 확인한다.
+    try:
+        from app.services import comfyui_client as _cfy
+        _cfy.set_cancel_key(project_id)
+    except Exception as _e:
+        print(f"[Image] cancel key 세팅 실패: {_e}")
+
+    if is_comfyui_image:
+        try:
+            from app.services import comfyui_client as _cfy
+            run_async(_cfy.system_stats())
+        except Exception as e:
+            msg = f"ComfyUI 연결 실패: {type(e).__name__}: {e}"
+            try:
+                from app.services.oneclick_service import append_task_log
+                append_task_log(project_id, msg, "error")
+            except Exception:
+                pass
+            raise RuntimeError(msg) from e
+
+    # v1.2.26: 외부 API(이미지) 서비스 — fal.ai(nano-banana, seedream, z-image,
+    # flux), OpenAI(dall-e), Grok 등 — 이 raise_if_cancelled() 로 즉시 이탈
+    # 가능하도록 thread-local cancel 키도 같이 세팅. 사용자 보고 "제작 중단
+    # 버튼 동작 안한다 — 누르면 모든 api 생성 요청도 중단 시켜야 해" 의 핵심
+    # 누락분. 기존엔 ComfyUI 키만 있어 외부 API 호출에는 cancel 신호가 닿지
+    # 않았다.
+    from app.services.cancel_ctx import (
+        OperationCancelled as _OperationCancelled,
+        set_cancel_key as _set_cancel_key,
+    )
+    _set_cancel_key(project_id)
 
     # 병렬 생성 (배치 단위)
     for batch_start in range(0, len(to_generate), CONCURRENT):
@@ -625,7 +892,11 @@ def _step_image(project_id: str, config: dict):
                     # 돈이 새는 사고가 났다. 이제는 매 컷 호출 직전에도 cancel 을
                     # 검사하여 즉시 중단한다.
                     if _redis_get(f"pipeline:cancel:{project_id}"):
-                        return
+                        raise PipelineCancelled(f"Step 4 cancelled before cut {cut_data.get('cut_number')}")
+                    # v1.2.26: cancel_ctx 도 함께 검사 → OperationCancelled 로
+                    # 깨워서 batch _gen_batch 가 즉시 빠져나가도록.
+                    from app.services.cancel_ctx import raise_if_cancelled as _raise
+                    _raise(f"image-step-cut:{cut_data.get('cut_number')}")
                     num = cut_data["cut_number"]
                     output = str(project_dir / "images" / f"cut_{num:03d}.png")
 
@@ -645,6 +916,14 @@ def _step_image(project_id: str, config: dict):
                         all_refs.extend(char_images)
 
                     try:
+                        try:
+                            service.progress_context = {
+                                "project_id": project_id,
+                                "cut_number": num,
+                                "total_cuts": len(all_cuts),
+                            }
+                        except Exception:
+                            pass
                         await service.generate(
                             prompt, width, height, output,
                             reference_images=all_refs if all_refs else None,
@@ -660,15 +939,32 @@ def _step_image(project_id: str, config: dict):
                             print(f"[spend_ledger] image record skipped: {_e}")
                         if cut_row:
                             cut_row.image_path = f"images/cut_{num:03d}.png"
-                            cut_row.image_model = config["image_model"]
+                            cut_row.image_model = image_model_id
                             cut_row.status = "image_done"
                         track_progress(project_id, 4)
+                    except _OperationCancelled:
+                        raise
                     except Exception as e:
-                        print(f"[Image] Cut {num} failed: {e}")
-                        track_progress(project_id, 4)
+                        msg = f"컷 {num}/{len(all_cuts)} 이미지 생성 실패: {type(e).__name__}: {e}"
+                        print(f"[Image] {msg}")
+                        try:
+                            from app.services.oneclick_service import append_task_log
+                            append_task_log(project_id, msg, "error")
+                        except Exception:
+                            pass
+                        return e
 
             tasks = [_one(cd, cr) for cd, cr in items]
-            await asyncio.gather(*tasks, return_exceptions=True)
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for result in results:
+                if isinstance(result, (PipelineCancelled, _OperationCancelled)):
+                    raise result
+            failures = [r for r in results if isinstance(r, Exception)]
+            if failures:
+                preview = "; ".join(
+                    f"{type(e).__name__}: {str(e)[:240]}" for e in failures[:3]
+                )
+                raise RuntimeError(f"이미지 생성 배치 실패: {preview}")
 
         run_async(_gen_batch(batch))
 
@@ -678,28 +974,58 @@ def _step_image(project_id: str, config: dict):
     # v1.1.55 hotfix: 이미지가 하나도 생성되지 않았으면 실패 처리.
     # 이전엔 개별 실패를 무시하고 step 을 "완료"로 마킹해서, 다음 step(영상)이
     # 이미지 없이 실행되어 머지 실패로 이어지는 사고가 났다.
-    import os as _img_os
-    _generated = [
-        f for f in (project_dir / "images").glob("cut_*.png")
-        if f.stat().st_size > 50
-    ] if (project_dir / "images").exists() else []
-    if not _generated:
+    expected_nums = [
+        int(cut_data["cut_number"])
+        for cut_data in all_cuts
+        if cut_data.get("cut_number") is not None
+    ]
+    generated_nums = set(custom_done_nums)
+    image_dir = project_dir / "images"
+    if image_dir.exists():
+        for f in image_dir.glob("cut_*.png"):
+            if not f.is_file() or f.stat().st_size <= 50:
+                continue
+            try:
+                generated_nums.add(int(f.stem.split("_", 1)[1]))
+            except (IndexError, ValueError):
+                continue
+
+    missing_nums = [n for n in expected_nums if n not in generated_nums]
+    if missing_nums:
+        preview = ", ".join(str(n) for n in missing_nums[:20])
+        if len(missing_nums) > 20:
+            preview += f", ... (+{len(missing_nums) - 20})"
         raise RuntimeError(
-            f"이미지가 하나도 생성되지 않았습니다 (총 {len(all_cuts)}컷). "
-            f"이미지 모델({config.get('image_model', '?')}) API 키와 연결 상태를 확인하세요."
+            f"이미지 생성이 일부 누락되었습니다: "
+            f"{len(generated_nums)}/{len(expected_nums)}컷 완료, "
+            f"누락 컷: {preview}. 이미지 모델({image_model_id}) 연결 상태를 확인하세요."
         )
-    print(f"[Image] 완료: {len(_generated)}/{len(all_cuts)} 이미지 생성됨")
+    print(f"[Image] 완료: {len(generated_nums)}/{len(expected_nums)} 이미지 생성됨")
 
     # v1.1.59: ComfyUI 로컬 모델 사용 시, 배치 종료 후 VRAM 해제.
     # 외부 API(Nano/OpenAI/Fal)만 썼다면 호출해도 no-op 에 가까움 (서버가 놀고 있으므로).
     try:
         from app.services.image.factory import IMAGE_REGISTRY
-        img_provider = IMAGE_REGISTRY.get(config.get("image_model", ""), {}).get("provider")
+        img_provider = IMAGE_REGISTRY.get(image_model_id, {}).get("provider")
         if img_provider == "comfyui":
             from app.services import comfyui_client
             run_async(comfyui_client.free_memory())
     except Exception as _e:
         print(f"[Image] VRAM 해제 스킵: {_e}")
+
+    # v1.2.24: cancel 키를 해제 — 다음 step 에서 같은 스레드가 재사용될 때
+    # 이전 project 의 플래그를 오인하지 않도록.
+    try:
+        from app.services import comfyui_client as _cfy
+        _cfy.set_cancel_key(None)
+    except Exception:
+        pass
+    # v1.2.26: thread-local cancel_ctx 키도 같이 해제.
+    try:
+        from app.services.cancel_ctx import set_cancel_key as _set_cancel_key
+        _set_cancel_key(None)
+    except Exception:
+        pass
 
 
 def _probe_audio_seconds(audio_path: str) -> float:
@@ -778,23 +1104,31 @@ def _step_video(project_id: str, config: dict):
     - v1.1.55: 각 컷 mp4 가 만들어지자마자 자기 대사 자막을 바로 번인
       (머지 후 자막 싱크 깨짐 사고 차단)
     """
-    from app.services.video.factory import get_video_service, VIDEO_REGISTRY
+    from app.services.video.factory import (
+        DEFAULT_VIDEO_MODEL,
+        VIDEO_REGISTRY,
+        get_video_service,
+        resolve_video_model,
+    )
     from app.services.video.prompt_builder import (
         should_generate_ai_video,
         build_video_motion_prompt,
+        should_force_safe_motion,
     )
 
     # v1.1.56: 로컬 ComfyUI 는 GPU 1개 큐라 동시 N 개 보내도 순차 처리 → 동시 1 로 강제.
     # 체감상 1번 컷이 먼저 완료돼 progress 가 빨리 돌고 총 시간은 동일.
-    _video_model = config.get("video_model", "ffmpeg-kenburns")
+    _video_model = resolve_video_model(config.get("video_model", DEFAULT_VIDEO_MODEL))
     _is_comfy_video = VIDEO_REGISTRY.get(_video_model, {}).get("provider") == "comfyui"
     CONCURRENT = 1 if _is_comfy_video else 4
 
+    project_dir = _ensure_project_layout(project_id)
     script = load_script(project_id)
-    project_dir = DATA_DIR / project_id
 
     # ★ 스튜디오와 동일: config 에서 video_model, selection, aspect_ratio 읽기
-    video_model = config.get("video_model", "ffmpeg-kenburns")
+    video_model = resolve_video_model(config.get("video_model", DEFAULT_VIDEO_MODEL))
+    prompt_config = dict(config or {})
+    prompt_config["resolved_video_model"] = video_model
     selection = config.get("video_target_selection", "all")
     ai_first_n = int(config.get("ai_video_first_n", 5) or 0)
     aspect_ratio = config.get("aspect_ratio", "16:9")
@@ -804,6 +1138,11 @@ def _step_video(project_id: str, config: dict):
         primary_service
         if video_model == "ffmpeg-static"
         else get_video_service("ffmpeg-static")
+    )
+    safe_motion_service = (
+        primary_service
+        if video_model == "ffmpeg-safe-motion"
+        else get_video_service("ffmpeg-safe-motion")
     )
 
     # v1.1.55: 컷 자막 스타일 — DEFAULT_CONFIG 의 subtitle_style 와 동일 키.
@@ -826,14 +1165,36 @@ def _step_video(project_id: str, config: dict):
         )
     print(f"[Video] 사전 검증: {len(_existing_imgs)}/{total_cuts} 이미지 존재")
 
+    # v1.2.24: ComfyUI 영상(LTX/WAN/HunyuanVideo 등)도 돈줄 차단 — 워커 스레드의
+    # cancel 키를 세팅해서 comfyui_client.submit/wait_for 가 redis 플래그 확인.
+    try:
+        from app.services import comfyui_client as _cfy
+        _cfy.set_cancel_key(project_id)
+    except Exception as _e:
+        print(f"[Video] cancel key 세팅 실패: {_e}")
+
+    # v1.2.26: 외부 API(영상) 서비스 — fal.ai(seedance, ltx2-fast/pro, kling-via-fal),
+    # Kling native — 도 raise_if_cancelled() 로 즉시 이탈 가능하도록 thread-local
+    # cancel 키 세팅. 영상은 컷당 비용이 가장 크므로 cancel 즉시 차단이 핵심.
+    from app.services.cancel_ctx import set_cancel_key as _set_cancel_key
+    _set_cancel_key(project_id)
+
     # v1.1.52: 이미 생성된 영상은 건너뛰고 경로만 수집 (이어하기 지원)
     to_generate = []
     for cut_data in all_cuts:
         num = cut_data["cut_number"]
+        cut = db.query(Cut).filter(
+            Cut.project_id == project_id,
+            Cut.cut_number == num,
+        ).first()
         existing = project_dir / "videos" / f"cut_{num:03d}.mp4"
         if existing.exists() and existing.stat().st_size > 50:
             print(f"[Video] Cut {num} 이미 존재 — 건너뜀")
             video_paths.append(str(existing))
+            if cut:
+                cut.video_path = f"videos/cut_{num:03d}.mp4"
+                cut.video_model = cut.video_model or video_model
+                cut.status = "video_done"
             track_progress(project_id, 5)
             continue
         to_generate.append(cut_data)
@@ -848,6 +1209,16 @@ def _step_video(project_id: str, config: dict):
 
             async def _one(cut_data):
                 async with sem:
+                    # v1.2.20 [돈줄 차단]: 컷 단위 cancel 체크.
+                    # 배치 시작 시점에서 한 번 검사하지만, 4컷이 모두 in-flight 인
+                    # 동안 사용자가 중지하면 영상 모델은 컷당 비용이 큼 — 매 컷
+                    # 호출 직전에도 cancel 을 검사하여 새 API 요청을 막는다.
+                    if _redis_get(f"pipeline:cancel:{project_id}"):
+                        return
+                    # v1.2.26: cancel_ctx 도 같이 검사 → 외부 영상 API 의
+                    # poll 루프가 OperationCancelled 로 즉시 이탈하도록.
+                    from app.services.cancel_ctx import raise_if_cancelled as _raise
+                    _raise(f"video-step-cut:{cut_data.get('cut_number')}")
                     num = cut_data["cut_number"]
                     img = str(project_dir / "images" / f"cut_{num:03d}.png")
                     aud = str(project_dir / "audio" / f"cut_{num:03d}.mp3")
@@ -855,36 +1226,32 @@ def _step_video(project_id: str, config: dict):
 
                     # ★ 스튜디오와 동일: AI/static 분기 + 모션 프롬프트
                     use_ai = should_generate_ai_video(num, selection, ai_first_n)
-                    svc = primary_service if use_ai else fallback_service
-                    used_model = video_model if use_ai else "ffmpeg-static"
                     motion_prompt = build_video_motion_prompt(
-                        num, total_cuts, config,
+                        num, total_cuts, prompt_config, cut_data=cut_data,
                     )
+                    force_safe_motion = use_ai and should_force_safe_motion(cut_data, config, video_model)
+                    if force_safe_motion:
+                        svc = safe_motion_service
+                        used_model = "ffmpeg-safe-motion"
+                        print(f"[Video] Cut {num} source-lock guard -> ffmpeg-safe-motion")
+                    else:
+                        svc = primary_service if use_ai else fallback_service
+                        used_model = video_model if use_ai else "ffmpeg-static"
 
-                    try:
-                        await svc.generate(
-                            image_path=img,
-                            audio_path=aud,
-                            duration=float(CUT_VIDEO_DURATION),
-                            output_path=out,
-                            aspect_ratio=aspect_ratio,
-                            prompt=motion_prompt,
-                        )
-                    except Exception as e:
-                        # ★ primary 실패 시 fallback 으로 재시도
-                        if use_ai and svc is not fallback_service:
-                            print(f"[Video] Cut {num} primary({video_model}) 실패, ffmpeg-static 폴백: {e}")
-                            await fallback_service.generate(
-                                image_path=img,
-                                audio_path=aud,
-                                duration=float(CUT_VIDEO_DURATION),
-                                output_path=out,
-                                aspect_ratio=aspect_ratio,
-                                prompt="",
-                            )
-                            used_model = "ffmpeg-static"
-                        else:
-                            raise
+                    # v1.2.20: AI 영상 실패 시 ffmpeg-static 폴백 제거. 사용자 요구 —
+                    # "API 이용할 때 설정된 모델의 API 연결 안되있을때 알림창
+                    # 띄우고 풀백으로 처리하지마." AI 컷이 실패하면 그대로
+                    # 예외를 올려 task 가 실패하도록 한다. (use_ai=False 인
+                    # 컷은 처음부터 ffmpeg-static 으로 가는 게 사용자 설정이라
+                    # 폴백이 아님 — 그건 그대로 유지)
+                    await svc.generate(
+                        image_path=img,
+                        audio_path=aud,
+                        duration=float(CUT_VIDEO_DURATION),
+                        output_path=out,
+                        aspect_ratio=aspect_ratio,
+                        prompt=motion_prompt,
+                    )
 
                     # v1.1.55: 컷 mp4 가 생긴 직후 자기 대사 자막 번인.
                     # 머지/normalize 후에 자막 입히면 컷 길이 변경으로 싱크가
@@ -930,7 +1297,7 @@ def _step_video(project_id: str, config: dict):
                 continue
             num, output, used_model = r
             # v1.1.55: AI 비디오 성공 클립만 지출 기록 (ffmpeg-static 은 무과금)
-            if used_model and used_model != "ffmpeg-static":
+            if used_model and not str(used_model).startswith("ffmpeg-"):
                 try:
                     from app.services import spend_ledger
                     spend_ledger.record_video(
@@ -947,6 +1314,37 @@ def _step_video(project_id: str, config: dict):
                 cut.video_model = used_model
                 cut.status = "video_done"
             track_progress(project_id, 5)
+
+    expected_nums = [
+        int(cut_data["cut_number"])
+        for cut_data in all_cuts
+        if cut_data.get("cut_number") is not None
+    ]
+    generated_nums: set[int] = set()
+    video_dir = project_dir / "videos"
+    if video_dir.exists():
+        for f in video_dir.glob("cut_*.mp4"):
+            if not f.is_file() or f.stat().st_size <= 50:
+                continue
+            try:
+                generated_nums.add(int(f.stem.split("_", 1)[1]))
+            except (IndexError, ValueError):
+                continue
+
+    missing_nums = [n for n in expected_nums if n not in generated_nums]
+    if missing_nums:
+        preview = ", ".join(str(n) for n in missing_nums[:20])
+        if len(missing_nums) > 20:
+            preview += f", ... (+{len(missing_nums) - 20})"
+        raise RuntimeError(
+            f"영상 생성이 일부 누락되었습니다: "
+            f"{len(generated_nums)}/{len(expected_nums)}컷 완료, "
+            f"누락 컷: {preview}. 영상 모델({video_model}) 연결 상태를 확인하세요."
+        )
+
+    # 컷별 video_path/status 는 병합 전에 먼저 보존한다. 이후 merge/render 단계가
+    # 실패해도 생성 완료된 컷을 다시 만들지 않게 하기 위한 안전장치.
+    db.commit()
 
     merged = str(project_dir / "output" / "merged.mp4")
     from app.services.video.ffmpeg_service import FFmpegService as _FFmpeg
@@ -970,13 +1368,27 @@ def _step_video(project_id: str, config: dict):
 
     # v1.1.59: ComfyUI 로컬 영상 모델 사용 시 VRAM 해제.
     try:
-        from app.services.video.factory import VIDEO_REGISTRY
-        vid_provider = VIDEO_REGISTRY.get(config.get("video_model", ""), {}).get("provider")
+        from app.services.video.factory import DEFAULT_VIDEO_MODEL, VIDEO_REGISTRY, resolve_video_model
+        vid_model = resolve_video_model(config.get("video_model", DEFAULT_VIDEO_MODEL))
+        vid_provider = VIDEO_REGISTRY.get(vid_model, {}).get("provider")
         if vid_provider == "comfyui":
             from app.services import comfyui_client
             run_async(comfyui_client.free_memory())
     except Exception as _e:
         print(f"[Video] VRAM 해제 스킵: {_e}")
+
+    # v1.2.24: cancel 키 해제.
+    try:
+        from app.services import comfyui_client as _cfy
+        _cfy.set_cancel_key(None)
+    except Exception:
+        pass
+    # v1.2.26: thread-local cancel_ctx 키도 같이 해제.
+    try:
+        from app.services.cancel_ctx import set_cancel_key as _set_cancel_key
+        _set_cancel_key(None)
+    except Exception:
+        pass
 
     # ── v1.1.55: 영상 생성 직후 자막 + 오프닝/엔딩 자동 합성 ──
     # 사용자 요구: "렌더할 때 오프닝 꼭 집어 넣고. 영상만들때 자막도 한꺼번에 붙여."
@@ -1016,9 +1428,24 @@ def _step_upload(project_id: str, config: dict):
     script = load_script(project_id)
     project_dir = DATA_DIR / project_id
 
-    # 프로젝트별 YouTube 계정 우선, 없으면 전역 토큰 fallback.
-    _pu = YouTubeUploader(project_id=project_id)
-    uploader = _pu if _pu.is_authenticated() else YouTubeUploader()
+    # 업로드 OAuth 우선순위:
+    # 1) 프리셋 프로젝트 토큰
+    # 2) 현재 프로젝트 토큰
+    # 3) 전역 토큰 (legacy)
+    uploader = None
+    template_project_id = config.get("template_project_id")
+    if template_project_id:
+        _tu = YouTubeUploader(project_id=str(template_project_id))
+        if _tu.is_authenticated():
+            uploader = _tu
+            print(f"[upload] using preset-bound YouTube token ({template_project_id})")
+    if uploader is None:
+        _pu = YouTubeUploader(project_id=project_id)
+        if _pu.is_authenticated():
+            uploader = _pu
+            print(f"[upload] using project-bound YouTube token ({project_id})")
+    if uploader is None:
+        uploader = YouTubeUploader()
 
     # 업로드 소스 우선순위:
     #   1. 자막 번인 + 오프닝/엔딩 페이드 영상 (final_with_subtitles.mp4)
@@ -1035,7 +1462,7 @@ def _step_upload(project_id: str, config: dict):
 
     result = run_async(uploader.upload(
         video_path=str(_video_path),
-        title=script.get("title", "Untitled"),
+        title=with_episode_prefix(script.get("title", "Untitled"), config.get("episode_number")),
         description=script.get("description", ""),
         tags=script.get("tags", []),
         thumbnail_path=str(
@@ -1047,4 +1474,39 @@ def _step_upload(project_id: str, config: dict):
         privacy="private",
     ))
 
-    update_project(project_id, youtube_url=result["url"])
+    shorts_results = []
+    if bool(config.get("shorts_upload_enabled", True)):
+        shorts_dir = _output_dir / "shorts"
+        shorts_files = [shorts_dir / "short_1.mp4", shorts_dir / "short_2.mp4"]
+        for idx, shorts_path in enumerate(shorts_files, start=1):
+            if not shorts_path.exists() or shorts_path.stat().st_size <= 0:
+                continue
+            shorts_base_title = with_episode_prefix(script.get("title", "Untitled"), config.get("episode_number"))
+            shorts_title = f"{shorts_base_title[:82]} #Shorts {idx}"
+            shorts_description = (
+                (script.get("description", "") or "").strip()
+                + "\n\n#Shorts"
+            ).strip()
+            try:
+                shorts_upload = run_async(uploader.upload(
+                    video_path=str(shorts_path),
+                    title=shorts_title[:100],
+                    description=shorts_description,
+                    tags=list(dict.fromkeys((script.get("tags", []) or []) + ["Shorts"])),
+                    thumbnail_path=None,
+                    privacy=str(config.get("youtube_privacy", "private") or "private"),
+                ))
+                shorts_results.append({
+                    "index": idx,
+                    "path": str(shorts_path),
+                    "url": shorts_upload.get("url"),
+                    "video_id": shorts_upload.get("video_id"),
+                })
+                print(f"[upload] shorts {idx} uploaded: {shorts_upload.get('url')}")
+            except Exception as exc:
+                print(f"[upload] shorts {idx} upload failed: {exc}")
+
+    new_config = dict(config or {})
+    if shorts_results:
+        new_config["shorts_uploads"] = shorts_results
+    update_project(project_id, youtube_url=result["url"], config=new_config)

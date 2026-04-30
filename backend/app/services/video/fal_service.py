@@ -9,6 +9,7 @@ import httpx
 
 from app.services.video.base import BaseVideoService
 from app.services.video.subprocess_helper import run_subprocess, find_ffmpeg
+from app.services.cancel_ctx import raise_if_cancelled  # v1.2.25 cancel 방어
 from app import config as cfg
 from app.config import CUT_VIDEO_DURATION
 
@@ -247,6 +248,9 @@ class FalVideoService(BaseVideoService):
         if not _get_fal_key():
             raise ValueError("FAL_KEY not configured")
 
+        # v1.2.25: cancel 확인 — 영상 제출 금지.
+        raise_if_cancelled(f"fal-video-submit:{self.model_id}")
+
         async with httpx.AsyncClient(timeout=600) as client:
             image_url = await self._upload_image(client, image_path)
 
@@ -295,6 +299,8 @@ class FalVideoService(BaseVideoService):
             print(f"[fal] result_url={result_url}")
 
             for poll_i in range(120):
+                # v1.2.25: polling 매 반복마다 cancel 체크 — 5초 sleep 낭비 없이 이탈.
+                raise_if_cancelled(f"fal-video-poll:{self.model_id}")
                 await asyncio.sleep(5)
                 try:
                     status_resp = await asyncio.wait_for(

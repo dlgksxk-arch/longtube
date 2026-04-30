@@ -38,3 +38,55 @@ input:focus, select:focus, textarea:focus {
   border-color: var(--accent-primary) !important;
   box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.15);
 }
+
+/* --------------------------------------------------------------------- */
+/* v2.1.0 전역 스타일 (v2 scope 한정)                                     */
+/* 기획 §6.1: 폰트 한 단계 상향, 여백 축소. 구 라우트(/oneclick, /settings,*/
+/* /youtube) 에는 영향이 없도록 `.v2-scope` 안에서만 적용한다.            */
+/*                                                                       */
+/* v2.4.0: 사용자 피드백 "글씨가 작아서 보이지 않는다" 반영해 전 tier 를   */
+/* 한 번 더 상향. 17 → 19px 바닥. text-xs 마저 15px 로 올린다. 이 정도면  */
+/* 4K 모니터 기본 scaling 에서도 또렷하게 읽힌다.                          */
+/* --------------------------------------------------------------------- */
+.v2-scope {
+  font-size: 19px;              /* v2.3 17 → v2.4 19 */
+  line-height: 1.6;
+}
+.v2-scope h1 { font-size: 1.7rem;  font-weight: 600; }   /* ~32px */
+.v2-scope h2 { font-size: 1.35rem; font-weight: 600; }   /* ~26px */
+.v2-scope h3 { font-size: 1.15rem; font-weight: 600; }   /* ~22px */
+.v2-scope .text-xs   { font-size: 15px !important; }     /* 15 */
+.v2-scope .text-sm   { font-size: 17px !important; }     /* 17 */
+.v2-scope .text-base { font-size: 19px !important; }     /* 19 */
+.v2-scope .text-lg   { font-size: 21px !important; }     /* 21 */
+.v2-scope .text-xl   { font-size: 24px !important; }     /* 24 */
+.v2-scope .text-2xl  { font-size: 28px !important; }     /* 28 */
+/* 임의 사이즈(text-[10px]/[11px]/[12px]) 미세 억제 — 14px 바닥. */
+.v2-scope .text-\[10px\],
+.v2-scope .text-\[11px\],
+.v2-scope .text-\[12px\] { font-size: 14px !important; }
+/* 여백 — section 간격 소폭 확대, 읽히도록. */
+.v2-scope section + section { margin-top: 20px; }
+
+/* --------------------------------------------------------------------- */
+/* v2.3.0 접근성 개선 (design:accessibility-review 결과 반영)            */
+/*   - 키보드 포커스 가시 링 (WCAG 2.1 AA 2.4.7 Focus Visible)            */
+/*   - 본문 muted 색상 하한 (gray-500 #6B7280 → gray-400 #9CA3AF 4.8:1)   */
+/*   - 링크 hover 가시성 (underline offset)                                */
+/* --------------------------------------------------------------------- */
+.v2-scope :focus-visible {
+  outline: 2px solid #38BDF8;      /* sky-400 */
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+/* 인풋/셀렉트는 기존 box-shadow 방식 유지하되, sky-400 링으로 교체해 대비 ↑ */
+.v2-scope input:focus-visible,
+.v2-scope select:focus-visible,
+.v2-scope textarea:focus-visible {
+  outline: none;
+  border-color: #38BDF8 !important;
+  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.35);
+}
+/* 본문 muted 최저 색상 — gray-500 은 bg-primary 대비 3.91:1 로 AA body 미달.
+   v2-scope 내부 text-gray-500 은 실제 렌더 시 gray-400 으로 끌어올린다. */
+.v2-scope .text-gray-500 { color: #9CA3AF !important; } /* gray-400 */

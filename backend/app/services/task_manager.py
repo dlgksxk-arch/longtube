@@ -139,6 +139,8 @@ def complete_task(project_id: str, step: str):
     """Mark task as completed"""
     state = _tasks.get(_key(project_id, step))
     if state:
+        if state.status == "cancelled":
+            return
         state.status = "completed"
         state.completed = state.total
         state.finished_at = time.time()
@@ -148,8 +150,10 @@ def fail_task(project_id: str, step: str, error: str):
     """Mark task as failed"""
     state = _tasks.get(_key(project_id, step))
     if state:
+        if state.status == "cancelled":
+            return
         state.status = "failed"
-        state.error = error
+        state.error = error or "Task failed"
         state.finished_at = time.time()
 
 

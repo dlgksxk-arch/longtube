@@ -13,7 +13,7 @@ v1.1.55: 모든 이미지 생성(컷, 썸네일, 재생성) 경로에서 동일�
 """
 import re
 from pathlib import Path
-from app.config import DATA_DIR
+from app.config import DATA_DIR, resolve_project_dir
 
 
 # ── 레퍼런스 스타일 락 (모든 이미지 생성 경로 공용) ──
@@ -53,13 +53,232 @@ NO_TEXT_DIRECTIVE = (
     "failure."
 )
 
+I2V_SAFE_STILL_DIRECTIVE = (
+    " || sharp single-exposure still image for image-to-video, crisp subject edges, "
+    "clear solid silhouettes, no motion blur, no afterimage, no double exposure, "
+    "no ghosting, no speed lines, no translucent duplicate bodies"
+)
+
+ANATOMY_SAFE_DIRECTIVE = (
+    " || ANATOMY SAFETY — every living subject must have one complete coherent body. "
+    "All visible limbs must be attached to the correct torso, inside the frame, and "
+    "not floating, duplicated, cropped off, pasted onto the background, or fused with "
+    "another subject. Keep bodies separated with clear silhouettes and simple poses."
+)
+
+HUMAN_ANATOMY_DIRECTIVE = (
+    " Human/character anatomy: one head, one torso, two arms, two legs, natural "
+    "shoulders and elbows, no extra arms, no extra hands, no detached hands, no "
+    "missing limbs. Hands must stay small or simplified."
+)
+
+QUADRUPED_ANATOMY_DIRECTIVE = (
+    " Quadruped anatomy: every dog, cat, horse, cow, deer, wolf, fox, bear, or similar "
+    "animal has exactly one head, one torso, four attached legs/paws/hooves, and one "
+    "tail if visible. Prefer side-view or three-quarter standing/walking poses with "
+    "all four feet grounded and separated. No fifth leg, no extra paws, no merged legs."
+)
+
+HAND_SAFE_DIRECTIVE = (
+    " || HAND SAFETY — avoid close-up hands, foreground fingers, fingertips, palms, "
+    "knuckles, gripping poses, and detailed hand anatomy. If a gesture is necessary, "
+    "keep arms simple and hands as tiny four-lobed mitten shapes."
+)
+
+LIMB_FRAME_SAFE_DIRECTIVE = (
+    " || LIMB FRAMING SAFETY — avoid close-up isolated limbs, paws, feet, cropped "
+    "bodies, partial bodies, and out-of-frame anatomy. Use medium or wide framing "
+    "with the whole subject visible and all limbs attached."
+)
+
+CARTOON_FACELESS_DIRECTIVE = (
+    " || CARTOON CHARACTER FACE LOCK — for any cartoon, simple, mascot, or stylized "
+    "character, keep the head as a blank simple shape. Do not draw or imply eyes, "
+    "nose, mouth, eyebrows, smile, frown, facial expression, anime face, or detailed "
+    "human face. Communicate the scene with silhouette, body pose, clothing, props, "
+    "and lighting only."
+)
+
+# Local SDXL follows positive tokens too literally. Keep additional safety
+# suffixes disabled in the default LoRA path.
+I2V_SAFE_STILL_DIRECTIVE = " || crisp single-subject still frame, sharp subject edges, clean solid silhouette"
+ANATOMY_SAFE_DIRECTIVE = " || one complete coherent body, attached simple limbs, centered readable pose"
+HUMAN_ANATOMY_DIRECTIVE = " Simple character body with one head, one torso, two arms, two legs, tube-like arms and tiny four-lobed mitten hands."
+HAND_SAFE_DIRECTIVE = " || tiny four-lobed mitten hands, hands kept small and away from the foreground, simple gesture"
+LIMB_FRAME_SAFE_DIRECTIVE = " || medium shot, whole subject visible, centered composition"
+CARTOON_FACELESS_DIRECTIVE = " || blank smooth round head, featureless face area, simple silhouette, readable body pose"
+
+SIMPLE_CHARACTER_COUNT_DIRECTIVE = (
+    " || single faceless round-head character, plain white background, centered "
+    "simple composition, empty white space, blank round head, tube-like arms, "
+    "tiny four-lobed mitten hands, simple feet"
+)
+
+_VIDEO_UNFRIENDLY_IMAGE_PATTERNS = [
+    (r"\bmotion\s+blur\s+on\s+[^,.;]+", "sharp subject edges"),
+    (r"\bmotion\s+blur\b", "sharp freeze-frame motion"),
+    (r"\bblurred\s+motion\b", "sharp freeze-frame motion"),
+    (r"\bblurred\s+face\b", "distant face in soft shadow"),
+    (r"\bspeed\s+lines?\b", "clean action pose"),
+    (r"\blong\s+exposure\b", "single-exposure still"),
+    (r"\bdouble\s+exposure\b", "single-exposure still"),
+    (r"\bghost(?:ing)?\b", "solid silhouette"),
+    (r"\bafterimage\b", "solid silhouette"),
+]
+
+_HAND_ANATOMY_RE = re.compile(
+    r"\b(hand|hands|finger|fingers|fingertip|fingertips|palm|palms|knuckle|knuckles)\b",
+    re.IGNORECASE,
+)
+_HAND_ACTION_RE = re.compile(
+    r"\b(holding|gripping|grabbing|pointing|reaching)\b",
+    re.IGNORECASE,
+)
+_HUMAN_SUBJECT_RE = re.compile(
+    r"\b(person|people|human|man|woman|boy|girl|child|kid|adult|character|figure|"
+    r"researcher|scientist|engineer|explorer|worker|soldier|farmer|teacher|student|"
+    r"crowd|silhouette|narrator)\b",
+    re.IGNORECASE,
+)
+_QUADRUPED_SUBJECT_RE = re.compile(
+    r"\b(dog|puppy|cat|kitten|horse|pony|cow|bull|deer|wolf|fox|bear|lion|tiger|"
+    r"leopard|cheetah|goat|sheep|pig|boar|rabbit|quadruped|animal)\b",
+    re.IGNORECASE,
+)
+_CROP_RISK_RE = re.compile(
+    r"\b(cropped|cut\s*off|out\s+of\s+frame|partial\s+body|fragmented|severed|"
+    r"dismembered|detached|floating\s+limb|floating\s+hand|floating\s+leg)\b",
+    re.IGNORECASE,
+)
+
+_HAND_RISK_IMAGE_PATTERNS = [
+    (
+        r"\ba\s+human\s+hand\s+and\s+a\s+robotic\s+hand\s+almost\s+touching\b",
+        "a human silhouette and a robotic silhouette facing the same glowing orb",
+    ),
+    (
+        r"\btwo\s+hands?\s+(?:almost\s+)?touching\b",
+        "two simplified silhouettes facing the same glowing orb",
+    ),
+    (
+        r"\bhands?\s+(?:almost\s+)?touching\b",
+        "two simplified figures facing the same glowing orb",
+    ),
+    (r"\bholding\s+([^,.;]+)", r"standing beside \1"),
+    (r"\bgripping\s+([^,.;]+)", r"standing beside \1"),
+    (r"\bgrabbing\s+([^,.;]+)", r"standing beside \1"),
+    (r"\bpointing\s+at\s+([^,.;]+)", r"looking toward \1"),
+    (r"\breaching\s+toward\s+([^,.;]+)", r"leaning toward \1"),
+    (r"\bfaint\s+glow\s+between\s+fingertips\b", "faint glow between two floating abstract symbols"),
+    (r"\bglow\s+between\s+fingertips\b", "glow between two floating abstract symbols"),
+    (r"\bbetween\s+fingertips\b", "between two floating abstract symbols"),
+    (r"\bfingertips?\b", "small arm gesture"),
+    (r"\bfingers?\b", "small arm gesture"),
+    (r"\bclose-up\s+of\s+(?:a\s+)?hands?\b", "close-up of a symbolic object"),
+    (r"\bforeground\s+hands?\b", "foreground symbolic objects"),
+]
+
+_ANATOMY_RISK_IMAGE_PATTERNS = [
+    (r"\bclose-up\s+of\s+(?:a\s+)?(?:leg|legs|foot|feet|paw|paws|hoof|hooves)\b", "medium shot of the full subject"),
+    (r"\bforeground\s+(?:leg|legs|foot|feet|paw|paws|hoof|hooves)\b", "full subject visible in the foreground"),
+    (r"\bcropped\s+(?:body|person|animal|dog|cat|horse)\b", "complete subject fully inside the frame"),
+    (r"\bpartial\s+(?:body|person|animal|dog|cat|horse)\b", "complete subject fully inside the frame"),
+    (r"\bcut\s*off\s+(?:body|limbs?|legs?|arms?|paws?)\b", "complete subject fully inside the frame"),
+    (r"\bdetached\s+(?:limbs?|legs?|arms?|hands?|paws?)\b", "all limbs attached to the correct body"),
+    (r"\bfloating\s+(?:limbs?|legs?|arms?|hands?|paws?)\b", "all limbs attached to the correct body"),
+    (r"\bfused\s+(?:bodies|people|animals|limbs?|legs?|arms?|hands?|paws?)\b", "separated bodies with clear silhouettes"),
+    (r"\bcrowd\s+of\s+people\b", "one simplified faceless rounded-head character"),
+    (r"\bgroup\s+of\s+people\s+overlapping\b", "one simplified faceless rounded-head character"),
+    (r"\bgroup\s+of\s+people\b", "one simplified faceless rounded-head character"),
+    (r"\baudience\b", "one simplified faceless rounded-head observer"),
+    (r"\bclassroom\s+full\s+of\s+people\b", "classroom with one faceless rounded-head teacher"),
+    (r"\bmeeting\s+room\s+full\s+of\s+people\b", "meeting room with one faceless rounded-head character"),
+    (r"\barmy\s+of\s+people\b", "one symbolic faceless character"),
+    (r"\bworkers\b", "one faceless rounded-head worker"),
+    (r"\bresearchers\b", "one faceless rounded-head researcher"),
+    (r"\boverlapping\b", "standing apart"),
+    (r"\ba\s+pack\s+of\s+dogs\b", "two separated side-view dogs"),
+    (r"\bpack\s+of\s+dogs\b", "two separated side-view dogs"),
+    (r"\bdog\s+running\b", "side-view dog walking with all four paws visible"),
+    (r"\bdog\s+jumping\b", "side-view dog standing with all four paws visible"),
+    (r"\bhorse\s+galloping\b", "side-view horse walking with all four legs visible"),
+    (r"\bcat\s+jumping\b", "side-view cat standing with all four paws visible"),
+]
+
+
+def _sanitize_i2v_source_prompt(text: str) -> str:
+    """Remove still-image cues that Hunyuan I2V tends to turn into ghost trails."""
+    out = text or ""
+    for pattern, replacement in _VIDEO_UNFRIENDLY_IMAGE_PATTERNS:
+        out = re.sub(pattern, replacement, out, flags=re.IGNORECASE)
+    return re.sub(r"\s{2,}", " ", out).strip()
+
+
+def _sanitize_hand_risky_prompt(text: str) -> tuple[str, bool]:
+    """Avoid foreground hand anatomy, which SDXL local models often deform."""
+    out = text or ""
+    had_hand_risk = bool(_HAND_ANATOMY_RE.search(out) or _HAND_ACTION_RE.search(out))
+    for pattern, replacement in _HAND_RISK_IMAGE_PATTERNS:
+        out = re.sub(pattern, replacement, out, flags=re.IGNORECASE)
+    out = re.sub(
+        r"(?:exactly four short rounded cartoon\s+){2,}fingers",
+        "tiny four-lobed mitten hands",
+        out,
+        flags=re.IGNORECASE,
+    )
+    out = re.sub(
+        r"(?:four simple rounded|exactly four short rounded cartoon) (?:simple rounded shapes|four simple rounded fingers|exactly four short rounded cartoon fingers)",
+        "tiny four-lobed mitten hands",
+        out,
+        flags=re.IGNORECASE,
+    )
+    out = re.sub(
+        r"(?:tiny\s+)?four-lobed\s+mitten\s+hands(?:,\s*(?:tiny\s+)?four-lobed\s+mitten\s+hands)+",
+        "tiny four-lobed mitten hands",
+        out,
+        flags=re.IGNORECASE,
+    )
+    out = re.sub(r"\s{2,}", " ", out).strip()
+    return out, had_hand_risk
+
+
+def _sanitize_anatomy_risky_prompt(text: str) -> tuple[str, dict[str, bool]]:
+    """Normalize high-risk anatomy compositions before they reach the image model."""
+    out = text or ""
+    flags = {
+        "human": bool(_HUMAN_SUBJECT_RE.search(out)),
+        "quadruped": bool(_QUADRUPED_SUBJECT_RE.search(out)),
+        "crop": bool(_CROP_RISK_RE.search(out)),
+    }
+    for pattern, replacement in _ANATOMY_RISK_IMAGE_PATTERNS:
+        if re.search(pattern, out, flags=re.IGNORECASE):
+            flags["crop"] = True
+        out = re.sub(pattern, replacement, out, flags=re.IGNORECASE)
+    out = re.sub(r"\s{2,}", " ", out).strip()
+    return out, flags
+
+
+def _build_anatomy_suffix(base: str, anatomy_flags: dict[str, bool], had_hand_risk: bool) -> str:
+    suffix = I2V_SAFE_STILL_DIRECTIVE + ANATOMY_SAFE_DIRECTIVE + SIMPLE_CHARACTER_COUNT_DIRECTIVE
+    if anatomy_flags.get("human"):
+        suffix += HUMAN_ANATOMY_DIRECTIVE
+    if anatomy_flags.get("quadruped"):
+        suffix += QUADRUPED_ANATOMY_DIRECTIVE
+    if had_hand_risk:
+        suffix += HAND_SAFE_DIRECTIVE
+    if anatomy_flags.get("crop"):
+        suffix += LIMB_FRAME_SAFE_DIRECTIVE
+    if anatomy_flags.get("human"):
+        suffix += CARTOON_FACELESS_DIRECTIVE
+    return suffix
+
 
 def _append_no_text(prompt: str) -> str:
     """프롬프트 끝에 NO_TEXT_DIRECTIVE 를 중복 없이 부착."""
     p = (prompt or "").strip()
     if not p:
         return p
-    if "NO TEXT, NO LETTERS" in p:
+    if "NO TEXT, NO LETTERS" in p or "readable glyph-free image" in p:
         return p
     return p + NO_TEXT_DIRECTIVE
 
@@ -81,12 +300,13 @@ def apply_reference_style_prefix(prompt: str, has_reference: bool) -> str:
 # ── 캐릭터 슬롯 규칙 ──
 
 def cut_has_character(cut_number: int) -> bool:
-    """1-based cut_number 기준, 5컷마다 1장씩 캐릭터 배치 (20%).
-    즉 cut 1, 6, 11, 16, ... 가 캐릭터 컷.
+    """캐릭터 등장 비율 제한 해제.
+
+    캐릭터 앵커(캐릭터 이미지 또는 설명)가 있으면 모든 컷이 캐릭터 등장 가능 컷이다.
     """
     if cut_number is None or cut_number < 1:
         return False
-    return (cut_number - 1) % 5 == 0
+    return True
 
 
 # ── 레퍼런스/캐릭터 이미지 수집 ──
@@ -94,7 +314,7 @@ def cut_has_character(cut_number: int) -> bool:
 def collect_reference_images(project_id: str, config: dict) -> list[str]:
     """config 의 reference_images 에서 절대 경로 목록을 반환."""
     ref_imgs = config.get("reference_images", [])
-    project_dir = Path(DATA_DIR) / project_id
+    project_dir = resolve_project_dir(project_id)
     paths = []
     for rel in ref_imgs:
         p = Path(rel)
@@ -107,7 +327,7 @@ def collect_reference_images(project_id: str, config: dict) -> list[str]:
 def collect_character_images(project_id: str, config: dict) -> list[str]:
     """config 의 character_images 에서 절대 경로 목록을 반환."""
     char_imgs = config.get("character_images", [])
-    project_dir = Path(DATA_DIR) / project_id
+    project_dir = resolve_project_dir(project_id)
     paths = []
     for rel in char_imgs:
         p = Path(rel)

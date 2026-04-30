@@ -17,6 +17,7 @@ import StepVideo from "@/components/studio/StepVideo";
 import StepRender from "@/components/studio/StepRender";
 import StepYouTube from "@/components/studio/StepYouTube";
 import GenerationTimer from "@/components/common/GenerationTimer";
+import LocalServiceStatus from "@/components/common/LocalServiceStatus";
 
 // v1.1.32 이후: 자막 스텝 제거. 자막 스타일은 설정(Step 1)에서 관리하고,
 // 번인은 Step 6(렌더링) 에서 한 번에 처리한다.
@@ -374,6 +375,7 @@ export default function StudioPage() {
       <div className="flex flex-1 min-h-0 overflow-hidden">
         {/* Left Sidebar — 항상 고정, 내부만 스크롤 */}
         <aside className="w-72 border-r border-border bg-bg-primary flex-shrink-0 overflow-y-auto">
+          <LocalServiceStatus />
           <div className="p-4">
             <h2 className="text-[11px] uppercase tracking-wider text-gray-500 font-semibold mb-3 px-2">
               파이프라인

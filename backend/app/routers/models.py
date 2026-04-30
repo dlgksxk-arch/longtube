@@ -17,6 +17,7 @@ PROVIDER_KEY_MAP: dict[str, list[str]] = {
     "fal":        ["FAL_KEY"],
     "xai":        ["XAI_API_KEY"],
     "kling":      ["KLING_ACCESS_KEY", "KLING_SECRET_KEY"],
+    "comfyui":    ["COMFYUI_BASE_URL"],
     "replicate":  ["REPLICATE_API_TOKEN"],
     "runway":     ["RUNWAY_API_KEY"],
     "midjourney": ["MIDJOURNEY_API_KEY"],

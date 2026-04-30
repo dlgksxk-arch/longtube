@@ -3,6 +3,7 @@ import asyncio
 import json
 import httpx
 from app.services.image.base import BaseImageService
+from app.services.cancel_ctx import raise_if_cancelled  # v1.2.25 cancel 방어
 from app import config
 
 FAL_BASE = "https://queue.fal.run"
@@ -46,6 +47,9 @@ class FalGenericService(BaseImageService):
             )
 
         headers = {"Authorization": f"Key {fal_key}", "Content-Type": "application/json"}
+
+        # v1.2.25: cancel 확인 — fal.ai 제출 금지.
+        raise_if_cancelled(f"fal-generic-submit:{self.model_id}")
 
         async with httpx.AsyncClient(timeout=180, follow_redirects=True) as client:
             resp = await client.post(
@@ -93,6 +97,8 @@ class FalGenericService(BaseImageService):
         response_url: str,
     ) -> str:
         for _ in range(60):
+            # v1.2.25: polling 루프 안에서 cancel 체크.
+            raise_if_cancelled(f"fal-generic-poll:{self.model_id}")
             resp = await client.get(status_url, headers=headers)
             resp.raise_for_status()
             data = _safe_json(resp, "poll-status")

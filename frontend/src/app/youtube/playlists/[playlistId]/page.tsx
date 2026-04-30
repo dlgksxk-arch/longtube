@@ -2,12 +2,22 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { ArrowLeft, X, Plus } from "lucide-react";
-import { youtubeStudioApi, type StudioPlaylistItem } from "@/lib/api";
+import {
+  youtubeStudioApi,
+  type StudioPlaylistItem,
+} from "@/lib/api";
+
+function studioHref(path: string, projectId?: string | null): string {
+  const pid = (projectId || "").trim();
+  return pid ? `${path}?project=${encodeURIComponent(pid)}` : path;
+}
 
 export default function PlaylistDetailPage() {
   const params = useParams<{ playlistId: string }>();
+  const searchParams = useSearchParams();
+  const projectId = (searchParams.get("project") || "").trim();
   const playlistId = params.playlistId;
 
   const [items, setItems] = useState<StudioPlaylistItem[]>([]);
@@ -16,10 +26,13 @@ export default function PlaylistDetailPage() {
   const [addVideoId, setAddVideoId] = useState("");
 
   const load = async () => {
+    if (!projectId) return;
     setLoading(true);
     setErr(null);
     try {
-      const res = await youtubeStudioApi.listPlaylistItems(playlistId);
+      const res = await youtubeStudioApi.listPlaylistItems(playlistId, {
+        projectId,
+      });
       setItems(res.items || []);
     } catch (e) {
       setErr((e as Error).message);
@@ -29,15 +42,15 @@ export default function PlaylistDetailPage() {
   };
 
   useEffect(() => {
-    if (playlistId) load();
+    if (playlistId && projectId) load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [playlistId]);
+  }, [playlistId, projectId]);
 
   const add = async () => {
     const id = addVideoId.trim();
-    if (!id) return;
+    if (!id || !projectId) return;
     try {
-      await youtubeStudioApi.addPlaylistItem(playlistId, id);
+      await youtubeStudioApi.addPlaylistItem(playlistId, id, projectId);
       setAddVideoId("");
       load();
     } catch (e) {
@@ -46,18 +59,25 @@ export default function PlaylistDetailPage() {
   };
 
   const remove = async (item: StudioPlaylistItem) => {
-    if (!confirm(`"${item.title}" 을 재생목록에서 제거하시겠습니까?`)) return;
+    if (!projectId || !confirm(`"${item.title}" 를 재생목록에서 제거하시겠습니까?`)) return;
     try {
-      await youtubeStudioApi.removePlaylistItem(playlistId, item.item_id);
+      await youtubeStudioApi.removePlaylistItem(playlistId, item.item_id, projectId);
       load();
     } catch (e) {
       alert(`제거 실패: ${(e as Error).message}`);
     }
   };
 
+  if (!projectId) {
+    return <div className="p-8 text-gray-500 text-sm">좌측에서 프리셋을 선택하십시오.</div>;
+  }
+
   return (
     <div className="p-8 max-w-4xl">
-      <Link href="/youtube/playlists" className="text-xs text-gray-400 hover:text-white flex items-center gap-1 mb-4">
+      <Link
+        href={studioHref("/youtube/playlists", projectId)}
+        className="text-xs text-gray-400 hover:text-white flex items-center gap-1 mb-4"
+      >
         <ArrowLeft size={12} /> 재생목록
       </Link>
 
@@ -72,7 +92,7 @@ export default function PlaylistDetailPage() {
             value={addVideoId}
             onChange={(e) => setAddVideoId(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && add()}
-            placeholder="YouTube video id (예: dQw4w9WgXcQ)"
+            placeholder="YouTube video id"
             className="flex-1 bg-bg-primary border border-border rounded px-3 py-2 text-sm focus:outline-none focus:border-accent-primary"
           />
           <button
@@ -85,7 +105,9 @@ export default function PlaylistDetailPage() {
       </div>
 
       {err && (
-        <div className="bg-red-500/10 border border-red-500/30 text-red-300 text-sm rounded p-3 mb-4">{err}</div>
+        <div className="bg-red-500/10 border border-red-500/30 text-red-300 text-sm rounded p-3 mb-4">
+          {err}
+        </div>
       )}
 
       <div className="bg-bg-secondary border border-border rounded-lg overflow-hidden">
@@ -94,30 +116,30 @@ export default function PlaylistDetailPage() {
         ) : items.length === 0 ? (
           <div className="p-6 text-gray-500 text-sm text-center">항목이 없습니다.</div>
         ) : (
-          items.map((it) => (
+          items.map((item) => (
             <div
-              key={it.item_id}
+              key={item.item_id}
               className="flex items-center gap-3 px-4 py-3 border-b border-border last:border-b-0 hover:bg-bg-tertiary/40"
             >
-              <div className="text-xs text-gray-500 w-6 text-right">{(it.position ?? 0) + 1}</div>
+              <div className="text-xs text-gray-500 w-6 text-right">{(item.position ?? 0) + 1}</div>
               <div className="w-24 aspect-video bg-black rounded overflow-hidden flex-shrink-0">
-                {it.thumbnail ? (
+                {item.thumbnail ? (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={it.thumbnail} alt={it.title} className="w-full h-full object-cover" />
+                  <img src={item.thumbnail} alt={item.title} className="w-full h-full object-cover" />
                 ) : null}
               </div>
               <div className="flex-1 min-w-0">
                 <Link
-                  href={`/youtube/videos/${it.video_id}`}
+                  href={studioHref(`/youtube/videos/${item.video_id}`, projectId)}
                   className="text-sm font-semibold truncate block hover:text-accent-primary"
-                  title={it.title}
+                  title={item.title}
                 >
-                  {it.title}
+                  {item.title}
                 </Link>
-                <div className="text-[11px] text-gray-500 font-mono">{it.video_id}</div>
+                <div className="text-[11px] text-gray-500 font-mono">{item.video_id}</div>
               </div>
               <button
-                onClick={() => remove(it)}
+                onClick={() => remove(item)}
                 className="p-2 text-gray-400 hover:text-red-400"
                 title="제거"
               >

@@ -17,6 +17,31 @@ def split_sentences(text: str) -> list[str]:
     return [p for p in parts if p.strip()]
 
 
+def _ass_escape(text: str) -> str:
+    return (text or "").replace("\r", " ").replace("\n", " ").strip()
+
+
+def _wrap_two_lines(text: str, aspect_ratio: str = "16:9") -> str:
+    text = re.sub(r"\s+", " ", _ass_escape(text))
+    if not text:
+        return ""
+    max_chars = 24 if aspect_ratio == "9:16" else 42
+    if len(text) <= max_chars:
+        return text
+
+    target = len(text) // 2
+    candidates = [m.start() for m in re.finditer(r"\s+", text)]
+    if candidates:
+        split_at = min(candidates, key=lambda idx: abs(idx - target))
+        first = text[:split_at].strip()
+        second = text[split_at:].strip()
+    else:
+        split_at = min(max_chars, max(1, target))
+        first = text[:split_at].strip()
+        second = text[split_at:].strip()
+    return first if not second else f"{first}\\N{second}"
+
+
 def _hex_to_ass_color(hex_color: str, alpha: int = 0) -> str:
     """Convert '#RRGGBB' (or 'RRGGBB') → ASS '&HAABBGGRR'.
 
@@ -160,9 +185,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         sentence_dur = speech_dur / len(sentences)
 
         for i, sentence in enumerate(sentences):
-            # libass treats literal newlines as end-of-event, so collapse
-            # any internal newlines to the ASS line-break escape "\\N".
-            text = sentence.replace("\r", " ").replace("\n", r"\N").strip()
+            text = _wrap_two_lines(sentence, aspect_ratio)
             s_start = format_ass_time(current_time + i * sentence_dur)
             s_end = format_ass_time(current_time + (i + 1) * sentence_dur)
             events.append(
@@ -250,7 +273,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     sentence_dur = dur / len(sentences)
     events: list[str] = []
     for i, sentence in enumerate(sentences):
-        text = sentence.replace("\r", " ").replace("\n", r"\N").strip()
+        text = _wrap_two_lines(sentence, aspect_ratio)
         s_start = format_ass_time(i * sentence_dur)
         s_end = format_ass_time((i + 1) * sentence_dur)
         events.append(

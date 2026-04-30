@@ -36,7 +36,7 @@ from typing import Optional
 from sqlalchemy import and_, or_, func as sqlfunc
 from sqlalchemy.orm import Session
 
-from app.config import DATA_DIR
+from app.config import DATA_DIR, resolve_project_dir
 from app.models.database import SessionLocal
 from app.models.project import Project
 from app.models.scheduled_episode import ScheduledEpisode
@@ -196,7 +196,7 @@ def _create_project_from_template(
         db.refresh(project)
 
         # 파일 디렉토리 생성
-        project_dir = Path(DATA_DIR) / project_id
+        project_dir = resolve_project_dir(project_id, config=config, create=True)
         for sub in ["audio", "images", "videos", "subtitles", "output"]:
             (project_dir / sub).mkdir(parents=True, exist_ok=True)
 
@@ -317,12 +317,12 @@ async def _run_episode(episode: ScheduledEpisode) -> None:
 
     # 5) YouTube 업로드
     # 우선순위: 간지 포함 > 자막 번인 > 컷 병합. 어느 것도 없으면 실패.
-    output_dir = Path(DATA_DIR) / project_id / "output"
+    output_dir = resolve_project_dir(project_id) / "output"
     candidates = [
         output_dir / "final_with_interludes.mp4",
         output_dir / "final_with_subtitles.mp4",
         output_dir / "final.mp4",
-        Path(DATA_DIR) / project_id / "videos" / "merged.mp4",
+        resolve_project_dir(project_id) / "videos" / "merged.mp4",
     ]
     final_video: Optional[Path] = None
     for cand in candidates:
@@ -482,11 +482,14 @@ async def _generate_thumbnail_for_episode(
 ) -> str:
     """AI 썸네일(+ 텍스트 오버레이) 생성. 성공 시 파일 경로 반환."""
     from app.services.thumbnail_service import generate_ai_thumbnail
+    from app.services.image.factory import resolve_image_model
     from app.services.llm.factory import get_llm_service
     from app.services.llm.base import BaseLLMService
     from app.models.cut import Cut
 
-    image_model_id = config.get("image_model") or "openai-image-1"
+    image_model_id = resolve_image_model(
+        config.get("thumbnail_model") or config.get("image_model")
+    )
     language = config.get("language", "ko")
 
     db = SessionLocal()

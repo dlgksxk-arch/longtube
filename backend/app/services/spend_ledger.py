@@ -42,6 +42,7 @@ PROVIDER_MAP = {
     "bbanana": "fal.ai",          # nano-banana 는 fal 인프라 사용
     "xai": "xAI (Grok)",
     "xai-grok": "xAI (Grok)",
+    "comfyui": "ComfyUI (Local)",
 }
 
 

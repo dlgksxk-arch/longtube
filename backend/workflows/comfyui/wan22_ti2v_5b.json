@@ -1,7 +1,7 @@
 {
   "_meta": {
-    "name": "WAN 2.2 TI2V 5B (image-to-video, single-stage)",
-    "notes": "TI2V 5B 는 14B 와 달리 high/low 2단계 구조가 아닌 단일 UNET. lightx2v 4-step LoRA 는 14B 전용이라 5B 에는 사용 불가. 네이티브 20 steps, cfg 5.0, uni_pc/simple. VAE 는 wan2.2_vae (5B 전용, wan_2.1_vae 아님). Native 24 fps."
+    "name": "WAN 2.2 TI2V 5B (official image-to-video path)",
+    "notes": "Wan2.2 TI2V-5B supports text+image-to-video. This API workflow follows the official ComfyUI 5B TI2V graph: UNETLoader -> ModelSamplingSD3(shift=8) -> KSampler, with the uploaded source image fed into Wan22ImageToVideoLatent.start_image. Do not replace this with the older WanImageToVideo conditioning node; that path weakens image adherence on this model."
   },
   "1": {
     "class_type": "LoadImage",
@@ -41,14 +41,12 @@
     "class_type": "CLIPTextEncode",
     "inputs": {
       "clip": ["3", 0],
-      "text": "nsfw, low quality, blurry, watermark, text, distorted"
+      "text": "${NEGATIVE}"
     }
   },
   "7": {
-    "class_type": "WanImageToVideo",
+    "class_type": "Wan22ImageToVideoLatent",
     "inputs": {
-      "positive": ["5", 0],
-      "negative": ["6", 0],
       "vae": ["4", 0],
       "width": "${WIDTH}",
       "height": "${HEIGHT}",
@@ -58,12 +56,19 @@
     }
   },
   "8": {
-    "class_type": "KSampler",
+    "class_type": "ModelSamplingSD3",
     "inputs": {
       "model": ["2", 0],
-      "positive": ["7", 0],
-      "negative": ["7", 1],
-      "latent_image": ["7", 2],
+      "shift": 8.0
+    }
+  },
+  "9": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": ["8", 0],
+      "positive": ["5", 0],
+      "negative": ["6", 0],
+      "latent_image": ["7", 0],
       "seed": "${SEED}",
       "steps": 20,
       "cfg": 5.0,
@@ -72,24 +77,24 @@
       "denoise": 1.0
     }
   },
-  "9": {
+  "10": {
     "class_type": "VAEDecode",
     "inputs": {
-      "samples": ["8", 0],
+      "samples": ["9", 0],
       "vae": ["4", 0]
     }
   },
-  "10": {
+  "11": {
     "class_type": "CreateVideo",
     "inputs": {
-      "images": ["9", 0],
-      "fps": 24
+      "images": ["10", 0],
+      "fps": "${FPS}"
     }
   },
-  "11": {
+  "12": {
     "class_type": "SaveVideo",
     "inputs": {
-      "video": ["10", 0],
+      "video": ["11", 0],
       "filename_prefix": "${PREFIX}",
       "format": "mp4",
       "codec": "h264"

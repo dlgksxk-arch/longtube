@@ -1,14 +1,20 @@
 """Subtitle router"""
 import json
 import os
-from fastapi import APIRouter, Depends, HTTPException
+import re
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from app.models.database import get_db
 from app.models.project import Project
 from app.models.cut import Cut
-from app.config import DATA_DIR
+from app.config import CUT_VIDEO_DURATION, DATA_DIR, FIRST_CUT_FADE_IN_SECONDS, resolve_project_dir
 from app.services.subtitle_service import generate_ass
+from app.services.shorts_service import (
+    load_script as load_shorts_script,
+    render_shorts_from_final,
+    select_shorts_segments,
+)
 from app.services.video.ffmpeg_service import FFmpegService
 from app.services.video.subprocess_helper import find_ffmpeg, run_subprocess
 
@@ -103,6 +109,131 @@ def _abs_cut_path(project_id: str, rel_path: str) -> str:
     if p.is_absolute():
         return str(p)
     return str(DATA_DIR / project_id / rel_path)
+
+
+def _safe_audio_ext(filename: str) -> str:
+    ext = os.path.splitext(filename or "")[1].lower()
+    return ext if ext in {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"} else ".mp3"
+
+
+@router.post("/{project_id}/bgm/upload")
+async def upload_render_bgm(
+    project_id: str,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(404, "Project not found")
+
+    content_type = (file.content_type or "").lower()
+    if content_type and not content_type.startswith("audio/") and content_type not in {
+        "application/octet-stream",
+        "video/mp4",
+    }:
+        raise HTTPException(400, "오디오 파일만 업로드할 수 있습니다.")
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(400, "빈 파일입니다.")
+
+    try:
+        cfg = dict(project.config or {})
+        bgm_dir = resolve_project_dir(project_id, cfg, create=True) / "bgm"
+        bgm_dir.mkdir(parents=True, exist_ok=True)
+        ext = _safe_audio_ext(file.filename or "")
+        safe_stem = re.sub(r"[^0-9A-Za-z가-힣_.-]+", "_", os.path.splitext(file.filename or "bgm")[0]).strip("._")
+        if not safe_stem:
+            safe_stem = "bgm"
+        bgm_path = bgm_dir / f"{safe_stem}{ext}"
+        with open(bgm_path, "wb") as f:
+            f.write(content)
+
+        cfg["bgm_enabled"] = True
+        cfg["bgm_path"] = f"bgm/{bgm_path.name}"
+        cfg["bgm_volume"] = float(cfg.get("bgm_volume", 0.24) or 0.24)
+        project.config = cfg
+        from sqlalchemy.orm.attributes import flag_modified
+        flag_modified(project, "config")
+        db.commit()
+        return {
+            "status": "uploaded",
+            "path": cfg["bgm_path"],
+            "filename": bgm_path.name,
+            "size": len(content),
+            "enabled": True,
+            "volume": cfg["bgm_volume"],
+        }
+    except Exception as e:
+        raise HTTPException(500, f"BGM upload failed: {str(e)}")
+
+
+@router.post("/{project_id}/bgm/generate")
+async def generate_render_bgm(project_id: str, db: Session = Depends(get_db)):
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(404, "Project not found")
+
+    cfg = dict(project.config or {})
+    from app.services.bgm_service import build_bgm_prompt, generate_bgm
+
+    prompt = build_bgm_prompt(
+        topic=project.topic or "",
+        title=project.title or "",
+        style_prompt=str(cfg.get("bgm_style_prompt") or ""),
+        language=str(cfg.get("language") or "ko"),
+    )
+    target_duration = int(cfg.get("target_duration") or 600)
+    length_ms = min(max(target_duration * 1000, 30_000), 180_000)
+    bgm_abs = resolve_project_dir(project_id, cfg, create=True) / "bgm" / "generated_bgm.mp3"
+
+    try:
+        result = await generate_bgm(prompt=prompt, output_path=bgm_abs, length_ms=length_ms)
+        cfg["bgm_enabled"] = True
+        cfg["bgm_path"] = "bgm/generated_bgm.mp3"
+        cfg["bgm_prompt_used"] = prompt
+        cfg["bgm_volume"] = float(cfg.get("bgm_volume", 0.24) or 0.24)
+        project.config = cfg
+        from sqlalchemy.orm.attributes import flag_modified
+        flag_modified(project, "config")
+        db.commit()
+        return {
+            "status": "generated",
+            "path": cfg["bgm_path"],
+            "size": result["size"],
+            "length_ms": result["length_ms"],
+            "prompt": prompt,
+            "enabled": True,
+            "volume": cfg["bgm_volume"],
+        }
+    except Exception as e:
+        raise HTTPException(500, f"BGM generation failed: {str(e)}")
+
+
+@router.delete("/{project_id}/bgm")
+def delete_render_bgm(project_id: str, db: Session = Depends(get_db)):
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(404, "Project not found")
+
+    cfg = dict(project.config or {})
+    rel_path = str(cfg.get("bgm_path") or "")
+    deleted = False
+    if rel_path:
+        try:
+            path = resolve_project_dir(project_id, cfg, create=False) / rel_path
+            if path.exists() and path.is_file():
+                path.unlink()
+                deleted = True
+        except Exception:
+            deleted = False
+    cfg["bgm_enabled"] = False
+    cfg["bgm_path"] = ""
+    project.config = cfg
+    from sqlalchemy.orm.attributes import flag_modified
+    flag_modified(project, "config")
+    db.commit()
+    return {"ok": True, "deleted": deleted}
 
 
 async def _video_has_audio(ffmpeg_bin: str, video_path: str) -> bool:
@@ -225,12 +356,22 @@ async def _heal_cut_audio(project_id: str, db: Session) -> dict:
     return summary
 
 
-def _resolution_for_aspect(aspect_ratio: str) -> str:
+def _resolution_for_aspect(aspect_ratio: str, target_resolution: str = "720p") -> str:
+    if str(target_resolution).lower() in {"1080", "1080p", "fullhd", "fhd"}:
+        if aspect_ratio == "9:16":
+            return "1080x1920"
+        if aspect_ratio == "1:1":
+            return "1080x1080"
+        if aspect_ratio == "3:4":
+            return "1080x1440"
+        return "1920x1080"
     if aspect_ratio == "9:16":
-        return "1080x1920"
+        return "720x1280"
     if aspect_ratio == "1:1":
-        return "1080x1080"
-    return "1920x1080"
+        return "720x720"
+    if aspect_ratio == "3:4":
+        return "720x960"
+    return "1280x720"
 
 
 def _resolve_interlude_path(project_id: str, project: Project, kind: str) -> str | None:
@@ -245,6 +386,106 @@ def _resolve_interlude_path(project_id: str, project: Project, kind: str) -> str
     if not p.is_absolute():
         p = DATA_DIR / project_id / vp
     return str(p) if p.exists() else None
+
+
+def _resolve_bgm_path(project_id: str, project: Project) -> str | None:
+    cfg = project.config or {}
+    if not bool(cfg.get("bgm_enabled", False)):
+        return None
+    raw = str(cfg.get("bgm_path") or "").strip()
+    if not raw:
+        return None
+    from pathlib import Path as _P
+    p = _P(raw)
+    if not p.is_absolute():
+        p = resolve_project_dir(project_id, cfg, create=False) / raw
+    if p.exists() and p.is_file():
+        return str(p)
+
+    template_project_id = str(cfg.get("template_project_id") or "").strip()
+    if template_project_id and not _P(raw).is_absolute():
+        tp = resolve_project_dir(template_project_id, create=False) / raw
+        if tp.exists() and tp.is_file():
+            return str(tp)
+    return None
+
+
+async def _ensure_bgm_for_render(project_id: str, project: Project, db: Session) -> str | None:
+    existing = _resolve_bgm_path(project_id, project)
+    if existing:
+        return existing
+
+    cfg = dict(project.config or {})
+    if not bool(cfg.get("bgm_enabled", False)):
+        return None
+
+    from app.services.bgm_service import build_bgm_prompt, generate_bgm
+
+    prompt = build_bgm_prompt(
+        topic=project.topic or "",
+        title=project.title or "",
+        style_prompt=str(cfg.get("bgm_style_prompt") or ""),
+        language=str(cfg.get("language") or "ko"),
+    )
+    target_duration = int(cfg.get("target_duration") or 600)
+    length_ms = min(max(target_duration * 1000, 30_000), 180_000)
+    bgm_rel = "bgm/generated_bgm.mp3"
+    bgm_abs = resolve_project_dir(project_id, cfg, create=True) / bgm_rel
+    print(f"[subtitle/render] generating BGM via ElevenLabs Music: {prompt!r}")
+    result = await generate_bgm(
+        prompt=prompt,
+        output_path=bgm_abs,
+        length_ms=length_ms,
+    )
+    cfg["bgm_path"] = bgm_rel
+    cfg["bgm_prompt_used"] = prompt
+    project.config = cfg
+    from sqlalchemy.orm.attributes import flag_modified
+    flag_modified(project, "config")
+    db.commit()
+    print(
+        f"[subtitle/render] BGM generated: {bgm_rel} "
+        f"size={result.get('size')} length_ms={result.get('length_ms')}"
+    )
+    return str(bgm_abs)
+
+
+async def _mix_bgm_into_video(input_path: str, bgm_path: str, output_path: str, volume: float) -> str:
+    ffmpeg_bin = find_ffmpeg()
+    vol = max(0.0, min(1.0, float(volume)))
+    has_audio = await _video_has_audio(ffmpeg_bin, input_path)
+    if has_audio:
+        filter_complex = (
+            f"[1:a]volume={vol:.4f},aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[bgm];"
+            f"[0:a]aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[main];"
+            f"[main][bgm]amix=inputs=2:duration=first:dropout_transition=2,alimiter=limit=0.95[aout]"
+        )
+    else:
+        filter_complex = (
+            f"[1:a]volume={vol:.4f},aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[aout]"
+        )
+    cmd = [
+        ffmpeg_bin, "-y",
+        "-i", input_path,
+        "-stream_loop", "-1", "-i", bgm_path,
+        "-filter_complex", filter_complex,
+        "-map", "0:v:0",
+        "-map", "[aout]",
+        "-c:v", "copy",
+        "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
+        "-shortest",
+        output_path,
+    ]
+    rc, _, stderr = await run_subprocess(
+        cmd,
+        timeout=900.0,
+        capture_stdout=False,
+        capture_stderr=True,
+    )
+    if rc != 0 or not os.path.exists(output_path) or os.path.getsize(output_path) <= 0:
+        err_tail = (stderr or b"").decode(errors="replace")[-800:]
+        raise RuntimeError(f"BGM mix failed: {err_tail}")
+    return output_path
 
 
 @router.post("/{project_id}/render")
@@ -280,7 +521,8 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
     output_path = output_dir / "final_with_subtitles.mp4"
 
     aspect_ratio = (project.config or {}).get("aspect_ratio", "16:9")
-    resolution = _resolution_for_aspect(aspect_ratio)
+    target_resolution = (project.config or {}).get("render_resolution", "720p")
+    resolution = _resolution_for_aspect(aspect_ratio, target_resolution)
 
     # v1.1.55: 컷 단계에서 이미 자막을 번인했으면 본편 단계의 ASS 생성/번인은
     # 건너뛴다. 머지 후 자막 입히면 ensure_min_duration 등으로 컷 길이가
@@ -351,7 +593,7 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
 
     print(f"[subtitle/render] {len(clip_paths)}/{len(cuts)} 컷 영상 수집 완료")
 
-    MIN_CUT_DURATION = 5.0
+    MIN_CUT_DURATION = float(CUT_VIDEO_DURATION)
     normalized_cuts: list[str] = []
     try:
         t_norm = _t.time()
@@ -360,7 +602,17 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
             await FFmpegService.ensure_min_duration(
                 cp, norm_out, min_seconds=MIN_CUT_DURATION, resolution=resolution
             )
-            normalized_cuts.append(norm_out)
+            if idx == 1 and FIRST_CUT_FADE_IN_SECONDS > 0:
+                fade_out = str(tmp_dir / "norm_001_fadein.mp4")
+                await FFmpegService.add_fade_in(
+                    norm_out,
+                    fade_out,
+                    fade_seconds=min(float(FIRST_CUT_FADE_IN_SECONDS), MIN_CUT_DURATION),
+                    resolution=resolution,
+                )
+                normalized_cuts.append(fade_out)
+            else:
+                normalized_cuts.append(norm_out)
         print(
             f"[subtitle/render] normalized {len(normalized_cuts)} cuts "
             f"(min={MIN_CUT_DURATION}s) in {_t.time()-t_norm:.1f}s"
@@ -478,8 +730,9 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
     # 을 삽입하고, 첫 150ms 동안 검정→첫 프레임 페이드 인. 자막은 본편에 이미
     # 번인돼 있어 타임라인이 같이 밀리므로 별도 조정 불필요.
     # config 에서 `pre_roll_sec=0` 을 주면 스킵(옛 프로젝트 하위호환).
-    pre_roll_sec = float((project.config or {}).get("pre_roll_sec", 0.5) or 0)
+    pre_roll_sec = float((project.config or {}).get("pre_roll_sec", 0.0) or 0)
     pre_roll_fade_sec = float((project.config or {}).get("pre_roll_fade_sec", 0.15) or 0)
+    final_nomusic_path = str(tmp_dir / "final_nomusic.mp4")
     if pre_roll_sec > 0:
         try:
             t_pre = _t.time()
@@ -498,15 +751,85 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
             print(f"[subtitle/render] PRE-ROLL FAILED (non-fatal, falling back to no pre-roll): "
                   f"{e}\n{traceback.format_exc()}")
             from shutil import copyfile
-            copyfile(pre_final_path, str(output_path))
+            copyfile(pre_final_path, final_nomusic_path)
+        else:
+            from shutil import copyfile
+            copyfile(str(output_path), final_nomusic_path)
     else:
         from shutil import copyfile
-        copyfile(pre_final_path, str(output_path))
+        copyfile(pre_final_path, final_nomusic_path)
+
+    bgm_enabled = bool((project.config or {}).get("bgm_enabled", False))
+    bgm_path = None
+    try:
+        bgm_path = await _ensure_bgm_for_render(project_id, project, db)
+    except Exception as e:
+        import traceback
+        print(
+            f"[subtitle/render] BGM GENERATION FAILED (non-fatal, rendering without BGM): "
+            f"{e}\n{traceback.format_exc()}"
+        )
+        if bgm_enabled:
+            raise HTTPException(500, f"BGM generation failed: {type(e).__name__}: {e}")
+    if bgm_path:
+        try:
+            t_bgm = _t.time()
+            volume = float((project.config or {}).get("bgm_volume", 0.24) or 0.24)
+            await _mix_bgm_into_video(final_nomusic_path, bgm_path, str(output_path), volume)
+            print(
+                f"[subtitle/render] BGM mixed volume={volume:.3f} "
+                f"file={bgm_path} in {_t.time()-t_bgm:.1f}s"
+            )
+        except Exception as e:
+            import traceback
+            print(
+                f"[subtitle/render] BGM MIX FAILED (non-fatal, falling back to no BGM): "
+                f"{e}\n{traceback.format_exc()}"
+            )
+            if bgm_enabled:
+                raise HTTPException(500, f"BGM mix failed: {type(e).__name__}: {e}")
+            from shutil import copyfile
+            copyfile(final_nomusic_path, str(output_path))
+    else:
+        from shutil import copyfile
+        copyfile(final_nomusic_path, str(output_path))
 
     if not output_path.exists():
         raise HTTPException(500, "Final render reported success but output file is missing")
 
     file_size = output_path.stat().st_size
+    shorts_results = []
+    try:
+        shorts_enabled = bool((project.config or {}).get("shorts_enabled", True))
+        if shorts_enabled:
+            script_for_shorts = load_shorts_script(DATA_DIR / project_id)
+            shorts_segments = select_shorts_segments(script_for_shorts, count=2)
+            shorts_results = await render_shorts_from_final(
+                output_path,
+                output_dir,
+                shorts_segments,
+                script=script_for_shorts,
+                channel_name=(project.config or {}).get("shorts_channel_name") or project.title,
+                source_title=script_for_shorts.get("title") or project.title,
+            )
+            shorts_meta_path = output_dir / "shorts" / "shorts.json"
+            shorts_meta_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(shorts_meta_path, "w", encoding="utf-8") as fh:
+                json.dump(
+                    {
+                        "enabled": True,
+                        "segments": shorts_segments,
+                        "results": shorts_results,
+                    },
+                    fh,
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            print(f"[subtitle/render] shorts rendered: {len(shorts_results)}")
+    except Exception as e:
+        import traceback
+        shorts_results = []
+        print(f"[subtitle/render] SHORTS FAILED (non-fatal): {e}\n{traceback.format_exc()}")
 
     # tmp 파일 청소
     try:
@@ -547,6 +870,7 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
         "opening_used": bool(opening_raw),
         "ending_used": bool(ending_raw),
         "cuts": len(normalized_cuts),
+        "shorts": shorts_results,
         "download_url": f"/assets/{project_id}/output/final_with_subtitles.mp4",
     }
 

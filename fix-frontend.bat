@@ -19,10 +19,14 @@ if exist node_modules (
     echo     Already clean.
 )
 echo.
-echo [3] Deleting .next cache...
+echo [3] Deleting Next cache...
 if exist .next (
     rmdir /s /q .next
     echo     Deleted!
+)
+if exist .next-dev (
+    rmdir /s /q .next-dev
+    echo     Deleted .next-dev!
 )
 echo.
 echo [4] Running npm install...

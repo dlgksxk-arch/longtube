@@ -10,7 +10,7 @@ from app.models.database import get_db
 from app.models.project import Project
 from app.models.cut import Cut
 from app.config import DATA_DIR, BASE_DIR as _BASE_DIR_FOR_LOG
-from app.services.image.factory import get_image_service
+from app.services.image.factory import get_image_service, resolve_image_model
 from app.services.image.base import get_size
 
 router = APIRouter()
@@ -272,14 +272,13 @@ def _collect_logo_images(project_id: str, config: dict) -> list[str]:
 
 
 def cut_has_character(cut_number: int) -> bool:
-    """1-based cut_number 기준, 5컷마다 1장씩 캐릭터 배치 (20%).
+    """캐릭터 등장 비율 제한 해제.
 
-    즉 cut 1, 6, 11, 16, ... 가 캐릭터 컷.
-    DB 마이그레이션 없이 결정적으로 계산 가능해 프론트/백엔드 모두 같은 규칙 적용 가능.
+    캐릭터 앵커(캐릭터 이미지 또는 설명)가 있으면 모든 컷이 캐릭터 등장 가능 컷이다.
     """
     if cut_number is None or cut_number < 1:
         return False
-    return (cut_number - 1) % 5 == 0
+    return True
 
 
 def _prompt_mentions_character(prompt: str, config: dict) -> bool:
@@ -334,7 +333,7 @@ async def generate_all_images(project_id: str, db: Session = Depends(get_db)):
         raise HTTPException(404, "Project not found")
 
     cuts = db.query(Cut).filter(Cut.project_id == project_id).all()
-    image_model = project.config.get("image_model", "nano-banana-2")
+    image_model = resolve_image_model(project.config.get("image_model"))
     aspect_ratio = project.config.get("aspect_ratio", "16:9")
 
     image_service = get_image_service(image_model)
@@ -460,7 +459,7 @@ async def generate_all_images_async(project_id: str, db: Session = Depends(get_d
         local_db = SessionLocal()
         try:
             proj = local_db.query(Project).filter(Project.id == project_id).first()
-            image_model = proj.config.get("image_model", "openai-image-1")
+            image_model = resolve_image_model(proj.config.get("image_model"))
             aspect_ratio = proj.config.get("aspect_ratio", "16:9")
             global_style = proj.config.get("image_global_prompt", "")
 
@@ -555,15 +554,25 @@ async def generate_all_images_async(project_id: str, db: Session = Depends(get_d
             # v1.1.55-fix: 실제 생성된 이미지 수 검증 — 0개면 failed 처리
             import os as _os
             _img_dir = DATA_DIR / project_id / "images"
-            _generated = [
-                f for f in _img_dir.glob("cut_*.png")
-                if f.stat().st_size > 50
-            ] if _img_dir.exists() else []
-            _ilog(f"=== post-check: {len(_generated)}/{len(cut_specs)} images on disk ===")
+            missing_nums = []
+            for cut in cut_specs:
+                plain = _img_dir / f"cut_{cut.cut_number}.png"
+                padded = _img_dir / f"cut_{cut.cut_number:03d}.png"
+                ok = any(
+                    p.exists() and p.is_file() and p.stat().st_size > 50
+                    for p in (plain, padded)
+                )
+                if not ok:
+                    missing_nums.append(cut.cut_number)
+            generated_count = len(cut_specs) - len(missing_nums)
+            _ilog(
+                f"=== post-check: {generated_count}/{len(cut_specs)} "
+                f"images ready; missing={missing_nums[:20]} ==="
+            )
 
             proj = local_db.query(Project).filter(Project.id == project_id).first()
             ss = dict(proj.step_states or {})
-            if _generated:
+            if not missing_nums:
                 ss["4"] = "completed"
                 proj.step_states = ss
                 local_db.commit()
@@ -572,7 +581,14 @@ async def generate_all_images_async(project_id: str, db: Session = Depends(get_d
                 ss["4"] = "failed"
                 proj.step_states = ss
                 local_db.commit()
-                fail_task(project_id, "image", f"이미지 0/{len(cut_specs)}개 생성됨 — API 키/잔액 확인 필요")
+                preview = ", ".join(str(n) for n in missing_nums[:20])
+                if len(missing_nums) > 20:
+                    preview += f", ... (+{len(missing_nums) - 20})"
+                fail_task(
+                    project_id,
+                    "image",
+                    f"이미지 {generated_count}/{len(cut_specs)}개 생성됨; 누락 컷: {preview}",
+                )
 
             # v1.1.59: 배치 종료 → ComfyUI VRAM 해제
             if IMAGE_REGISTRY.get(image_model, {}).get("provider") == "comfyui":
@@ -640,7 +656,7 @@ async def resume_images_async(project_id: str, db: Session = Depends(get_db)):
         local_db = SessionLocal()
         try:
             proj = local_db.query(Project).filter(Project.id == project_id).first()
-            image_model = proj.config.get("image_model", "openai-image-1")
+            image_model = resolve_image_model(proj.config.get("image_model"))
             aspect_ratio = proj.config.get("aspect_ratio", "16:9")
             global_style = proj.config.get("image_global_prompt", "")
 
@@ -770,7 +786,7 @@ async def generate_one_image(
     if not cut.image_prompt:
         raise HTTPException(400, "Cut has no image prompt")
 
-    image_model = project.config.get("image_model", "nano-banana-2")
+    image_model = resolve_image_model(project.config.get("image_model"))
     aspect_ratio = project.config.get("aspect_ratio", "16:9")
 
     image_service = get_image_service(image_model)
@@ -1007,7 +1023,10 @@ def list_character_slots(project_id: str, db: Session = Depends(get_db)):
         "slots": [
             {
                 "cut_number": c.cut_number,
-                "has_character": cut_has_character(c.cut_number),
+                "has_character": bool(
+                    (project.config.get("character_images") or [])
+                    or (project.config.get("character_description") or "").strip()
+                ) and cut_has_character(c.cut_number),
             }
             for c in cuts
         ],

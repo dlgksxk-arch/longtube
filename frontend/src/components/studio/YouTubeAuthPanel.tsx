@@ -14,6 +14,7 @@ import { youtubeApi, type YouTubeChannelInfo } from "@/lib/api";
 
 interface Props {
   projectId: string;
+  channelId?: number | null;
   /** 헤더를 간결하게 할 때 true (StepYouTube 의 작은 상태 표시용). */
   compact?: boolean;
 }
@@ -23,7 +24,8 @@ interface Props {
  * 관리한다. StepYouTube 는 compact 모드로 상태만 표시하고 실제 인증 버튼은
  * 누르지 않아도 되게끔 Step 1 로 안내한다.
  */
-export default function YouTubeAuthPanel({ projectId, compact = false }: Props) {
+export default function YouTubeAuthPanel({ projectId, channelId, compact = false }: Props) {
+  const channelNo = typeof channelId === "number" && channelId >= 1 && channelId <= 4 ? channelId : null;
   const [authChecking, setAuthChecking] = useState(true);
   const [authenticated, setAuthenticated] = useState(false);
   const [authing, setAuthing] = useState(false);
@@ -38,7 +40,9 @@ export default function YouTubeAuthPanel({ projectId, compact = false }: Props) 
     setAuthChecking(true);
     (async () => {
       try {
-        const s = await youtubeApi.projectAuthStatus(projectId);
+        const s = channelNo
+          ? await youtubeApi.channelAuthStatus(channelNo)
+          : await youtubeApi.projectAuthStatus(projectId);
         if (!cancelled) setAuthenticated(s.authenticated);
       } catch (e: any) {
         if (!cancelled) setAuthError(e?.message || "인증 상태 확인 실패");
@@ -49,7 +53,7 @@ export default function YouTubeAuthPanel({ projectId, compact = false }: Props) 
     return () => {
       cancelled = true;
     };
-  }, [projectId]);
+  }, [projectId, channelNo]);
 
   useEffect(() => {
     if (!authenticated) {
@@ -61,7 +65,9 @@ export default function YouTubeAuthPanel({ projectId, compact = false }: Props) 
     setChannelError(null);
     (async () => {
       try {
-        const info = await youtubeApi.projectAuthChannel(projectId);
+        const info = channelNo
+          ? await youtubeApi.channelAuthInfo(channelNo)
+          : await youtubeApi.projectAuthChannel(projectId);
         if (!cancelled) setChannelInfo(info);
       } catch (e: any) {
         if (!cancelled) setChannelError(e?.message || "채널 정보 조회 실패");
@@ -72,14 +78,20 @@ export default function YouTubeAuthPanel({ projectId, compact = false }: Props) 
     return () => {
       cancelled = true;
     };
-  }, [authenticated, projectId]);
+  }, [authenticated, projectId, channelNo]);
 
   const handleAuthenticate = async () => {
     setAuthing(true);
     setAuthError(null);
     try {
-      await youtubeApi.projectAuthenticate(projectId);
-      const s = await youtubeApi.projectAuthStatus(projectId);
+      if (channelNo) {
+        await youtubeApi.channelAuthenticate(channelNo);
+      } else {
+        await youtubeApi.projectAuthenticate(projectId);
+      }
+      const s = channelNo
+        ? await youtubeApi.channelAuthStatus(channelNo)
+        : await youtubeApi.projectAuthStatus(projectId);
       setAuthenticated(s.authenticated);
     } catch (e: any) {
       setAuthError(e?.message || "OAuth 인증 실패");
@@ -100,11 +112,18 @@ export default function YouTubeAuthPanel({ projectId, compact = false }: Props) 
     setAuthError(null);
     setChannelError(null);
     try {
-      await youtubeApi.projectAuthReset(projectId);
       setChannelInfo(null);
       setAuthenticated(false);
-      await youtubeApi.projectAuthenticate(projectId);
-      const s = await youtubeApi.projectAuthStatus(projectId);
+      if (channelNo) {
+        await youtubeApi.channelAuthReset(channelNo);
+        await youtubeApi.channelAuthenticate(channelNo);
+      } else {
+        await youtubeApi.projectAuthReset(projectId);
+        await youtubeApi.projectAuthenticate(projectId);
+      }
+      const s = channelNo
+        ? await youtubeApi.channelAuthStatus(channelNo)
+        : await youtubeApi.projectAuthStatus(projectId);
       setAuthenticated(s.authenticated);
     } catch (e: any) {
       setAuthError(e?.message || "계정 전환 실패");
@@ -119,7 +138,9 @@ export default function YouTubeAuthPanel({ projectId, compact = false }: Props) 
         <div className="flex items-center gap-2 text-gray-300">
           <Youtube size={16} className="text-red-500" />
           <h3 className="text-sm font-medium">YouTube 계정 인증</h3>
-          <span className="text-[10px] text-gray-500">(프로젝트별 토큰)</span>
+          <span className="text-[10px] text-gray-500">
+            {channelNo ? `(CH${channelNo} 채널 토큰)` : "(프로젝트별 토큰)"}
+          </span>
         </div>
       )}
 

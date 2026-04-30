@@ -1,5 +1,491 @@
 # LongTube Changelog
 
+> **2026-04-22 — v2 프로젝트 폐기.**
+> `v2.0.74` 이후 진행됐던 v2 병렬 경로 (`/v2/*` · `/api/v2/*`) 작업
+> (v2.1.0 ~ v2.4.0, 그리고 폐기 결정 로그) 은
+> [`_archive/v2/CHANGELOG-v2.md`](_archive/v2/CHANGELOG-v2.md) 로 적출됐다.
+> 어떤 엔트리도 git 커밋에 머지된 적 없음. 아이디어만 `docs/v2-plan.md`
+> (그리고 그 아카이브 복사본) 를 통해 v1 에 이식한다.
+> 앞으로 이 파일에는 v1 릴리즈만 추가한다.
+
+---
+
+## v1.2.29 (2026-04-23)
+
+### 채널 번호가 박힌 프로젝트 ID + 고아 프로젝트 채널 매칭 + 긴급정지 재발 방지
+
+- **배경**: Jerome 요구 두 건 + 치명 사고 한 건.
+  1. "앞으로 결과물 생성할 때 파일명에 채널 번호도 표기 해 딸깍_CH1_뭐뭐
+     날짜_순번 이렇게" — 프로젝트 ID 만 보고도 어느 채널에서 생성됐는지 즉시
+     식별되도록.
+  2. "야.. 모든 작업 중단을 눌렀는데.... 왜 계속 이미지를 생성 하는거야.. 도대체
+     왜...." — 긴급 정지를 눌렀는데 ComfyUI 가 cut_016 ~ cut_021 총 6 컷을
+     더 생성한 사고. 돈줄/시간 차단이 완전히 실패.
+
+- **수선**:
+  1. **`_generate_oneclick_project_id` 에 channel 인자 추가** — 채널이 1~4
+     범위일 때 `딸깍_CH{n}_{주제}_{YYMMDD}-{N}` 형식으로 ID 를 만든다. 채널
+     정보 없는 구버전 경로는 기존 `딸깍_{주제}_{YYMMDD}-{N}` 유지.
+     `prepare_task`·`_clone_project_from_template`·`_fire_queue_for_channel`
+     모두 channel 을 스레드 관통시킴. 프런트 `oneclickApi.prepare` body 에도
+     `channel` 필드 추가.
+  2. **고아 프로젝트 채널 매칭 강화** — `list_orphan_projects` 가 project_id
+     의 `CH{n}_` 프리픽스를 정규식으로 파싱해 채널을 복원한다. 둘 다 없는
+     구버전 프로젝트는 `unattributed=True` 로 마킹해 모든 채널 뷰에 표시.
+  3. **긴급 정지 재발 방지 (치명) — 프로세스 전역 halt 집합 도입**.
+     - `cancel_ctx.py` 에 `_HALT_KEYS: set[str]` + `mark_halted()` /
+       `unmark_halted()` / `is_halted()` 추가. redis 와 무관한 최후 안전선.
+     - `is_cancelled()` 가 3 단계 OR 로 확인: (1) 프로세스 halt 집합 (예외
+       발생 불가), (2) redis `pipeline:cancel:<key>`, (3) `_progress_mem`
+       fallback. 기존엔 redis 읽기 중 예외가 나면 `is_cancelled()` 가
+       `return False` 로 조용히 묵살 → 긴급정지 신호가 사라졌음.
+     - `_redis_set` / `_redis_get` / `_redis_incr` / `_redis_delete` 에
+       try/except 를 둘러 redis 장애가 전파되지 않고 항상 `_progress_mem` 에
+       기록/조회되도록 보장. redis.set 이 예외를 냈을 때 `_progress_mem`
+       업데이트가 스킵돼 워커 스레드가 영원히 False 를 보던 사고 수선.
+     - `emergency_stop_all()` / `cancel_task()` / `delete_task()` 가
+       `mark_halted(pid)` 를 함께 호출. 상태 필터(running/queued/paused)
+       밖의 떠돌이 스레드도 같은 project_id 로 돌고 있으면 halt 시키도록
+       `_TASKS` 전체의 project_id 를 모아 선제 마킹.
+     - `_run_oneclick_task()` 가 실행 시작 시점에 `unmark_halted(project_id)`
+       를 호출해 재실행 시 이전 halt 가 계승되지 않게 한다.
+
+- **버전**: 프론트 `package.json` / `src/lib/version.ts` / 백엔드 `main.py`
+  모두 `1.2.29` 로 동기화.
+
+---
+
+## v1.2.28 (2026-04-23)
+
+### 복구 후 재실행 실패시 큐 항목 소실 방지 + 실시간 현황 모델명 줄바꿈 표시 + 프리셋 실시간 반영 + 고아 프로젝트 섹션 신설
+
+- **배경**: Jerome 보고 여러 건을 한 릴리즈로 묶어 정리.
+  1. "이거 봐 다른 페이지 갔다오니까 또 다 사라졌자나" — 실패/복구한 항목이
+     대기/실패 어디에도 남지 않고 사라지는 현상.
+  2. "내가 EP.1 복구 해서 다시 진행 시켰는데. 실시간 현황이 맞탱이가 가서
+     실패 했자나? 근데 EP.1 어디갓냐?" — 복구 → 실행 → UI crash → 실패
+     한 뒤 EP.1 자체가 어디에도 보이지 않음.
+  3. "사용중인 모델 이름 명확히 표기해. 잘라먹지 말고" — 라이브 파이프라인
+     위젯이 모델명을 `...` 로 잘라 표기.
+  4. "프리셋에 설정한 내용 그대로 진행 하게 하라고!!! 설정 변경하면 실시간
+     으로 반영해!!!" — Project Settings 에서 모델을 바꿔도 실행 중인 딸깍
+     태스크는 예전 모델을 계속 사용.
+
+- **수선**:
+  1. **`_fire_queue_for_channel` 실패시 큐 아이템 손실 방지** —
+     기존: `head = items.pop(target_idx)` 로 큐에서 꺼낸 후 `prepare_task` /
+     `start_task` 가 예외를 던지면 `print` 만 찍고 아이템이 증발.
+     수정: `prepare_task` 실패시 `head` 를 해당 채널 맨 앞에 되돌려 넣고
+     `_save_queue_to_disk()`. `start_task` 실패시 `task["status"] = "failed"`
+     마킹해 실패/취소 섹션에 남기도록 방어.
+  2. **`_recover_orphaned_projects` 0-완료 필터 제거** —
+     기존: "완료된 스텝 0개" 프로젝트는 복구 대상에서 스킵 → 이미지 삭제
+     직후 서버 재시작시 해당 프로젝트가 영구 증발.
+     수정: 필터 삭제. 모든 `__oneclick__` 프로젝트 무조건 복구 시도.
+  3. **`_run_single_step` 에서 DB 설정 재로드** —
+     스텝 시작 직전 `_load_project(project_id)` 로 최신 config 를 DB 에서
+     다시 읽어 기존 `config` dict 를 덮어쓰고 `_sync_task_models_from_config`
+     재호출. UI 에서 모델을 바꾸면 다음 컷/다음 스텝부터 새 모델을 사용.
+  4. **`projects.update_project` PATCH 훅** —
+     config 업데이트 성공시 `_TASKS` 에서 같은 project_id + running/
+     prepared/queued/paused 태스크를 찾아 `_sync_task_models_from_config`
+     즉시 호출 → `task["models"]` 를 새 config 로 갱신, 변경 내역 로그.
+  5. **라이브 파이프라인 모델명 줄바꿈** —
+     `frontend/src/app/oneclick/live/page.tsx` 의 모델명 span 을
+     `truncate` → `break-all whitespace-normal` 로 교체. 긴 모델명도 전체가
+     3-4 줄로 보이도록 표시.
+  6. **실패/취소 카드 체크박스 멀티셀렉트** —
+     채널 편집 모달의 실패/취소 섹션에 체크박스 + "전체 선택" / "선택 N건
+     복구" 버튼. 일괄 초기화-후-대기큐-복귀 지원.
+  7. **고아 프로젝트 섹션 신설** —
+     `_TASKS` 에 없지만 DB/디스크에 남은 `__oneclick__` 프로젝트를 나열하는
+     `GET /oneclick/orphan-projects` + `POST /oneclick/orphan-projects/requeue`
+     엔드포인트 추가. 채널 편집 모달 오른쪽 열 하단에 "고아 프로젝트" 섹션
+     렌더. 선택 후 "선택 N건 복구" 로 폴더 삭제 + 큐 재등록.
+
+- **관련 파일**:
+  - `backend/app/services/oneclick_service.py`
+    (`_fire_queue_for_channel`, `_recover_orphaned_projects`,
+     `_run_single_step`, `list_orphan_projects`, `requeue_orphan_projects`).
+  - `backend/app/routers/oneclick.py` (orphan-projects 엔드포인트 2 개).
+  - `backend/app/routers/projects.py` (`update_project` 실시간 훅).
+  - `frontend/src/app/oneclick/page.tsx` (실패 멀티셀렉트 + 고아 섹션 UI).
+  - `frontend/src/app/oneclick/live/page.tsx` (모델명 줄바꿈).
+  - `frontend/src/lib/api.ts` (`listOrphanProjects`, `requeueOrphanProjects`,
+     `OrphanProject` 타입).
+
+---
+
+## v1.2.27 (2026-04-23)
+
+### "제작 중단" 버튼 "중단 중..." 에서 멈춤 현상 해소 + stall 자동 복구
+
+- **배경**: Jerome 보고 — "제작 중단을 눌렀는데 중단중... 에서 중단이 안되."
+  live 페이지 스크린샷: 이미지 4/120 컷, "2538s 동안 변화 없음" 에서 긴급정지
+  버튼을 눌렀지만 UI 가 "중단 중..." 상태로 고정. 원인 분석:
+  1. `emergency_stop_all()` 이 `await comfyui_client.interrupt()` +
+     `await comfyui_client.clear_queue()` 를 순차로 await. 각 호출이 최악
+     10 초 타임아웃 → 20 초 동안 응답 지연. FastAPI 엔드포인트가 이 20 초 동안
+     블로킹돼 프런트는 계속 "중단 중..." 만 보게 됨.
+  2. `cancel_task()` 의 `_kill_comfy()` 경로도 동일하게 blocking await.
+  3. 진행률이 몇 분째 변화 없을 때(이미지 모델 행, 유령 API 호출 정체 등)
+     사용자가 수동 개입 없이 회복할 수단이 없었다.
+
+- **수선**:
+  1. **A. 백엔드 emergency_stop 즉시 응답화** —
+     `emergency_stop_all()` 의 ComfyUI 호출을 `asyncio.gather(interrupt,
+     clear_queue, return_exceptions=True)` 로 병렬화 + `asyncio.wait_for(...,
+     timeout=3.0)` 로 상한 설정. TimeoutError 시 `loop.create_task(...)` 로
+     fire-and-forget 전환해 엔드포인트는 즉시 반환. `cancel_task()` 의 no-loop
+     `_kill_comfy()` 경로도 동일하게 `wait_for(timeout=3.0)` 로 감쌈.
+  2. **B. 프런트 handleEmergencyStop 페일세이프** —
+     `try/finally` + `setTimeout(() => setEmergencyStopping(false), 8000)`
+     safety net 추가. 백엔드가 어떤 이유로든 응답하지 않아도 8 초 후 버튼이
+     반드시 풀리도록 강제. finally 에서 `clearTimeout(safety)` 로 정상 응답
+     시에는 즉시 해제.
+  3. **C. stall 감지 자동 복구** —
+     `autoResetFiredRef` 추가. `stalled && stallMs >= 180000` 일 때(3 분 이상
+     진행 없음) `oneclickApi.comfyuiReset()` 를 1 회만 자동 호출, 로그에
+     "[자동복구] 3분 이상 진행 없음 — ComfyUI 큐 리셋 시도" 기록. 수동 개입
+     없이 wait_for 폴링 루프가 에러를 받아 다음 컷으로 넘어가거나 서비스 레벨
+     재시도가 걸리게 함.
+  4. **새 엔드포인트 `POST /api/oneclick/comfyui-reset`** —
+     파이프라인/태스크는 건드리지 않고 ComfyUI 만 `interrupt()` +
+     `clear_queue()` 병렬 호출. timeout 3 초 + fire-and-forget 폴백.
+     frontend `oneclickApi.comfyuiReset()` 에서 호출.
+
+- **부수 작업**: `oneclick_service.py` 의 `_queue_loop` tail 이 과거 Edit 툴
+  사고로 `print(f"[oneclick.queue] loop iteration er` 에서 잘려 있던 것 복구.
+  `_queue_scheduler_task` / `start_queue_scheduler` / `stop_queue_scheduler`
+  main.py 참조 해결. `oneclick.py` router 도 `class QueueStateModel(BaseModel):`
+  바로 아래 `# v1.1.57: 기` (UTF-8 중간) 에서 잘려 있던 것 복구 — 필드 정의
+  (`channel_times` / `channel_presets` / `items`) + `/queue` GET/PUT +
+  `/queue/run-next` 엔드포인트 재작성.
+
+- **테스트**: 전체 `backend/app/` 에 `python -m compileall -q` 통과.
+
+---
+
+## v1.2.26 (2026-04-23)
+
+### "제작 중단" 버튼 동작 정상화 — `_step_image` / `_step_video` 도 cancel_ctx 키 세팅
+
+- **배경**: 사용자 보고 — "제작 중단 버튼 동작 안한다. 누르면 모든 api 생성 요청도
+  중단 시켜야 해." Live 페이지에서 이미지 생성 3% 시점에 중단을 눌러도
+  fal.ai / OpenAI / Grok / Flux 등 외부 이미지 모델 호출이 끝까지 진행되어
+  "버튼 안먹는다" 로 보였다.
+
+- **원인**: v1.2.25 에서 모든 외부 API 서비스에 `raise_if_cancelled()` 가드를
+  박았지만, `_step_image` 와 `_step_video` 워커 스레드 진입 시점에
+  `cancel_ctx.set_cancel_key(project_id)` 가 호출되지 않았다. 기존엔 ComfyUI
+  전용 `_cfy.set_cancel_key()` 만 세팅 → fal.ai 등 외부 API 서비스의
+  `raise_if_cancelled()` 는 thread-local key 가 None 이라 무조건 False 반환
+  → cancel 신호가 닿지 않아 in-flight HTTP 요청이 끝까지 진행됨.
+
+- **수선**:
+  1. `pipeline_tasks._step_image` / `_step_video` 진입 시
+     `cancel_ctx.set_cancel_key(project_id)` 도 같이 호출, 종료 시 `(None)` 으로 해제.
+  2. 두 step 의 per-cut `_one()` async 함수 안에 `raise_if_cancelled(태그)` 직접
+     호출 추가 — `_redis_get` 만으로는 하위 polling 루프가 깨어나는 데 시간이
+     걸리는데, 컷 단위에서 즉시 OperationCancelled 로 이탈해 batch 전체가 빨리 빠진다.
+  3. `oneclick_service._run_sync_pipeline` 의 모든 `except PipelineCancelled` 를
+     `except _CancelTypes` 로 통일. `_CancelTypes = (PipelineCancelled, OperationCancelled)`.
+     외부 API 서비스에서 올린 OperationCancelled 가 fail 로 잘못 기록되던 문제 해소.
+  4. `cancel_task()` 에서 정리 작업(redis flag, comfyui interrupt) 보다 **먼저**
+     `task["status"] = "cancelled"` 로 마킹. redis/comfyui 호출이 슬로우 응답
+     이어도 cancel POST 가 즉시 200 응답하고 UI 에 반영. 사용자 로그에
+     "⏹ 사용자 중단 요청 — 모든 외부 API 호출 차단 시작" 한 줄 추가.
+
+- **테스트**: pipeline_tasks.py / oneclick_service.py / cancel_ctx 및 모든 8개
+  외부 API 서비스 py_compile 통과.
+
+- **부수 작업**: pipeline_tasks.py / oneclick_service.py tail 두 차례 손상 →
+  git HEAD 또는 결정 가능한 형태로 모두 복구.
+
+---
+
+## v1.2.25 (2026-04-23)
+
+### 모든 외부 API 모델로 "유령 호출" 차단선 일반화
+
+- **배경**: v1.2.24 에서 ComfyUI(`comfyui_client.submit`/`wait_for`) 에
+  thread-local cancel 관문을 넣어 로컬 생성 루프의 유령 호출을 막았다.
+  Jerome 피드백 — "로컬 뿐 아니라 다른 모든 API 모델에서도 이런일은 일어
+  나선 안되." fal.ai (flux / nano-banana / grok / midjourney / fal-video /
+  kling), OpenAI (DALL·E 이미지 / TTS), ElevenLabs 등 **외부 API 서비스들도
+  동일한 구조적 누수** 를 갖고 있었다. `asyncio.to_thread` 워커 스레드
+  안의 `run_async` 가 새 이벤트 루프를 만들어 async HTTP 호출을 돌리므로
+  submit 엔드포인트 / 폴링 루프 / 재시도 루프 어느 지점도 cancel 신호를
+  받지 못한다.
+
+- **1. 공용 모듈 신설**: `backend/app/services/cancel_ctx.py`
+  - `OperationCancelled(RuntimeError)` 예외.
+  - `set_cancel_key(pid)` / `get_cancel_key()` / `is_cancelled()` /
+    `raise_if_cancelled(where)` — `threading.local()` 기반. 각 워커 OS 스레드가
+    자기 프로젝트 키를 보유한다.
+  - `is_cancelled()` 는 `pipeline_tasks._redis_get("pipeline:cancel:<pid>")` 를
+    lazy import 로 읽어 서비스 레이어가 redis 유틸을 자체 임포트하지 않아도
+    동작. redis 먹통이면 조용히 False — cancel 방어선이 본 동작을 막지 않는다.
+  - `comfyui_client.py` 의 v1.2.24 cancel 관문도 이 공용 모듈로 위임.
+    `ComfyUICancelled` 는 `OperationCancelled` 를 같이 상속해서 기존 except
+    블록도 그대로 동작.
+
+- **2. 8개 외부 API 서비스에 cancel 가드 삽입**
+  모든 submit / 폴링 / 재시도 진입점에 `raise_if_cancelled(태그)` 를 박았다.
+
+  이미지:
+  - `flux_service.py` — `flux-submit:{model_id}`, `flux-poll`
+  - `nano_banana_service.py` — `nano-banana-submit:{model_id}`, `nano-banana-poll`
+  - `fal_generic_service.py` — `fal-generic-submit:{model_id}`, `fal-generic-poll:{model_id}`
+  - `grok_service.py` — `grok-retry` (재시도 루프 매 반복)
+  - `openai_image_service.py` — `openai-generate:{model}` (generations),
+    `openai-edits` (edits)
+
+  영상:
+  - `fal_service.py` (video) — `fal-video-submit:{model_id}`,
+    `fal-video-poll:{model_id}` (매 5초 대기 전)
+  - `kling_service.py` — `kling-submit`, `kling-poll`
+
+  TTS:
+  - `elevenlabs_service.py` — `elevenlabs-tts` (재시도 매 반복)
+  - `openai_tts_service.py` — `openai-tts` (재시도 매 반복)
+
+- **3. pipeline_tasks 의 나머지 step 에도 cancel 키 래핑**
+  `_step_image` / `_step_video` 는 v1.2.24 에서 이미 `set_cancel_key(pid)` /
+  `set_cancel_key(None)` 쌍을 걸어뒀지만, **다른 step 은 빠져 있었다.**
+  그 step 들이 호출하는 서비스의 `raise_if_cancelled()` 가 무효화되는
+  셈이라 이번에 전부 채웠다.
+  - `_step_script` — LLM 호출 (`generate_script`) 및 진입 직후 썸네일
+    이미지 API 호출까지 커버. 함수 맨 끝에서 `None` 으로 해제.
+  - `_step_voice` — ElevenLabs / OpenAI TTS 루프 커버. 함수 끝에서 해제.
+  - `_generate_thumbnail_sync` — 재생성 경로 단독 호출 시에도 가드가 서도록
+    여기서도 세팅. `try: ... except: ... finally: _set_cancel_key(None)` 로
+    예외 경로에서도 반드시 해제하게 만들었다.
+
+- **4. 회수된 범위**
+  | 레이어        | 이전(1.2.24)        | 현재(1.2.25)                        |
+  | ------------- | ------------------- | ----------------------------------- |
+  | ComfyUI 로컬  | submit / poll 가드  | 동일 (공용 모듈로 리팩터)           |
+  | fal.ai 이미지 | **방치**            | flux / nano-banana / fal-generic 가드 |
+  | fal.ai 영상   | **방치**            | submit / poll 가드                  |
+  | Kling 영상    | **방치**            | submit / poll 가드                  |
+  | Grok 이미지   | **방치**            | 재시도 루프 가드                    |
+  | OpenAI 이미지 | **방치**            | generations / edits 재시도 가드     |
+  | ElevenLabs    | **방치**            | 재시도 가드                         |
+  | OpenAI TTS    | **방치**            | 재시도 가드                         |
+  | step_script   | **cancel 키 미세팅**| 세팅 + finally 해제                 |
+  | step_voice    | **cancel 키 미세팅**| 세팅 + finally 해제                 |
+  | thumbnail_sync| **cancel 키 미세팅**| 세팅 + finally 해제                 |
+
+- **5. pipeline_tasks.py tail 손상 복구**
+  작업 중에 `pipeline_tasks.py` 가 46001바이트에서 UTF-8 mid-sequence 로
+  잘려 있는 것을 발견 — `_step_upload()` 전체와 step5 직후의 auto-render
+  블록이 사라져 있었다. HEAD 기준으로 해당 tail(약 70줄) 을 복원하고
+  py_compile 통과 확인.
+
+- **검증**: `backend/app` 전 Python 파일 `py_compile` 통과. 9개 외부 API
+  서비스 + 1개 공용 모듈 + pipeline_tasks 의 step 3 함수가 동일한 패턴으로
+  cancel 을 감시한다. 사용자가 중지를 누르면, 직후에 시작하려던 어떤 외부
+  API 호출도 `OperationCancelled` 로 조기 이탈한다 — 돈줄 유출 봉인.
+
+---
+
+## v1.2.24 (2026-04-23)
+
+### 유령 API 호출 잔존 원인 재추적 — 워커 스레드 경계 방어
+
+- **배경**: v1.2.23 에서 `cancel_task` 가 ComfyUI `/interrupt` + `/queue`
+  clear 까지 쏘도록 강화했는데도 Jerome 이 "응 그럼 API 계속 부르는 문제
+  해결해" 라고 피드백. 중지 후에도 ComfyUI `/prompt` 가 새로 날아가는 현상이
+  여전히 관찰됨.
+
+- **진짜 원인**: `cancel_task` 는 outer `asyncio.Task` 만 `prev.cancel()`
+  하고, 실제 무거운 작업은 `asyncio.to_thread(_run_sync_pipeline, ...)` 로
+  넘긴 OS 워커 스레드 안에서 돌고 있다. 이 워커 스레드는 파이썬 레벨에서
+  강제로 죽일 수 없고, 안에서 `run_async` 로 새 이벤트 루프를 만들어 `async`
+  서비스(`comfyui_service.generate` → `comfyui_client.submit` / `wait_for`)
+  를 호출한다. Redis cancel 플래그는 `_step_image` / `_step_video` 의 **배치
+  단위** 에서만 검사되고, 한 배치 안에 있는 `submit()` / `wait_for()` 루프
+  자체는 cancel 신호를 보지 못해 그대로 `/prompt` 를 한 건 더 쏘고 생성
+  완료까지 폴링한다.
+
+- **수정**: `backend/app/services/comfyui_client.py`
+  1) `threading.local()` 기반 cancel 컨텍스트 추가 — `set_cancel_key(pid)` /
+     `get_cancel_key()` / `_is_cancelled()` / `raise_if_cancelled()`.
+     `asyncio.to_thread` 워커마다 OS 스레드가 분리돼 있으므로 thread-local
+     이 각 워커의 작업 키를 안전하게 담을 수 있다.
+  2) `ComfyUICancelled(ComfyUIError)` 예외 신설.
+  3) `submit()` 진입 시 `raise_if_cancelled("submit")` — `/prompt` 를 쏘기
+     전에 redis `pipeline:cancel:<pid>` 를 한 번 더 확인하는 최종 방어선.
+  4) `wait_for()` 폴링 루프 매 반복마다 `_is_cancelled()` 검사. 세팅돼 있으면
+     로컬 httpx 로 `/interrupt` 를 베스트 에포트로 한 번 더 쏘고 즉시
+     `ComfyUICancelled` 로 이탈.
+  5) `upload_image()` 진입 시에도 cancel 체크 (레퍼런스 업로드로 서버에 쓰레기
+     파일 쌓는 것 방지).
+
+- **`pipeline_tasks.py` 연동**: `_step_image` / `_step_video` 가 배치 루프
+  진입 전에 `comfyui_client.set_cancel_key(project_id)` 로 현재 워커 스레드의
+  cancel 키를 세팅하고, 스텝 종료(성공/실패 무관) 시 `set_cancel_key(None)`
+  으로 해제한다. 중간에 `ComfyUICancelled` 가 올라오면 배치가 즉시 중단되고
+  상위 핸들러가 `cancelled` 상태로 처리한다.
+
+- **결과**: cancel 누른 뒤부터는 워커 스레드가 다음 컷을 제출하는 순간
+  ComfyUI 와 통신하기 직전에 튕겨나간다. 이미 실행 중이던 프롬프트는 wait_for
+  안쪽에서 `/interrupt` 로 재차 끊는다. UI 큐와 ComfyUI 서버 상태가 한 박자
+  안에 동기화된다.
+
+- **부수**: 이번 세션 도중 이전 편집으로 tail 이 잘려 있던 `comfyui_client.py`
+  / `video.py` / `voice.py` / `nano_banana_service.py` / `youtube.py` 를 전부
+  복구. `backend/app/` 전체가 `python3 -m py_compile` 을 다시 통과한다.
+
+- 버전 bump: `backend/app/main.py`(×2) / `frontend/package.json` /
+  `frontend/src/lib/version.ts`.
+
+---
+
+## v1.2.23 (2026-04-22)
+
+### 유령 ComfyUI 호출 차단 + 실패 태스크 "초기화 후 큐 복귀"
+
+- **배경**: Jerome 지시 — "야 이 씨발 새끼야!!!!!! 지금 실시간 큐에 아무것도
+  작업중이 아닌데 왜 api 로 생성을 요청하는거야?!!?1 미친 새끼야!!!!!!!!!".
+  제작 큐 UI 에는 아무 태스크도 진행 중이 아닌데 ComfyUI 서버 쪽에서
+  SDXL 20-step 프롬프트 3 건이 24~28 초 간격으로 연속 실행됐다.
+
+- **원인**: `cancel_task` 가 Python 측 Redis cancel 플래그 설정과
+  asyncio.Task cancel 만 처리하고, 이미 ComfyUI `/prompt` 큐에
+  **제출돼 대기 중인 프롬프트** 는 그대로 두고 있었다. ComfyUI 서버는
+  자기 큐를 순서대로 계속 실행하기 때문에, Python 쪽이 깨끗이 취소된
+  한참 뒤에도 SDXL 호출이 "유령처럼" 돌았다.
+
+- **수정**: `backend/app/services/oneclick_service.py::cancel_task`
+  1) Redis `pipeline:cancel:{pid}=1` (다음 컷 호출 차단)
+  2) **NEW**: `comfyui_client.interrupt()` — 현재 실행 중 프롬프트 강제 중지
+  3) **NEW**: `comfyui_client.clear_queue()` — 대기 큐 전부 비움
+  4) `_ACTIVE_RUNS` 의 `asyncio.Task.cancel()`
+  5) 태스크를 즉시 `cancelled` 로 마킹
+  2) / 3) 을 `loop.create_task` 로 fire-and-forget 로 묶어 취소 응답이
+  네트워크 대기로 막히지 않게 함. 이로써 "UI 에서는 끝났는데 ComfyUI
+  서버가 혼자 SDXL 돌리는" 이상 동작이 원천 차단된다.
+
+### 실패/취소 태스크 초기화 후 대기 큐 복귀 (Task #42)
+
+- **배경**: Jerome 지시 — "여기에 초기화 후 큐에 복구 기능 넣어. 그 기능은
+  해당 작업으로 생성된 폴더 삭제하고 대기 큐로 돌아가는거야. 그리고
+  각채널별로 복구하기 넣어. 폴더 연결 해서 내용물 확인해서 몇프로 진행
+  되었는지 파악해서 대기큐로 들어가도록".
+
+- **백엔드** (`backend/app/services/oneclick_service.py`)
+  - `_inspect_project_progress(project_id, total_cuts)` — 디스크를 열어
+    `script.json` / `audio/*` / `images/*` / `videos/*` / `output/merged.mp4`
+    / `output/thumbnail.png` 를 세어 실제 진행률(가중 평균)을 계산.
+  - `requeue_task(task_id)` — 실패/취소 태스크에 대해:
+    1) 진행률 관찰 (리포트용) → 2) Redis cancel + asyncio cancel (안전망)
+    → 3) 프로젝트 폴더 전체 삭제 → 4) 프로젝트 config 에서 주제/에피소드
+    상세(openings/endings/core_content/episode_number/next_episode_preview)
+    추출 → 5) 동일 채널의 대기 큐 맨 뒤에 새 아이템 append
+    → 6) `_TASKS` 에서 해당 태스크 제거. completed/running 은 거부.
+  - `requeue_channel_failed(channel)` — 채널 1~4 중 하나의 실패/취소
+    태스크 전부에 대해 `requeue_task` 를 호출. 개별 실패는 errors 배열로
+    수집하고 나머지를 계속 처리.
+
+- **라우터** (`backend/app/routers/oneclick.py`)
+  - `POST /oneclick/tasks/{task_id}/requeue`
+  - `POST /oneclick/tasks/requeue-channel?channel=N`
+
+- **프론트엔드**
+  - `frontend/src/lib/api.ts` — `requeueTask` / `requeueChannelFailed`
+    메서드 추가.
+  - `frontend/src/app/oneclick/page.tsx`:
+    - `handleRequeueTask` / `handleRequeueChannel` 핸들러. 실행 전 확인
+      다이얼로그, 성공 시 프론트 태스크 목록에서 제거 + 큐 재조회.
+    - 각 채널 모달의 "실패/취소" 섹션 헤더에 "이 채널 실패 전부 복귀"
+      버튼 (RefreshCw 아이콘) 추가.
+    - 실패 행마다 이어하기(RotateCcw) 와 삭제(Trash2) 사이에 "초기화 후
+      큐 복구" 버튼(RefreshCw) 추가.
+
+### 부수 복구 — oneclick_service.py tail 재구성
+
+- cancel_task 수정 도중 Edit 도구가 파일 tail 을 잘라
+  `bulk_delete_tasks` 본문 + `get_library_stats` + 큐 스케줄러 모듈 전체가
+  손실됐다. 세션 전사에 남은 이전 Read 결과를 원본 삼아 수동 재구성.
+  `_queue_normalize` 는 v1.2.9/1.2.10 필드(openings/endings/core_content/
+  episode_number/next_episode_preview) 와 v1.2.14 필드(channel_presets)
+  모두 보존하도록 확장했고, `_fire_queue_for_channel` 과
+  `run_queue_top_now` 는 `_resolve_item_preset` 로 채널별 기본 프리셋
+  fallback 을 쓰며, 에피소드 상세를 그대로 `prepare_task` 에 전달한다.
+  `ast.parse` / `py_compile` 통과 확인.
+
+---
+
+## v1.2.1 / v1.2.2 (2026-04-22)
+
+### UI — 메인 대시보드 좌측 사이드바 도입
+
+- **배경**: Jerome 지시 — "롱폼 메인 대쉬 보드 수정하자. 좌측에 메뉴 스택
+  하고 대쉬보드랑 딸깍 대쉬 보드 유튜브 스튜디오 등 메인 메뉴 배치 하고
+  하단에 info 배치해". 기존에는 상단 우측에 YouTube Studio / API 설정 /
+  딸깍 대시보드 버튼 3 개가 나란히 떠 있었고, 좌측 네비는 없었다.
+- **변경 (v1.2.1)**:
+  - `frontend/src/app/page.tsx` — 루트 컨테이너를 `max-w-6xl mx-auto p-8`
+    단일 div 에서 `flex h-screen overflow-hidden` 의 좌측 `<aside>` + 우측
+    `<main>` 구조로 교체. 사이드바 NAV 스택: 대시보드(`/`) · 딸깍 대시보드
+    (`/oneclick`) · YouTube Studio (`/youtube`) · API 설정 (`/settings`).
+    하단에는 버전/프리셋 수/API 연결 요약을 담는 "시스템 정보" 블록 배치.
+  - 상단 우측에 있던 3 개 버튼은 제거 (사이드바와 중복). 제목도 "LongTube"
+    에서 "대시보드" 로 변경 (브랜드는 사이드바 로고가 담당).
+  - Root `app/layout.tsx` 는 건드리지 않음. `/oneclick`, `/youtube` 는 이미
+    자체 사이드바를 갖고 있어 중복을 피해야 해서, 메인 페이지 안에서만
+    사이드바 레이아웃을 구성.
+- **변경 (v1.2.2)**: Jerome 피드백 — "글씨 쫌 키워. UI 씨발 쫌 잘좀 만들어."
+  사이드바 전반 가독성 확대 — 너비 `w-60` → `w-72`, 로고 아이콘 32px → 44px /
+  타이틀 `text-lg` → `text-2xl`, NAV 항목 `text-sm`+아이콘 16 → `text-base
+  font-medium`+아이콘 20 / 패딩 `py-2.5` → `py-3.5`, 시스템 정보 헤더
+  `text-xs` → `text-sm` / 본문 `text-[10px]` → `text-sm`. 컬러도 한 단계
+  밝게 (gray-400 → gray-300, 200 → 200 유지).
+- **영향 없는 것**: API 상태 패널·프리셋 리스트·API 키 모달 로직, 백엔드,
+  다른 페이지(`/oneclick`, `/youtube`, `/settings`, `/studio/*`).
+
+---
+
+## v1.2.0 (2026-04-22)
+
+### 변경 — "금칙사항 / 필수사항" 단일 필드 → 두 필드 분리
+
+- **배경**: v1.1.73 에서 도입된 `content_constraints` 는 textarea 하나에 금지
+  규칙과 필수 규칙을 섞어 쓰게 돼 있었다. Jerome 지시: "금칙사항/필수사항
+  분리해. 분리해서 대본 생성할때 반영 하게 해."
+- **변경**:
+  - `frontend/src/lib/api.ts` — `ProjectConfig` 에 `content_forbidden?` /
+    `content_required?` 추가. 구 `content_constraints?` 는 하위 호환을 위해
+    읽기 전용으로 유지.
+  - `frontend/src/components/studio/StepSettings.tsx` — "기본 정보" 섹션의
+    통합 textarea 를 2-column grid 의 두 textarea (**필수 사항**, **금칙 사항**)
+    로 분리. UI 순서는 필수 → 금칙.
+  - 구 `content_constraints` 값이 남아 있고 두 신규 필드가 비어 있는 기존
+    프로젝트에는 앰버 배너로 알려주고 "필수 사항으로 옮기기" / "금칙 사항으로
+    옮기기" 중 한 번의 클릭으로 이관하도록 했다.
+  - `backend/app/services/llm/base.py::_build_user_prompt` — `constraints_raw`
+    하나 읽던 것을 `forbidden_raw` / `required_raw` / `legacy_raw` 로 확장.
+    `_build_constraints_block(lang)` 헬퍼가 언어별 (`en`/`ja`/`ko`) 로
+    `[필수 사항]` / `[금지 사항]` 서브블록을 UI 와 같은 순서로 렌더한다.
+    빈 쪽 서브블록은 통째로 스킵. 두 필드 모두 비어 있고 구
+    `content_constraints` 만 있으면 기존 동작대로 `[사용자 규칙]` 단일 블록
+    으로 주입 (완전 하위 호환).
+- **영향 없는 것**: DB 스키마(변경 없음 — config JSON 에 키만 추가), 기존
+  프로젝트의 대본 생성 거동(구 값만 있는 경우 이전과 동일한 프롬프트가 나감),
+  다른 설정 필드.
+
+### 버전 규칙 전환
+
+- HANDOFF 상의 `2.0.74` 네이밍(우연히 2.x 로 jump 된 LAN 릴리즈) 에서 v1 고도화
+  모드 방침에 맞춰 **`1.2.0`** 으로 넘긴다. 이후 릴리즈는 `1.2.1`, `1.2.2` …
+  순. 5 곳 bump: `backend/app/main.py` (FastAPI version + `/api/health`
+  응답), `frontend/src/lib/version.ts`, `frontend/package.json`,
+  `frontend/package-lock.json` (2 곳).
+
+---
+
 ## v1.1.63 (2026-04-20)
 
 ### 새 기능 — Claude Opus 4.7 대본 모델 추가
@@ -2256,165 +2742,4 @@ v1.1.5 의 cmd 정리 로직은 실제로 동작하지 않았습니다. 원인:
 - `taskkill /fi "WINDOWTITLE eq ..."` 는 **Microsoft 공식 문서상 콘솔 애플리케이션(cmd.exe)을 매치하지 못합니다**. WINDOWTITLE 필터는 GUI 창이 있는 프로세스 전용입니다.
 - 결과적으로 v1.1.5 의 `"LongTube Server*"`, `"LongTube-Backend*"`, `"next-server*"` 필터는 모두 공회전했고, 유저 스크린샷에서 이전 cmd 창 10여 개가 그대로 누적됐음.
 
-**진짜 수정 (v1.1.6)**: PowerShell `Get-CimInstance Win32_Process` 로 프로세스의 **command line 문자열**을 직접 검사해서 죽이는 방식으로 전면 교체. 더 이상 title 에 의존하지 않음.
-- 백엔드: `python.exe` 중 command line 에 `uvicorn*app.main:app*` 포함된 것
-- 프론트엔드: `node.exe` 중 command line 에 `next*dev*` 포함된 것
-- 래퍼: `cmd.exe` 중 command line 에 `uvicorn`, `next dev`, `start.bat`, `force-restart.bat` 포함된 것 (단 자기 자신 `$PID` 제외)
-- 포트 기반 kill (8000/3000) 은 폴백으로 유지
-- `taskkill /im python.exe` broad kill 은 여전히 최후의 수단으로 존치
-
-### 영상 생성 실패 진단 기능 (UI 에서 바로 보이는 에러)
-이전까지 영상 생성이 실패하면 백엔드 콘솔의 `[video-async] Cut N FAILED: ...` 로그를 직접 뒤져야 했습니다. 이제:
-- **task_manager 확장**: `TaskState.item_errors: list[{cut_number, error}]` 필드 추가. `record_item_error()` 헬퍼로 컷별 실패 이유 누적 저장. `to_dict()` 에도 포함되어 `/api/tasks/{pid}/{step}` 응답에 나옴.
-- **video.py**: `_run()` / `resume-async` 양쪽 모두 모든 실패 지점에서 `record_item_error()` 호출. 이미지/오디오 파일 누락, 제너레이터 예외(FFmpeg stderr 포함), DB 경로 누락 전부 기록됨.
-- **StepVideo.tsx**: 태스크가 실패했거나 `item_errors` 가 1개 이상이면 빨간색 카드가 영상 탭에 표시됨. 컷별 에러 메시지 (`컷 N: <type>: <message>`) 가 모노스페이스로 찍혀서 FFmpeg 리턴코드, 파일 경로 문제, 타임아웃 등을 바로 식별 가능. 백엔드 재시작 시 메모리가 비워져서 카드도 사라짐 (이 제한도 UI 에 명시).
-- **StepVideo**: 마운트 시 항상 `taskApi.status()` 호출해서 이전 실패 기록이 있으면 복원 (탭 이동 후 돌아왔을 때 유지)
-
-### 변경 파일
-- `start.bat`, `force-restart.bat` — PowerShell commandline kill 전면 교체
-- `backend/app/services/task_manager.py` — item_errors 필드, record_item_error 헬퍼
-- `backend/app/routers/video.py` — 모든 실패 경로에서 record_item_error 호출
-- `frontend/src/lib/api.ts` — TaskItemError 타입 + TaskStatus.item_errors 필드
-- `frontend/src/components/studio/StepVideo.tsx` — 에러 카드 UI + 마운트 시 status 조회
-- 버전 파일 4개 — 1.1.6
-
----
-
-## v1.1.5 (2026-04-10)
-
-### 버그 수정 (배치 스크립트)
-- **재시작 시 기존 CMD 윈도우 누적 문제 수정**: `start.bat` 과 `force-restart.bat` 이 이전 실행에서 남은 cmd 윈도우를 완전히 정리하지 못해서 실행할 때마다 "LongTube Server", "LongTube-Backend", "LongTube-Frontend", "next-server (v14.2.15)" 윈도우가 계속 쌓이던 문제 수정
-  - **원인 1**: `start.bat` 의 자체 윈도우 title 이 "LongTube Server" 로 고정되어 있어서, 다음 실행 때 `taskkill /fi "WINDOWTITLE eq LongTube Server*"` 를 하면 자기 자신도 죽일 위험이 있어 생략됨 → 윈도우 누적
-  - **원인 2**: next.js dev 서버는 시작 후 자기 윈도우 title 을 "next-server (vX.Y.Z)" 로 바꿔서 `LongTube-Frontend*` 필터에 안 잡힘
-  - **수정 1**: 스크립트 시작 직후 `title LongTube-Launcher-%RANDOM%%RANDOM%` 로 자기 윈도우를 고유값으로 바꿔놓고 cleanup 을 실행 → 자살 방지
-  - **수정 2**: cleanup 필터에 `"next-server*"` 추가
-  - **수정 3**: start.bat 은 모든 서버가 뜬 후 `title LongTube Server` 로 다시 rename → 다음 실행 때 정상적으로 매치되어 죽음
-  - **수정 4**: `"LongTube Force Restart*"`, `"LongTube-Launcher*"` 타이틀도 cleanup 대상에 추가
-  - force-restart.bat 에도 동일 패턴 적용
-
-### 변경 파일
-- `start.bat` — self-rename + 확장된 cleanup 필터
-- `force-restart.bat` — self-rename + 확장된 cleanup 필터
-- `frontend/src/lib/version.ts`, `backend/app/main.py`, `frontend/package.json`, `frontend/package-lock.json` — 1.1.5
-
----
-
-## v1.1.4 (2026-04-10)
-
-### 기능 추가
-- **최종 병합 영상 미리보기**: 모든 컷의 영상 생성이 완료되면 영상 탭 하단 "최종 병합 영상" 카드에 `merged.mp4` 가 `<video controls>` 플레이어로 즉시 표시됩니다. 기존에는 설명 텍스트만 있었음. 캐시 방지를 위해 URL 에 `?t=<timestamp>` 버스터 부착.
-- **탭 전환 시 생성 상태 유지**: StepVoice / StepImage / StepVideo 세 단계에 마운트-복원 로직 추가. 컴포넌트가 마운트될 때 `taskApi.status()` 를 한번 호출해서 백엔드 태스크가 `running` 이면 로컬 `generating=true` 로 복원합니다. 이 때문에:
-  - 이미지 생성 도중 다른 탭(대본/음성/영상 등)으로 이동 후 다시 돌아와도 진행 바와 "생성 중..." 표시가 계속 유지됩니다
-  - 백엔드는 이미 `asyncio.create_task` 로 백그라운드에서 돌고 있었기 때문에, 실제 생성 자체는 어차피 탭 이동과 무관하게 진행됩니다. 이번 수정은 그것을 UI 에 올바르게 반영시키는 것입니다.
-  - 제한: 백엔드 자체를 재시작하면 인-메모리 `task_manager` 상태가 사라져서 UI 복원 불가 (이 경우엔 "이어서 생성" 버튼으로 재개)
-
-### 변경 파일
-- `frontend/src/components/studio/StepVideo.tsx` — 마운트 복원 useEffect + 병합 영상 `<video>` 플레이어
-- `frontend/src/components/studio/StepImage.tsx` — 마운트 복원 useEffect
-- `frontend/src/components/studio/StepVoice.tsx` — 마운트 복원 useEffect
-- `frontend/src/lib/version.ts` — 1.1.4
-- `backend/app/main.py` — 1.1.4
-- `frontend/package.json`, `package-lock.json` — 1.1.4
-
----
-
-## v1.1.3 (2026-04-10)
-
-### 버그 수정
-- **영상 단계 상태 불일치 수정**: 모든 컷이 실패해도 `step_states["5"] = "completed"` 로 저장되던 버그 수정 (`backend/app/routers/video.py` `_run`)
-  - 이전: `clip_paths` 비어 있어도 무조건 completed → UI 상 "완료" 인데 실제 영상은 0개
-  - 수정: 성공한 클립이 1개라도 있으면 completed, 0개면 failed 로 기록 + `fail_task` 호출
-  - `resume-async` 에도 동일 로직 적용 (기존 완료분 + 신규 생성 합산으로 판단)
-- **실패 원인 안내 추가**: 모든 컷 실패 시 task error 메시지에 "백엔드 콘솔의 `[video-async]` 로그를 확인하세요" 안내
-- **DB 직접 복구**: 기존 프로젝트 `043a24df` 의 잘못 기록된 `step_states["5"]="completed"` 를 `"failed"` 로 교정 (실제 video_path 가 0개인 상태와 일치시킴)
-
-### UX 개선
-- **영상 대기 컷에 이미지 썸네일 표시**: 영상 단계에 진입했을 때 아직 생성되지 않은 컷에도 해당 이미지가 60% 불투명도로 배경에 표시됨 (`StepVideo.tsx`)
-  - 기존: `<Film>` 아이콘만 덩그러니 → 어떤 컷인지 구분 불가
-  - 수정: 이미지 위에 반투명 오버레이 + "영상 대기" 라벨
-  - 생성 중/대기 상태는 기존대로 유지 (20~30% 오파시티)
-
-### 변경 파일
-- `backend/app/routers/video.py` — `_run` + `resume-async` step_states 로직 수정
-- `frontend/src/components/studio/StepVideo.tsx` — placeholder 렌더링 개선
-- `frontend/src/lib/version.ts` — 1.1.3
-- `backend/app/main.py` — 1.1.3
-- `frontend/package.json`, `package-lock.json` — 1.1.3
-
----
-
-## v1.1.2 (2026-04-10)
-
-### UX 개선
-- **각 단계 정리/삭제 버튼 상시 표시**: 음성/이미지/영상 단계의 휴지통 버튼이 기존에는 완료된 항목이 1개 이상 있을 때만 보였으나, 이제 생성 중이 아닐 때는 항상 표시됨
-  - 이유: 영상 1% 멈춤처럼 생성이 실패해 DB 에 완료 기록이 0개인 상태에서도 부분 파일/태스크 상태를 정리할 수단이 필요
-  - 동작 변경:
-    - 완료된 항목이 있으면 → 기존처럼 모든 파일 삭제 + DB 경로 비우기 + 폴더 제거
-    - 완료된 항목이 0개여도 버튼 표시 → "단계 초기화" 로 동작 (`clearStep` + `taskApi.cancel` 순차 실행 → 태스크 상태까지 리셋)
-  - 툴팁도 상황별로 다르게 표시 ("영상 모두 지우기" / "영상 단계 정리")
-- **확인 다이얼로그에 개수 표시**: "영상 3개를 모두 삭제하시겠습니까?" 처럼 몇 개가 지워지는지 명시
-- **에러 처리 추가**: `clearStep` 실패 시 alert 로 에러 메시지 표시 (기존엔 조용히 삼킴)
-
-### 변경 파일
-- `frontend/src/components/studio/StepVideo.tsx` — trash 버튼 조건 완화, 취소 호출 병행
-- `frontend/src/components/studio/StepImage.tsx` — 동일
-- `frontend/src/components/studio/StepVoice.tsx` — 동일
-- `frontend/src/lib/version.ts` — 1.1.2
-- `backend/app/main.py` — 1.1.2
-- `frontend/package.json`, `package-lock.json` — 1.1.2
-
----
-
-## v1.0.1 (2026-04-10)
-
-### 신규 기능
-- **중지 기능**: 음성/이미지/영상 각 단계에서 생성 중지 버튼 추가
-  - 생성 중일 때만 빨간색 "중지" 버튼 활성화
-  - 클릭 시 "중지하시겠습니까?" 확인 다이얼로그 표시
-  - 확인 시 백엔드 태스크 강제 취소, 이미 완료된 컷은 유지
-- **이어서 생성 기능**: 미완료 컷만 이어서 생성하는 기능 추가
-  - 일부 컷이 완료되고 미완료 컷이 있으면 "이어서 생성" 버튼 표시
-  - 백엔드에 `/resume-async` 엔드포인트 추가 (voice, image, video 각각)
-  - 이미 완료된 컷은 건너뛰고 미완료 컷만 생성
-- **버전 정보 표시**: 대시보드 및 스튜디오 우측 상단에 버전 표시 (v1.0.1)
-- **GenerationTimer stuck 감지**: 2분 이상 0건 완료 시 경고 메시지 표시
-
-### 버그 수정
-- **이미지 스타일 불일치 수정**: LLM 시스템 프롬프트에서 "cinematic" 하드코딩 제거
-  - 전체 이미지 스타일이 카툰/일러스트면 cinematic/realistic 용어 사용 금지
-  - 아트 스타일은 모든 컷에 통일, 캐릭터는 30~50% 컷에만 등장하도록 변경
-  - KO/EN/JA 3개 언어 프롬프트 모두 동일하게 적용
-- **TTS API 타임아웃 추가**: OpenAI TTS 호출에 60초 타임아웃 (무한 대기 방지)
-- **비동기 태스크 에러 처리 강화**: BaseException 처리 + 에러 로그 출력
-- **task_manager 30분 타임아웃**: stuck 상태 태스크 자동 만료 처리
-- **레퍼런스/캐릭터 이미지 분리**: 레퍼런스 이미지는 모든 컷에(스타일용), 캐릭터 이미지는 캐릭터 등장 컷에만 전달
-- **이미지 서비스 안전장치**: 레퍼런스 파일 접근 실패 시 skip, 전부 실패 시 표준 생성 폴백
-
-### 변경 파일
-- `frontend/src/components/studio/StepVoice.tsx` — 중지/이어서 생성 버튼
-- `frontend/src/components/studio/StepImage.tsx` — 중지/이어서 생성 버튼
-- `frontend/src/components/studio/StepVideo.tsx` — 중지/이어서 생성 버튼
-- `frontend/src/components/common/GenerationTimer.tsx` — stuck 감지
-- `frontend/src/lib/api.ts` — resumeAsync API 추가
-- `frontend/src/app/studio/[projectId]/page.tsx` — 버전 정보 표시
-- `frontend/src/app/page.tsx` — 버전 정보 표시
-- `backend/app/routers/voice.py` — resume-async 엔드포인트 + 에러 처리 강화
-- `backend/app/routers/image.py` — resume-async 엔드포인트 + 캐릭터/레퍼런스 분리
-- `backend/app/routers/video.py` — resume-async 엔드포인트
-- `backend/app/services/llm/base.py` — 시스템 프롬프트 스타일/캐릭터 분리
-- `backend/app/services/image/openai_image_service.py` — 안전장치 + 폴백
-- `backend/app/services/tts/openai_tts_service.py` — 60초 타임아웃
-- `backend/app/services/task_manager.py` — 30분 타임아웃 자동 만료
-
----
-
-## v1.0.0 (초기 버전)
-- 프로젝트 생성/관리
-- LLM 대본 생성 (Claude, GPT)
-- TTS 음성 생성 (OpenAI, ElevenLabs)
-- 이미지 생성 (OpenAI gpt-image-1, DALL-E 3, Flux, Midjourney 등)
-- 영상 생성 (FFmpeg Ken Burns, Kling, Runway 등)
-- 자막 생성/합성
-- 비동기 백그라운드 생성 + 진행률 표시
-- 레퍼런스/캐릭터 이미지 지원
-- 다국어 지원 (KO/EN/JA)
+**진짜 수정 (v1.1.6)**: PowerShell `Get-CimInstance Win32_Process` 로 프로세스의 **command line 문자열**을 직접 검사해서 죽이는 방식으로 전면 교체. 더 이상 title 에 의

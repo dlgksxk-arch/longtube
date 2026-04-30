@@ -1,4 +1,5 @@
 """Video generation router"""
+import json
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException
 import datetime as _dt
@@ -24,7 +25,7 @@ from app.models.database import get_db
 from app.models.project import Project
 from app.models.cut import Cut
 from app.config import DATA_DIR, CUT_VIDEO_DURATION
-from app.services.video.factory import get_video_service
+from app.services.video.factory import DEFAULT_VIDEO_MODEL, get_video_service, resolve_video_model
 from app.services.video.ffmpeg_service import FFmpegService
 
 router = APIRouter()
@@ -49,6 +50,26 @@ def _to_absolute(project_id: str, rel_path: str) -> str:
     return str(DATA_DIR / project_id / rel_path)
 
 
+def _load_script_cut_map(project_id: str) -> dict[int, dict]:
+    script_path = DATA_DIR / project_id / "script.json"
+    if not script_path.exists():
+        return {}
+    try:
+        with open(script_path, "r", encoding="utf-8") as fh:
+            script = json.load(fh)
+    except Exception as exc:
+        _vlog(f"script cut map load failed project={project_id}: {exc}")
+        return {}
+
+    cut_map: dict[int, dict] = {}
+    for cut_data in script.get("cuts", []):
+        try:
+            cut_map[int(cut_data.get("cut_number"))] = cut_data
+        except (TypeError, ValueError):
+            continue
+    return cut_map
+
+
 # --------------------------------------------------------------------------- #
 # v1.1.36 — 영상 제작 대상 선택
 # --------------------------------------------------------------------------- #
@@ -66,9 +87,9 @@ def _to_absolute(project_id: str, rel_path: str) -> str:
 #   - "every_3"        : cut 1, 4, 7, 10 ...     ((n-1) % 3 == 0)
 #   - "every_4"        : cut 1, 5, 9, 13 ...     ((n-1) % 4 == 0)
 #   - "every_5"        : cut 1, 6, 11, 16 ...    ((n-1) % 5 == 0)
-#   - "character_only" : image.py cut_has_character 규칙과 동일 (n=1,4,7,...)
+#   - "character_only" : 기존 캐릭터 슬롯 기반 절약 모드 (현재는 every_5 와 동일)
 
-VIDEO_TARGET_OPTIONS = {"all", "every_3", "every_4", "every_5", "character_only"}
+VIDEO_TARGET_OPTIONS = {"all", "every_3", "every_4", "every_5", "character_only", "none"}
 
 
 def should_generate_ai_video(cut_number: int, selection: str, ai_first_n: int = 5) -> bool:
@@ -101,14 +122,16 @@ def should_generate_ai_video(cut_number: int, selection: str, ai_first_n: int = 
     if selection == "every_5":
         return (cut_number - 1) % 5 == 0
     if selection == "character_only":
-        # image.py cut_has_character 와 규칙 일치 (순환 import 회피용 복제)
-        return (cut_number - 1) % 3 == 0
+        # legacy 절약 모드 유지 — 현재는 every_5 와 동일
+        return (cut_number - 1) % 5 == 0
     return True
 
 
 def count_ai_video_cuts(total_cuts: int, selection: str, ai_first_n: int = 5) -> int:
     """selection 기준 AI 비디오가 실제로 생성될 컷 수. estimation_service 에서 재사용."""
     if total_cuts <= 0:
+        return 0
+    if selection == "none":
         return 0
     if selection == "all" or selection not in VIDEO_TARGET_OPTIONS:
         return total_cuts
@@ -122,6 +145,8 @@ def _build_video_motion_prompt(
     cut_number: int,
     total_cuts: int,
     config: dict,
+    cut_data: dict | None = None,
+    video_model: str | None = None,
 ) -> str:
     """컷별 영상 모션 프롬프트 생성.
 
@@ -132,16 +157,23 @@ def _build_video_motion_prompt(
     FFmpeg KenBurns 서비스는 이 프롬프트를 사용하지 않지만, fal/kling 등
     AI 영상 모델은 prompt 를 실제 모션 지시로 해석한다.
     """
-    from app.routers.image import cut_has_character  # 순환 import 방지 — 함수 안에서 import
+    from app.services.video.prompt_builder import build_video_motion_prompt
+    prompt_config = dict(config or {})
+    if video_model:
+        prompt_config["resolved_video_model"] = video_model
+    return build_video_motion_prompt(cut_number, total_cuts, prompt_config, cut_data=cut_data)
 
-    character_description = (
-        (config.get("character_description") or "").strip()
-        or (config.get("image_global_prompt") or "").strip()
-    )
+
+def _should_force_safe_motion(cut_data: dict | None, config: dict, video_model: str) -> bool:
+    from app.services.video.prompt_builder import should_force_safe_motion
+    return should_force_safe_motion(cut_data, config, video_model)
+
+    character_description = (config.get("character_description") or "").strip()
+    has_character_anchor = bool(character_description or (config.get("character_images") or []))
 
     is_first = cut_number == 1
     is_last = total_cuts > 0 and cut_number == total_cuts
-    is_character_cut = cut_has_character(cut_number)
+    is_character_cut = has_character_anchor
 
     parts: list[str] = []
 
@@ -211,7 +243,8 @@ VIDEO_PARALLELISM = 4
 def _parallelism_for(video_model: str) -> int:
     """v1.1.56: ComfyUI 로컬 모델은 GPU 1개 큐라 동시성 무의미 → 1.
     fal.ai/kling 같은 클라우드 API 는 네트워크 bound 라 4 병렬이 유리."""
-    from app.services.video.factory import VIDEO_REGISTRY
+    from app.services.video.factory import VIDEO_REGISTRY, resolve_video_model
+    video_model = resolve_video_model(video_model)
     if VIDEO_REGISTRY.get(video_model, {}).get("provider") == "comfyui":
         return 1
     return VIDEO_PARALLELISM
@@ -295,6 +328,7 @@ async def _generate_one_cut_safe(
     *,
     primary_service,
     kenburns_service,
+    safe_motion_service,
     static_service,
     video_model: str,
     use_ai: bool,
@@ -307,6 +341,8 @@ async def _generate_one_cut_safe(
     aspect_ratio: str,
     motion_prompt: str,
     cut_number: int = 0,
+    force_safe_motion: bool = False,
+    is_cancelled=None,
 ) -> tuple[str, str]:
     """단일 컷을 생성한다. Primary 가 실패하면 자동으로 ffmpeg-kenburns 로 폴백.
 
@@ -323,10 +359,32 @@ async def _generate_one_cut_safe(
     """
     import asyncio as _aio
 
+    def _cancel_requested() -> bool:
+        if is_cancelled is None:
+            return False
+        try:
+            return bool(is_cancelled())
+        except Exception:
+            return False
+
     # 앞 5컷 강제 AI 여부
     is_forced_ai = cut_number >= 1 and cut_number <= 5
     # 앞 5컷이면 재시도 3회, 그 외 1회
     max_retries = 3 if is_forced_ai else 1
+
+    if _cancel_requested():
+        raise _aio.CancelledError(f"video cut {cut_number} cancelled before generation")
+
+    if force_safe_motion:
+        await safe_motion_service.generate(
+            image_path=img_abs,
+            audio_path=aud_abs,
+            duration=duration,
+            output_path=output_path,
+            aspect_ratio=aspect_ratio,
+            prompt=motion_prompt,
+        )
+        return output_path, "ffmpeg_safe_motion"
 
     # 1) AI 대상이 아닌 컷 → 원래 동작: ffmpeg-static 으로 채워넣기
     if not use_ai:
@@ -340,23 +398,24 @@ async def _generate_one_cut_safe(
         )
         return output_path, "ffmpeg_selection"
 
-    # 2) 사전 체크 혹은 런 중 발생한 "primary 사용 불가" 상태
-    #    v1.1.55: 앞 5컷은 이 상태도 무시하고 AI 를 시도한다
+    # v1.2.20: 폴백 제거. 사용자 요구 — "API 이용할 때 설정된 모델의 API 연결
+    # 안되있을때 알림창 띄우고 풀백으로 처리하지마." preflight 실패 / primary
+    # 사용 불가 시 kenburns 로 갈아치우지 않고 명시적 RuntimeError 를 올려 컷
+    # 단위 실패로 기록한다. (use_ai=False 인 컷이 처음부터 ffmpeg-static 으로
+    # 가는 건 사용자 설정이므로 폴백 아님 — 위에서 그대로 처리)
     if (force_full_fallback or primary_disabled[0]) and not is_forced_ai:
-        await kenburns_service.generate(
-            image_path=img_abs,
-            audio_path=aud_abs,
-            duration=duration,
-            output_path=output_path,
-            aspect_ratio=aspect_ratio,
-            prompt=motion_prompt,
+        raise RuntimeError(
+            f"primary 영상 모델({video_model}) 사용 불가 (preflight 실패 또는 잔액 소진). "
+            f"폴백 비활성화 — API 키와 잔액을 확인하거나 영상 모델을 ffmpeg-kenburns/static "
+            f"으로 직접 바꾸세요."
         )
-        return output_path, "ffmpeg_forced"
 
-    # 3) AI 대상 컷 → primary 시도 (앞 5컷은 최대 3회 재시도)
+    # AI 대상 컷 → primary 시도 (앞 5컷은 최대 3회 재시도)
     last_err = None
     _vlog(f"_gen_safe cut={cut_number} primary={type(primary_service).__name__} max_retries={max_retries}")
     for attempt in range(1, max_retries + 1):
+        if _cancel_requested():
+            raise _aio.CancelledError(f"video cut {cut_number} cancelled before attempt {attempt}")
         try:
             _vlog(f"_gen_safe cut={cut_number} attempt={attempt} → primary.generate() 호출")
             await primary_service.generate(
@@ -374,36 +433,31 @@ async def _generate_one_cut_safe(
             err_str = f"{type(e).__name__}: {e}"
             import traceback as _tb2
             _vlog(f"_gen_safe cut={cut_number} attempt={attempt} PRIMARY FAILED: {err_str}\n{_tb2.format_exc()[-700:]}")
-            if is_forced_ai and attempt < max_retries:
+            if _cancel_requested():
+                raise _aio.CancelledError(f"video cut {cut_number} cancelled after failed attempt {attempt}")
+            if attempt < max_retries:
                 wait = attempt * 5
                 print(
                     f"[video-async] cut {cut_number} AI 실패 ({attempt}/{max_retries}), "
                     f"{wait}초 후 재시도: {err_str[:200]}"
                 )
                 await _aio.sleep(wait)
+                if _cancel_requested():
+                    raise _aio.CancelledError(f"video cut {cut_number} cancelled during retry wait")
                 continue
-            # 마지막 시도도 실패
+            # 마지막 시도까지 실패 — terminal 이면 같은 런 안의 후속 컷도 즉시 실패시키도록 플래그 set
             if _is_terminal_primary_error(err_str):
                 if not primary_disabled[0]:
                     primary_disabled[0] = True
                     print(
-                        f"[video-async] primary({video_model}) 사용 불가로 판명 — "
-                        f"남은 컷은 ffmpeg-kenburns 로 처리. 사유: {err_str[:200]}"
+                        f"[video-async] primary({video_model}) 사용 불가로 판명. 사유: {err_str[:200]}"
                     )
-            else:
-                retries_info = f" ({max_retries}회 시도 후)" if max_retries > 1 else ""
-                print(f"[video-async] primary({video_model}) 컷 {cut_number} 실패{retries_info} → kenburns 폴백. {err_str[:200]}")
 
-    # kenburns 폴백
-    await kenburns_service.generate(
-        image_path=img_abs,
-        audio_path=aud_abs,
-        duration=duration,
-        output_path=output_path,
-        aspect_ratio=aspect_ratio,
-        prompt=motion_prompt,
+    # v1.2.20: kenburns 폴백 제거 — 그대로 raise
+    raise RuntimeError(
+        f"영상 컷 {cut_number} 생성 실패 — 모델 {video_model}. "
+        f"폴백 비활성화. 마지막 오류: {last_err}"
     )
-    return output_path, "ai_fallback_kenburns"
 
 
 @router.get("/diagnose-ping")
@@ -443,21 +497,23 @@ async def diagnose_log(tail: int = 200, clear: bool = False):
 
 
 @router.get("/diagnose-comfyui")
-async def diagnose_comfyui(model_id: str = "comfyui-ltxv-13b"):
+async def diagnose_comfyui(model_id: str = "comfyui-hunyuan15-480p"):
     """진단용 — 해당 ComfyUI 영상 모델로 실제 워크플로 dry-run 제출.
 
     브라우저에서 URL 만 치면 JSON 으로 에러 반환.
-    예: /api/video/diagnose-comfyui?model_id=comfyui-ltxv-13b
+    예: /api/video/diagnose-comfyui?model_id=comfyui-hunyuan15-480p
     """
     import traceback
-    from app.services.video.factory import get_video_service, VIDEO_REGISTRY
+    from app.services.video.factory import get_video_service, VIDEO_REGISTRY, resolve_video_model
     from app.services import comfyui_client as _cc
     from pathlib import Path as _P
 
+    resolved_model_id = resolve_video_model(model_id)
     result = {
         "model_id": model_id,
-        "registry_hit": model_id in VIDEO_REGISTRY,
-        "provider": VIDEO_REGISTRY.get(model_id, {}).get("provider"),
+        "resolved_model_id": resolved_model_id,
+        "registry_hit": resolved_model_id in VIDEO_REGISTRY,
+        "provider": VIDEO_REGISTRY.get(resolved_model_id, {}).get("provider"),
         "stage": None,
         "ok": False,
         "error": None,
@@ -466,7 +522,7 @@ async def diagnose_comfyui(model_id: str = "comfyui-ltxv-13b"):
     # 1) 서비스 인스턴스 (워크플로 JSON 로드)
     try:
         result["stage"] = "service_init"
-        svc = get_video_service(model_id)
+        svc = get_video_service(resolved_model_id)
         result["service_class"] = type(svc).__name__
     except Exception as e:
         result["error"] = f"{type(e).__name__}: {e}\n{traceback.format_exc()[-800:]}"
@@ -601,13 +657,14 @@ async def generate_all_videos(project_id: str, db: Session = Depends(get_db)):
     if not cuts:
         raise HTTPException(400, "No cuts found in project")
 
-    video_model = project.config.get("video_model", "ffmpeg-kenburns")
+    video_model = resolve_video_model(project.config.get("video_model", DEFAULT_VIDEO_MODEL))
     aspect_ratio = project.config.get("aspect_ratio", "16:9")
     # v2.1.1: enable_ai_video=False → 모든 컷 Ken Burns 폴백
     enable_ai_video = bool((project.config or {}).get("enable_ai_video", True))
     selection = (project.config or {}).get("video_target_selection", "all") if enable_ai_video else "none"
     ai_first_n = int((project.config or {}).get("ai_video_first_n", 5) or 0) if enable_ai_video else 0
     total_cuts = len(cuts)
+    script_cut_map = _load_script_cut_map(project_id)
 
     primary_service = get_video_service(video_model)
     # v1.1.40: 선택되지 않은 컷은 효과 없는 ffmpeg-static 폴백 (비용 0).
@@ -616,6 +673,11 @@ async def generate_all_videos(project_id: str, db: Session = Depends(get_db)):
         primary_service
         if video_model == "ffmpeg-static"
         else get_video_service("ffmpeg-static")
+    )
+    safe_motion_service = (
+        primary_service
+        if video_model == "ffmpeg-safe-motion"
+        else get_video_service("ffmpeg-safe-motion")
     )
     video_dir = DATA_DIR / project_id / "videos"
     video_dir.mkdir(parents=True, exist_ok=True)
@@ -636,12 +698,25 @@ async def generate_all_videos(project_id: str, db: Session = Depends(get_db)):
         try:
             video_path = str(video_dir / f"cut_{cut.cut_number}.mp4")
             motion_prompt = _build_video_motion_prompt(
-                cut.cut_number, total_cuts, project.config or {}
+                cut.cut_number,
+                total_cuts,
+                project.config or {},
+                script_cut_map.get(int(cut.cut_number)),
+                video_model,
             )
 
             use_ai = should_generate_ai_video(cut.cut_number, selection, ai_first_n)
-            svc = primary_service if use_ai else fallback_service
-            used_model = video_model if use_ai else "ffmpeg-static"
+            force_safe_motion = use_ai and _should_force_safe_motion(
+                script_cut_map.get(int(cut.cut_number)),
+                project.config or {},
+                video_model,
+            )
+            if force_safe_motion:
+                svc = safe_motion_service
+                used_model = "ffmpeg-safe-motion"
+            else:
+                svc = primary_service if use_ai else fallback_service
+                used_model = video_model if use_ai else "ffmpeg-static"
 
             result_path = await svc.generate(
                 image_path=_to_absolute(project_id, cut.image_path),
@@ -656,7 +731,7 @@ async def generate_all_videos(project_id: str, db: Session = Depends(get_db)):
             cut.video_model = used_model
             cut.status = "completed"
             # v1.1.55-fix: 단건 영상 생성 비용 기록
-            if use_ai:
+            if used_model and not str(used_model).startswith("ffmpeg-"):
                 try:
                     from app.services import spend_ledger
                     spend_ledger.record_video(
@@ -793,7 +868,7 @@ async def generate_all_videos_async(project_id: str, db: Session = Depends(get_d
 
             proj = local_db.query(Project).filter(Project.id == project_id).first()
             proj_config = dict(proj.config or {})
-            video_model = proj_config.get("video_model", "ffmpeg-kenburns")
+            video_model = resolve_video_model(proj_config.get("video_model", DEFAULT_VIDEO_MODEL))
             aspect_ratio = proj_config.get("aspect_ratio", "16:9")
             enable_ai_video = bool(proj_config.get("enable_ai_video", True))
             selection = proj_config.get("video_target_selection", "all") if enable_ai_video else "none"
@@ -829,12 +904,18 @@ async def generate_all_videos_async(project_id: str, db: Session = Depends(get_d
                 if video_model == "ffmpeg-static"
                 else get_video_service("ffmpeg-static")
             )
+            safe_motion_service = (
+                primary_service
+                if video_model == "ffmpeg-safe-motion"
+                else get_video_service("ffmpeg-safe-motion")
+            )
             v_dir = DATA_DIR / project_id / "videos"
             v_dir.mkdir(parents=True, exist_ok=True)
 
             cuts = local_db.query(Cut).filter(Cut.project_id == project_id).order_by(Cut.cut_number).all()
             total = len(cuts)
             _vlog(f"_run loaded {total} cuts from DB")
+            script_cut_map = _load_script_cut_map(project_id)
 
             cut_specs = []
             for c in cuts:
@@ -844,13 +925,21 @@ async def generate_all_videos_async(project_id: str, db: Session = Depends(get_d
                     "image_path": c.image_path,
                     "audio_path": c.audio_path,
                     "audio_duration": c.audio_duration or 5.0,
+                    "script_cut": script_cut_map.get(int(c.cut_number), {}),
                 })
             local_db.close()
 
             primary_disabled = [False]
             completed_counter = [0]
             cut_results: dict[int, str] = {}
-            counts = {"ai": 0, "ai_fallback_kenburns": 0, "ffmpeg_forced": 0, "ffmpeg_selection": 0, "failed": 0}
+            counts = {
+                "ai": 0,
+                "ai_fallback_kenburns": 0,
+                "ffmpeg_forced": 0,
+                "ffmpeg_safe_motion": 0,
+                "ffmpeg_selection": 0,
+                "failed": 0,
+            }
 
             def _bump_progress():
                 completed_counter[0] += 1
@@ -914,12 +1003,23 @@ async def generate_all_videos_async(project_id: str, db: Session = Depends(get_d
                         _vlog(f"_worker cut={cut_number} EXIT_AFTER_SEM status={state.status}")
                         return
                     video_path_out = str(v_dir / f"cut_{cut_number}.mp4")
-                    motion_prompt = _build_video_motion_prompt(cut_number, total, proj_config)
+                    motion_prompt = _build_video_motion_prompt(
+                        cut_number,
+                        total,
+                        proj_config,
+                        spec.get("script_cut"),
+                        video_model,
+                    )
                     use_ai = should_generate_ai_video(cut_number, selection, ai_first_n)
+                    force_safe_motion = use_ai and _should_force_safe_motion(
+                        spec.get("script_cut"),
+                        proj_config,
+                        video_model,
+                    )
                     print(
                         f"[video-async] cut {cut_number}/{total} START "
                         f"duration={spec['audio_duration']} "
-                        f"model={video_model if use_ai else 'ffmpeg-static'} ai={use_ai} "
+                        f"model={'ffmpeg-safe-motion' if force_safe_motion else (video_model if use_ai else 'ffmpeg-static')} ai={use_ai} "
                         f"motion={motion_prompt[:60]}..."
                     )
                     _s = _t.time()
@@ -929,9 +1029,11 @@ async def generate_all_videos_async(project_id: str, db: Session = Depends(get_d
                             _generate_one_cut_safe(
                                 primary_service=primary_service,
                                 kenburns_service=kenburns_service,
+                                safe_motion_service=safe_motion_service,
                                 static_service=static_service,
                                 video_model=video_model,
                                 use_ai=use_ai,
+                                force_safe_motion=force_safe_motion,
                                 force_full_fallback=force_full_fallback,
                                 primary_disabled=primary_disabled,
                                 img_abs=img_abs,
@@ -941,6 +1043,7 @@ async def generate_all_videos_async(project_id: str, db: Session = Depends(get_d
                                 aspect_ratio=aspect_ratio,
                                 motion_prompt=motion_prompt,
                                 cut_number=cut_number,
+                                is_cancelled=lambda: state.status != "running",
                             ),
                             timeout=720,  # 12분
                         )
@@ -963,11 +1066,13 @@ async def generate_all_videos_async(project_id: str, db: Session = Depends(get_d
                                     wc.video_model = "ffmpeg-kenburns (auto-fallback)"
                                 elif source == "ffmpeg_forced":
                                     wc.video_model = "ffmpeg-kenburns (preflight-fallback)"
+                                elif source == "ffmpeg_safe_motion":
+                                    wc.video_model = "ffmpeg-safe-motion"
                                 else:
                                     wc.video_model = "ffmpeg-static"
                                 wc.status = "completed"
                                 # v1.1.55-fix: 스튜디오 영상 생성 비용 기록 (AI 모델만)
-                                if source in ("ai", "ai_fallback_kenburns"):
+                                if source == "ai":
                                     try:
                                         from app.services import spend_ledger
                                         spend_ledger.record_video(
@@ -1012,6 +1117,7 @@ async def generate_all_videos_async(project_id: str, db: Session = Depends(get_d
                 f"[video-async] SUMMARY ai={counts['ai']} "
                 f"ai_fallback_kenburns={counts['ai_fallback_kenburns']} "
                 f"ffmpeg_forced={counts['ffmpeg_forced']} "
+                f"ffmpeg_safe_motion={counts['ffmpeg_safe_motion']} "
                 f"ffmpeg_selection={counts['ffmpeg_selection']} "
                 f"failed={counts['failed']} "
                 f"primary_disabled={primary_disabled[0]}"
@@ -1188,7 +1294,7 @@ async def resume_videos_async(project_id: str, db: Session = Depends(get_db)):
 
             proj = local_db.query(Project).filter(Project.id == project_id).first()
             proj_config = dict(proj.config or {})
-            video_model = proj_config.get("video_model", "ffmpeg-kenburns")
+            video_model = resolve_video_model(proj_config.get("video_model", DEFAULT_VIDEO_MODEL))
             aspect_ratio = proj_config.get("aspect_ratio", "16:9")
             enable_ai_video = bool(proj_config.get("enable_ai_video", True))
             selection = proj_config.get("video_target_selection", "all") if enable_ai_video else "none"
@@ -1214,11 +1320,17 @@ async def resume_videos_async(project_id: str, db: Session = Depends(get_db)):
                 if video_model == "ffmpeg-static"
                 else get_video_service("ffmpeg-static")
             )
+            safe_motion_service = (
+                primary_service
+                if video_model == "ffmpeg-safe-motion"
+                else get_video_service("ffmpeg-safe-motion")
+            )
             v_dir = DATA_DIR / project_id / "videos"
             v_dir.mkdir(parents=True, exist_ok=True)
 
             db_cuts = local_db.query(Cut).filter(Cut.project_id == project_id).order_by(Cut.cut_number).all()
             total_cuts_for_prompt = len(db_cuts)
+            script_cut_map = _load_script_cut_map(project_id)
 
             pending_specs = []
             for c in db_cuts:
@@ -1228,6 +1340,7 @@ async def resume_videos_async(project_id: str, db: Session = Depends(get_db)):
                         "image_path": c.image_path,
                         "audio_path": c.audio_path,
                         "audio_duration": c.audio_duration or 5.0,
+                        "script_cut": script_cut_map.get(int(c.cut_number), {}),
                     })
 
             local_db.close()
@@ -1235,7 +1348,14 @@ async def resume_videos_async(project_id: str, db: Session = Depends(get_db)):
             primary_disabled = [False]
             completed_counter = [0]
             cut_results: dict[int, str] = {}
-            counts = {"ai": 0, "ai_fallback_kenburns": 0, "ffmpeg_forced": 0, "ffmpeg_selection": 0, "failed": 0}
+            counts = {
+                "ai": 0,
+                "ai_fallback_kenburns": 0,
+                "ffmpeg_forced": 0,
+                "ffmpeg_safe_motion": 0,
+                "ffmpeg_selection": 0,
+                "failed": 0,
+            }
 
             def _bump_progress():
                 completed_counter[0] += 1
@@ -1275,11 +1395,22 @@ async def resume_videos_async(project_id: str, db: Session = Depends(get_db)):
                     if state.status != "running":
                         return
                     video_path_out = str(v_dir / f"cut_{cut_number}.mp4")
-                    motion_prompt = _build_video_motion_prompt(cut_number, total_cuts_for_prompt, proj_config)
+                    motion_prompt = _build_video_motion_prompt(
+                        cut_number,
+                        total_cuts_for_prompt,
+                        proj_config,
+                        spec.get("script_cut"),
+                        video_model,
+                    )
                     use_ai = should_generate_ai_video(cut_number, selection, ai_first_n)
+                    force_safe_motion = use_ai and _should_force_safe_motion(
+                        spec.get("script_cut"),
+                        proj_config,
+                        video_model,
+                    )
                     print(
                         f"[video-resume] cut {cut_number} START "
-                        f"model={video_model if use_ai else 'ffmpeg-static'} ai={use_ai}"
+                        f"model={'ffmpeg-safe-motion' if force_safe_motion else (video_model if use_ai else 'ffmpeg-static')} ai={use_ai}"
                     )
                     _s = _t.time()
                     try:
@@ -1287,9 +1418,11 @@ async def resume_videos_async(project_id: str, db: Session = Depends(get_db)):
                             _generate_one_cut_safe(
                                 primary_service=primary_service,
                                 kenburns_service=kenburns_service,
+                                safe_motion_service=safe_motion_service,
                                 static_service=static_service,
                                 video_model=video_model,
                                 use_ai=use_ai,
+                                force_safe_motion=force_safe_motion,
                                 force_full_fallback=force_full_fallback,
                                 primary_disabled=primary_disabled,
                                 img_abs=img_abs,
@@ -1298,6 +1431,8 @@ async def resume_videos_async(project_id: str, db: Session = Depends(get_db)):
                                 output_path=video_path_out,
                                 aspect_ratio=aspect_ratio,
                                 motion_prompt=motion_prompt,
+                                cut_number=cut_number,
+                                is_cancelled=lambda: state.status != "running",
                             ),
                             timeout=720,
                         )
@@ -1320,11 +1455,13 @@ async def resume_videos_async(project_id: str, db: Session = Depends(get_db)):
                                     wc.video_model = "ffmpeg-kenburns (auto-fallback)"
                                 elif source == "ffmpeg_forced":
                                     wc.video_model = "ffmpeg-kenburns (preflight-fallback)"
+                                elif source == "ffmpeg_safe_motion":
+                                    wc.video_model = "ffmpeg-safe-motion"
                                 else:
                                     wc.video_model = "ffmpeg-static"
                                 wc.status = "completed"
                                 # v1.1.55-fix: 스튜디오 영상 resume 비용 기록
-                                if source in ("ai", "ai_fallback_kenburns"):
+                                if source == "ai":
                                     try:
                                         from app.services import spend_ledger
                                         spend_ledger.record_video(
@@ -1367,6 +1504,7 @@ async def resume_videos_async(project_id: str, db: Session = Depends(get_db)):
                 f"[video-resume] SUMMARY ai={counts['ai']} "
                 f"ai_fallback_kenburns={counts['ai_fallback_kenburns']} "
                 f"ffmpeg_forced={counts['ffmpeg_forced']} "
+                f"ffmpeg_safe_motion={counts['ffmpeg_safe_motion']} "
                 f"ffmpeg_selection={counts['ffmpeg_selection']} "
                 f"failed={counts['failed']} "
                 f"primary_disabled={primary_disabled[0]}"

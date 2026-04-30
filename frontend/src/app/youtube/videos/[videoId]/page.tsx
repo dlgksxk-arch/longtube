@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowLeft,
   Save,
@@ -16,15 +16,19 @@ import {
 } from "lucide-react";
 import {
   youtubeStudioApi,
-  type StudioVideoDetail,
   type StudioCategory,
+  type StudioVideoDetail,
 } from "@/lib/api";
+
+function studioHref(path: string, projectId?: string | null): string {
+  const pid = (projectId || "").trim();
+  return pid ? `${path}?project=${encodeURIComponent(pid)}` : path;
+}
 
 function toLocalInput(rfc3339?: string | null): string {
   if (!rfc3339) return "";
   try {
     const d = new Date(rfc3339);
-    // datetime-local input 은 "YYYY-MM-DDTHH:mm" 포맷을 요구
     const pad = (n: number) => String(n).padStart(2, "0");
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
   } catch {
@@ -32,19 +36,20 @@ function toLocalInput(rfc3339?: string | null): string {
   }
 }
 
-function fromLocalInput(v: string): string {
-  if (!v) return "";
+function fromLocalInput(value: string): string {
+  if (!value) return "";
   try {
-    const d = new Date(v);
-    return d.toISOString();
+    return new Date(value).toISOString();
   } catch {
-    return v;
+    return value;
   }
 }
 
 export default function StudioVideoDetailPage() {
   const params = useParams<{ videoId: string }>();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const projectId = (searchParams.get("project") || "").trim();
   const videoId = params.videoId;
 
   const [detail, setDetail] = useState<StudioVideoDetail | null>(null);
@@ -55,7 +60,6 @@ export default function StudioVideoDetailPage() {
   const [msg, setMsg] = useState<string | null>(null);
   const thumbInputRef = useRef<HTMLInputElement | null>(null);
 
-  // editable fields
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [tags, setTags] = useState("");
@@ -68,25 +72,29 @@ export default function StudioVideoDetailPage() {
   const [publicStatsViewable, setPublicStatsViewable] = useState(true);
 
   const reload = async () => {
+    if (!projectId) return;
     setLoading(true);
     setErr(null);
     try {
-      const [d, c] = await Promise.all([
-        youtubeStudioApi.getVideo(videoId),
-        youtubeStudioApi.listCategories("KR").catch(() => ({ items: [], region_code: "KR" })),
+      const [video, categoriesRes] = await Promise.all([
+        youtubeStudioApi.getVideo(videoId, projectId),
+        youtubeStudioApi.listCategories("KR", projectId).catch(() => ({
+          items: [],
+          region_code: "KR",
+        })),
       ]);
-      setDetail(d);
-      setCategories(c.items || []);
-      setTitle(d.title || "");
-      setDescription(d.description || "");
-      setTags((d.tags || []).join(", "));
-      setCategoryId(d.category_id || "");
-      setDefaultLanguage(d.default_language || "");
-      setPrivacyStatus(d.privacy_status || "private");
-      setPublishAtLocal(toLocalInput(d.publish_at));
-      setMadeForKids(Boolean(d.self_declared_made_for_kids ?? d.made_for_kids));
-      setEmbeddable(d.embeddable ?? true);
-      setPublicStatsViewable(d.public_stats_viewable ?? true);
+      setDetail(video);
+      setCategories(categoriesRes.items || []);
+      setTitle(video.title || "");
+      setDescription(video.description || "");
+      setTags((video.tags || []).join(", "));
+      setCategoryId(video.category_id || "");
+      setDefaultLanguage(video.default_language || "");
+      setPrivacyStatus(video.privacy_status || "private");
+      setPublishAtLocal(toLocalInput(video.publish_at));
+      setMadeForKids(Boolean(video.self_declared_made_for_kids ?? video.made_for_kids));
+      setEmbeddable(video.embeddable ?? true);
+      setPublicStatsViewable(video.public_stats_viewable ?? true);
     } catch (e) {
       setErr((e as Error).message);
     } finally {
@@ -95,11 +103,12 @@ export default function StudioVideoDetailPage() {
   };
 
   useEffect(() => {
-    if (videoId) reload();
+    if (videoId && projectId) reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [videoId]);
+  }, [videoId, projectId]);
 
   const save = async () => {
+    if (!projectId) return;
     setSaving(true);
     setErr(null);
     setMsg(null);
@@ -108,18 +117,22 @@ export default function StudioVideoDetailPage() {
         .split(",")
         .map((t) => t.trim())
         .filter(Boolean);
-      await youtubeStudioApi.updateVideo(videoId, {
-        title,
-        description,
-        tags: tagList,
-        category_id: categoryId || undefined,
-        default_language: defaultLanguage || undefined,
-        privacy_status: privacyStatus,
-        publish_at: publishAtLocal ? fromLocalInput(publishAtLocal) : "",
-        made_for_kids: madeForKids,
-        embeddable,
-        public_stats_viewable: publicStatsViewable,
-      });
+      await youtubeStudioApi.updateVideo(
+        videoId,
+        {
+          title,
+          description,
+          tags: tagList,
+          category_id: categoryId || undefined,
+          default_language: defaultLanguage || undefined,
+          privacy_status: privacyStatus,
+          publish_at: publishAtLocal ? fromLocalInput(publishAtLocal) : "",
+          made_for_kids: madeForKids,
+          embeddable,
+          public_stats_viewable: publicStatsViewable,
+        },
+        projectId,
+      );
       setMsg("저장되었습니다.");
       await reload();
     } catch (e) {
@@ -132,43 +145,48 @@ export default function StudioVideoDetailPage() {
   const onPickThumb = () => thumbInputRef.current?.click();
 
   const onThumbChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0];
-    if (!f) return;
+    if (!projectId) return;
+    const file = e.target.files?.[0];
+    if (!file) return;
     try {
-      await youtubeStudioApi.setThumbnail(videoId, f);
-      setMsg("썸네일이 교체되었습니다. 잠시 후 반영됩니다.");
+      await youtubeStudioApi.setThumbnail(videoId, file, projectId);
+      setMsg("썸네일을 교체했습니다. 잠시 후 반영됩니다.");
       setTimeout(reload, 1500);
-    } catch (err2) {
-      setErr((err2 as Error).message);
+    } catch (thumbErr) {
+      setErr((thumbErr as Error).message);
     } finally {
       if (thumbInputRef.current) thumbInputRef.current.value = "";
     }
   };
 
   const onDelete = async () => {
-    if (!confirm(`정말 삭제하시겠습니까?\n\n"${detail?.title}"\n\n복구할 수 없습니다.`)) return;
+    if (!projectId || !confirm(`정말 삭제하시겠습니까?\n\n"${detail?.title}"\n\n복구할 수 없습니다.`)) return;
     try {
-      await youtubeStudioApi.deleteVideo(videoId);
-      router.push("/youtube/videos");
+      await youtubeStudioApi.deleteVideo(videoId, projectId);
+      router.push(studioHref("/youtube/videos", projectId));
     } catch (e) {
       alert(`삭제 실패: ${(e as Error).message}`);
     }
   };
 
+  if (!projectId) {
+    return <div className="p-8 text-gray-500 text-sm">좌측에서 프리셋을 선택하십시오.</div>;
+  }
+
   if (loading && !detail) {
     return <div className="p-8 text-gray-500 text-sm">불러오는 중...</div>;
   }
+
   if (!detail) {
-    return (
-      <div className="p-8 text-red-300 text-sm">
-        {err || "영상을 찾을 수 없습니다."}
-      </div>
-    );
+    return <div className="p-8 text-red-300 text-sm">{err || "영상을 찾을 수 없습니다."}</div>;
   }
 
   return (
     <div className="p-8 max-w-5xl">
-      <Link href="/youtube/videos" className="text-xs text-gray-400 hover:text-white flex items-center gap-1 mb-4">
+      <Link
+        href={studioHref("/youtube/videos", projectId)}
+        className="text-xs text-gray-400 hover:text-white flex items-center gap-1 mb-4"
+      >
         <ArrowLeft size={12} /> 영상 목록
       </Link>
 
@@ -178,7 +196,9 @@ export default function StudioVideoDetailPage() {
             // eslint-disable-next-line @next/next/no-img-element
             <img src={detail.thumbnail} alt={detail.title} className="w-full h-full object-cover" />
           ) : (
-            <div className="w-full h-full flex items-center justify-center text-gray-600 text-xs">썸네일 없음</div>
+            <div className="w-full h-full flex items-center justify-center text-gray-600 text-xs">
+              썸네일 없음
+            </div>
           )}
           <button
             onClick={onPickThumb}
@@ -199,9 +219,15 @@ export default function StudioVideoDetailPage() {
           <div className="text-xs text-gray-500 font-mono mb-1">{detail.video_id}</div>
           <h2 className="text-xl font-bold mb-2 break-words">{detail.title}</h2>
           <div className="flex flex-wrap items-center gap-3 text-xs text-gray-400 mb-4">
-            <span className="flex items-center gap-1"><Eye size={12} /> {detail.view_count ?? 0}</span>
-            <span className="flex items-center gap-1"><ThumbsUp size={12} /> {detail.like_count ?? 0}</span>
-            <span className="flex items-center gap-1"><MessageSquare size={12} /> {detail.comment_count ?? 0}</span>
+            <span className="flex items-center gap-1">
+              <Eye size={12} /> {detail.view_count ?? 0}
+            </span>
+            <span className="flex items-center gap-1">
+              <ThumbsUp size={12} /> {detail.like_count ?? 0}
+            </span>
+            <span className="flex items-center gap-1">
+              <MessageSquare size={12} /> {detail.comment_count ?? 0}
+            </span>
             {detail.publish_at && (
               <span className="flex items-center gap-1 text-amber-300">
                 <Clock size={12} /> 예약: {new Date(detail.publish_at).toLocaleString("ko-KR")}
@@ -213,20 +239,23 @@ export default function StudioVideoDetailPage() {
             target="_blank"
             className="inline-flex items-center gap-1 text-xs text-accent-primary hover:underline"
           >
-            <ExternalLink size={12} /> YouTube 에서 열기
+            <ExternalLink size={12} /> YouTube에서 보기
           </a>
         </div>
       </div>
 
       {err && (
-        <div className="bg-red-500/10 border border-red-500/30 text-red-300 text-sm rounded p-3 mb-4">{err}</div>
+        <div className="bg-red-500/10 border border-red-500/30 text-red-300 text-sm rounded p-3 mb-4">
+          {err}
+        </div>
       )}
       {msg && (
-        <div className="bg-green-500/10 border border-green-500/30 text-green-300 text-sm rounded p-3 mb-4">{msg}</div>
+        <div className="bg-green-500/10 border border-green-500/30 text-green-300 text-sm rounded p-3 mb-4">
+          {msg}
+        </div>
       )}
 
       <div className="grid grid-cols-[1fr_280px] gap-6">
-        {/* Main edit panel */}
         <div className="bg-bg-secondary border border-border rounded-lg p-5 space-y-4">
           <div>
             <label className="block text-xs text-gray-400 mb-1">제목</label>
@@ -260,9 +289,6 @@ export default function StudioVideoDetailPage() {
               onChange={(e) => setTags(e.target.value)}
               className="w-full bg-bg-primary border border-border rounded px-3 py-2 text-sm focus:outline-none focus:border-accent-primary"
             />
-            <div className="text-right text-[10px] text-gray-500 mt-0.5">
-              {tags.split(",").filter((t) => t.trim()).length} 개 · 총 {tags.length} 자 / 500
-            </div>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
@@ -274,9 +300,9 @@ export default function StudioVideoDetailPage() {
                 className="w-full bg-bg-primary border border-border rounded px-3 py-2 text-sm focus:outline-none focus:border-accent-primary"
               >
                 <option value="">-</option>
-                {categories.map((c) => (
-                  <option key={c.category_id} value={c.category_id}>
-                    {c.title}
+                {categories.map((category) => (
+                  <option key={category.category_id} value={category.category_id}>
+                    {category.title}
                   </option>
                 ))}
               </select>
@@ -294,20 +320,23 @@ export default function StudioVideoDetailPage() {
           </div>
         </div>
 
-        {/* Side panel: publish options */}
         <div className="space-y-4">
           <div className="bg-bg-secondary border border-border rounded-lg p-4">
             <h3 className="text-xs font-semibold text-gray-300 mb-3">공개 설정</h3>
             <div className="space-y-2 text-sm">
-              {(["private", "unlisted", "public"] as const).map((p) => (
-                <label key={p} className="flex items-center gap-2 cursor-pointer">
+              {(["private", "unlisted", "public"] as const).map((privacy) => (
+                <label key={privacy} className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="radio"
-                    checked={privacyStatus === p}
-                    onChange={() => setPrivacyStatus(p)}
+                    checked={privacyStatus === privacy}
+                    onChange={() => setPrivacyStatus(privacy)}
                   />
                   <span>
-                    {p === "private" ? "비공개" : p === "unlisted" ? "일부공개" : "공개"}
+                    {privacy === "private"
+                      ? "비공개"
+                      : privacy === "unlisted"
+                        ? "일부 공개"
+                        : "공개"}
                   </span>
                 </label>
               ))}
@@ -321,9 +350,6 @@ export default function StudioVideoDetailPage() {
                 onChange={(e) => setPublishAtLocal(e.target.value)}
                 className="w-full bg-bg-primary border border-border rounded px-2 py-1.5 text-xs focus:outline-none focus:border-accent-primary"
               />
-              <p className="text-[10px] text-gray-500 mt-1">
-                예약 시각을 넣으면 자동으로 비공개로 내려갔다 해당 시각에 공개 전환됩니다. 비우면 예약 해제.
-              </p>
             </div>
           </div>
 
@@ -343,23 +369,23 @@ export default function StudioVideoDetailPage() {
                 checked={publicStatsViewable}
                 onChange={(e) => setPublicStatsViewable(e.target.checked)}
               />
-              좋아요/조회수 공개
+              조회수 공개
             </label>
           </div>
 
-          <div className="flex flex-col gap-2">
+          <div className="bg-bg-secondary border border-border rounded-lg p-4 space-y-2">
             <button
               onClick={save}
               disabled={saving}
-              className="w-full bg-accent-primary hover:bg-purple-600 text-white rounded px-4 py-2 text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+              className="w-full bg-accent-primary hover:bg-purple-600 text-white rounded px-4 py-2 text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-50"
             >
-              <Save size={14} /> {saving ? "저장 중..." : "저장"}
+              <Save size={16} /> {saving ? "저장 중..." : "저장"}
             </button>
             <button
               onClick={onDelete}
-              className="w-full bg-red-600/20 hover:bg-red-600 text-red-300 hover:text-white rounded px-4 py-2 text-sm flex items-center justify-center gap-2"
+              className="w-full bg-red-600/90 hover:bg-red-600 text-white rounded px-4 py-2 text-sm font-semibold flex items-center justify-center gap-2"
             >
-              <Trash2 size={14} /> 영상 삭제
+              <Trash2 size={16} /> 영상 삭제
             </button>
           </div>
         </div>

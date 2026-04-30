@@ -1,26 +1,53 @@
 """Video service factory"""
 from app.services.video.base import BaseVideoService
-from app.services.video.ffmpeg_service import FFmpegService, FFmpegStaticService
+from app.services.video.ffmpeg_service import (
+    FFmpegSafeMotionService,
+    FFmpegService,
+    FFmpegStaticService,
+)
 from app.services.video.kling_service import KlingService
 from app.services.video.fal_service import FalVideoService
 from app.services.video.comfyui_service import ComfyUIVideoService
 
-# v1.1.64: 로컬 ComfyUI 영상 모델 전부 레지스트리 미등록.
-#   - LTX Video 2B distilled / HunyuanVideo 1.5 480p — v1.1.64 에서 제거
-#   - WAN 2.2 i2v/ti2v_5b — v1.1.62 이전에 체크포인트 미설치로 제거
-#   - LTX 13B distilled — 튜닝 미완으로 미등록
-# 워크플로 JSON 은 backend/workflows/comfyui/ 에 보존 (복구 시 factory 에 한 줄 추가로 복구 가능).
-# 서비스 클래스 `ComfyUIVideoService` 및 매핑 dict 도 보존 (dead code 상태).
+DEFAULT_VIDEO_MODEL = "comfyui-hunyuan15-480p"
+WAN22_TI2V_5B_MODEL = "comfyui-wan22-ti2v-5b"
+
+# Keep old saved project configs safe: these local test models are no longer
+# exposed in Studio, but if a preset still contains one, run Hunyuan instead.
+DEPRECATED_LOCAL_VIDEO_MODEL_ALIASES = {
+    "comfyui-ltxv-2b": DEFAULT_VIDEO_MODEL,
+    "comfyui-ltxv-13b": DEFAULT_VIDEO_MODEL,
+    "comfyui-wan22-i2v-fast": DEFAULT_VIDEO_MODEL,
+    WAN22_TI2V_5B_MODEL: DEFAULT_VIDEO_MODEL,
+    "comfyui-wan22-5b": DEFAULT_VIDEO_MODEL,
+}
+
+# Studio/local video generation exposes stable ComfyUI workflows only. Wan2.2
+# TI2V-5B can preserve scenes, but on this PC the useful track-control path is
+# far too slow for 120-cut production, so saved Wan/LTX test presets map to
+# Hunyuan instead.
 
 VIDEO_REGISTRY: dict[str, dict] = {
     # --- Local (free) ---
-    "ffmpeg-kenburns":  {"name": "FFmpeg Ken Burns",      "provider": "local", "default": True,
+    "ffmpeg-kenburns":  {"name": "FFmpeg Ken Burns",      "provider": "local", "default": False,
                          "cost_per_unit": "Free (local)", "cost_value": 0},
     # v1.1.40: 폴백 전용 — 영상 제작 대상 선택 모드에서 미선택 컷에 적용.
     # 효과 없는 정지 이미지 영상. 사용자 선택 모델 드롭다운에는 default=False.
     "ffmpeg-static":    {"name": "FFmpeg Static (no motion)", "provider": "local-static",
                          "cost_per_unit": "Free (local)", "cost_value": 0},
-
+    "ffmpeg-safe-motion": {
+        "name": "FFmpeg Safe Static (source locked)",
+        "provider": "local-safe-motion",
+        "cost_per_unit": "Free (local)",
+        "cost_value": 0,
+    },
+    "comfyui-hunyuan15-480p": {
+        "name": "HunyuanVideo 1.5 480p I2V (Local ComfyUI)",
+        "provider": "comfyui",
+        "default": True,
+        "cost_per_unit": "Free (local ComfyUI)",
+        "cost_value": 0,
+    },
     # --- Cheapest fal.ai options (added v1.1.11) ---
     "ltx2-fast":        {"name": "LTX Video 2.0 Fast",    "provider": "fal",
                          "cost_per_unit": "$0.20/5s (1080p) — $0.04/s", "cost_value": 0.20},
@@ -45,7 +72,19 @@ VIDEO_REGISTRY: dict[str, dict] = {
 }
 
 
+def resolve_video_model(model_id: str | None) -> str:
+    model_id = model_id or DEFAULT_VIDEO_MODEL
+    if model_id in DEPRECATED_LOCAL_VIDEO_MODEL_ALIASES:
+        return DEPRECATED_LOCAL_VIDEO_MODEL_ALIASES[model_id]
+    return model_id
+
+
 def get_video_service(model_id: str) -> BaseVideoService:
+    original_model_id = model_id
+    model_id = resolve_video_model(model_id)
+    if original_model_id != model_id:
+        print(f"[video-factory] Remapped deprecated local model '{original_model_id}' -> '{model_id}'")
+
     # Fallback to ffmpeg if unknown model selected
     if model_id not in VIDEO_REGISTRY:
         print(f"[video-factory] Unknown model '{model_id}', falling back to ffmpeg-kenburns")
@@ -57,6 +96,8 @@ def get_video_service(model_id: str) -> BaseVideoService:
         return FFmpegService()
     elif provider == "local-static":
         return FFmpegStaticService()
+    elif provider == "local-safe-motion":
+        return FFmpegSafeMotionService()
     elif provider == "kling":
         return KlingService()
     elif provider == "comfyui":

@@ -3,6 +3,21 @@
 import sys
 import asyncio
 
+
+def _configure_stdio_encoding() -> None:
+    """Keep diagnostic prints from failing on Windows code pages."""
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        if stream is None or not hasattr(stream, "reconfigure"):
+            continue
+        try:
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
+        except Exception:
+            pass
+
+
+_configure_stdio_encoding()
+
 # Windows: force ProactorEventLoopPolicy before anything else imports asyncio.
 # asyncio.create_subprocess_exec() raises NotImplementedError on the default
 # SelectorEventLoop on Windows, which our fal/ffmpeg video services rely on.
@@ -26,7 +41,17 @@ from app.models.database import init_db
 # v1.1.43: oneclick_service 에 "주제 큐 + 매일 HH:MM" 형태의 새 스케줄러가
 # 다시 붙었다 (구 17 행 그리드 와는 완전히 다른 모델). startup/shutdown 에서
 # `start_queue_scheduler` / `stop_queue_scheduler` 를 호출한다.
-from app.routers import projects, pipeline, script, voice, image, video, subtitle, interlude, youtube, youtube_studio, downloads, models, api_status, api_keys, api_balances, tasks, oneclick
+from app.routers import projects, pipeline, script, voice, image, video, subtitle, interlude, youtube, youtube_studio, downloads, models, api_status, api_keys, api_balances, tasks, oneclick, assets
+# v2.1.0 병렬 라우터. 구 라우터와 독립적으로 /api/v2/* 에 마운트된다.
+from app.routers.v2 import (
+    keys as v2_keys,
+    presets as v2_presets,
+    queue as v2_queue,
+    tasks as v2_tasks,
+    events as v2_events,
+    storage as v2_storage,
+    usage as v2_usage,
+)
 from app.services import oneclick_service
 
 
@@ -95,6 +120,17 @@ async def lifespan(app: FastAPI):
         oneclick_service.start_queue_scheduler()
     except Exception as e:
         print(f"[startup] oneclick queue scheduler start failed: {e}")
+    # v2.1.0: .env 평문 API 키 → api_key_vault 1회 암호화 동기화.
+    # .env 파일은 건드리지 않으며, DB 에 이미 같은 provider 행이 있으면 덮지 않는다.
+    try:
+        from app.security.vault_sync import sync_env_into_vault
+        report = sync_env_into_vault()
+        ins = len(report.get("inserted", []))
+        skp = len(report.get("skipped", []))
+        emp = len(report.get("empty", []))
+        print(f"[startup] vault sync: inserted={ins} skipped={skp} empty={emp}")
+    except Exception as e:
+        print(f"[startup] vault sync failed (non-fatal): {e}")
     yield
     # Shutdown
     try:
@@ -106,7 +142,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="LongTube",
     description="YouTube longform video automation pipeline",
-    version="2.0.74",
+    version="1.2.29",
     lifespan=lifespan,
 )
 
@@ -142,6 +178,7 @@ app.include_router(interlude.router, prefix="/api/interlude", tags=["interlude"]
 app.include_router(youtube.router, prefix="/api/youtube", tags=["youtube"])
 app.include_router(youtube_studio.router, prefix="/api/youtube-studio", tags=["youtube-studio"])
 app.include_router(downloads.router, prefix="/api/downloads", tags=["downloads"])
+app.include_router(assets.router, prefix="/api/assets", tags=["assets"])
 app.include_router(models.router, prefix="/api/models", tags=["models"])
 app.include_router(api_status.router, prefix="/api/api-status", tags=["api-status"])
 app.include_router(api_keys.router, prefix="/api/api-keys", tags=["api-keys"])
@@ -149,6 +186,15 @@ app.include_router(api_balances.router, prefix="/api/api-balances", tags=["api-b
 app.include_router(tasks.router, prefix="/api/tasks", tags=["tasks"])
 # v1.1.43: /api/schedule 라우터 비활성화 (자동화 스케줄 기능 삭제)
 app.include_router(oneclick.router, prefix="/api/oneclick", tags=["oneclick"])
+
+# v2.1.0 병렬 라우터 — 구 라우터와 독립. /api/v2/* 에 마운트.
+app.include_router(v2_keys.router, prefix="/api/v2/keys", tags=["v2-keys"])
+app.include_router(v2_presets.router, prefix="/api/v2/presets", tags=["v2-presets"])
+app.include_router(v2_queue.router, prefix="/api/v2/queue", tags=["v2-queue"])
+app.include_router(v2_tasks.router, prefix="/api/v2/tasks", tags=["v2-tasks"])
+app.include_router(v2_events.router, prefix="/api/v2/events", tags=["v2-events"])
+app.include_router(v2_storage.router, prefix="/api/v2/storage", tags=["v2-storage"])
+app.include_router(v2_usage.router, prefix="/api/v2/usage", tags=["v2-usage"])
 
 # Serve generated assets — ensure directory exists before mounting
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -158,4 +204,4 @@ app.mount("/assets", StaticFiles(directory=str(DATA_DIR)), name="assets")
 @app.get("/api/health")
 async def health():
     from app.config import COMFYUI_BASE_URL as _CU
-    return {"status": "ok", "version": "2.0.74", "comfyui_base_url": _CU or None}
+    return {"status": "ok", "version": "1.2.29", "comfyui_base_url": _CU or None}

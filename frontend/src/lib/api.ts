@@ -2,22 +2,26 @@
 // 백엔드 호스트는 다음 우선순위로 결정한다:
 //   1) NEXT_PUBLIC_API_BASE 환경변수 (빌드 타임 주입)
 //   2) 브라우저에서 로드된 호스트명 + :8000 (같은 머신에서 프런트/백이 도는 전형적 셋업)
-//   3) 로컬 개발 폴백 http://localhost:8000
+//   3) 로컬 개발 폴백 http://127.0.0.1:8000
 // 2)를 쓰면 192.168.x.x 로 접속한 다른 PC 도 자동으로 그 IP 의 백엔드를 바라본다.
+// 단, localhost 는 Windows IPv6 해석 흔들림을 피하려고 127.0.0.1 로 고정한다.
 const _envApi = process.env.NEXT_PUBLIC_API_BASE;
 const _envAsset = process.env.NEXT_PUBLIC_ASSET_BASE;
 function _deriveAssetBase(): string {
   if (_envAsset) return _envAsset.replace(/\/$/, "");
   if (typeof window !== "undefined" && window.location?.hostname) {
-    return `${window.location.protocol}//${window.location.hostname}:8000`;
+    const hostname =
+      window.location.hostname === "localhost" ? "127.0.0.1" : window.location.hostname;
+    return `${window.location.protocol}//${hostname}:8000`;
   }
-  return "http://localhost:8000";
+  return "http://127.0.0.1:8000";
 }
 function _deriveApiBase(): string {
   if (_envApi) return _envApi.replace(/\/$/, "");
   return `${_deriveAssetBase()}/api`;
 }
 const BASE_URL = _deriveApiBase();
+const DEFAULT_API_TIMEOUT_MS = 20_000;
 
 // v1.1.28: AbortSignal 지원. 호출 측에서 취소할 수 있어야 "긴급중지" 가 가능.
 // v1.1.29: 네트워크 오류 / HTTP 오류 / JSON 파싱 오류를 구분해서 구체적인 메시지로 던진다.
@@ -27,11 +31,22 @@ async function request(
   body?: any,
   isFormData?: boolean,
   signal?: AbortSignal,
+  timeoutMs: number = DEFAULT_API_TIMEOUT_MS,
 ) {
+  const controller = new AbortController();
+  const timeoutId = globalThis.setTimeout(() => controller.abort(), timeoutMs);
+  const abortFromCaller = () => controller.abort();
+  if (signal) {
+    if (signal.aborted) {
+      controller.abort();
+    } else {
+      signal.addEventListener("abort", abortFromCaller, { once: true });
+    }
+  }
   const options: RequestInit = {
     method,
     headers: isFormData ? {} : { "Content-Type": "application/json" },
-    signal,
+    signal: controller.signal,
   };
   if (body) {
     options.body = isFormData ? body : JSON.stringify(body);
@@ -44,7 +59,15 @@ async function request(
     // fetch 자체가 실패 — 백엔드 미기동, CORS 차단, 네트워크 단절 등
     const msg = (e as Error)?.message || String(e);
     console.error(`[api] ${method} ${url} → NETWORK ERROR:`, e);
+    if ((e as Error)?.name === "AbortError") {
+      throw new Error(`요청 시간 초과: ${method} ${url} — 백엔드가 작업 중이거나 응답하지 않습니다.`);
+    }
     throw new Error(`네트워크 오류: ${method} ${url} (${msg}) — 백엔드 서버(8000)가 켜져있는지 확인하세요.`);
+  } finally {
+    globalThis.clearTimeout(timeoutId);
+    if (signal) {
+      signal.removeEventListener("abort", abortFromCaller);
+    }
   }
   if (!res.ok) {
     let detail = res.statusText;
@@ -59,7 +82,11 @@ async function request(
       }
     }
     console.error(`[api] ${method} ${url} → HTTP ${res.status}: ${detail}`);
-    throw new Error(`HTTP ${res.status} ${method} ${path}: ${detail}`);
+    const message =
+      typeof detail === "string" && detail.trim()
+        ? detail.trim()
+        : `요청 실패 (${res.status})`;
+    throw new Error(message);
   }
   return res.json();
 }
@@ -68,6 +95,8 @@ export const api = {
   get: (path: string, signal?: AbortSignal) => request("GET", path, undefined, false, signal),
   post: (path: string, body?: any, signal?: AbortSignal) =>
     request("POST", path, body, false, signal),
+  postWithTimeout: (path: string, body: any, timeoutMs: number, signal?: AbortSignal) =>
+    request("POST", path, body, false, signal, timeoutMs),
   put: (path: string, body?: any, signal?: AbortSignal) =>
     request("PUT", path, body, false, signal),
   delete: (path: string, signal?: AbortSignal) =>
@@ -119,8 +148,14 @@ export interface ProjectConfig {
   image_global_prompt?: string;
   character_description?: string;
   /** v1.1.73: 대본 생성 시 LLM 에 "최우선 제약" 으로 주입되는 자유 텍스트.
-   *  예: "환단고기 등 위서 인용 금지 / 사료 부족 시 '설이 있다' 로 열어둘 것". */
+   *  예: "환단고기 등 위서 인용 금지 / 사료 부족 시 '설이 있다' 로 열어둘 것".
+   *  v1.1.75 부터는 아래 두 필드로 분리. 기존 프로젝트 호환을 위해 읽기는 유지
+   *  (두 필드가 모두 비었고 이 값만 있으면 legacy 블록으로 LLM 프롬프트에 주입). */
   content_constraints?: string;
+  /** v1.1.75: 금칙 사항. LLM 이 절대 포함하면 안 되는 내용. */
+  content_forbidden?: string;
+  /** v1.1.75: 필수 사항. LLM 이 반드시 지켜야 하는 내용. */
+  content_required?: string;
   // 레퍼런스 자산 경로 목록 (DB 대신 project.config 에 보관)
   reference_images?: string[];
   character_images?: string[];
@@ -137,6 +172,20 @@ export interface ProjectConfig {
   };
   /** v1.1.55: YouTube 공개 범위 — "private" | "unlisted" | "public" */
   youtube_privacy?: string;
+  /** v1.1.55: YouTube 업로드 대상 채널 1~4. 0/null = 자동. */
+  youtube_channel?: number | null;
+  /** OneClick channel number stamped onto generated projects/presets. */
+  channel?: number | null;
+  /** v2.1.1: false 면 모든 컷을 Ken Burns(이미지+줌) 으로 폴백. */
+  enable_ai_video?: boolean;
+  /** v2.1.3: 최종 렌더에 깔 BGM. bgm_path 는 프로젝트 폴더 기준 상대 경로. */
+  bgm_enabled?: boolean;
+  bgm_path?: string;
+  bgm_style_prompt?: string;
+  bgm_prompt_used?: string;
+  bgm_volume?: number;
+  /** v1.1.60: ComfyUI 로컬 이미지 모델용 negative prompt. */
+  image_negative_prompt?: string;
 }
 
 // v1.1.33: 프로젝트 예상 소요시간/비용
@@ -198,6 +247,7 @@ export interface Cut {
   cut_number: number;
   narration: string;
   image_prompt: string;
+  motion_prompt?: string;
   scene_type: string;
   duration_estimate?: number;
   audio_path?: string;
@@ -258,9 +308,9 @@ export const scriptApi = {
   generate: (id: string): Promise<{ cuts: Cut[]; total_duration_estimate: number }> =>
     api.post(`/script/${id}/generate`),
   generateAsync: (id: string) => api.post(`/script/${id}/generate-async`),
-  editCut: (id: string, cutNumber: number, data: { narration?: string; image_prompt?: string }) =>
+  editCut: (id: string, cutNumber: number, data: { narration?: string; image_prompt?: string; motion_prompt?: string }) =>
     api.put(`/script/${id}/cuts/${cutNumber}`, data),
-  addCut: (id: string, data: { cut_number: number; narration: string; image_prompt: string; scene_type: string }) =>
+  addCut: (id: string, data: { cut_number: number; narration: string; image_prompt: string; motion_prompt?: string; scene_type: string }) =>
     api.post(`/script/${id}/cuts/add`, data),
   deleteCut: (id: string, cutNumber: number) => api.delete(`/script/${id}/cuts/${cutNumber}`),
   reorderCuts: (id: string, order: number[]) => api.put(`/script/${id}/cuts/reorder`, { order }),
@@ -395,6 +445,29 @@ export const subtitleApi = {
   generate: (id: string) => api.post(`/subtitle/${id}/generate`),
   render: (id: string) => api.post(`/subtitle/${id}/render`),
   renderAsync: (id: string) => api.post(`/subtitle/${id}/render-async`),
+  uploadBgm: (id: string, file: File): Promise<{
+    status: string;
+    path: string;
+    filename: string;
+    size: number;
+    enabled: boolean;
+    volume: number;
+  }> => {
+    const fd = new FormData();
+    fd.append("file", file);
+    return api.upload(`/subtitle/${id}/bgm/upload`, fd);
+  },
+  generateBgm: (id: string): Promise<{
+    status: string;
+    path: string;
+    size: number;
+    length_ms: number;
+    prompt: string;
+    enabled: boolean;
+    volume: number;
+  }> => api.post(`/subtitle/${id}/bgm/generate`),
+  deleteBgm: (id: string): Promise<{ ok: boolean; deleted: boolean }> =>
+    api.delete(`/subtitle/${id}/bgm`),
 };
 
 // ─── YouTube ───
@@ -702,6 +775,48 @@ export const apiStatusApi = {
     api.get(`/api-status/fal/video-probe?model=${encodeURIComponent(model)}`),
 };
 
+export interface LocalServiceInfo {
+  provider?: string;
+  status: string;
+  version?: string;
+  balance?: string | null;
+  detail?: string;
+  queue_running?: number | null;
+  queue_pending?: number | null;
+}
+
+export interface LocalGpuStatus {
+  name?: string;
+  load_percent?: number | null;
+  memory_used_mb?: number | null;
+  memory_total_mb?: number | null;
+  memory_percent?: number | null;
+  temperature_c?: number | null;
+}
+
+export interface LocalSystemStatus {
+  provider?: string;
+  status: string;
+  cpu_percent?: number | null;
+  ram_percent?: number | null;
+  ram_used_gb?: number | null;
+  ram_total_gb?: number | null;
+  gpu?: LocalGpuStatus | null;
+  gpus?: LocalGpuStatus[];
+  gpu_available?: boolean;
+  gpu_detail?: string | null;
+}
+
+export interface LocalServicesStatus {
+  backend: LocalServiceInfo;
+  comfyui: LocalServiceInfo;
+  system?: LocalSystemStatus;
+}
+
+export const localServicesApi = {
+  status: (): Promise<LocalServicesStatus> => api.get("/api-status/local-services"),
+};
+
 // ─── API Keys ───
 export interface ProviderInfo {
   provider: string;
@@ -766,6 +881,7 @@ export const apiBalancesApi = {
 export interface StudioAuthStatus {
   authenticated: boolean;
   project_id?: string | null;
+  channel_no?: number | null;
   channel_id?: string | null;
   channel_title?: string | null;
 }
@@ -797,6 +913,26 @@ export interface StudioVideoListResponse {
   next_page_token?: string | null;
   prev_page_token?: string | null;
   total_results?: number | null;
+}
+
+export interface GeneratedVideoArtifact {
+  id: string;
+  project_id: string;
+  project_title: string;
+  topic: string;
+  channel?: number | null;
+  kind: "main" | "shorts" | "other";
+  label: string;
+  relative_path: string;
+  filename: string;
+  size: number;
+  updated_at?: number | null;
+  created_at?: string | null;
+  uploaded: boolean;
+  upload_status?: "local" | "uploaded" | "processing" | "failed";
+  youtube_url?: string | null;
+  video_id?: string | null;
+  uploaded_at?: string | null;
 }
 
 export interface StudioVideoDetail {
@@ -887,6 +1023,16 @@ export interface StudioCategory {
   title: string;
 }
 
+export const STUDIO_CHANNELS = [1, 2, 3, 4] as const;
+export type StudioChannelNo = (typeof STUDIO_CHANNELS)[number];
+
+export function parseStudioChannel(value?: string | null): StudioChannelNo {
+  const num = Number(value);
+  return STUDIO_CHANNELS.includes(num as StudioChannelNo)
+    ? (num as StudioChannelNo)
+    : 1;
+}
+
 function qs(params: Record<string, string | number | boolean | undefined | null>): string {
   const parts: string[] = [];
   for (const [k, v] of Object.entries(params)) {
@@ -897,8 +1043,8 @@ function qs(params: Record<string, string | number | boolean | undefined | null>
 }
 
 export const youtubeStudioApi = {
-  authStatus: (projectId?: string): Promise<StudioAuthStatus> =>
-    api.get(`/youtube-studio/auth/status${qs({ project_id: projectId })}`),
+  authStatus: (projectId?: string, channelId?: number): Promise<StudioAuthStatus> =>
+    api.get(`/youtube-studio/auth/status${qs({ project_id: projectId, channel_id: channelId })}`),
 
   // Videos
   listVideos: (opts: {
@@ -906,6 +1052,7 @@ export const youtubeStudioApi = {
     pageToken?: string;
     maxResults?: number;
     projectId?: string;
+    channelId?: number;
   } = {}): Promise<StudioVideoListResponse> =>
     api.get(
       `/youtube-studio/videos${qs({
@@ -913,18 +1060,20 @@ export const youtubeStudioApi = {
         page_token: opts.pageToken,
         max_results: opts.maxResults ?? 25,
         project_id: opts.projectId,
+        channel_id: opts.channelId,
       })}`,
     ),
-  getVideo: (videoId: string, projectId?: string): Promise<StudioVideoDetail> =>
-    api.get(`/youtube-studio/videos/${encodeURIComponent(videoId)}${qs({ project_id: projectId })}`),
+  getVideo: (videoId: string, projectId?: string, channelId?: number): Promise<StudioVideoDetail> =>
+    api.get(`/youtube-studio/videos/${encodeURIComponent(videoId)}${qs({ project_id: projectId, channel_id: channelId })}`),
   updateVideo: (
     videoId: string,
     body: StudioVideoUpdateBody,
     projectId?: string,
+    channelId?: number,
   ): Promise<{ video_id: string; snippet: any; status: any }> =>
     request(
       "PATCH",
-      `/youtube-studio/videos/${encodeURIComponent(videoId)}${qs({ project_id: projectId })}`,
+      `/youtube-studio/videos/${encodeURIComponent(videoId)}${qs({ project_id: projectId, channel_id: channelId })}`,
       body,
       false,
     ),
@@ -932,18 +1081,59 @@ export const youtubeStudioApi = {
     videoId: string,
     file: File,
     projectId?: string,
+    channelId?: number,
   ): Promise<{ video_id: string; thumbnail_path: string }> => {
     const fd = new FormData();
     fd.append("file", file);
     return api.upload(
-      `/youtube-studio/videos/${encodeURIComponent(videoId)}/thumbnail${qs({ project_id: projectId })}`,
+      `/youtube-studio/videos/${encodeURIComponent(videoId)}/thumbnail${qs({ project_id: projectId, channel_id: channelId })}`,
       fd,
     );
   },
-  deleteVideo: (videoId: string, projectId?: string): Promise<{ status: string; video_id: string }> =>
+  deleteVideo: (videoId: string, projectId?: string, channelId?: number): Promise<{ status: string; video_id: string }> =>
     api.delete(
-      `/youtube-studio/videos/${encodeURIComponent(videoId)}${qs({ confirm: true, project_id: projectId })}`,
+      `/youtube-studio/videos/${encodeURIComponent(videoId)}${qs({ confirm: true, project_id: projectId, channel_id: channelId })}`,
     ),
+
+  listGeneratedVideos: (
+    opts: { projectId?: string; channelId?: number } = {},
+  ): Promise<{ items: GeneratedVideoArtifact[]; count: number; uploaded_count?: number; local_count?: number }> =>
+    api.get(
+      `/youtube-studio/generated-videos${qs({
+        project_id: opts.projectId,
+        channel_id: opts.channelId,
+      })}`,
+    ),
+  uploadGeneratedVideo: (
+    body: {
+      project_id: string;
+      relative_path: string;
+      title?: string;
+      description?: string;
+      tags?: string[];
+      privacy_status?: "private" | "unlisted" | "public";
+      category_id?: string;
+      default_language?: string;
+      made_for_kids?: boolean;
+    },
+    opts: { projectId?: string; channelId?: number } = {},
+  ): Promise<{ video_id: string; url: string; project_id: string; relative_path: string; kind: string }> =>
+    api.postWithTimeout(
+      `/youtube-studio/generated-videos/upload${qs({
+        project_id: opts.projectId,
+        channel_id: opts.channelId,
+      })}`,
+      body,
+      30 * 60_000,
+    ),
+  openGeneratedVideoFolder: (
+    body: { project_id: string; relative_path: string },
+  ): Promise<{ status: string; project_id: string; relative_path: string }> =>
+    api.post(`/youtube-studio/generated-videos/open-folder`, body),
+  deleteGeneratedVideo: (
+    body: { project_id: string; relative_path: string; delete_project?: boolean },
+  ): Promise<{ status: string; project_id: string; relative_path: string }> =>
+    api.post(`/youtube-studio/generated-videos/delete`, body),
 
   // Direct upload
   directUpload: (
@@ -959,6 +1149,7 @@ export const youtubeStudioApi = {
       publishAt?: string;
       thumbnail?: File | null;
       projectId?: string;
+      channelId?: number;
     },
     signal?: AbortSignal,
   ): Promise<{ video_id: string; url: string; publish_at?: string; publish_at_error?: string; thumbnail_error?: string }> => {
@@ -974,70 +1165,76 @@ export const youtubeStudioApi = {
     if (params.publishAt) fd.append("publish_at", params.publishAt);
     if (params.thumbnail) fd.append("thumbnail", params.thumbnail);
     return api.upload(
-      `/youtube-studio/upload${qs({ project_id: params.projectId })}`,
+      `/youtube-studio/upload${qs({ project_id: params.projectId, channel_id: params.channelId })}`,
       fd,
       signal,
     );
   },
 
   // Playlists
-  listPlaylists: (projectId?: string): Promise<{ items: StudioPlaylist[] }> =>
-    api.get(`/youtube-studio/playlists${qs({ project_id: projectId })}`),
+  listPlaylists: (projectId?: string, channelId?: number): Promise<{ items: StudioPlaylist[] }> =>
+    api.get(`/youtube-studio/playlists${qs({ project_id: projectId, channel_id: channelId })}`),
   createPlaylist: (
     body: { title: string; description?: string; privacy_status?: "private" | "unlisted" | "public" },
     projectId?: string,
+    channelId?: number,
   ): Promise<{ playlist_id: string; title: string }> =>
-    api.post(`/youtube-studio/playlists${qs({ project_id: projectId })}`, body),
+    api.post(`/youtube-studio/playlists${qs({ project_id: projectId, channel_id: channelId })}`, body),
   updatePlaylist: (
     playlistId: string,
     body: { title?: string; description?: string; privacy_status?: "private" | "unlisted" | "public" },
     projectId?: string,
+    channelId?: number,
   ): Promise<{ playlist_id: string; snippet: any }> =>
     request(
       "PATCH",
-      `/youtube-studio/playlists/${encodeURIComponent(playlistId)}${qs({ project_id: projectId })}`,
+      `/youtube-studio/playlists/${encodeURIComponent(playlistId)}${qs({ project_id: projectId, channel_id: channelId })}`,
       body,
       false,
     ),
-  deletePlaylist: (playlistId: string, projectId?: string): Promise<{ status: string; playlist_id: string }> =>
+  deletePlaylist: (playlistId: string, projectId?: string, channelId?: number): Promise<{ status: string; playlist_id: string }> =>
     api.delete(
-      `/youtube-studio/playlists/${encodeURIComponent(playlistId)}${qs({ confirm: true, project_id: projectId })}`,
+      `/youtube-studio/playlists/${encodeURIComponent(playlistId)}${qs({ confirm: true, project_id: projectId, channel_id: channelId })}`,
     ),
   listPlaylistItems: (
     playlistId: string,
-    opts: { pageToken?: string; maxResults?: number; projectId?: string } = {},
+    opts: { pageToken?: string; maxResults?: number; projectId?: string; channelId?: number } = {},
   ): Promise<{ items: StudioPlaylistItem[]; next_page_token?: string | null; total_results?: number | null }> =>
     api.get(
       `/youtube-studio/playlists/${encodeURIComponent(playlistId)}/items${qs({
         page_token: opts.pageToken,
         max_results: opts.maxResults ?? 50,
         project_id: opts.projectId,
+        channel_id: opts.channelId,
       })}`,
     ),
   addPlaylistItem: (
     playlistId: string,
     videoId: string,
     projectId?: string,
+    channelId?: number,
   ): Promise<{ item_id: string; playlist_id: string; video_id: string }> =>
     api.post(
-      `/youtube-studio/playlists/${encodeURIComponent(playlistId)}/items${qs({ project_id: projectId })}`,
+      `/youtube-studio/playlists/${encodeURIComponent(playlistId)}/items${qs({ project_id: projectId, channel_id: channelId })}`,
       { video_id: videoId },
     ),
   removePlaylistItem: (
     playlistId: string,
     itemId: string,
     projectId?: string,
+    channelId?: number,
   ): Promise<{ status: string; item_id: string }> =>
     api.delete(
       `/youtube-studio/playlists/${encodeURIComponent(playlistId)}/items/${encodeURIComponent(itemId)}${qs({
         project_id: projectId,
+        channel_id: channelId,
       })}`,
     ),
 
   // Comments
   listComments: (
     videoId: string,
-    opts: { order?: "time" | "relevance"; pageToken?: string; maxResults?: number; projectId?: string } = {},
+    opts: { order?: "time" | "relevance"; pageToken?: string; maxResults?: number; projectId?: string; channelId?: number } = {},
   ): Promise<{ items: StudioCommentThread[]; next_page_token?: string | null; total_results?: number | null }> =>
     api.get(
       `/youtube-studio/videos/${encodeURIComponent(videoId)}/comments${qs({
@@ -1045,10 +1242,11 @@ export const youtubeStudioApi = {
         page_token: opts.pageToken,
         max_results: opts.maxResults ?? 50,
         project_id: opts.projectId,
+        channel_id: opts.channelId,
       })}`,
     ),
-  replyComment: (parentId: string, text: string, projectId?: string): Promise<StudioCommentReply> =>
-    api.post(`/youtube-studio/comments/${encodeURIComponent(parentId)}/reply${qs({ project_id: projectId })}`, {
+  replyComment: (parentId: string, text: string, projectId?: string, channelId?: number): Promise<StudioCommentReply> =>
+    api.post(`/youtube-studio/comments/${encodeURIComponent(parentId)}/reply${qs({ project_id: projectId, channel_id: channelId })}`, {
       text,
     }),
   moderateComment: (
@@ -1056,19 +1254,20 @@ export const youtubeStudioApi = {
     status: "heldForReview" | "published" | "rejected",
     banAuthor: boolean,
     projectId?: string,
+    channelId?: number,
   ): Promise<{ status: string; comment_id: string; moderation: string }> =>
     api.post(
-      `/youtube-studio/comments/${encodeURIComponent(commentId)}/moderation${qs({ project_id: projectId })}`,
+      `/youtube-studio/comments/${encodeURIComponent(commentId)}/moderation${qs({ project_id: projectId, channel_id: channelId })}`,
       { status, ban_author: banAuthor },
     ),
-  markCommentSpam: (commentId: string, projectId?: string): Promise<{ status: string; comment_id: string }> =>
-    api.post(`/youtube-studio/comments/${encodeURIComponent(commentId)}/spam${qs({ project_id: projectId })}`),
-  deleteComment: (commentId: string, projectId?: string): Promise<{ status: string; comment_id: string }> =>
-    api.delete(`/youtube-studio/comments/${encodeURIComponent(commentId)}${qs({ project_id: projectId })}`),
+  markCommentSpam: (commentId: string, projectId?: string, channelId?: number): Promise<{ status: string; comment_id: string }> =>
+    api.post(`/youtube-studio/comments/${encodeURIComponent(commentId)}/spam${qs({ project_id: projectId, channel_id: channelId })}`),
+  deleteComment: (commentId: string, projectId?: string, channelId?: number): Promise<{ status: string; comment_id: string }> =>
+    api.delete(`/youtube-studio/comments/${encodeURIComponent(commentId)}${qs({ project_id: projectId, channel_id: channelId })}`),
 
   // Categories
-  listCategories: (regionCode = "KR", projectId?: string): Promise<{ items: StudioCategory[]; region_code: string }> =>
-    api.get(`/youtube-studio/categories${qs({ region_code: regionCode, project_id: projectId })}`),
+  listCategories: (regionCode = "KR", projectId?: string, channelId?: number): Promise<{ items: StudioCategory[]; region_code: string }> =>
+    api.get(`/youtube-studio/categories${qs({ region_code: regionCode, project_id: projectId, channel_id: channelId })}`),
 };
 
 // ─── OneClick (v1.1.34 딸깍 제작) ───
@@ -1078,7 +1277,7 @@ export interface OneClickTask {
   project_id: string;
   topic: string;
   title: string;
-  status: "prepared" | "queued" | "running" | "completed" | "failed" | "cancelled";
+  status: "prepared" | "queued" | "running" | "completed" | "failed" | "cancelled" | "paused";
   current_step: number | null;
   current_step_name: string | null;
   step_states: Record<string, string>;
@@ -1091,6 +1290,8 @@ export interface OneClickTask {
   current_step_label?: string | null;
   triggered_by?: "manual" | "schedule";
   channel?: number;  // v1.1.58: 채널 1~4 (없으면 수동 실행)
+  // v1.2.17: 에피소드 번호 — 완료/실패 목록의 EP 배지 표시에 사용
+  episode_number?: number | null;
   // v1.1.52: 각 스텝에서 사용하는 AI 모델명
   models?: {
     script?: string;
@@ -1160,11 +1361,28 @@ export interface OneClickQueueItem {
   template_project_id: string | null;
   target_duration: number | null;  // 초 단위. null 이면 템플릿 기본값
   channel: number;                 // v1.1.57: 채널 1~4 (기본 1)
+  // v1.2.9: 에피소드 상세 — 스크립트 생성 프롬프트에 주입된다.
+  openings?: string[];             // 오프닝 대사 1~5 (고정 길이 5, 빈 문자열 허용)
+  endings?: string[];              // 엔딩 대사 1~5 (고정 길이 5, 빈 문자열 허용)
+  core_content?: string;           // 이번 에피소드 핵심 내용 (자유 서술)
+  // v1.2.10: 시리즈 연속성.
+  episode_number?: number | null;  // 이번 에피소드 번호 (1 이상 정수, null 이면 미지정)
+  next_episode_preview?: string;   // 다음 에피소드 예고 (엔딩 부근에 자연스럽게 노출)
+  // v1.2.30: 대기열 등록 경로/시각. 라이브 큐에서 "자동 실행 03:00",
+  // "수동 등록", "복구" 등 운영 판단 정보를 보여준다.
+  queued_source?: string;
+  queued_at?: string | null;
+  queued_note?: string;
+  requeued_from_task_id?: string;
+  restored_from_project_id?: string;
 }
 
 export interface OneClickQueueState {
   // v1.1.57: 채널별 스케줄 시간
   channel_times: Record<string, string | null>;  // {"1": "07:00", "2": "12:00", ...}
+  // v1.2.14: 채널별 기본 프리셋 (template_project_id). 큐 아이템에 개별 프리셋이
+  // 지정되지 않으면 이 값으로 대체된다.
+  channel_presets?: Record<string, string | null>;
   last_run_dates: Record<string, string | null>;  // 백엔드가 관리하는 읽기 전용 필드
   items: OneClickQueueItem[];
 }
@@ -1176,6 +1394,16 @@ export const oneclickApi = {
     topic: string;
     title?: string;
     target_duration?: number;
+    // v1.2.9: 에피소드 상세 — 스크립트 프롬프트에 주입.
+    openings?: string[];
+    endings?: string[];
+    core_content?: string;
+    // v1.2.10: 시리즈 연속성.
+    episode_number?: number | null;
+    next_episode_preview?: string;
+    // v1.2.29: 채널 번호(1-4). 지정되면 project_id 에 CH{n} prefix 가 박히고
+    // config.channel 에도 기록된다.
+    channel?: number | null;
   }): Promise<OneClickTask> => api.post(`/oneclick/prepare`, body),
   start: (taskId: string): Promise<OneClickTask> => api.post(`/oneclick/${taskId}/start`),
   resume: (taskId: string): Promise<OneClickTask> => api.post(`/oneclick/${taskId}/resume`),
@@ -1189,6 +1417,13 @@ export const oneclickApi = {
     comfyui_queue_cleared: boolean;
     errors: string[];
   }> => api.post(`/oneclick/emergency-stop`),
+  // v1.2.27: ComfyUI 큐만 리셋 (태스크는 계속). stall 자동 복구용.
+  comfyuiReset: (): Promise<{
+    ok: boolean;
+    comfyui_interrupt: boolean;
+    comfyui_queue_cleared: boolean;
+    errors: string[];
+  }> => api.post(`/oneclick/comfyui-reset`),
   get: (taskId: string): Promise<OneClickTask> => api.get(`/oneclick/tasks/${taskId}`),
   list: (): Promise<{ tasks: OneClickTask[] }> => api.get(`/oneclick/tasks`),
   deleteTask: (taskId: string): Promise<{ ok: boolean }> => api.delete(`/oneclick/tasks/${taskId}`),
@@ -1209,11 +1444,41 @@ export const oneclickApi = {
   getTaskDetail: (taskId: string): Promise<TaskDetail> =>
     api.get(`/oneclick/tasks/${taskId}/detail`),
   manualUpload: (taskId: string): Promise<{ ok: boolean; youtube_url: string | null }> =>
-    api.post(`/oneclick/tasks/${taskId}/upload`),
+    api.postWithTimeout(`/oneclick/tasks/${taskId}/upload`, undefined, 30 * 60_000),
   bulkDelete: (taskIds: string[]): Promise<{ ok: boolean; deleted: number; freed_mb: number; skipped: string[] }> =>
     api.post(`/oneclick/tasks/bulk-delete`, { task_ids: taskIds }),
   libraryStats: (): Promise<LibraryStats> =>
     api.get(`/oneclick/library/stats`),
+  // v1.2.23: 실패/취소 태스크를 "초기화 + 대기 큐 복귀".
+  // 해당 프로젝트 폴더를 통째로 지우고 주제/프리셋/길이/에피소드 상세를
+  // 보존한 새 큐 아이템을 해당 채널의 맨 뒤에 append 한다.
+  requeueTask: (taskId: string): Promise<{
+    ok: boolean;
+    task_id: string;
+    channel: number;
+    progress: {
+      has_script: boolean;
+      audio_count: number;
+      image_count: number;
+      video_count: number;
+      has_merged: boolean;
+      has_thumbnail: boolean;
+      total_cuts: number;
+      progress_pct: number;
+      disk_bytes: number;
+    };
+    queue_item: OneClickQueueItem;
+    deleted_bytes: number;
+  }> => api.post(`/oneclick/tasks/${taskId}/requeue`),
+  // v1.2.23: 채널별 실패/취소 전부 복귀.
+  requeueChannelFailed: (channel: number): Promise<{
+    ok: boolean;
+    channel: number;
+    requeued_count: number;
+    total_deleted_bytes: number;
+    items: unknown[];
+    errors: { task_id: string; error: string }[];
+  }> => api.post(`/oneclick/tasks/requeue-channel?channel=${channel}`),
 
   // v1.1.58: 실행 중 태스크 조회
   getRunning: (): Promise<{ running: {
@@ -1224,19 +1489,95 @@ export const oneclickApi = {
 
   // v1.1.43: 주제 큐
   getQueue: (): Promise<OneClickQueueState> => api.get(`/oneclick/queue`),
+  queueTemplateUrl: (): string => `/api/oneclick/queue-template`,
   setQueue: (body: {
     channel_times: Record<string, string | null>;
+    // v1.2.14: 채널별 기본 프리셋 저장.
+    channel_presets?: Record<string, string | null>;
     items: OneClickQueueItem[];
   }): Promise<OneClickQueueState> => api.put(`/oneclick/queue`, body),
-  runQueueNext: (): Promise<OneClickTask> =>
-    api.post(`/oneclick/queue/run-next`),
+  // v1.2.12: channel 지정 시 해당 채널의 맨 위 1건만 실행.
+  runQueueNext: (channel?: number): Promise<OneClickTask> =>
+    api.post(
+      `/oneclick/queue/run-next${typeof channel === "number" ? `?channel=${channel}` : ""}`,
+    ),
+
+  // v1.2.28: 고아 프로젝트 — _TASKS 에 없지만 DB/디스크에 남아있는 딸깍 프로젝트.
+  // 채널 편집 패널의 "고아 프로젝트" 섹션이 사용.
+  listOrphanProjects: (channel?: number): Promise<{
+    ok: boolean;
+    channel: number | null;
+    count: number;
+    items: OrphanProject[];
+  }> =>
+    api.get(
+      `/oneclick/orphan-projects${typeof channel === "number" ? `?channel=${channel}` : ""}`,
+    ),
+  // 선택한 고아 프로젝트들을 "폴더 삭제 + 큐 재등록".
+  requeueOrphanProjects: (
+    projectIds: string[],
+    targetChannel?: number | null,
+  ): Promise<{
+    ok: boolean;
+    requeued_count: number;
+    total_deleted_bytes: number;
+    items: {
+      project_id: string;
+      queue_item: OneClickQueueItem;
+      deleted_bytes: number;
+    }[];
+    errors: { project_id: string; error: string }[];
+  }> =>
+    api.post(`/oneclick/orphan-projects/requeue`, {
+      project_ids: projectIds,
+      target_channel: typeof targetChannel === "number" ? targetChannel : null,
+    }),
 };
+
+// v1.2.28: 고아 프로젝트 — list_orphan_projects 의 각 item 타입.
+export interface OrphanProject {
+  project_id: string;
+  topic: string;
+  title: string;
+  episode_number: number | null;
+  channel: number;
+  // v1.2.29: 채널 귀속이 불분명한(project_id prefix 도 없고 config.channel 도 없는)
+  // 프로젝트 표시용 플래그. 프론트에서 "⚠ 채널 미지정" 배지를 붙일 때 쓴다.
+  unattributed?: boolean;
+  openings: string[];
+  endings: string[];
+  core_content: string;
+  next_episode_preview: string;
+  target_duration: number | null;
+  template_project_id: string | null;
+  progress: {
+    has_script: boolean;
+    audio_count: number;
+    image_count: number;
+    video_count: number;
+    has_merged: boolean;
+    has_thumbnail: boolean;
+    total_cuts: number;
+    progress_pct: number;
+    disk_bytes: number;
+  };
+  created_at: string;
+}
 
 // ─── Asset URL helper ───
 // v2.0.74: 정적 에셋(/assets/<id>/...) 도 env > window host > localhost 규칙.
 export const ASSET_BASE = _deriveAssetBase();
+const encodeAssetPath = (path: string) =>
+  String(path || "")
+    .replace(/^\/+/, "")
+    .split("/")
+    .filter(Boolean)
+    .map(encodeURIComponent)
+    .join("/");
+
 export const assetUrl = (projectId: string, relativePath: string) =>
-  `${ASSET_BASE}/assets/${projectId}/${relativePath}`;
+  `${BASE_URL}/assets/project/${encodeURIComponent(projectId)}/${encodeAssetPath(relativePath)}`;
+
 
 /**
  * Resolve a path returned by the backend (e.g. "/assets/<id>/output/final.mp4")
@@ -1245,6 +1586,12 @@ export const assetUrl = (projectId: string, relativePath: string) =>
 export const resolveAssetUrl = (pathOrUrl: string): string => {
   if (!pathOrUrl) return pathOrUrl;
   if (/^https?:\/\//i.test(pathOrUrl)) return pathOrUrl;
+  if (pathOrUrl.startsWith("/assets/")) {
+    const parts = pathOrUrl.replace(/^\/assets\/+/, "").split("/").filter(Boolean);
+    if (parts.length >= 2 && parts[0] !== "_system" && parts[0] !== "channels") {
+      return assetUrl(parts[0], parts.slice(1).join("/"));
+    }
+  }
   if (pathOrUrl.startsWith("/")) return `${ASSET_BASE}${pathOrUrl}`;
   return `${ASSET_BASE}/${pathOrUrl}`;
 };

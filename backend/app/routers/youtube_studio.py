@@ -19,7 +19,9 @@ API v3 가 허용하는 범위 안에서 전부 만질 수 있도록 설계했�
 from __future__ import annotations
 
 import asyncio
+import json
 import os
+import subprocess
 import shutil
 import tempfile
 import uuid
@@ -37,6 +39,9 @@ from app.services.youtube_service import (
 )
 from app.models.database import SessionLocal
 from app.models.project import Project
+from app.config import resolve_project_dir
+from app.services.title_utils import with_episode_prefix
+from sqlalchemy.orm.attributes import flag_modified
 
 router = APIRouter()
 
@@ -44,14 +49,15 @@ router = APIRouter()
 # ---------- Helpers ----------
 
 
-def _uploader(project_id: Optional[str]) -> YouTubeUploader:
+def _uploader(project_id: Optional[str], channel_id: Optional[int] = None) -> YouTubeUploader:
     """project_id 가 있으면 프로젝트 토큰, 없으면 전역 토큰 사용.
 
     v1.1.25 부터 프로젝트별 토큰을 권장하지만 Studio 화면에서는 "채널 단위"
     로 여러 프로젝트를 가로질러 관리하므로 전역 토큰을 기본값으로 둡니다.
     """
     pid = (project_id or "").strip() or None
-    return YouTubeUploader(project_id=pid)
+    ch = int(channel_id) if channel_id in (1, 2, 3, 4) else None
+    return YouTubeUploader(project_id=pid, channel_id=ch)
 
 
 def _require_auth(up: YouTubeUploader) -> None:
@@ -70,12 +76,187 @@ def _wrap_errors(e: Exception) -> HTTPException:
     return HTTPException(500, f"예상치 못한 오류: {e}")
 
 
+VIDEO_SUFFIXES = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
+
+
+def _norm_rel(path: str | Path) -> str:
+    return Path(str(path).replace("\\", "/")).as_posix().lstrip("/")
+
+
+def _video_id_from_url(url: Optional[str]) -> Optional[str]:
+    if not url:
+        return None
+    text = str(url)
+    if "watch?v=" in text:
+        return text.split("watch?v=", 1)[1].split("&", 1)[0]
+    if "youtu.be/" in text:
+        return text.split("youtu.be/", 1)[1].split("?", 1)[0].split("/", 1)[0]
+    return None
+
+
+def _safe_project_file(project: Project, relative_path: str) -> Path:
+    rel = Path(str(relative_path).replace("\\", "/"))
+    if rel.is_absolute() or ".." in rel.parts:
+        raise HTTPException(400, "Invalid relative_path")
+
+    base = resolve_project_dir(project.id, project.config or {}, create=False).resolve()
+    target = (base / rel).resolve()
+    try:
+        target.relative_to(base)
+    except ValueError:
+        raise HTTPException(400, "Path escapes project directory")
+    if not target.exists() or not target.is_file():
+        raise HTTPException(404, "Video file not found")
+    if target.suffix.lower() not in VIDEO_SUFFIXES:
+        raise HTTPException(400, f"Unsupported video format: {target.suffix}")
+    return target
+
+
+def _project_channel(cfg: dict) -> Optional[int]:
+    for key in ("channel", "youtube_channel"):
+        try:
+            value = cfg.get(key)
+            if value is not None:
+                return int(value)
+        except Exception:
+            pass
+    return None
+
+
+def _project_matches_generated_filter(
+    project: Project,
+    preset_id: Optional[str],
+    channel_id: Optional[int],
+) -> bool:
+    cfg = project.config or {}
+    if not cfg.get("__oneclick__"):
+        return False
+    if preset_id and cfg.get("template_project_id") != preset_id:
+        return False
+    if channel_id is not None and _project_channel(cfg) != int(channel_id):
+        return False
+    return True
+
+
+def _load_shorts_upload_records(project_dir: Path, cfg: dict) -> dict[str, dict]:
+    records: list[dict] = []
+    raw = cfg.get("shorts_uploads")
+    if isinstance(raw, list):
+        records.extend([x for x in raw if isinstance(x, dict)])
+
+    json_path = project_dir / "output" / "shorts" / "shorts_uploads.json"
+    if json_path.exists():
+        try:
+            data = json.loads(json_path.read_text(encoding="utf-8"))
+            if isinstance(data, list):
+                records.extend([x for x in data if isinstance(x, dict)])
+            elif isinstance(data, dict):
+                items = data.get("items")
+                if isinstance(items, list):
+                    records.extend([x for x in items if isinstance(x, dict)])
+        except Exception:
+            pass
+
+    out: dict[str, dict] = {}
+    for rec in records:
+        path_value = rec.get("relative_path") or rec.get("path") or rec.get("video_path")
+        if not path_value:
+            continue
+        rel = _norm_rel(path_value)
+        if Path(str(path_value)).is_absolute():
+            try:
+                rel = _norm_rel(Path(path_value).resolve().relative_to(project_dir.resolve()))
+            except Exception:
+                pass
+        out[rel] = rec
+    return out
+
+
+def _load_generated_upload_records(cfg: dict) -> dict[str, dict]:
+    raw = cfg.get("generated_uploads")
+    if not isinstance(raw, dict):
+        return {}
+    return {_norm_rel(k): v for k, v in raw.items() if isinstance(v, dict)}
+
+
+def _artifact_payload(
+    project: Project,
+    project_dir: Path,
+    path: Path,
+    kind: str,
+    label: str,
+    uploaded_record: Optional[dict],
+) -> dict:
+    rel = _norm_rel(path.relative_to(project_dir))
+    url = None
+    video_id = None
+    uploaded_at = None
+    if uploaded_record:
+        url = uploaded_record.get("url") or uploaded_record.get("youtube_url") or uploaded_record.get("video_url")
+        video_id = uploaded_record.get("video_id") or _video_id_from_url(url)
+        uploaded_at = uploaded_record.get("uploaded_at")
+    if not url and kind == "main" and project.youtube_url:
+        url = project.youtube_url
+        video_id = _video_id_from_url(url)
+
+    stat = path.stat()
+    cfg = project.config or {}
+    return {
+        "id": f"{project.id}:{rel}",
+        "project_id": project.id,
+        "project_title": project.title,
+        "topic": project.topic,
+        "channel": _project_channel(cfg),
+        "kind": kind,
+        "label": label,
+        "relative_path": rel,
+        "filename": path.name,
+        "size": stat.st_size,
+        "updated_at": stat.st_mtime,
+        "created_at": project.created_at.isoformat() if project.created_at else None,
+        "uploaded": bool(url or video_id),
+        "upload_status": "uploaded" if (url or video_id) else "local",
+        "youtube_url": url,
+        "video_id": video_id,
+        "uploaded_at": uploaded_at,
+    }
+
+
+def _clean_generated_record(cfg: dict, rel: str) -> bool:
+    changed = False
+    norm = _norm_rel(rel)
+    generated_uploads = cfg.get("generated_uploads")
+    if isinstance(generated_uploads, dict) and norm in generated_uploads:
+        generated_uploads.pop(norm, None)
+        changed = True
+
+    shorts_uploads = cfg.get("shorts_uploads")
+    if isinstance(shorts_uploads, list):
+        before = len(shorts_uploads)
+        shorts_uploads[:] = [
+            x for x in shorts_uploads
+            if not isinstance(x, dict) or _norm_rel(x.get("relative_path") or x.get("path") or "") != norm
+        ]
+        changed = changed or len(shorts_uploads) != before
+    return changed
+
+
+def _open_folder(path: Path) -> None:
+    folder = path if path.is_dir() else path.parent
+    if os.name == "nt":
+        os.startfile(str(folder))  # type: ignore[attr-defined]
+        return
+    opener = "open" if os.name == "posix" and Path("/System/Library").exists() else "xdg-open"
+    subprocess.Popen([opener, str(folder)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
 # ---------- Schemas ----------
 
 
 class StudioAuthStatus(BaseModel):
     authenticated: bool
     project_id: Optional[str] = None
+    channel_no: Optional[int] = None
     channel_id: Optional[str] = None
     channel_title: Optional[str] = None
 
@@ -125,27 +306,60 @@ class CommentModerationRequest(BaseModel):
     ban_author: bool = False
 
 
+class GeneratedUploadRequest(BaseModel):
+    project_id: str
+    relative_path: str
+    title: Optional[str] = None
+    description: str = ""
+    tags: list[str] = []
+    privacy_status: Literal["private", "unlisted", "public"] = "private"
+    category_id: Optional[str] = None
+    default_language: Optional[str] = None
+    made_for_kids: bool = False
+
+
+class GeneratedArtifactRequest(BaseModel):
+    project_id: str
+    relative_path: str
+
+
+class GeneratedArtifactDeleteRequest(GeneratedArtifactRequest):
+    delete_project: bool = False
+
+
 # ---------- Auth ----------
 
 
 @router.get("/auth/status", response_model=StudioAuthStatus)
-async def studio_auth_status(project_id: Optional[str] = Query(default=None)):
+async def studio_auth_status(
+    project_id: Optional[str] = Query(default=None),
+    channel_id: Optional[int] = Query(default=None, ge=1, le=4),
+):
     """Studio 화면 진입 시 호출 — 로그인 여부 + 채널 정보 한 번에 반환.
 
     인증돼 있지 않아도 200 으로 `authenticated=false` 를 내려줍니다.
     """
-    up = _uploader(project_id)
+    up = _uploader(project_id, channel_id)
     if not up.is_authenticated():
-        return StudioAuthStatus(authenticated=False, project_id=project_id)
+        return StudioAuthStatus(
+            authenticated=False,
+            project_id=project_id,
+            channel_no=channel_id,
+        )
     try:
         info = await asyncio.to_thread(up.get_channel_info)
     except Exception as e:
         # 토큰은 있으나 채널 조회 실패 — 로그만 남기고 authenticated=true 로 반환
         print(f"[youtube-studio] channel_info 실패 (non-fatal): {e}")
-        return StudioAuthStatus(authenticated=True, project_id=project_id)
+        return StudioAuthStatus(
+            authenticated=True,
+            project_id=project_id,
+            channel_no=channel_id,
+        )
     return StudioAuthStatus(
         authenticated=True,
         project_id=project_id,
+        channel_no=channel_id,
         channel_id=info.get("channel_id"),
         channel_title=info.get("title") or info.get("channel_title"),
     )
@@ -193,6 +407,7 @@ def _match_longtube_projects(video_ids: list[str]) -> dict[str, dict]:
 @router.get("/videos")
 async def list_videos(
     project_id: Optional[str] = Query(default=None),
+    channel_id: Optional[int] = Query(default=None, ge=1, le=4),
     query: Optional[str] = Query(default=None),
     page_token: Optional[str] = Query(default=None),
     max_results: int = Query(default=25, ge=1, le=50),
@@ -202,7 +417,7 @@ async def list_videos(
     v1.1.51: 각 영상에 LongTube 프로젝트 매칭 정보 추가
     (longtube.source = "oneclick" | "preset" | null).
     """
-    up = _uploader(project_id)
+    up = _uploader(project_id, channel_id)
     _require_auth(up)
     try:
         data = await asyncio.to_thread(
@@ -227,8 +442,12 @@ async def list_videos(
 
 
 @router.get("/videos/{video_id}")
-async def get_video(video_id: str, project_id: Optional[str] = Query(default=None)):
-    up = _uploader(project_id)
+async def get_video(
+    video_id: str,
+    project_id: Optional[str] = Query(default=None),
+    channel_id: Optional[int] = Query(default=None, ge=1, le=4),
+):
+    up = _uploader(project_id, channel_id)
     _require_auth(up)
     try:
         return await asyncio.to_thread(up.get_video, video_id)
@@ -241,8 +460,9 @@ async def update_video(
     video_id: str,
     body: VideoUpdateRequest,
     project_id: Optional[str] = Query(default=None),
+    channel_id: Optional[int] = Query(default=None, ge=1, le=4),
 ):
-    up = _uploader(project_id)
+    up = _uploader(project_id, channel_id)
     _require_auth(up)
     try:
         return await asyncio.to_thread(
@@ -268,8 +488,9 @@ async def set_video_thumbnail(
     video_id: str,
     file: UploadFile = File(...),
     project_id: Optional[str] = Query(default=None),
+    channel_id: Optional[int] = Query(default=None, ge=1, le=4),
 ):
-    up = _uploader(project_id)
+    up = _uploader(project_id, channel_id)
     _require_auth(up)
 
     suffix = Path(file.filename or "thumb.png").suffix.lower() or ".png"
@@ -297,6 +518,7 @@ async def delete_video(
     video_id: str,
     confirm: bool = Query(default=False),
     project_id: Optional[str] = Query(default=None),
+    channel_id: Optional[int] = Query(default=None, ge=1, le=4),
 ):
     """영상 삭제. 복구 불가 — `confirm=true` 필수."""
     if not confirm:
@@ -304,13 +526,240 @@ async def delete_video(
             400,
             "영상 삭제는 복구 불가입니다. confirm=true 쿼리 파라미터가 반드시 필요합니다.",
         )
-    up = _uploader(project_id)
+    up = _uploader(project_id, channel_id)
     _require_auth(up)
     try:
         await asyncio.to_thread(up.delete_video, video_id)
     except Exception as e:
         raise _wrap_errors(e)
     return {"status": "deleted", "video_id": video_id}
+
+
+# ---------- Generated project uploads ----------
+
+
+@router.get("/generated-videos")
+async def list_generated_videos(
+    project_id: Optional[str] = Query(default=None),
+    channel_id: Optional[int] = Query(default=None, ge=1, le=4),
+):
+    """List actual video files generated by OneClick for the selected preset/channel."""
+    db = SessionLocal()
+    try:
+        items: list[dict] = []
+        projects = db.query(Project).order_by(Project.updated_at.desc()).all()
+        for project in projects:
+            if not _project_matches_generated_filter(project, project_id, channel_id):
+                continue
+            cfg = project.config or {}
+            project_dir = resolve_project_dir(project.id, cfg, create=False)
+            if not project_dir.exists():
+                continue
+
+            generated_uploads = _load_generated_upload_records(cfg)
+            shorts_uploads = _load_shorts_upload_records(project_dir, cfg)
+            seen: set[str] = set()
+
+            for rel, label in (
+                ("output/final_with_subtitles.mp4", "Main video"),
+                ("output/final.mp4", "Main video"),
+                ("output/merged.mp4", "Merged video"),
+            ):
+                path = project_dir / rel
+                if not path.exists() or not path.is_file():
+                    continue
+                norm = _norm_rel(rel)
+                if norm in seen:
+                    continue
+                seen.add(norm)
+                record = generated_uploads.get(norm)
+                items.append(_artifact_payload(project, project_dir, path, "main", label, record))
+
+            shorts_dir = project_dir / "output" / "shorts"
+            if shorts_dir.exists():
+                for idx, path in enumerate(sorted(shorts_dir.glob("*.mp4")), start=1):
+                    if not path.is_file():
+                        continue
+                    norm = _norm_rel(path.relative_to(project_dir))
+                    if norm in seen:
+                        continue
+                    seen.add(norm)
+                    record = generated_uploads.get(norm) or shorts_uploads.get(norm)
+                    items.append(
+                        _artifact_payload(project, project_dir, path, "shorts", f"Shorts {idx}", record)
+                    )
+
+        items.sort(key=lambda x: float(x.get("updated_at") or 0), reverse=True)
+        return {
+            "items": items,
+            "count": len(items),
+            "uploaded_count": sum(1 for item in items if item.get("uploaded")),
+            "local_count": sum(1 for item in items if not item.get("uploaded")),
+        }
+    finally:
+        db.close()
+
+
+@router.post("/generated-videos/open-folder")
+async def open_generated_video_folder(body: GeneratedArtifactRequest):
+    db = SessionLocal()
+    try:
+        project = db.get(Project, body.project_id)
+        if project is None:
+            raise HTTPException(404, "Project not found")
+        target = _safe_project_file(project, body.relative_path)
+        try:
+            await asyncio.to_thread(_open_folder, target)
+        except Exception as e:
+            raise HTTPException(500, f"폴더 열기 실패: {e}")
+        return {"status": "opened", "project_id": project.id, "relative_path": _norm_rel(body.relative_path)}
+    finally:
+        db.close()
+
+
+@router.post("/generated-videos/delete")
+async def delete_generated_video(body: GeneratedArtifactDeleteRequest):
+    db = SessionLocal()
+    try:
+        project = db.get(Project, body.project_id)
+        if project is None:
+            raise HTTPException(404, "Project not found")
+
+        cfg = project.config or {}
+        target = _safe_project_file(project, body.relative_path)
+        project_dir = resolve_project_dir(project.id, cfg, create=False)
+        rel = _norm_rel(target.relative_to(project_dir))
+
+        if body.delete_project:
+            if not cfg.get("__oneclick__"):
+                raise HTTPException(400, "OneClick 결과 프로젝트만 통째 삭제할 수 있습니다.")
+            shutil.rmtree(project_dir, ignore_errors=True)
+            db.delete(project)
+            db.commit()
+            return {
+                "status": "project_deleted",
+                "project_id": body.project_id,
+                "relative_path": rel,
+            }
+
+        try:
+            target.unlink()
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            raise HTTPException(500, f"파일 삭제 실패: {e}")
+
+        changed = _clean_generated_record(cfg, rel)
+        if rel in ("output/final_with_subtitles.mp4", "output/final.mp4", "output/merged.mp4"):
+            # 로컬 메인 결과물을 지웠으면 업로드 매핑은 남겨두지 않는다.
+            project.youtube_url = None
+            changed = True
+        if changed:
+            project.config = cfg
+            flag_modified(project, "config")
+        db.commit()
+        return {
+            "status": "deleted",
+            "project_id": project.id,
+            "relative_path": rel,
+        }
+    finally:
+        db.close()
+
+
+@router.post("/generated-videos/upload")
+async def upload_generated_video(
+    body: GeneratedUploadRequest,
+    project_id: Optional[str] = Query(default=None),
+    channel_id: Optional[int] = Query(default=None, ge=1, le=4),
+):
+    """Upload an existing server-local generated video file to the selected YouTube channel."""
+    if body.privacy_status not in VALID_PRIVACY:
+        raise HTTPException(400, f"Invalid privacy_status: {body.privacy_status!r}")
+
+    up = _uploader(project_id, channel_id)
+    _require_auth(up)
+
+    db = SessionLocal()
+    try:
+        project = db.get(Project, body.project_id)
+        if project is None:
+            raise HTTPException(404, "Project not found")
+
+        cfg = project.config or {}
+        video_path = _safe_project_file(project, body.relative_path)
+        project_dir = resolve_project_dir(project.id, cfg, create=False)
+        rel = _norm_rel(video_path.relative_to(project_dir))
+        kind = "shorts" if "/shorts/" in f"/{rel}" else "main"
+
+        thumbnail_path: Optional[str] = None
+        for candidate in (
+            project_dir / "output" / "thumbnail.png",
+            project_dir / "thumbnail.png",
+        ):
+            if candidate.exists() and candidate.is_file():
+                thumbnail_path = str(candidate)
+                break
+
+        title = with_episode_prefix(
+            body.title or project.title or project.topic or video_path.stem,
+            cfg.get("episode_number"),
+        )
+        if kind == "shorts" and "#shorts" not in title.lower():
+            title = f"{title[:85]} #Shorts"
+        description = body.description or (project.topic or "")
+        tags = list(body.tags or [])
+        if kind == "shorts" and not any(t.lower() == "shorts" for t in tags):
+            tags.append("Shorts")
+
+        try:
+            upload_result = await asyncio.to_thread(
+                up.upload,
+                str(video_path),
+                title,
+                description,
+                tags,
+                thumbnail_path,
+                body.privacy_status,
+                body.default_language,
+                body.category_id,
+                bool(body.made_for_kids),
+                None,
+            )
+        except Exception as e:
+            raise _wrap_errors(e)
+
+        record = {
+            "video_id": upload_result.get("video_id"),
+            "url": upload_result.get("url"),
+            "title": title,
+            "relative_path": rel,
+            "kind": kind,
+            "privacy_status": body.privacy_status,
+        }
+        cfg.setdefault("generated_uploads", {})[rel] = record
+        if kind == "shorts":
+            uploads = cfg.setdefault("shorts_uploads", [])
+            if isinstance(uploads, list):
+                uploads[:] = [
+                    x for x in uploads
+                    if not isinstance(x, dict) or _norm_rel(x.get("relative_path") or x.get("path") or "") != rel
+                ]
+                uploads.append(record)
+        else:
+            project.youtube_url = upload_result.get("url") or project.youtube_url
+
+        project.config = cfg
+        flag_modified(project, "config")
+        db.commit()
+        return {
+            **upload_result,
+            "project_id": project.id,
+            "relative_path": rel,
+            "kind": kind,
+        }
+    finally:
+        db.close()
 
 
 # ---------- Direct upload ----------
@@ -329,6 +778,7 @@ async def direct_upload(
     publish_at: Optional[str] = Form(None),
     thumbnail: Optional[UploadFile] = File(None),
     project_id: Optional[str] = Query(default=None),
+    channel_id: Optional[int] = Query(default=None, ge=1, le=4),
 ):
     """LongTube 파이프라인을 거치지 않고 바로 업로드.
 
@@ -341,7 +791,7 @@ async def direct_upload(
     if privacy_status not in VALID_PRIVACY:
         raise HTTPException(400, f"privacy_status 값이 유효하지 않습니다: {privacy_status!r}")
 
-    up = _uploader(project_id)
+    up = _uploader(project_id, channel_id)
     _require_auth(up)
 
     # 업로드 파일을 임시 디스크로 flush (메모리 폭탄 방지)
@@ -367,12 +817,22 @@ async def direct_upload(
             with thumb_tmp.open("wb") as tf:
                 shutil.copyfileobj(thumbnail.file, tf, length=1024 * 1024)
 
+        upload_title = title
+        if project_id:
+            db = SessionLocal()
+            try:
+                project = db.get(Project, project_id)
+                if project is not None:
+                    upload_title = with_episode_prefix(upload_title, (project.config or {}).get("episode_number"))
+            finally:
+                db.close()
+
         tag_list = [t.strip() for t in (tags or "").split(",") if t.strip()]
 
         upload_result = await asyncio.to_thread(
             up.upload,
             str(video_tmp),
-            title,
+            upload_title,
             description or "",
             tag_list,
             str(thumb_tmp) if thumb_tmp else None,
@@ -417,8 +877,11 @@ async def direct_upload(
 
 
 @router.get("/playlists")
-async def list_playlists(project_id: Optional[str] = Query(default=None)):
-    up = _uploader(project_id)
+async def list_playlists(
+    project_id: Optional[str] = Query(default=None),
+    channel_id: Optional[int] = Query(default=None, ge=1, le=4),
+):
+    up = _uploader(project_id, channel_id)
     _require_auth(up)
     try:
         items = await asyncio.to_thread(up.list_playlists)
@@ -431,8 +894,9 @@ async def list_playlists(project_id: Optional[str] = Query(default=None)):
 async def create_playlist(
     body: PlaylistCreateRequest,
     project_id: Optional[str] = Query(default=None),
+    channel_id: Optional[int] = Query(default=None, ge=1, le=4),
 ):
-    up = _uploader(project_id)
+    up = _uploader(project_id, channel_id)
     _require_auth(up)
     try:
         return await asyncio.to_thread(
@@ -450,8 +914,9 @@ async def update_playlist(
     playlist_id: str,
     body: PlaylistUpdateRequest,
     project_id: Optional[str] = Query(default=None),
+    channel_id: Optional[int] = Query(default=None, ge=1, le=4),
 ):
-    up = _uploader(project_id)
+    up = _uploader(project_id, channel_id)
     _require_auth(up)
     try:
         return await asyncio.to_thread(
@@ -470,10 +935,11 @@ async def delete_playlist(
     playlist_id: str,
     confirm: bool = Query(default=False),
     project_id: Optional[str] = Query(default=None),
+    channel_id: Optional[int] = Query(default=None, ge=1, le=4),
 ):
     if not confirm:
         raise HTTPException(400, "재생목록 삭제는 confirm=true 가 필요합니다.")
-    up = _uploader(project_id)
+    up = _uploader(project_id, channel_id)
     _require_auth(up)
     try:
         await asyncio.to_thread(up.delete_playlist, playlist_id)
@@ -488,8 +954,9 @@ async def list_playlist_items(
     page_token: Optional[str] = Query(default=None),
     max_results: int = Query(default=50, ge=1, le=50),
     project_id: Optional[str] = Query(default=None),
+    channel_id: Optional[int] = Query(default=None, ge=1, le=4),
 ):
-    up = _uploader(project_id)
+    up = _uploader(project_id, channel_id)
     _require_auth(up)
     try:
         return await asyncio.to_thread(
@@ -507,8 +974,9 @@ async def add_playlist_item(
     playlist_id: str,
     body: PlaylistAddItemRequest,
     project_id: Optional[str] = Query(default=None),
+    channel_id: Optional[int] = Query(default=None, ge=1, le=4),
 ):
-    up = _uploader(project_id)
+    up = _uploader(project_id, channel_id)
     _require_auth(up)
     try:
         return await asyncio.to_thread(up.add_to_playlist, playlist_id, body.video_id)
@@ -521,8 +989,9 @@ async def remove_playlist_item(
     playlist_id: str,  # URL 식별성만 위해 받음
     item_id: str,
     project_id: Optional[str] = Query(default=None),
+    channel_id: Optional[int] = Query(default=None, ge=1, le=4),
 ):
-    up = _uploader(project_id)
+    up = _uploader(project_id, channel_id)
     _require_auth(up)
     try:
         await asyncio.to_thread(up.remove_from_playlist, item_id)
@@ -541,8 +1010,9 @@ async def list_video_comments(
     page_token: Optional[str] = Query(default=None),
     max_results: int = Query(default=50, ge=1, le=100),
     project_id: Optional[str] = Query(default=None),
+    channel_id: Optional[int] = Query(default=None, ge=1, le=4),
 ):
-    up = _uploader(project_id)
+    up = _uploader(project_id, channel_id)
     _require_auth(up)
     try:
         return await asyncio.to_thread(
@@ -561,8 +1031,9 @@ async def reply_comment(
     parent_id: str,
     body: CommentReplyRequest,
     project_id: Optional[str] = Query(default=None),
+    channel_id: Optional[int] = Query(default=None, ge=1, le=4),
 ):
-    up = _uploader(project_id)
+    up = _uploader(project_id, channel_id)
     _require_auth(up)
     try:
         return await asyncio.to_thread(up.reply_to_comment, parent_id, body.text)
@@ -575,8 +1046,9 @@ async def moderate_comment(
     comment_id: str,
     body: CommentModerationRequest,
     project_id: Optional[str] = Query(default=None),
+    channel_id: Optional[int] = Query(default=None, ge=1, le=4),
 ):
-    up = _uploader(project_id)
+    up = _uploader(project_id, channel_id)
     _require_auth(up)
     try:
         await asyncio.to_thread(
@@ -594,8 +1066,9 @@ async def moderate_comment(
 async def mark_comment_spam(
     comment_id: str,
     project_id: Optional[str] = Query(default=None),
+    channel_id: Optional[int] = Query(default=None, ge=1, le=4),
 ):
-    up = _uploader(project_id)
+    up = _uploader(project_id, channel_id)
     _require_auth(up)
     try:
         await asyncio.to_thread(up.mark_comment_as_spam, comment_id)
@@ -608,8 +1081,9 @@ async def mark_comment_spam(
 async def delete_comment(
     comment_id: str,
     project_id: Optional[str] = Query(default=None),
+    channel_id: Optional[int] = Query(default=None, ge=1, le=4),
 ):
-    up = _uploader(project_id)
+    up = _uploader(project_id, channel_id)
     _require_auth(up)
     try:
         await asyncio.to_thread(up.delete_comment, comment_id)
@@ -625,8 +1099,9 @@ async def delete_comment(
 async def list_categories(
     region_code: str = Query(default="KR"),
     project_id: Optional[str] = Query(default=None),
+    channel_id: Optional[int] = Query(default=None, ge=1, le=4),
 ):
-    up = _uploader(project_id)
+    up = _uploader(project_id, channel_id)
     _require_auth(up)
     try:
         items = await asyncio.to_thread(up.list_video_categories, region_code)

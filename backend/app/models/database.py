@@ -113,6 +113,13 @@ def init_db():
     from app.models.cut import Cut  # noqa
     from app.models.api_log import ApiLog  # noqa
     from app.models.scheduled_episode import ScheduledEpisode  # noqa
+    # v2.1.0 신규 테이블 (병렬). 기존 테이블과 독립.
+    from app.models.channel_preset import ChannelPreset  # noqa
+    from app.models.preset_queue_item import PresetQueueItem  # noqa
+    from app.models.preset_task import PresetTask  # noqa
+    from app.models.preset_usage_record import PresetUsageRecord  # noqa
+    from app.models.event import Event  # noqa
+    from app.models.api_key_vault import ApiKeyVault  # noqa
     Base.metadata.create_all(bind=engine)
     # 기존 설치 호환 마이그레이션
     try:

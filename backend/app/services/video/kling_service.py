@@ -12,6 +12,7 @@ import httpx
 
 from app.services.video.base import BaseVideoService
 from app.services.video.subprocess_helper import run_subprocess, find_ffmpeg
+from app.services.cancel_ctx import raise_if_cancelled  # v1.2.25 cancel 방어
 from app import config as cfg
 
 # Global endpoint (not Beijing)
@@ -79,6 +80,9 @@ class KlingService(BaseVideoService):
         elif aspect_ratio == "1:1":
             kling_ratio = "1:1"
 
+        # v1.2.25: cancel 확인 — Kling 제출 금지.
+        raise_if_cancelled("kling-submit")
+
         async with httpx.AsyncClient(timeout=600) as client:
             # Submit task
             resp = await client.post(
@@ -101,6 +105,8 @@ class KlingService(BaseVideoService):
 
             # Poll for completion (max ~10 min)
             for _ in range(120):
+                # v1.2.25: polling 루프 안에서 cancel 체크.
+                raise_if_cancelled("kling-poll")
                 await asyncio.sleep(5)
                 status_resp = await client.get(
                     f"{KLING_BASE}{KLING_IMAGE2VIDEO}/{task_id}",

@@ -9,7 +9,9 @@ from typing import Optional
 from app.models.database import get_db
 from app.models.project import Project
 from app.services.estimation_service import estimate_project
-from app.config import DATA_DIR
+from app.services.image.factory import DEFAULT_IMAGE_MODEL
+from app.services.video.factory import DEFAULT_VIDEO_MODEL
+from app.config import resolve_project_dir
 import os
 
 router = APIRouter()
@@ -33,8 +35,8 @@ DEFAULT_CONFIG = {
     "cut_transition": "slow",
     "style": "news_explainer",
     "script_model": "claude-sonnet-4-6",
-    "image_model": "openai-image-1",
-    "video_model": "ffmpeg-kenburns",
+    "image_model": DEFAULT_IMAGE_MODEL,
+    "video_model": DEFAULT_VIDEO_MODEL,
     # v2.1.1: AI 영상 생성 활성화 여부. False 면 모든 컷이 Ken Burns 폴백 (비용 0, GPU 0)
     "enable_ai_video": True,
     # v1.1.36: 영상 제작 대상 — 선택되지 않은 컷은 ffmpeg-kenburns 폴백(비용 0)
@@ -55,6 +57,11 @@ DEFAULT_CONFIG = {
     "auto_pause_after_step": True,
     # v1.1.55: YouTube 공개 범위 — 프리셋 설정에서 관리
     "youtube_privacy": "private",
+    # v2.1.3: 최종 렌더 BGM. bgm_path 는 DATA_DIR/{project_id} 기준 상대 경로.
+    "bgm_enabled": False,
+    "bgm_path": "",
+    "bgm_style_prompt": "",
+    "bgm_volume": 0.24,
     "subtitle_style": {
         "font": "Pretendard Bold",
         "size": 48,
@@ -97,7 +104,7 @@ def create_project(body: ProjectCreate, db: Session = Depends(get_db)):
     db.commit()
 
     # NAS에 프로젝트 디렉토리 생성
-    project_dir = DATA_DIR / project_id
+    project_dir = resolve_project_dir(project_id, config=config, create=True)
     for sub in ["audio", "images", "videos", "subtitles", "output"]:
         os.makedirs(project_dir / sub, exist_ok=True)
 
@@ -146,6 +153,38 @@ def update_project(project_id: str, body: ProjectUpdate, db: Session = Depends(g
         flag_modified(project, "config")
 
     db.commit()
+
+    # v1.2.28: 실행 중인 딸깍 태스크에 설정 변경 즉시 전파.
+    # 사용자 요구: "설정 변경하면 실시간으로 반영해!!!"
+    # _TASKS 의 해당 project_id task 에 대해 task["models"] 를 새 config 기준으로
+    # 덮어쓰고 로그도 남긴다. 실제 스텝 함수가 다음 컷/다음 스텝에서 config 를
+    # 다시 읽도록 _run_single_step 도 v1.2.28 에서 DB 재로드로 바뀌었으니
+    # 여기선 UI 표시/로그 즉시성만 챙기면 된다.
+    if body.config is not None:
+        try:
+            from app.services.oneclick_service import refresh_tasks_for_project_update
+            refresh_tasks_for_project_update(project.id, dict(project.config or {}))
+            from app.services import oneclick_service as _oc
+            _fresh_cfg = dict(project.config or {})
+            for _t in list(_oc._TASKS.values()):
+                if _t.get("project_id") != project.id:
+                    continue
+                if _t.get("status") not in ("running", "prepared", "queued", "paused"):
+                    continue
+                _old_models = dict(_t.get("models") or {})
+                _oc._sync_task_models_from_config(_t, _fresh_cfg)
+                _new_models = _t.get("models") or {}
+                _changes = [
+                    f"{k}: {_old_models.get(k, '') or '(없음)'} → {_new_models.get(k, '') or '(없음)'}"
+                    for k in ("script", "tts", "tts_voice", "image", "video", "thumbnail")
+                    if _old_models.get(k, "") != _new_models.get(k, "")
+                ]
+                if _changes:
+                    _oc._add_log(_t, "ℹ 설정 실시간 반영: " + "; ".join(_changes))
+        except Exception:
+            # 프로젝트 업데이트 자체는 이미 커밋됐으니, 태스크 동기화 실패는 삼킨다.
+            pass
+
     return _to_dict(project)
 
 

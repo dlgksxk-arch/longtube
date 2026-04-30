@@ -35,7 +35,7 @@
     "class_type": "CLIPTextEncode",
     "inputs": {
       "clip": ["14", 0],
-      "text": "low quality, worst quality, deformed, distorted, blurry, watermark, text"
+      "text": "${NEGATIVE}"
     }
   },
   "5": {

@@ -21,7 +21,7 @@ from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
-from app.config import YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET, BASE_DIR, DATA_DIR
+from app.config import YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET, BASE_DIR, DATA_DIR, resolve_project_dir
 
 # 업로드 + 썸네일 세팅 권한
 SCOPES = [
@@ -40,7 +40,7 @@ def _project_token_path(project_id: str) -> Path:
     각 프로젝트 디렉토리 아래에 저장하면 프로젝트별로 다른 YouTube 계정을 연결할
     수 있습니다. `DATA_DIR/{project_id}/youtube_token.json` 형태.
     """
-    return Path(DATA_DIR) / project_id / "youtube_token.json"
+    return resolve_project_dir(project_id) / "youtube_token.json"
 
 
 def _channel_token_path(channel_id: int) -> Path:
@@ -57,6 +57,21 @@ VALID_PRIVACY = {"private", "unlisted", "public"}
 
 # YouTube 카테고리 ID (대표적인 것만; 22=People & Blogs 기본값)
 DEFAULT_CATEGORY_ID = "22"
+
+
+def _friendly_youtube_error(prefix: str, e: Exception) -> str:
+    msg = str(e)
+    lowered = msg.lower()
+    if (
+        "quotaexceeded" in lowered
+        or "dailylimitexceeded" in lowered
+        or "you have exceeded your quota" in lowered
+    ):
+        return (
+            f"{prefix}: YouTube API 할당량이 초과되었습니다. "
+            "잠시 후 다시 시도하거나 Google Cloud Console에서 YouTube Data API 할당량을 확인해주세요."
+        )
+    return f"{prefix}: {e}"
 
 
 class YouTubeAuthError(RuntimeError):
@@ -399,29 +414,83 @@ class YouTubeUploader:
             {"items": [...], "next_page_token": str|None, "total_results": int}
         """
         self._ensure()
+        requested_max = max(1, min(int(max_results or 50), 50))
+        search_query = (query or "").strip()
+
         try:
-            req_params: dict = {
-                "part": "snippet",
-                "forMine": True,
-                "type": "video",
-                "maxResults": max(1, min(int(max_results or 50), 50)),
-                "order": "date",
-            }
-            if page_token:
-                req_params["pageToken"] = page_token
-            if query and query.strip():
-                req_params["q"] = query.strip()
-            resp = self.youtube.search().list(**req_params).execute()
+            if search_query:
+                req_params: dict = {
+                    "part": "snippet",
+                    "forMine": True,
+                    "type": "video",
+                    "maxResults": requested_max,
+                    "order": "date",
+                    "q": search_query,
+                }
+                if page_token:
+                    req_params["pageToken"] = page_token
+                resp = self.youtube.search().list(**req_params).execute()
+                raw_items = resp.get("items") or []
+                next_page_token = resp.get("nextPageToken")
+                prev_page_token = resp.get("prevPageToken")
+                total_results = (resp.get("pageInfo") or {}).get("totalResults")
+            else:
+                ch_resp = self.youtube.channels().list(
+                    part="contentDetails",
+                    mine=True,
+                ).execute()
+                ch_items = ch_resp.get("items") or []
+                if not ch_items:
+                    return {
+                        "items": [],
+                        "next_page_token": None,
+                        "prev_page_token": None,
+                        "total_results": 0,
+                    }
+                uploads_playlist_id = (
+                    ((ch_items[0].get("contentDetails") or {}).get("relatedPlaylists") or {}).get("uploads")
+                    or ""
+                ).strip()
+                if not uploads_playlist_id:
+                    return {
+                        "items": [],
+                        "next_page_token": None,
+                        "prev_page_token": None,
+                        "total_results": 0,
+                    }
+
+                req: dict = {
+                    "part": "snippet,contentDetails",
+                    "playlistId": uploads_playlist_id,
+                    "maxResults": requested_max,
+                }
+                if page_token:
+                    req["pageToken"] = page_token
+                resp = self.youtube.playlistItems().list(**req).execute()
+                raw_items = resp.get("items") or []
+                next_page_token = resp.get("nextPageToken")
+                prev_page_token = resp.get("prevPageToken")
+                total_results = (resp.get("pageInfo") or {}).get("totalResults")
         except Exception as e:
-            raise YouTubeUploadError(f"영상 목록 조회 실패: {e}") from e
+            raise YouTubeUploadError(_friendly_youtube_error("영상 목록 조회 실패", e)) from e
 
         items = []
         video_ids: list[str] = []
-        for it in resp.get("items") or []:
-            vid = ((it.get("id") or {}).get("videoId") or "").strip()
+        for it in raw_items:
+            raw_id = it.get("id")
+            id_block = raw_id if isinstance(raw_id, dict) else {}
+            content_details = it.get("contentDetails") or {}
+            snippet = it.get("snippet") or {}
+            resource_id = snippet.get("resourceId") or {}
+            vid = (
+                (id_block.get("videoId"))
+                or (content_details.get("videoId"))
+                or (resource_id.get("videoId"))
+                or ""
+            ).strip()
             if not vid:
                 continue
-            sn = it.get("snippet") or {}
+            sn = snippet
             thumbs = sn.get("thumbnails") or {}
             thumb = None
             for key in ("medium", "high", "default"):
@@ -468,9 +537,9 @@ class YouTubeUploader:
 
         return {
             "items": items,
-            "next_page_token": resp.get("nextPageToken"),
-            "prev_page_token": resp.get("prevPageToken"),
-            "total_results": (resp.get("pageInfo") or {}).get("totalResults"),
+            "next_page_token": next_page_token,
+            "prev_page_token": prev_page_token,
+            "total_results": total_results,
         }
 
     def get_video(self, video_id: str) -> dict:

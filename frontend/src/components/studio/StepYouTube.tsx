@@ -36,6 +36,29 @@ interface Props {
   onUpdate: () => void;
 }
 
+function formatThumbnailEpisodeLabel(value: string): string {
+  const digits = (value || "").replace(/\D/g, "");
+  if (!digits) return "";
+  return `EP.${digits.padStart(2, "0")}`;
+}
+
+function sanitizeThumbnailHook(value: string): string {
+  return (value || "")
+    .replace(/\bEP\.?\s*0*\d{1,3}\b/gi, "")
+    .replace(/\s*[\[\(【][^\]\)】]{1,30}[\]\)】]\s*$/, "")
+    .replace(/\s{2,}/g, " ")
+    .trim()
+    .replace(/^[·\-:\s]+|[·\-:\s]+$/g, "")
+    .trim();
+}
+
+function getYouTubeChannelId(project: Project): number | null {
+  const raw = (project.config as any)?.youtube_channel ?? (project.config as any)?.channel;
+  const channelId =
+    typeof raw === "number" ? raw : typeof raw === "string" ? Number.parseInt(raw, 10) : NaN;
+  return Number.isFinite(channelId) && channelId >= 1 && channelId <= 4 ? channelId : null;
+}
+
 const PRIVACY_OPTIONS: { value: YouTubePrivacy; label: string; description: string }[] = [
   {
     value: "private",
@@ -55,6 +78,7 @@ const PRIVACY_OPTIONS: { value: YouTubePrivacy; label: string; description: stri
 ];
 
 export default function StepYouTube({ project, cuts, onUpdate }: Props) {
+  const youtubeChannelId = getYouTubeChannelId(project);
   const [authChecking, setAuthChecking] = useState(true);
   const [authenticated, setAuthenticated] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
@@ -125,7 +149,9 @@ export default function StepYouTube({ project, cuts, onUpdate }: Props) {
     setAuthChecking(true);
     (async () => {
       try {
-        const s = await youtubeApi.projectAuthStatus(project.id);
+        const s = youtubeChannelId
+          ? await youtubeApi.channelAuthStatus(youtubeChannelId)
+          : await youtubeApi.projectAuthStatus(project.id);
         if (!cancelled) setAuthenticated(s.authenticated);
       } catch (e: any) {
         if (!cancelled) setAuthError(e?.message || "인증 상태 확인 실패");
@@ -136,7 +162,7 @@ export default function StepYouTube({ project, cuts, onUpdate }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [project.id]);
+  }, [project.id, youtubeChannelId]);
 
   // 썸네일 메인 후크 텍스트 자동 기본값 — titleHook 이 있을 때만 세팅.
   // title 은 절대 fallback 으로 쓰지 않는다 (project.title 이 채널명으로 잘못
@@ -144,7 +170,7 @@ export default function StepYouTube({ project, cuts, onUpdate }: Props) {
   // 'AI 전체 추천' 을 눌러야 한다.
   useEffect(() => {
     if (thumbMainHookTouched) return;
-    const fromHook = titleHook.trim();
+    const fromHook = sanitizeThumbnailHook(titleHook.trim());
     if (fromHook) setThumbMainHook(fromHook);
   }, [titleHook, thumbMainHookTouched]);
 
@@ -152,10 +178,10 @@ export default function StepYouTube({ project, cuts, onUpdate }: Props) {
   useEffect(() => {
     const n = episodeNumber.trim();
     if (!n) return;
-    const defaultLabel = `EP. ${n}`;
+    const defaultLabel = formatThumbnailEpisodeLabel(n);
     setThumbEpisodeLabel((prev) => {
-      // 기존 값이 비어있거나 "EP. " 자동값 패턴이면 갱신
-      if (!prev || /^EP\.\s*\d+$/.test(prev)) return defaultLabel;
+      // 기존 값이 비어있거나 자동값 패턴이면 갱신
+      if (!prev || /^EP\.?\s*\d+$/i.test(prev)) return defaultLabel;
       return prev;
     });
   }, [episodeNumber]);
@@ -278,7 +304,7 @@ export default function StepYouTube({ project, cuts, onUpdate }: Props) {
       // 썸네일 메인 후크 텍스트는 전용 입력 필드에서 그대로 가져온다.
       // 비어 있으면 아예 생성을 막는다 — 과거에 project.title(= 채널명)이
       // 실수로 썸네일에 박히던 버그 방지.
-      const mainHook = thumbMainHook.trim();
+      const mainHook = sanitizeThumbnailHook(thumbMainHook.trim());
       if (!mainHook) {
         setThumbError("썸네일 메인 후크 텍스트가 비어있습니다. 'AI 전체 추천' 을 누르거나 직접 입력하세요.");
         setThumbGenerating(false);
@@ -287,7 +313,7 @@ export default function StepYouTube({ project, cuts, onUpdate }: Props) {
       const res = await youtubeApi.generateThumbnail(project.id, {
         title: mainHook,
         subtitle: thumbSubtitle.trim() || undefined,
-        episode_label: thumbEpisodeLabel.trim() || undefined,
+        episode_label: formatThumbnailEpisodeLabel(thumbEpisodeLabel.trim()) || undefined,
         image_model: thumbModel || undefined,
         prompt: thumbCustomPrompt.trim() || undefined,
       });
@@ -660,7 +686,7 @@ export default function StepYouTube({ project, cuts, onUpdate }: Props) {
               type="text"
               value={thumbEpisodeLabel}
               onChange={(e) => setThumbEpisodeLabel(e.target.value)}
-              placeholder="EP. 1"
+              placeholder="EP.01"
               className="w-full px-3 py-2 bg-bg-primary border border-border rounded text-sm"
             />
           </div>

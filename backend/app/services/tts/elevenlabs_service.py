@@ -2,10 +2,12 @@
 v1.1.52: 재시도 로직 추가.
 """
 import asyncio
+import os
 import subprocess
 from typing import Optional
 import httpx
 from app.services.tts.base import BaseTTSService, _resolve_bins
+from app.services.cancel_ctx import raise_if_cancelled  # v1.2.25 cancel 방어
 from app import config
 from app.config import TTS_MAX_DURATION, TTS_MIN_DURATION  # 상수는 고정이라 직접 import OK
 
@@ -38,6 +40,8 @@ class ElevenLabsService(BaseTTSService):
         vs["speed"] = max(0.7, min(1.2, sp))
         MAX_RETRIES = 3
         for attempt in range(1, MAX_RETRIES + 1):
+            # v1.2.25: 재시도 루프 안에서 cancel 체크.
+            raise_if_cancelled("elevenlabs-tts")
             try:
                 async with httpx.AsyncClient(timeout=120) as client:
                     resp = await client.post(
@@ -69,18 +73,20 @@ class ElevenLabsService(BaseTTSService):
 
         duration = self._get_duration(output_path)
 
-        # v1.1.49: 음성이 TTS_MAX_DURATION(4.5초)을 초과하면 자동 보정
-        max_dur = TTS_MAX_DURATION  # 4.5
-        if duration > max_dur:
-            duration = self.enforce_max_duration(output_path, duration, max_dur)
-
-        # v1.1.53: 음성이 TTS_MIN_DURATION(4.0초) 미만이면 감속으로 늘림
-        min_dur = TTS_MIN_DURATION  # 4.0
-        if duration < min_dur:
-            duration = self.enforce_min_duration(output_path, duration, min_dur)
+        # Do not tempo-shift or cut narration. Timing must be solved by text length.
+        if os.path.basename(output_path) != "voice_preview.mp3":
+            try:
+                duration = self.validate_duration_window(
+                    output_path, duration, TTS_MIN_DURATION, TTS_MAX_DURATION
+                )
+            except ValueError:
+                try:
+                    os.remove(output_path)
+                except OSError:
+                    pass
+                raise
 
         # Return relative path for DB storage (audio/cut_X.wav)
-        import os
         rel_path = output_path
         # If it's an absolute path, extract relative from project dir
         if os.path.isabs(output_path):
@@ -130,7 +136,7 @@ class ElevenLabsService(BaseTTSService):
             _, ffprobe_bin = _resolve_bins()
             result = subprocess.run(
                 [ffprobe_bin, "-v", "quiet", "-show_entries", "format=duration", "-of", "csv=p=0", path],
-                capture_output=True, text=True, timeout=10,
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
             )
             if result.stdout.strip():
                 return float(result.stdout.strip())

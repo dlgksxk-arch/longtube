@@ -7,6 +7,7 @@ import base64
 from pathlib import Path
 from typing import Optional
 from app.services.image.base import BaseImageService
+from app.services.cancel_ctx import raise_if_cancelled  # v1.2.25 cancel 방어
 from app import config
 
 
@@ -80,6 +81,8 @@ class OpenAIImageService(BaseImageService):
 
         MAX_RETRIES = 3
         for attempt in range(1, MAX_RETRIES + 1):
+            # v1.2.25: 재시도 루프 진입 시마다 cancel 체크.
+            raise_if_cancelled(f"openai-generate:{openai_model}")
             try:
                 async with httpx.AsyncClient(timeout=120) as client:
                     resp = await client.post(
@@ -143,6 +146,8 @@ class OpenAIImageService(BaseImageService):
         last_err = None
 
         for attempt in range(1, MAX_RETRIES + 1):
+            # v1.2.25: /edits 재시도 루프에서도 cancel 체크.
+            raise_if_cancelled("openai-edits")
             opened_files = []
             files = []
             try:
@@ -191,7 +196,7 @@ class OpenAIImageService(BaseImageService):
                     if attempt < MAX_RETRIES:
                         await asyncio.sleep(attempt * 3)
                         continue
-                    break  # 모든 재시도 실패 → 폴백
+                    break  # 모든 재시도 실패 → 명시적 RuntimeError
 
                 data = resp.json()
                 self._save_result(data["data"][0], output_path)
@@ -208,9 +213,15 @@ class OpenAIImageService(BaseImageService):
                 for f in opened_files:
                     f.close()
 
-        # v1.1.54: /edits 엔드포인트 전부 실패 → 레퍼런스 없이 표준 생성 폴백
-        print(f"[Image] /edits {MAX_RETRIES}회 실패, 표준 생성으로 폴백: {last_err}")
-        return await self._generate_standard(prompt, size, output_path, "gpt-image-1")
+        # v1.2.20: 폴백 제거. 표준 생성으로 갈아엎지 않고 명시적 RuntimeError.
+        # 사용자 요구: "API 이용할 때 설정된 모델의 API 연결 안되있을때 알림창
+        # 띄우고 풀백으로 처리하지마." — 레퍼런스가 무시된 채 다른 결과를 내는
+        # 것을 막는다. task.error 로 전파되어 UI 알림으로 노출.
+        raise RuntimeError(
+            f"[OpenAI Image] /edits 엔드포인트 {MAX_RETRIES}회 모두 실패 — "
+            f"폴백 비활성화. 원인: {last_err}. OPENAI_API_KEY/잔액/네트워크를 "
+            f"확인하세요."
+        )
 
     def _save_result(self, result: dict, output_path: str):
         """Save image result (b64_json or url) to file."""
@@ -229,15 +240,4 @@ class OpenAIImageService(BaseImageService):
 
     def _resolve_size(self, width: int, height: int, model: str) -> str:
         """OpenAI는 정해진 사이즈만 지원"""
-        if model == "gpt-image-1":
-            if width > height:
-                return "1536x1024"
-            elif height > width:
-                return "1024x1536"
-            return "1024x1024"
-        else:
-            if width > height:
-                return "1792x1024"
-            elif height > width:
-                return "1024x1792"
-            return "1024x1024"
+   

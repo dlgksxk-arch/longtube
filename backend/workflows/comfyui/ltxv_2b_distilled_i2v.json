@@ -33,7 +33,7 @@
     "class_type": "CLIPTextEncode",
     "inputs": {
       "clip": ["14", 0],
-      "text": "low quality, worst quality, deformed, distorted, disfigured, mutated, extra limbs, extra eyes, misplaced eyes, morphing face, blurry, watermark, text"
+      "text": "${NEGATIVE}"
     }
   },
   "5": {

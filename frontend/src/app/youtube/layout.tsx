@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft,
   LayoutDashboard,
@@ -14,14 +14,14 @@ import {
   RefreshCw,
   LogIn,
 } from "lucide-react";
-import { youtubeApi, youtubeStudioApi, type StudioAuthStatus } from "@/lib/api";
+import {
+  projectsApi,
+  youtubeApi,
+  youtubeStudioApi,
+  type Project,
+  type StudioAuthStatus,
+} from "@/lib/api";
 import { APP_VERSION } from "@/lib/version";
-
-// v1.1.31: YouTube Studio 전역 레이아웃.
-// - 좌측 사이드 네비 + 상단 채널 상태 바.
-// - 로그인 상태 체크는 /api/youtube-studio/auth/status 한 번만 쏘고
-//   자식 페이지에서도 재사용할 수 있도록 여기서만 관리. (children 은 별도로
-//   자기 상태 호출)
 
 const NAV = [
   { href: "/youtube", label: "대시보드", icon: LayoutDashboard },
@@ -31,18 +31,61 @@ const NAV = [
   { href: "/youtube/comments", label: "댓글", icon: MessageSquare },
 ];
 
+function makeStudioHref(pathname: string, projectId?: string | null): string {
+  const pid = (projectId || "").trim();
+  return pid ? `${pathname}?project=${encodeURIComponent(pid)}` : pathname;
+}
+
+function getPresetChannelId(preset?: Project | null): number | undefined {
+  const raw = preset?.config?.youtube_channel ?? preset?.config?.channel;
+  const channelId =
+    typeof raw === "number" ? raw : typeof raw === "string" ? Number.parseInt(raw, 10) : NaN;
+  return Number.isFinite(channelId) && channelId >= 1 && channelId <= 4 ? channelId : undefined;
+}
+
 export default function YouTubeStudioLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const [auth, setAuth] = useState<StudioAuthStatus | null>(null);
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const requestedProjectId = (searchParams.get("project") || "").trim();
+
+  const [presets, setPresets] = useState<Project[]>([]);
+  const [authMap, setAuthMap] = useState<Record<string, StudioAuthStatus>>({});
   const [loading, setLoading] = useState(false);
+
+  const selectedPreset = useMemo(
+    () => presets.find((preset) => preset.id === requestedProjectId) || presets[0] || null,
+    [presets, requestedProjectId],
+  );
+  const selectedProjectId = selectedPreset?.id || null;
+  const selectedAuth = selectedProjectId ? authMap[selectedProjectId] : null;
+
+  const navLinks = useMemo(
+    () =>
+      NAV.map((item) => ({
+        ...item,
+        href: makeStudioHref(item.href, selectedProjectId),
+      })),
+    [selectedProjectId],
+  );
 
   const load = async () => {
     setLoading(true);
     try {
-      const data = await youtubeStudioApi.authStatus();
-      setAuth(data);
-    } catch {
-      setAuth({ authenticated: false });
+      const presetRows = await projectsApi.list();
+      setPresets(presetRows);
+
+      const results = await Promise.all(
+        presetRows.map(async (preset) => {
+          try {
+            const data = await youtubeStudioApi.authStatus(preset.id, getPresetChannelId(preset));
+            return [preset.id, data] as const;
+          } catch {
+            return [preset.id, { authenticated: false, project_id: preset.id }] as const;
+          }
+        }),
+      );
+      setAuthMap(Object.fromEntries(results));
     } finally {
       setLoading(false);
     }
@@ -52,14 +95,25 @@ export default function YouTubeStudioLayout({ children }: { children: React.Reac
     load();
   }, []);
 
+  useEffect(() => {
+    if (!presets.length) return;
+    if (!requestedProjectId || !presets.some((preset) => preset.id === requestedProjectId)) {
+      router.replace(makeStudioHref(pathname, presets[0].id));
+    }
+  }, [pathname, presets, requestedProjectId, router]);
+
   const startOAuth = async () => {
-    // 전역 OAuth 플로우는 기존 /api/youtube/auth 를 그대로 재사용.
-    // v2.0.74: 하드코딩된 http://localhost:8000 제거 — BASE_URL 을 타도록 youtubeApi.authenticate() 사용.
+    if (!selectedProjectId) return;
     setLoading(true);
     try {
-      await youtubeApi.authenticate();
+      const channelId = getPresetChannelId(selectedPreset);
+      if (channelId) {
+        await youtubeApi.channelAuthenticate(channelId);
+      } else {
+        await youtubeApi.projectAuthenticate(selectedProjectId);
+      }
     } catch (e) {
-      alert(`OAuth 오류: ${(e as Error).message}`);
+      alert(`YouTube 연결 실패: ${(e as Error).message}`);
     }
     await load();
   };
@@ -67,8 +121,7 @@ export default function YouTubeStudioLayout({ children }: { children: React.Reac
   return (
     <div className="min-h-screen bg-bg-primary text-white">
       <div className="flex">
-        {/* Sidebar */}
-        <aside className="w-56 min-h-screen border-r border-border bg-bg-secondary flex flex-col">
+        <aside className="w-72 min-h-screen border-r border-border bg-bg-secondary flex flex-col">
           <div className="p-4 border-b border-border">
             <Link href="/" className="flex items-center gap-2 text-gray-300 hover:text-white text-sm">
               <ArrowLeft size={14} /> LongTube
@@ -82,13 +135,13 @@ export default function YouTubeStudioLayout({ children }: { children: React.Reac
             </div>
           </div>
 
-          <nav className="flex-1 p-2">
-            {NAV.map((item) => {
+          <nav className="p-2 border-b border-border">
+            {navLinks.map((item) => {
               const Icon = item.icon;
               const active =
-                item.href === "/youtube"
+                item.href.startsWith("/youtube?")
                   ? pathname === "/youtube"
-                  : pathname.startsWith(item.href);
+                  : pathname.startsWith(item.href.split("?")[0]);
               return (
                 <Link
                   key={item.href}
@@ -106,39 +159,97 @@ export default function YouTubeStudioLayout({ children }: { children: React.Reac
             })}
           </nav>
 
-          <div className="p-3 border-t border-border text-xs">
-            {auth?.authenticated ? (
-              <div>
-                <div className="text-gray-400 mb-1">연결된 채널</div>
-                <div className="font-semibold text-gray-200 truncate" title={auth.channel_title || ""}>
-                  {auth.channel_title || "(이름 없음)"}
-                </div>
-                <button
-                  onClick={load}
-                  className="mt-2 text-[11px] text-gray-500 hover:text-gray-300 flex items-center gap-1"
-                >
-                  <RefreshCw size={10} className={loading ? "animate-spin" : ""} /> 새로고침
-                </button>
-              </div>
-            ) : (
+          <div className="mx-3 mt-3 rounded-lg border border-border bg-bg-primary/30 p-3 flex-1 min-h-0 flex flex-col">
+            <div className="mb-3 flex items-center justify-between">
+              <div className="text-xs font-semibold text-gray-300">프리셋 관리</div>
               <button
-                onClick={startOAuth}
-                disabled={loading}
-                className="w-full bg-accent-primary hover:bg-purple-600 text-white rounded px-3 py-2 flex items-center justify-center gap-2 text-sm disabled:opacity-50"
+                onClick={load}
+                className="text-[11px] text-gray-500 hover:text-gray-300 flex items-center gap-1"
               >
-                <LogIn size={14} />
-                {loading ? "인증 중..." : "YouTube 로그인"}
+                <RefreshCw size={10} className={loading ? "animate-spin" : ""} /> 새로고침
               </button>
+            </div>
+
+            <div className="space-y-2 overflow-y-auto pr-1">
+              {presets.map((preset) => {
+                const auth = authMap[preset.id];
+                const selected = preset.id === selectedProjectId;
+                return (
+                  <Link
+                    key={preset.id}
+                    href={makeStudioHref("/youtube", preset.id)}
+                    className={`block rounded-lg border px-3 py-3 transition-colors ${
+                      selected
+                        ? "border-accent-primary bg-accent-primary/15"
+                        : "border-border bg-bg-secondary hover:border-accent-primary/40"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-sm font-semibold truncate" title={preset.title}>
+                          {preset.title}
+                        </div>
+                        <div className="mt-1 text-[11px] text-gray-500 font-mono">{preset.id}</div>
+                      </div>
+                      <span
+                        className={`text-[11px] flex-shrink-0 ${
+                          auth?.authenticated ? "text-green-400" : "text-gray-500"
+                        }`}
+                      >
+                        {auth?.authenticated ? "연결" : "미연결"}
+                      </span>
+                    </div>
+                    <div className="mt-2 truncate text-[11px] text-gray-400" title={auth?.channel_title || ""}>
+                      {auth?.channel_title ||
+                        (getPresetChannelId(preset)
+                          ? `CH${getPresetChannelId(preset)} YouTube 미연결`
+                          : "YouTube 미연결")}
+                    </div>
+                  </Link>
+                );
+              })}
+
+              {presets.length === 0 && (
+                <div className="rounded-lg border border-border bg-bg-secondary px-3 py-4 text-sm text-gray-500">
+                  프리셋이 없습니다.
+                </div>
+              )}
+            </div>
+
+            {selectedPreset && (
+              <div className="mt-3 rounded-lg border border-border bg-bg-secondary p-3">
+                <div className="text-xs text-gray-400 mb-1">현재 관리 프리셋</div>
+                <div className="text-sm font-semibold truncate" title={selectedPreset.title}>
+                  {selectedPreset.title}
+                </div>
+                <div className="mt-1 text-[11px] text-gray-500 font-mono">{selectedPreset.id}</div>
+                {selectedAuth?.authenticated ? (
+                  <div className="mt-2 text-[11px] text-green-400 truncate" title={selectedAuth.channel_title || ""}>
+                    연결 채널: {selectedAuth.channel_title || "연결됨"}
+                  </div>
+                ) : (
+                  <button
+                    onClick={startOAuth}
+                    disabled={loading}
+                    className="mt-3 w-full bg-accent-primary hover:bg-purple-600 text-white rounded px-3 py-2 flex items-center justify-center gap-2 text-sm disabled:opacity-50"
+                  >
+                    <LogIn size={14} />
+                    {loading
+                      ? "연결 중..."
+                      : getPresetChannelId(selectedPreset)
+                        ? `CH${getPresetChannelId(selectedPreset)} 연결`
+                        : "이 프리셋 연결"}
+                  </button>
+                )}
+              </div>
             )}
           </div>
         </aside>
 
-        {/* Content */}
         <main className="flex-1 min-w-0">
-          {auth && !auth.authenticated && (
+          {selectedPreset && selectedAuth && !selectedAuth.authenticated && (
             <div className="bg-amber-400/10 border-b border-amber-400/30 text-amber-300 text-sm px-6 py-3">
-              YouTube 인증이 필요합니다. 좌측 사이드바에서 로그인해주세요. 먼저 로그인해야 이 페이지의
-              데이터가 로드됩니다.
+              현재 프리셋에 연결된 YouTube OAuth 가 없습니다. 좌측에서 해당 프리셋을 연결한 뒤 사용하십시오.
             </div>
           )}
           {children}

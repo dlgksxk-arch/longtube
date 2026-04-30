@@ -12,7 +12,7 @@ import {
   modelsApi,
   projectsApi,
   voiceApi,
-  ASSET_BASE,
+  assetUrl,
   type AssetRef,
   type InterludeEntry,
   type InterludeKind,
@@ -53,6 +53,13 @@ function _fmtDuration(sec?: number): string {
   const m = Math.floor(sec / 60);
   const s = Math.round(sec % 60);
   return `${m}분 ${s}초`;
+}
+
+function getYouTubeChannelId(config: ProjectConfig): number | null {
+  const raw = (config as any).youtube_channel ?? (config as any).channel;
+  const channelId =
+    typeof raw === "number" ? raw : typeof raw === "string" ? Number.parseInt(raw, 10) : NaN;
+  return Number.isFinite(channelId) && channelId >= 1 && channelId <= 4 ? channelId : null;
 }
 
 export default function StepSettings({ project, onUpdate, onNextStep, onDirtyChange }: Props) {
@@ -176,6 +183,7 @@ export default function StepSettings({ project, onUpdate, onNextStep, onDirtyCha
     }
   };
 
+
   // v1.1.55: 변경 추적 — 저장 전 이탈 시 경고 + 필수값 검증
   const [isDirty, setIsDirty] = useState(false);
   const markDirty = () => { if (!isDirty) { setIsDirty(true); onDirtyChange?.(true); } };
@@ -227,7 +235,7 @@ export default function StepSettings({ project, onUpdate, onNextStep, onDirtyCha
       if (result?.path) {
         setTtsPreviewPlaying(true);
         const audio = new Audio(
-          `${ASSET_BASE}/assets/${project.id}/${result.path}?t=${Date.now()}`,
+          `${assetUrl(project.id, result.path)}?t=${Date.now()}`,
         );
         audio.onended = () => setTtsPreviewPlaying(false);
         audio.onerror = () => setTtsPreviewPlaying(false);
@@ -373,23 +381,86 @@ export default function StepSettings({ project, onUpdate, onNextStep, onDirtyCha
           {/* 주제는 선택 사항 */}
         </div>
         {/* v1.1.73: 대본 생성 시 LLM 에 "최우선 제약" 으로 주입되는 규칙. 주제 필드에
-            뭉쳐 넣으면 모델이 설명으로 해석하고 무시할 위험이 있어 전용 필드로 분리. */}
-        <div>
-          <label className="block text-xs text-gray-400 mb-1">
-            금칙사항 / 필수사항{" "}
-            <span className="text-[10px] text-gray-500">(대본 생성 시 최우선 규칙으로 주입)</span>
-          </label>
-          <textarea
-            value={config.content_constraints || ""}
-            onChange={(e) => updateConfig("content_constraints", e.target.value)}
-            placeholder={"예:\n환단고기 등 위서 인용 금지\n사료 부족 시 '설이 있다' 로 열어둘 것\n청동기 부족국가 연합의 기억이라는 관점 유지"}
-            rows={4}
-            className="w-full bg-bg-primary border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-accent-primary placeholder:text-gray-600 resize-y"
-          />
-          <p className="text-[10px] text-gray-500 mt-1">
-            한 줄에 하나씩 또는 &quot; / &quot; 로 구분. 비워 두면 기존 동작 그대로입니다.
-          </p>
+            뭉쳐 넣으면 모델이 설명으로 해석하고 무시할 위험이 있어 전용 필드로 분리.
+            v1.1.75: 필수사항 / 금칙사항 을 서로 다른 textarea 로 분리. LLM 프롬프트에도
+            각각 [필수] / [금지] 서브블록으로 주입 (UI 와 같은 순서). 구 content_constraints
+            는 읽기만 유지 — 두 필드가 비어 있는 기존 프로젝트에서만 legacy 로 사용. */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">
+              필수 사항{" "}
+              <span className="text-[10px] text-gray-500">(대본에서 반드시 지킬 것)</span>
+            </label>
+            <textarea
+              value={config.content_required || ""}
+              onChange={(e) => updateConfig("content_required", e.target.value)}
+              placeholder={"예:\n사료 부족 시 '설이 있다' 로 열어둘 것\n청동기 부족국가 연합의 기억이라는 관점 유지\n도입부에 주제 한 문장 요약 넣기"}
+              rows={4}
+              className="w-full bg-bg-primary border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-accent-primary placeholder:text-gray-600 resize-y"
+            />
+            <p className="text-[10px] text-gray-500 mt-1">
+              한 줄에 하나씩. 비워 두면 필수 규칙 없이 생성됩니다.
+            </p>
+          </div>
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">
+              금칙 사항{" "}
+              <span className="text-[10px] text-gray-500">(대본에 절대 포함하지 말 것)</span>
+            </label>
+            <textarea
+              value={config.content_forbidden || ""}
+              onChange={(e) => updateConfig("content_forbidden", e.target.value)}
+              placeholder={"예:\n환단고기 등 위서 인용 금지\n근거 없는 단정 표현 금지\n경쟁 채널 이름 언급 금지"}
+              rows={4}
+              className="w-full bg-bg-primary border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-accent-primary placeholder:text-gray-600 resize-y"
+            />
+            <p className="text-[10px] text-gray-500 mt-1">
+              한 줄에 하나씩. 비워 두면 금지 규칙 없이 생성됩니다.
+            </p>
+          </div>
         </div>
+        {/* v1.1.75: 구 프로젝트에 content_constraints 가 남아 있고, 아직 분리 필드가
+            비어 있다면 사용자에게 한 번 알려서 옮기도록 안내. */}
+        {(() => {
+          const legacy = (config.content_constraints || "").trim();
+          const hasNew =
+            (config.content_forbidden || "").trim() ||
+            (config.content_required || "").trim();
+          if (!legacy || hasNew) return null;
+          return (
+            <div className="text-[11px] text-amber-400 bg-amber-400/10 border border-amber-400/30 rounded-lg px-3 py-2">
+              <div className="font-medium mb-1">
+                기존 "금칙사항 / 필수사항" 통합 입력이 남아 있습니다.
+              </div>
+              <div className="text-gray-400 mb-2 whitespace-pre-wrap">{legacy}</div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    updateConfig("content_required", legacy);
+                    updateConfig("content_constraints", "");
+                  }}
+                  className="px-2 py-1 rounded bg-bg-primary border border-border hover:border-accent-primary/60 text-gray-200"
+                >
+                  필수 사항으로 옮기기
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    updateConfig("content_forbidden", legacy);
+                    updateConfig("content_constraints", "");
+                  }}
+                  className="px-2 py-1 rounded bg-bg-primary border border-border hover:border-accent-primary/60 text-gray-200"
+                >
+                  금칙 사항으로 옮기기
+                </button>
+              </div>
+              <div className="text-[10px] text-gray-500 mt-2">
+                옮기기 전까지는 기존 값이 LLM 에 "legacy 규칙" 으로 주입됩니다.
+              </div>
+            </div>
+          );
+        })()}
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="block text-xs text-gray-400 mb-1">
@@ -532,7 +603,8 @@ export default function StepSettings({ project, onUpdate, onNextStep, onDirtyCha
                 const sel = config.video_target_selection || "all";
                 if (sel === "all") return expectedCuts;
                 let step = 0;
-                if (sel === "every_3" || sel === "character_only") step = 3;
+                if (sel === "every_3") step = 3;
+                else if (sel === "character_only") step = 5;
                 else if (sel === "every_4") step = 4;
                 else if (sel === "every_5") step = 5;
                 else return expectedCuts;
@@ -551,7 +623,7 @@ export default function StepSettings({ project, onUpdate, onNextStep, onDirtyCha
               { value: "every_3",        label: "3컷당 1장",   hint: "1,4,7... 컷만 AI, 나머지는 Ken Burns" },
               { value: "every_4",        label: "4컷당 1장",   hint: "1,5,9... 컷만 AI" },
               { value: "every_5",        label: "5컷당 1장",   hint: "1,6,11... 컷만 AI" },
-              { value: "character_only", label: "캐릭터만",    hint: "캐릭터 등장 컷(3컷당) 만 AI" },
+              { value: "character_only", label: "캐릭터만",    hint: "기존 캐릭터 슬롯 기준 컷만 AI (1,6,11...)" },
             ].map((opt) => {
               const selected = (config.video_target_selection || "all") === opt.value;
               return (
@@ -1096,7 +1168,7 @@ export default function StepSettings({ project, onUpdate, onNextStep, onDirtyCha
       </div>
 
       {/* YouTube 계정 인증 */}
-      <YouTubeAuthPanel projectId={project.id} />
+      <YouTubeAuthPanel projectId={project.id} channelId={getYouTubeChannelId(config)} />
 
       {/* 파이프라인 옵션 */}
       <div className="bg-bg-secondary border border-border rounded-lg p-5 space-y-4">
@@ -1126,7 +1198,10 @@ export default function StepSettings({ project, onUpdate, onNextStep, onDirtyCha
       </div>
 
       {/* v1.1.55: 미저장 경고 + 필수값 안내 + 저장 버튼 */}
-      <div className="space-y-2">
+      {/* v1.2.21: save()/saveAndNext() 함수는 정의돼 있었으나 실제 버튼이
+          렌더되지 않아 사용자가 변경사항을 영속화할 방법이 없었다. 하단에
+          sticky 저장 바를 추가한다. */}
+      <div className="sticky bottom-0 -mx-4 px-4 py-3 bg-bg-primary/95 backdrop-blur border-t border-border space-y-2 z-10">
         {isDirty && (
           <div className="flex items-center gap-2 text-xs text-amber-400 bg-amber-400/10 border border-amber-400/30 rounded-lg px-3 py-2">
             <span>변경사항이 저장되지 않았습니다.</span>
@@ -1137,26 +1212,34 @@ export default function StepSettings({ project, onUpdate, onNextStep, onDirtyCha
             <span>필수 항목을 입력해 주세요: {missingFields.join(", ")}</span>
           </div>
         )}
-        <div className="flex justify-end gap-3">
-          <LoadingButton onClick={save} loading={saving} icon={<Save size={14} />} variant="secondary">
-            설정 저장{isDirty ? " *" : ""}
-          </LoadingButton>
-          <button
-            onClick={saveAndNext}
-            disabled={!hasRequiredFields}
-            className="bg-accent-primary hover:bg-purple-600 text-white font-semibold px-5 py-2 rounded-lg flex items-center gap-2 text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        <div className="flex items-center justify-end gap-2">
+          <LoadingButton
+            onClick={save}
+            loading={saving}
+            disabled={!isDirty || !hasRequiredFields}
+            icon={<Save size={14} />}
+            variant="primary"
           >
-            저장 후 다음 단계 <ArrowRight size={14} />
-          </button>
+            저장
+          </LoadingButton>
+          {onNextStep && (
+            <LoadingButton
+              onClick={saveAndNext}
+              loading={saving}
+              disabled={!hasRequiredFields}
+              icon={<ArrowRight size={14} />}
+              variant="secondary"
+            >
+              저장하고 다음 단계
+            </LoadingButton>
+          )}
         </div>
       </div>
-      </div>{/* 스크롤 영역 끝 */}
+    </div>
     </div>
   );
 }
 
-
-// ─── AssetSlot: 레퍼런스/캐릭터/로고 공용 업로드 위젯 ───
 interface AssetSlotProps {
   title: string;
   description: string;
@@ -1212,7 +1295,7 @@ function AssetSlot({
               {it.exists ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
-                  src={`${ASSET_BASE}/assets/${projectId}/${it.path}`}
+                  src={assetUrl(projectId, it.path)}
                   alt={it.filename}
                   className="w-full h-14 object-cover"
                 />

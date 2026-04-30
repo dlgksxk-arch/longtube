@@ -5,7 +5,7 @@ import { Image as ImageIcon, Wand2, RefreshCw, Upload, Eye, Palette, Users, Tras
 import LoadingButton from "@/components/common/LoadingButton";
 import ModelSelector from "@/components/common/ModelSelector";
 import CostEstimate from "@/components/common/CostEstimate";
-import { imageApi, modelsApi, projectsApi, scriptApi, taskApi, assetUrl, cutHasCharacter, type Project, type Cut, type ModelInfo } from "@/lib/api";
+import { imageApi, modelsApi, projectsApi, scriptApi, taskApi, assetUrl, type Project, type Cut, type ModelInfo } from "@/lib/api";
 import GenerationTimer from "@/components/common/GenerationTimer";
 
 interface Props {
@@ -31,6 +31,7 @@ export default function StepImage({ project, cuts, onUpdate }: Props) {
   // 여기서는 설정에 저장된 값을 그대로 사용하기 때문에 업로드 UI 를 제거한다.
   const referenceImages: string[] = (project.config as any).reference_images || [];
   const characterImages: string[] = (project.config as any).character_images || [];
+  const hasCharacterAnchor = characterImages.length > 0 || Boolean((project.config as any).character_description?.trim?.());
 
   // Poll task status during generation → refresh cuts when a new image completes
   useEffect(() => {
@@ -321,10 +322,10 @@ export default function StepImage({ project, cuts, onUpdate }: Props) {
                     <div className={`absolute top-2 left-2 w-6 h-6 rounded-full text-white text-xs flex items-center justify-center font-bold ${isCurrentlyGenerating ? "bg-accent-primary" : "bg-black/70"}`}>
                       {cut.cut_number}
                     </div>
-                    {cutHasCharacter(cut.cut_number) && (
+                    {hasCharacterAnchor && (
                       <div
                         className="absolute bottom-2 left-2 px-1.5 py-0.5 rounded text-[10px] bg-accent-secondary/80 text-white font-bold flex items-center gap-1"
-                        title="이 컷에는 캐릭터 이미지가 배치됩니다 (3컷당 1장 규칙)"
+                        title="이 컷에는 캐릭터 프롬프트가 적용됩니다"
                       >
                         <Users size={10} /> 캐릭터
                       </div>

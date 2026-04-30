@@ -72,6 +72,9 @@ function emptyItem(templateId?: string, targetDuration?: number | null): OneClic
     template_project_id: templateId ?? null,
     target_duration: targetDuration ?? null,
     channel: 1,
+    queued_source: "manual",
+    queued_at: new Date().toISOString(),
+    queued_note: "스튜디오 위젯에서 직접 추가",
   };
 }
 
@@ -298,6 +301,9 @@ export default function OneClickWidget() {
           template_project_id: it.template_project_id || null,
           target_duration: it.target_duration ?? null,
           channel: it.channel || 1,
+          queued_source: it.queued_source || "manual",
+          queued_at: it.queued_at || new Date().toISOString(),
+          queued_note: it.queued_note || "스튜디오 위젯에서 직접 추가",
         })),
       });
       setItems(
