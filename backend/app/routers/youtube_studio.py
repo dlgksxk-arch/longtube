@@ -41,6 +41,8 @@ from app.models.database import SessionLocal
 from app.models.project import Project
 from app.config import resolve_project_dir
 from app.services.title_utils import with_episode_prefix
+from app.services.youtube_metadata import DEFAULT_MAX_TAGS, expand_tags, format_description
+from app.services.multilingual_caption_service import upload_multilingual_captions
 from sqlalchemy.orm.attributes import flag_modified
 
 router = APIRouter()
@@ -705,37 +707,138 @@ async def upload_generated_video(
             body.title or project.title or project.topic or video_path.stem,
             cfg.get("episode_number"),
         )
+        if kind == "main" and not thumbnail_path:
+            try:
+                from app.services.thumbnail_service import ensure_standard_thumbnail
+
+                script = {}
+                script_path = project_dir / "script.json"
+                if script_path.exists():
+                    with open(script_path, "r", encoding="utf-8") as f:
+                        script = json.load(f) or {}
+                generated_thumb = await ensure_standard_thumbnail(
+                    project_id=project.id,
+                    config=cfg,
+                    script=script,
+                    title=script.get("title") or title,
+                    topic=project.topic,
+                    episode_number=cfg.get("episode_number"),
+                )
+                if generated_thumb and Path(generated_thumb).exists():
+                    thumbnail_path = generated_thumb
+            except Exception as e:
+                print(f"[youtube_studio] thumbnail generation skipped before upload: {e}")
         if kind == "shorts" and "#shorts" not in title.lower():
             title = f"{title[:85]} #Shorts"
-        description = body.description or (project.topic or "")
-        tags = list(body.tags or [])
-        if kind == "shorts" and not any(t.lower() == "shorts" for t in tags):
-            tags.append("Shorts")
+        language = (cfg.get("language") or body.default_language or "ko")
+        description = format_description(
+            body.description or cfg.get("youtube_description") or project.topic or "",
+            title=title,
+            topic=project.topic or "",
+            narration="",
+            language=language,
+            shorts=kind == "shorts",
+        )
+        tags = expand_tags(
+            body.tags or [],
+            title=title,
+            topic=project.topic or "",
+            narration="",
+            language=language,
+            max_tags=DEFAULT_MAX_TAGS,
+            shorts=kind == "shorts",
+        )
 
         try:
-            upload_result = await asyncio.to_thread(
-                up.upload,
-                str(video_path),
-                title,
-                description,
-                tags,
-                thumbnail_path,
-                body.privacy_status,
-                body.default_language,
-                body.category_id,
-                bool(body.made_for_kids),
-                None,
-            )
+            existing_upload = await asyncio.to_thread(up.find_existing_upload_by_title, title)
+            if existing_upload:
+                video_id = existing_upload.get("video_id")
+                upload_result = {
+                    "status": "already_uploaded",
+                    "video_id": video_id,
+                    "url": existing_upload.get("url") or (f"https://www.youtube.com/watch?v={video_id}" if video_id else None),
+                    "title": existing_upload.get("title") or title,
+                    "already_uploaded": True,
+                }
+            else:
+                upload_result = await asyncio.to_thread(
+                    up.upload,
+                    str(video_path),
+                    title,
+                    description,
+                    tags,
+                    None,
+                    body.privacy_status,
+                    body.default_language,
+                    body.category_id,
+                    bool(body.made_for_kids),
+                    None,
+                )
+                verified = await asyncio.to_thread(
+                    up.confirm_upload_visible_in_studio,
+                    video_id=upload_result.get("video_id"),
+                    title=title,
+                )
+                upload_result = {
+                    **upload_result,
+                    "studio_verified": True,
+                    "studio_record": verified,
+                }
+                if thumbnail_path and upload_result.get("video_id"):
+                    try:
+                        thumb_result = await asyncio.to_thread(
+                            up.set_thumbnail,
+                            str(upload_result.get("video_id")),
+                            thumbnail_path,
+                        )
+                        upload_result["thumbnail_uploaded"] = True
+                        upload_result["thumbnail_result"] = thumb_result
+                    except Exception as e:
+                        upload_result["thumbnail_error"] = str(e)
+                        print(f"[youtube_studio] thumbnail upload failed (non-fatal): {e}")
         except Exception as e:
             raise _wrap_errors(e)
+
+        if not upload_result.get("already_uploaded"):
+            record_title = title
+        else:
+            record_title = upload_result.get("title") or title
+
+        caption_result = None
+        caption_error = None
+        caption_file = project_dir / "subtitles" / "subtitles.srt"
+        if (
+            kind == "main"
+            and upload_result.get("video_id")
+            and not upload_result.get("already_uploaded")
+            and caption_file.exists()
+            and bool(cfg.get("youtube_captions_enabled", False))
+        ):
+            try:
+                caption_result = await upload_multilingual_captions(
+                    up,
+                    str(upload_result.get("video_id")),
+                    str(caption_file),
+                    {**cfg, "language": language},
+                )
+                cfg["youtube_captions"] = caption_result
+                cfg["youtube_caption"] = caption_result
+                cfg.pop("youtube_caption_error", None)
+                cfg.pop("youtube_caption_errors", None)
+            except Exception as e:
+                caption_error = str(e)
+                cfg["youtube_caption_error"] = caption_error
+                cfg["youtube_caption_errors"] = {"all": caption_error}
+                print(f"[youtube_studio] caption upload failed (non-fatal): {e}")
 
         record = {
             "video_id": upload_result.get("video_id"),
             "url": upload_result.get("url"),
-            "title": title,
+            "title": record_title,
             "relative_path": rel,
             "kind": kind,
             "privacy_status": body.privacy_status,
+            "already_uploaded": bool(upload_result.get("already_uploaded")),
         }
         cfg.setdefault("generated_uploads", {})[rel] = record
         if kind == "shorts":
@@ -752,11 +855,21 @@ async def upload_generated_video(
         project.config = cfg
         flag_modified(project, "config")
         db.commit()
+        if kind != "shorts" and upload_result.get("url"):
+            try:
+                from app.services.project_archive import archive_uploaded_project
+
+                archive_result = archive_uploaded_project(project.id, project.config or {})
+                print(f"[youtube_studio] uploaded project archive: {archive_result}")
+            except Exception as e:
+                print(f"[youtube_studio] uploaded project archive skipped: {e}")
         return {
             **upload_result,
             "project_id": project.id,
             "relative_path": rel,
             "kind": kind,
+            "caption_uploaded": caption_result is not None,
+            "caption_error": caption_error,
         }
     finally:
         db.close()
@@ -827,13 +940,27 @@ async def direct_upload(
             finally:
                 db.close()
 
-        tag_list = [t.strip() for t in (tags or "").split(",") if t.strip()]
+        tag_list = expand_tags(
+            [t.strip() for t in (tags or "").split(",") if t.strip()],
+            title=upload_title,
+            topic=title,
+            narration=description or "",
+            language=default_language or "ko",
+            max_tags=DEFAULT_MAX_TAGS,
+        )
+        upload_description = format_description(
+            description or "",
+            title=upload_title,
+            topic=title,
+            narration="",
+            language=default_language or "ko",
+        )
 
         upload_result = await asyncio.to_thread(
             up.upload,
             str(video_tmp),
             upload_title,
-            description or "",
+            upload_description,
             tag_list,
             str(thumb_tmp) if thumb_tmp else None,
             privacy_status,
@@ -842,6 +969,16 @@ async def direct_upload(
             bool(made_for_kids),
             None,  # progress_callback — 직접 업로드는 polling 없이 동기 응답
         )
+        verified = await asyncio.to_thread(
+            up.confirm_upload_visible_in_studio,
+            video_id=upload_result.get("video_id"),
+            title=upload_title,
+        )
+        upload_result = {
+            **upload_result,
+            "studio_verified": True,
+            "studio_record": verified,
+        }
     except Exception as e:
         raise _wrap_errors(e)
     finally:
@@ -869,6 +1006,59 @@ async def direct_upload(
         except Exception as e:
             # 업로드는 성공했으니 fail-soft — 에러만 응답에 기록
             upload_result["publish_at_error"] = str(e)
+
+    if project_id and upload_result.get("video_id"):
+        db = SessionLocal()
+        try:
+            project = db.get(Project, project_id)
+            if project is not None:
+                cfg = dict(project.config or {})
+                caption_file = resolve_project_dir(project.id, cfg, create=False) / "subtitles" / "subtitles.srt"
+                if caption_file.exists() and bool(cfg.get("youtube_captions_enabled", False)):
+                    try:
+                        caption_result = await upload_multilingual_captions(
+                            up,
+                            str(upload_result.get("video_id")),
+                            str(caption_file),
+                            {**cfg, "language": default_language or cfg.get("language") or "ko"},
+                        )
+                        cfg["youtube_captions"] = caption_result
+                        cfg["youtube_caption"] = caption_result
+                        cfg.pop("youtube_caption_error", None)
+                        cfg.pop("youtube_caption_errors", None)
+                        project.config = cfg
+                        flag_modified(project, "config")
+                        upload_result["caption_uploaded"] = True
+                        upload_result["caption_result"] = caption_result
+                        db.commit()
+                    except Exception as e:
+                        cfg["youtube_caption_error"] = str(e)
+                        cfg["youtube_caption_errors"] = {"all": str(e)}
+                        project.config = cfg
+                        flag_modified(project, "config")
+                        upload_result["caption_uploaded"] = False
+                        upload_result["caption_error"] = str(e)
+                        db.commit()
+                        print(f"[youtube_studio] direct caption upload failed (non-fatal): {e}")
+        finally:
+            db.close()
+
+    if project_id and upload_result.get("url"):
+        db = SessionLocal()
+        try:
+            project = db.get(Project, project_id)
+            if project is not None:
+                project.youtube_url = upload_result.get("url") or project.youtube_url
+                db.commit()
+                try:
+                    from app.services.project_archive import archive_uploaded_project
+
+                    archive_result = archive_uploaded_project(project.id, project.config or {})
+                    print(f"[youtube_studio] direct uploaded project archive: {archive_result}")
+                except Exception as e:
+                    print(f"[youtube_studio] direct uploaded project archive skipped: {e}")
+        finally:
+            db.close()
 
     return upload_result
 

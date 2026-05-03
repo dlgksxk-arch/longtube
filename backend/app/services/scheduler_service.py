@@ -40,6 +40,7 @@ from app.config import DATA_DIR, resolve_project_dir
 from app.models.database import SessionLocal
 from app.models.project import Project
 from app.models.scheduled_episode import ScheduledEpisode
+from app.services.multilingual_caption_service import upload_multilingual_captions
 
 # ─── 전역 상태 ──────────────────────────────────────────────────
 # lifespan 에서 start_scheduler() 로 생성, stop_scheduler() 로 취소.
@@ -355,13 +356,31 @@ async def _run_episode(episode: ScheduledEpisode) -> None:
             final_title,
             description,
             tags,
-            thumb_path,
+            None,
             privacy,
             config.get("language", "ko"),
             None,        # category_id
             False,       # made_for_kids
             None,        # progress_callback
         )
+        verified = await asyncio.to_thread(
+            uploader.confirm_upload_visible_in_studio,
+            video_id=result.get("video_id"),
+            title=final_title,
+        )
+        result = {**result, "studio_verified": True, "studio_record": verified}
+        if thumb_path and result.get("video_id") and Path(str(thumb_path)).exists():
+            try:
+                thumb_result = await asyncio.to_thread(
+                    uploader.set_thumbnail,
+                    str(result.get("video_id")),
+                    str(thumb_path),
+                )
+                result["thumbnail_uploaded"] = True
+                result["thumbnail_result"] = thumb_result
+            except Exception as e:
+                result["thumbnail_error"] = str(e)
+                print(f"[scheduler] thumbnail upload failed (non-fatal): {e}")
     except (YouTubeAuthError, YouTubeUploadError) as e:
         tb = traceback.format_exc()
         print(f"[scheduler] ✗ 업로드 실패: {e}\n{tb}")
@@ -388,6 +407,18 @@ async def _run_episode(episode: ScheduledEpisode) -> None:
         return
 
     video_url = result.get("url") or ""
+    caption_path = resolve_project_dir(project_id) / "subtitles" / "subtitles.srt"
+    if result.get("video_id") and caption_path.exists() and bool(config.get("youtube_captions_enabled", False)):
+        try:
+            caption_result = await upload_multilingual_captions(
+                uploader,
+                str(result.get("video_id")),
+                str(caption_path),
+                config,
+            )
+            print(f"[scheduler] caption uploaded: {caption_result}")
+        except Exception as e:
+            print(f"[scheduler] caption upload failed (non-fatal): {e}")
 
     # 6) 성공
     _update_episode(
@@ -400,6 +431,13 @@ async def _run_episode(episode: ScheduledEpisode) -> None:
     )
     _update_project_youtube(project_id, video_url)
     _update_project_status(project_id, "completed")
+    try:
+        from app.services.project_archive import archive_uploaded_project
+
+        archive_result = archive_uploaded_project(project_id, config)
+        print(f"[scheduler] uploaded project archive: {archive_result}")
+    except Exception as e:
+        print(f"[scheduler] uploaded project archive skipped: {e}")
     print(
         f"[scheduler] ✔ 업로드 완료 episode={episode_id} "
         f"project={project_id} url={video_url}"
@@ -454,7 +492,7 @@ async def _generate_metadata(
             topic=topic,
             narration=narration,
             language=language,
-            max_tags=15,
+            max_tags=30,
             episode_number=episode_number,
         )
 
@@ -468,8 +506,23 @@ async def _generate_metadata(
     else:
         final_title = _fallback_title(topic, episode_number)
 
-    description = (result.get("description") or topic or "")[:5000]
-    tags = _clean_tag_list(result.get("tags") or [], 15)
+    from app.services.youtube_metadata import expand_tags, format_description
+
+    description = format_description(
+        result.get("description") or topic or "",
+        title=final_title,
+        topic=topic,
+        narration=narration,
+        language=language,
+    )
+    tags = expand_tags(
+        result.get("tags") or [],
+        title=final_title,
+        topic=topic,
+        narration=narration,
+        language=language,
+        max_tags=30,
+    )
 
     return final_title[:100], description, tags, language
 
@@ -481,14 +534,30 @@ async def _generate_thumbnail_for_episode(
     config: dict,
 ) -> str:
     """AI 썸네일(+ 텍스트 오버레이) 생성. 성공 시 파일 경로 반환."""
-    from app.services.thumbnail_service import generate_ai_thumbnail
-    from app.services.image.factory import resolve_image_model
+    from app.services.thumbnail_service import ensure_standard_thumbnail, generate_ai_thumbnail
+    from app.tasks.pipeline_tasks import load_script
+
+    try:
+        script = load_script(project_id) or {}
+    except Exception:
+        script = {}
+    if title and not script.get("title"):
+        script["title"] = title
+    return await ensure_standard_thumbnail(
+        project_id=project_id,
+        config=config,
+        script=script,
+        title=title,
+        topic=title,
+        episode_number=episode_number,
+    )
+    from app.services.image.factory import DEFAULT_THUMBNAIL_MODEL, resolve_image_model
     from app.services.llm.factory import get_llm_service
     from app.services.llm.base import BaseLLMService
     from app.models.cut import Cut
 
     image_model_id = resolve_image_model(
-        config.get("thumbnail_model") or config.get("image_model")
+        config.get("thumbnail_model") or DEFAULT_THUMBNAIL_MODEL
     )
     language = config.get("language", "ko")
 

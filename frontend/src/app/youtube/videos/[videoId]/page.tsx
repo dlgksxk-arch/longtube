@@ -309,13 +309,17 @@ export default function StudioVideoDetailPage() {
             </div>
             <div>
               <label className="block text-xs text-gray-400 mb-1">기본 언어</label>
-              <input
-                type="text"
+              <select
                 value={defaultLanguage}
                 onChange={(e) => setDefaultLanguage(e.target.value)}
-                placeholder="ko"
                 className="w-full bg-bg-primary border border-border rounded px-3 py-2 text-sm focus:outline-none focus:border-accent-primary"
-              />
+              >
+                <option value="">-</option>
+                <option value="ko">Korean (ko)</option>
+                <option value="en">English (en)</option>
+                <option value="ja">Japanese (ja)</option>
+                <option value="hi">Hindi (hi)</option>
+              </select>
             </div>
           </div>
         </div>

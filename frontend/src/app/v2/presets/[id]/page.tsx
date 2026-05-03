@@ -107,6 +107,7 @@ const SUBTITLE_LANG_OPTIONS = [
   { value: "ko", label: "한국어" },
   { value: "en", label: "English" },
   { value: "ja", label: "日本語" },
+  { value: "hi", label: "Hindi" },
 ] as const;
 type SubtitleLang = (typeof SUBTITLE_LANG_OPTIONS)[number]["value"];
 
@@ -181,6 +182,11 @@ function inputToNum(s: string): number | null {
   if (t === "") return null;
   const n = Number(t);
   return Number.isFinite(n) ? n : null;
+}
+
+function dbToLinearVolume(db: number | null): number | null {
+  if (db === null) return null;
+  return Math.max(0, Math.min(1, Math.pow(10, db / 20)));
 }
 
 // ---------------------------------------------------------------------------
@@ -766,15 +772,20 @@ export default function V2PresetEditPage() {
       };
 
       // 섹션 9 — 음향.
+      const bgmVolumeDb = inputToNum(audio.bgm_volume_db);
       nextConfig.audio = {
         ...(pickObj(detail.config ?? {}, "audio")),
         bgm_enabled: audio.bgm_enabled,
         bgm_style_prompt: audio.bgm_style_prompt,
-        bgm_volume_db: inputToNum(audio.bgm_volume_db),
+        bgm_volume_db: bgmVolumeDb,
         ducking_strength: audio.ducking_strength,
         fade_in_sec: inputToNum(audio.fade_in_sec),
         fade_out_sec: inputToNum(audio.fade_out_sec),
       };
+      nextConfig.bgm_enabled = audio.bgm_enabled;
+      nextConfig.bgm_style_prompt = audio.bgm_style_prompt;
+      nextConfig.bgm_volume_db = bgmVolumeDb;
+      nextConfig.bgm_volume = dbToLinearVolume(bgmVolumeDb) ?? 0.24;
 
       const body: Record<string, unknown> = { config: nextConfig };
       if (name.trim() !== detail.name) body.name = name.trim();

@@ -74,7 +74,13 @@ class ClaudeService(BaseLLMService):
 
         raise_if_cancelled("claude generate_script")
         raw = response.content[0].text
-        return self._parse_json(raw)
+        parsed = self._parse_json(raw)
+        cuts = parsed.get("cuts") or []
+        if len(cuts) != estimated_cuts:
+            raise ValueError(
+                f"script generation returned {len(cuts)} cuts, expected {estimated_cuts}"
+            )
+        return self.strengthen_visual_context(parsed)
 
     async def _generate_script_chunked(
         self,
@@ -164,13 +170,13 @@ class ClaudeService(BaseLLMService):
                         pass
 
         first = chunks[0] if chunks else {}
-        return {
+        return self.strengthen_visual_context({
             "title": first.get("title") or str(topic),
             "description": first.get("description") or "",
             "tags": first.get("tags") or [],
             "thumbnail_prompt": first.get("thumbnail_prompt") or "",
             "cuts": all_cuts,
-        }
+        })
 
     @staticmethod
     def _safe_int(value, default: int) -> int:

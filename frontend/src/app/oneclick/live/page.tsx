@@ -65,6 +65,82 @@ function getStepState(
   return "pending";
 }
 
+const STEP_ORDER = ["2", "3", "4", "5", "6", "7"] as const;
+
+function inferLiveStepKey(task: OneClickTask | null): string | null {
+  if (!task || task.status !== "running") return null;
+
+  const cuts = task.completed_cuts_by_step || {};
+  const text = [
+    task.current_step_name || "",
+    task.current_step_label || "",
+    task.current_step_progress_text || "",
+    task.sub_status || "",
+    ...(task.logs || []).slice(-6).map((log) => log?.msg || ""),
+  ].join(" ");
+
+  if (/youtube|upload/i.test(text)) return "7";
+  if (/final_with_subtitles|post[-_\s]?process|mux|render/i.test(text)) return "6";
+  if (/ffmpeg|\.mp4|video/i.test(text)) return "5";
+  if (/comfyui|ksampler|saveimage|dreamshaper|\.png|cut_\d+/i.test(text)) return "4";
+  if (/elevenlabs|tts|audio|\.mp3/i.test(text)) return "3";
+
+  const current = task.current_step ? String(task.current_step) : null;
+  if ((current === "2" || !current) && Number(cuts["5"] || 0) > 0) return "5";
+  if ((current === "2" || !current) && Number(cuts["4"] || 0) > 0) return "4";
+  if ((current === "2" || !current) && Number(cuts["3"] || 0) > 0) return "3";
+  return current;
+}
+
+function getEffectiveStepStates(task: OneClickTask | null): Record<string, string> {
+  const states = { ...(task?.step_states || {}) };
+  const activeKey = inferLiveStepKey(task);
+  if (!task || !activeKey) return states;
+
+  for (const key of STEP_ORDER) {
+    if (key === activeKey) break;
+    if (states[key] !== "failed" && states[key] !== "cancelled") {
+      states[key] = "completed";
+    }
+  }
+
+  if (states[activeKey] !== "completed") {
+    states[activeKey] = "running";
+  }
+
+  for (const key of STEP_ORDER.slice(STEP_ORDER.indexOf(activeKey as any) + 1)) {
+    if (states[key] === "running") states[key] = "pending";
+  }
+
+  return states;
+}
+
+function getEffectiveTask(task: OneClickTask | null): OneClickTask | null {
+  if (!task) return null;
+  const activeKey = inferLiveStepKey(task);
+  if (!activeKey) return task;
+  const text = `${task.current_step_progress_text || ""} ${task.sub_status || ""}`;
+  const cutMatch = text.match(/(?:cut|컷|ì»·)?\s*(\d+)\s*\/\s*(\d+)/i);
+  const stepLabel = STEPS.find((step) => step.key === activeKey)?.label || task.current_step_name;
+  const hasCutProgress = ["3", "4", "5"].includes(activeKey);
+  const completed = Number(task.completed_cuts_by_step?.[activeKey] || 0);
+  const parsedCut = cutMatch ? Number(cutMatch[1]) : 0;
+  const parsedTotal = cutMatch ? Number(cutMatch[2]) : 0;
+  return {
+    ...task,
+    current_step: Number(activeKey),
+    current_step_name: stepLabel || task.current_step_name,
+    current_step_label: stepLabel || task.current_step_label,
+    current_step_completed: hasCutProgress
+      ? Math.max(completed, parsedCut || 0)
+      : task.current_step_completed,
+    current_step_total: hasCutProgress
+      ? parsedTotal || task.total_cuts || task.current_step_total
+      : task.current_step_total,
+    step_states: getEffectiveStepStates(task),
+  };
+}
+
 interface LogEntry {
   time: string;
   msg: string;
@@ -78,6 +154,51 @@ const timeValue = (value?: string | null) => {
   const parsed = new Date(value).getTime();
   return Number.isFinite(parsed) ? parsed : 0;
 };
+
+const isUploadRecoverableTask = (task: OneClickTask) => {
+  const states = task.step_states || {};
+  return states["6"] === "completed" && states["7"] !== "completed";
+};
+
+const DEFAULT_QUEUE_CHANNELS = [1, 2, 3, 4] as const;
+const DEFAULT_QUEUE_CHANNEL_TIMES: Record<string, string | null> = Object.fromEntries(
+  DEFAULT_QUEUE_CHANNELS.map((ch) => [String(ch), null]),
+);
+
+function normalizeQueueChannelTimes(times?: Record<string, string | null | undefined> | null) {
+  const out: Record<string, string | null> = { ...DEFAULT_QUEUE_CHANNEL_TIMES };
+  for (const [key, value] of Object.entries(times || {})) {
+    const ch = Number(key);
+    if (Number.isFinite(ch) && ch > 0) out[String(ch)] = value || null;
+  }
+  return out;
+}
+
+function queueChannelTimeLabel(value: string | null | undefined) {
+  return value || "수동";
+}
+
+function collectQueueChannels(
+  channelTimes: Record<string, string | null | undefined>,
+  queueItems: OneClickQueueItem[],
+  tasks: OneClickTask[],
+) {
+  const channels = new Set<number>();
+  for (const ch of DEFAULT_QUEUE_CHANNELS) channels.add(ch);
+  for (const key of Object.keys(channelTimes || {})) {
+    const ch = Number(key);
+    if (Number.isFinite(ch) && ch > 0) channels.add(ch);
+  }
+  for (const item of queueItems || []) {
+    const ch = Number(item.channel || 0);
+    if (Number.isFinite(ch) && ch > 0) channels.add(ch);
+  }
+  for (const task of tasks || []) {
+    const ch = Number(task.channel || 0);
+    if (Number.isFinite(ch) && ch > 0) channels.add(ch);
+  }
+  return Array.from(channels).sort((a, b) => a - b);
+}
 
 function serverLogToEntry(log: ServerLogEntry): LogEntry {
   return {
@@ -105,9 +226,9 @@ function formatQueueWaitingMeta(
     source === "import"
       ? "엑셀 등록"
       : source === "requeue"
-        ? "실패 복구"
+        ? "실패 재시도"
         : source === "orphan"
-          ? "고아 복구"
+          ? "미완성 복구"
           : source === "schedule" || source === "system"
             ? "자동 등록"
             : "수동 등록";
@@ -160,15 +281,69 @@ function queueTitle(item: OneClickQueueItem) {
   return withEpisodeTitle(item.topic, item.episode_number);
 }
 
+function queueEpisodeSortValue(item: OneClickQueueItem) {
+  const ep = Number(item.episode_number);
+  return Number.isFinite(ep) && ep > 0 ? ep : Number.POSITIVE_INFINITY;
+}
+
+function compareQueueByEpisodeWithinChannel(
+  a: { item: OneClickQueueItem; index: number },
+  b: { item: OneClickQueueItem; index: number },
+) {
+  const episodeDiff = queueEpisodeSortValue(a.item) - queueEpisodeSortValue(b.item);
+  if (episodeDiff !== 0) return episodeDiff;
+  return a.index - b.index;
+}
+
+function scheduledDelayMinutes(value: string | null | undefined, nowMinutes: number) {
+  if (!value) return Number.POSITIVE_INFINITY;
+  const [hh, mm] = value.split(":").map((part) => Number(part));
+  if (!Number.isFinite(hh) || !Number.isFinite(mm)) return Number.POSITIVE_INFINITY;
+  const scheduled = hh * 60 + mm;
+  return (scheduled - nowMinutes + 1440) % 1440;
+}
+
+function channelBadgeClass(channel?: number | null, active = true) {
+  if (!active) return "border-border/60 bg-bg-primary/40 text-gray-600";
+  switch (Number(channel || 1)) {
+    case 1:
+      return "border-emerald-300/60 bg-emerald-400/20 text-emerald-100 shadow-[0_0_0_1px_rgba(52,211,153,0.18)]";
+    case 2:
+      return "border-sky-300/60 bg-sky-400/20 text-sky-100 shadow-[0_0_0_1px_rgba(56,189,248,0.18)]";
+    case 3:
+      return "border-amber-300/70 bg-amber-400/20 text-amber-100 shadow-[0_0_0_1px_rgba(251,191,36,0.18)]";
+    case 4:
+      return "border-fuchsia-300/60 bg-fuchsia-400/20 text-fuchsia-100 shadow-[0_0_0_1px_rgba(217,70,239,0.18)]";
+    default:
+      return "border-blue-300/60 bg-blue-400/20 text-blue-100";
+  }
+}
+
 function isLiveNextQueueItem(item: OneClickQueueItem) {
+  const note = String(item.queued_note || "");
   return (
     String(item.queued_source || "").toLowerCase() === "manual" &&
-    String(item.queued_note || "").includes("실시간 현황")
+    (note.includes("\uc2e4\uc2dc\uac04 \ud604\ud669") || note.includes("\uc218\ub3d9 \uc2e4\ud589"))
   );
 }
 
 function taskTitle(item: OneClickTask) {
   return withEpisodeTitle(item.topic || item.title, item.episode_number);
+}
+
+function taskProgressHeartbeat(task: OneClickTask | null | undefined) {
+  if (!task) return "";
+  return [
+    task.status || "",
+    task.current_step ?? "",
+    task.current_step_name || "",
+    task.current_step_completed ?? "",
+    task.current_step_total ?? "",
+    task.current_step_cut_progress_pct ?? "",
+    task.progress_pct ?? "",
+    task.sub_status || "",
+    task.logs?.length || 0,
+  ].join("|");
 }
 
 function queueItemKey(item: OneClickQueueItem, index: number) {
@@ -328,9 +503,9 @@ function ActivityPanel({
   const [modelNameMap, setModelNameMap] = useState<Record<string, string>>({});
   const [voiceNameMap, setVoiceNameMap] = useState<Record<string, string>>({});
   // 활성 단계의 마지막 진행 변화를 추적해서 stale(멈춤) 여부 판단
-  const lastTickRef = useRef<{ step: string; cuts: number; ts: number }>({
+  const lastTickRef = useRef<{ step: string; heartbeat: string; ts: number }>({
     step: "",
-    cuts: -1,
+    heartbeat: "",
     ts: Date.now(),
   });
   const [now, setNow] = useState(Date.now());
@@ -418,10 +593,11 @@ function ActivityPanel({
     );
   }
 
-  const stepStates = task.step_states || {};
-  const completedByStep = task.completed_cuts_by_step || {};
-  const totalCuts = Math.max(1, Number(task.total_cuts || 0));
-  const timeBreakdown = task.estimate?.time_breakdown || {};
+  const liveTask = getEffectiveTask(task) || task;
+  const stepStates = liveTask.step_states || {};
+  const completedByStep = liveTask.completed_cuts_by_step || {};
+  const totalCuts = Math.max(1, Number(liveTask.total_cuts || 0));
+  const timeBreakdown = liveTask.estimate?.time_breakdown || {};
 
   // step → 예상 소요 (초) 매핑
   const stepEstSec: Record<string, number> = {
@@ -440,15 +616,22 @@ function ActivityPanel({
   const primaryActive = activeSteps[0];
   let staleSec = 0;
   if (primaryActive) {
-    const cutsNow = Number(completedByStep[primaryActive.key] || 0);
+    const activeHeartbeat = [
+      Number(completedByStep[primaryActive.key] || 0),
+      liveTask.current_step_completed ?? "",
+      liveTask.current_step_cut_progress_pct ?? "",
+      liveTask.progress_pct ?? "",
+      liveTask.sub_status || "",
+      liveTask.logs?.length || 0,
+    ].join("|");
     const tick = lastTickRef.current;
-    if (tick.step !== primaryActive.key || tick.cuts !== cutsNow) {
-      lastTickRef.current = { step: primaryActive.key, cuts: cutsNow, ts: now };
+    if (tick.step !== primaryActive.key || tick.heartbeat !== activeHeartbeat) {
+      lastTickRef.current = { step: primaryActive.key, heartbeat: activeHeartbeat, ts: now };
     } else {
       staleSec = Math.floor((now - tick.ts) / 1000);
     }
   } else {
-    lastTickRef.current = { step: "", cuts: -1, ts: now };
+    lastTickRef.current = { step: "", heartbeat: "", ts: now };
   }
 
   return (
@@ -468,24 +651,24 @@ function ActivityPanel({
 
       <div className="space-y-2.5">
         {STEPS.map((s) => {
-          const state = getStepState(task, s.key);
+          const state = getStepState(liveTask, s.key);
           const stepNum = Number(s.key);
           const cuts = Number(completedByStep[s.key] || 0);
           const modelName =
-            s.modelKey && task?.models
+            s.modelKey && liveTask?.models
               ? s.modelKey === "tts"
                 ? [
-                    task.models.tts
-                      ? modelNameMap[task.models.tts] || task.models.tts
+                    liveTask.models.tts
+                      ? modelNameMap[liveTask.models.tts] || liveTask.models.tts
                       : "",
-                    task.models.tts_voice
-                      ? voiceNameMap[task.models.tts_voice] || task.models.tts_voice
+                    liveTask.models.tts_voice
+                      ? voiceNameMap[liveTask.models.tts_voice] || liveTask.models.tts_voice
                       : "",
                   ]
                     .filter(Boolean)
                     .join(" / ")
-                : task.models[s.modelKey]
-                  ? modelNameMap[task.models[s.modelKey] as string] || task.models[s.modelKey] || ""
+                : liveTask.models[s.modelKey]
+                  ? modelNameMap[liveTask.models[s.modelKey] as string] || liveTask.models[s.modelKey] || ""
                   : ""
               : "";
           // 컷 단위 진행이 의미 있는 단계
@@ -681,20 +864,21 @@ export default function LivePage() {
   // 이 여러 개 쌓일 수 있다. 기존 .find() 1건 표시로는 가려지던 상태.
   const [activeTasks, setActiveTasks] = useState<OneClickTask[]>([]);
   const [pendingQueueItems, setPendingQueueItems] = useState<OneClickQueueItem[]>([]);
-  const [queueChannelTimes, setQueueChannelTimes] = useState<Record<string, string | null>>({
-    "1": null,
-    "2": null,
-    "3": null,
-    "4": null,
-  });
+  const [queueChannelTimes, setQueueChannelTimes] = useState<Record<string, string | null>>(
+    DEFAULT_QUEUE_CHANNEL_TIMES,
+  );
   const [recoveryOpen, setRecoveryOpen] = useState(false);
   const [recoveryLoading, setRecoveryLoading] = useState(false);
   const [recoveryChannel, setRecoveryChannel] = useState<number | null>(null);
   const [failedTasks, setFailedTasks] = useState<OneClickTask[]>([]);
   const [orphanProjects, setOrphanProjects] = useState<OrphanProject[]>([]);
   const [recoveringId, setRecoveringId] = useState<string | null>(null);
+  const [recoveryUploadingId, setRecoveryUploadingId] = useState<string | null>(null);
+  const [recoveryBulkUploading, setRecoveryBulkUploading] = useState(false);
+  const [recoveryBulkQueuing, setRecoveryBulkQueuing] = useState(false);
   const [movingQueueId, setMovingQueueId] = useState<string | null>(null);
   const [queuePanelOpen, setQueuePanelOpen] = useState(false);
+  const [queueChannelFilter, setQueueChannelFilter] = useState<number | null>(null);
   const [selectedQueueIds, setSelectedQueueIds] = useState<Set<string>>(new Set());
   const [queueBatchRunning, setQueueBatchRunning] = useState(false);
   const [logs, setLogs] = useState<LogEntry[]>([]);
@@ -705,7 +889,7 @@ export default function LivePage() {
   const logEndRef = useRef<HTMLDivElement | null>(null);
   // 멈춤 감지: 진행률이 일정 시간 변하지 않으면 경고
   const lastPctChangeRef = useRef<number>(Date.now());
-  const lastPctValueRef = useRef<number>(0);
+  const lastPctValueRef = useRef<string>("");
   const [stalled, setStalled] = useState(false);
   // v1.2.27: 3분 stall 시 ComfyUI 큐 자동 리셋을 이번 stall 라운드에 이미 쐈는지.
   // 진행률이 다시 변하면 false 로 되돌려 다음 stall 라운드에 다시 쏠 수 있게 한다.
@@ -834,7 +1018,7 @@ export default function LivePage() {
       .then((queueState) => {
         if (!cancelled) {
           setPendingQueueItems(queueState.items || []);
-          setQueueChannelTimes(queueState.channel_times || {});
+          setQueueChannelTimes(normalizeQueueChannelTimes(queueState.channel_times));
         }
       })
       .catch(() => {
@@ -892,7 +1076,7 @@ export default function LivePage() {
               level: "info",
             },
           ]);
-          lastPctValueRef.current = active.progress_pct;
+          lastPctValueRef.current = taskProgressHeartbeat(active);
           lastPctChangeRef.current = Date.now();
         } else {
           // 실시간 현황은 "현재 진행 중" 화면이다. 진행 중 태스크가 없을 때
@@ -1059,8 +1243,9 @@ export default function LivePage() {
 
         // 멈춤 감지: 진행률이 90초 이상 변하지 않으면 경고,
         // 180초 이상이면 ComfyUI 큐 자동 리셋 (한 stall 라운드에 1회).
-        if (fresh.progress_pct !== lastPctValueRef.current) {
-          lastPctValueRef.current = fresh.progress_pct;
+        const heartbeat = taskProgressHeartbeat(fresh);
+        if (heartbeat !== lastPctValueRef.current) {
+          lastPctValueRef.current = heartbeat;
           lastPctChangeRef.current = Date.now();
           setStalled(false);
           autoResetFiredRef.current = false;
@@ -1127,8 +1312,8 @@ export default function LivePage() {
 
   // 로그 자동 스크롤
   useEffect(() => {
-    logEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [logs]);
+    logEndRef.current?.scrollIntoView({ behavior: "auto" });
+  }, [logs, task?.sub_status, task?.current_step_completed, task?.progress_pct]);
 
   const handleCancel = async () => {
     if (!task) return;
@@ -1176,7 +1361,7 @@ export default function LivePage() {
         ]);
         markServerSync();
         setPendingQueueItems(queueState.items || []);
-        setQueueChannelTimes(queueState.channel_times || {});
+        setQueueChannelTimes(normalizeQueueChannelTimes(queueState.channel_times));
         const activeList = (tasks || [])
           .filter((t) => ["prepared", "queued", "running"].includes(t.status))
           .sort((a, b) => {
@@ -1275,7 +1460,7 @@ export default function LivePage() {
       ]);
       markServerSync();
       setPendingQueueItems(queueState.items || []);
-      setQueueChannelTimes(queueState.channel_times || {});
+      setQueueChannelTimes(normalizeQueueChannelTimes(queueState.channel_times));
       // v1.1.65: running 우선 정렬로 activeTasks 갱신
       const activeList = (tasks || [])
         .filter((t) => ["prepared", "queued", "running"].includes(t.status))
@@ -1298,7 +1483,7 @@ export default function LivePage() {
             level: "info",
           },
         ]);
-        lastPctValueRef.current = active.progress_pct;
+        lastPctValueRef.current = taskProgressHeartbeat(active);
         lastPctChangeRef.current = Date.now();
         setPollFails(0);
         setStalled(false);
@@ -1333,7 +1518,7 @@ export default function LivePage() {
         items,
       });
       setPendingQueueItems(updated.items || []);
-      setQueueChannelTimes(updated.channel_times || {});
+      setQueueChannelTimes(normalizeQueueChannelTimes(updated.channel_times));
       markServerSync();
     } catch (e: any) {
       addLog(`[오류] 대기열 순서 변경 실패: ${e?.message || e}`, "error");
@@ -1355,7 +1540,7 @@ export default function LivePage() {
         items,
       });
       setPendingQueueItems(updated.items || []);
-      setQueueChannelTimes(updated.channel_times || {});
+      setQueueChannelTimes(normalizeQueueChannelTimes(updated.channel_times));
       setSelectedQueueIds((prev) => {
         const next = new Set(prev);
         next.delete(rowKey);
@@ -1423,7 +1608,7 @@ export default function LivePage() {
           items: [...stillLiveNext, cancelled, ...normalRemaining],
         });
         setPendingQueueItems(updated.items || []);
-        setQueueChannelTimes(updated.channel_times || {});
+        setQueueChannelTimes(normalizeQueueChannelTimes(updated.channel_times));
         setSelectedQueueIds(new Set());
         markServerSync();
         addLog(`[시스템] 다음 실행 예약 취소: ${cancelled.topic}`, "warn");
@@ -1454,7 +1639,7 @@ export default function LivePage() {
         items: [...existingLiveNext, ...promoted, ...normalRemaining],
       });
       setPendingQueueItems(updated.items || []);
-      setQueueChannelTimes(updated.channel_times || {});
+      setQueueChannelTimes(normalizeQueueChannelTimes(updated.channel_times));
       setSelectedQueueIds(new Set());
 
       const activeList = (tasks || []).filter((t) => ["prepared", "queued", "running"].includes(t.status));
@@ -1462,7 +1647,7 @@ export default function LivePage() {
         activeList.length > 0 ||
         Boolean(task && ["prepared", "queued", "running"].includes(task.status));
       if (!hasActiveWork) {
-        await oneclickApi.runQueueNext(promoted[0].channel || 1);
+        await oneclickApi.runQueueNext();
         addLog(`[시스템] 선택 ${promoted.length}건 즉시 실행 시작: ${promoted[0].topic}`, "success");
       } else {
         addLog(`[시스템] 선택 ${promoted.length}건을 다음 실행 목록 뒤에 추가했습니다. 현재 작업 완료 후 예약한 순서대로 실행합니다.`, "success");
@@ -1484,12 +1669,17 @@ export default function LivePage() {
       ]);
       markServerSync();
       const failed = (tasks || [])
-        .filter((t) => ["failed", "cancelled", "paused"].includes(t.status))
+        .filter((t) => ["failed", "cancelled", "paused"].includes(t.status) || isUploadRecoverableTask(t))
         .filter((t) => channel == null || Number(t.channel || 0) === channel)
         .sort(
-          (a, b) =>
-            timeValue(b.finished_at || b.created_at) -
-            timeValue(a.finished_at || a.created_at),
+          (a, b) => {
+            const uploadDiff = Number(isUploadRecoverableTask(b)) - Number(isUploadRecoverableTask(a));
+            if (uploadDiff !== 0) return uploadDiff;
+            return (
+              timeValue(b.finished_at || b.created_at) -
+              timeValue(a.finished_at || a.created_at)
+            );
+          },
         );
       const orphans = [...(orphanRes.items || [])].sort(
         (a, b) => timeValue(b.created_at) - timeValue(a.created_at),
@@ -1516,30 +1706,143 @@ export default function LivePage() {
         level: "warn",
       },
     ]);
-    lastPctValueRef.current = failed.progress_pct;
+    lastPctValueRef.current = taskProgressHeartbeat(failed);
     lastPctChangeRef.current = Date.now();
     setStalled(false);
+  };
+
+  const handleQueueFailedTask = async (failed: OneClickTask) => {
+    setRecoveringId(failed.task_id);
+    try {
+      const result = await oneclickApi.requeueTask(failed.task_id);
+      markServerSync();
+      addLog(`[시스템] 제작 큐 상단에 배치: ${taskTitle(failed)} (CH${result.channel})`, "success");
+      await loadRecoveryContent(recoveryChannel);
+      await handleRefresh();
+      setRecoveryOpen(false);
+      setQueuePanelOpen(true);
+    } catch (e: any) {
+      addLog(`[오류] 제작 큐 배치 실패: ${taskTitle(failed)} - ${e?.message || e}`, "error");
+    } finally {
+      setRecoveringId(null);
+    }
   };
 
   const handleRecoverOrphan = async (projectId: string) => {
     setRecoveringId(projectId);
     try {
-      const recovered = await oneclickApi.recoverProject(projectId);
+      const result = await oneclickApi.requeueOrphanProjects([projectId], recoveryChannel);
       markServerSync();
-      setTask(recovered);
-      replaceLogsFromTask(recovered, [
-        {
-          time: timeStr(),
-          msg: `[시스템] 고아 프로젝트 불러옴: ${recovered.topic}`,
-          level: "warn",
-        },
-      ]);
-      setStalled(false);
+      const queued = result.items?.[0]?.queue_item;
+      addLog(`[시스템] 고아 프로젝트를 제작 큐 상단에 배치: ${queued?.topic || projectId}`, "success");
       await loadRecoveryContent(recoveryChannel);
+      await handleRefresh();
+      setRecoveryOpen(false);
+      setQueuePanelOpen(true);
     } catch (e: any) {
-      addLog(`[오류] 고아 프로젝트 불러오기 실패: ${e?.message || e}`, "error");
+      addLog(`[오류] 고아 프로젝트 큐 배치 실패: ${e?.message || e}`, "error");
     } finally {
       setRecoveringId(null);
+    }
+  };
+
+  const handleRecoveryQueueAll = async () => {
+    if (recoveryBulkQueuing || recoveryBulkUploading || recoveringId) return;
+    const taskTargets = [...failedTasks];
+    const orphanIds = orphanProjects.map((item) => item.project_id).filter(Boolean);
+    const total = taskTargets.length + orphanIds.length;
+    if (total === 0) return;
+    if (!confirm(`복구 대상 ${total}건을 제작 큐 상단에 순서대로 배치합니다. 계속할까요?`)) return;
+
+    setRecoveryBulkQueuing(true);
+    let ok = 0;
+    let fail = 0;
+    try {
+      if (orphanIds.length > 0) {
+        setRecoveringId("__orphans__");
+        const result = await oneclickApi.requeueOrphanProjects(orphanIds, recoveryChannel);
+        ok += result.requeued_count || 0;
+        fail += result.errors?.length || 0;
+        for (const error of result.errors || []) {
+          addLog(`[오류] 고아 프로젝트 전체 복구 실패: ${error.project_id} - ${error.error}`, "error");
+        }
+      }
+
+      for (const item of taskTargets.reverse()) {
+        setRecoveringId(item.task_id);
+        try {
+          await oneclickApi.requeueTask(item.task_id);
+          ok += 1;
+        } catch (e: any) {
+          fail += 1;
+          addLog(`[오류] 태스크 전체 복구 실패: ${taskTitle(item)} - ${e?.message || e}`, "error");
+        }
+      }
+
+      markServerSync();
+      addLog(`[시스템] 전체 복구 완료: 성공 ${ok}건 / 실패 ${fail}건`, fail ? "warn" : "success");
+      await loadRecoveryContent(recoveryChannel);
+      await handleRefresh();
+      setRecoveryOpen(false);
+      setQueuePanelOpen(true);
+    } finally {
+      setRecoveringId(null);
+      setRecoveryBulkQueuing(false);
+    }
+  };
+
+  const handleRecoveryReupload = async (failed: OneClickTask) => {
+    if (recoveryUploadingId || recoveryBulkUploading) return;
+    setRecoveryUploadingId(failed.task_id);
+    try {
+      const result = await oneclickApi.manualUpload(failed.task_id);
+      markServerSync();
+      addLog(
+        `[시스템] 업로드 실패 항목 재시도 완료: ${taskTitle(failed)}${result.youtube_url ? ` — ${result.youtube_url}` : ""}`,
+        "success",
+      );
+      const fresh = await oneclickApi.get(failed.task_id);
+      markServerSync();
+      setTask(fresh);
+      syncLogsFromTask(fresh);
+      await loadRecoveryContent(recoveryChannel);
+      await handleRefresh();
+    } catch (e: any) {
+      addLog(`[오류] 업로드 재시도 실패: ${taskTitle(failed)} — ${e?.message || e}`, "error");
+      await loadRecoveryContent(recoveryChannel);
+    } finally {
+      setRecoveryUploadingId(null);
+    }
+  };
+
+  const handleRecoveryBulkReupload = async () => {
+    if (recoveryBulkUploading || recoveryUploadingId) return;
+    const targets = failedTasks.filter(isUploadRecoverableTask);
+    if (targets.length === 0) return;
+    if (!confirm(`업로드 실패 ${targets.length}건을 순서대로 다시 업로드합니다. 계속할까요?`)) return;
+    setRecoveryBulkUploading(true);
+    try {
+      let ok = 0;
+      for (const item of targets) {
+        setRecoveryUploadingId(item.task_id);
+        try {
+          const result = await oneclickApi.manualUpload(item.task_id);
+          ok += 1;
+          addLog(
+            `[시스템] 업로드 재시도 완료 (${ok}/${targets.length}): ${taskTitle(item)}${result.youtube_url ? ` — ${result.youtube_url}` : ""}`,
+            "success",
+          );
+        } catch (e: any) {
+          addLog(`[오류] 업로드 재시도 실패: ${taskTitle(item)} — ${e?.message || e}`, "error");
+          break;
+        }
+      }
+      markServerSync();
+      await loadRecoveryContent(recoveryChannel);
+      await handleRefresh();
+    } finally {
+      setRecoveryUploadingId(null);
+      setRecoveryBulkUploading(false);
     }
   };
 
@@ -1557,7 +1860,7 @@ export default function LivePage() {
         if (cancelled) return;
         markServerSync();
         setPendingQueueItems(queueState.items || []);
-        setQueueChannelTimes(queueState.channel_times || {});
+        setQueueChannelTimes(normalizeQueueChannelTimes(queueState.channel_times));
         const activeList = (tasks || [])
           .filter((t) => ["prepared", "queued", "running"].includes(t.status))
           .sort((a, b) => {
@@ -1575,6 +1878,22 @@ export default function LivePage() {
       clearInterval(id);
     };
   }, [markServerSync]);
+
+  useEffect(() => {
+    if (!activeTasks.length) return;
+    const current = task?.task_id
+      ? activeTasks.find((item) => item.task_id === task.task_id)
+      : null;
+    const next = current || activeTasks.find((item) => item.status === "running") || activeTasks[0];
+    if (!next) return;
+
+    if (!task || taskProgressHeartbeat(next) !== taskProgressHeartbeat(task)) {
+      setTask(next);
+      syncLogsFromTask(next);
+      lastPctValueRef.current = taskProgressHeartbeat(next);
+      lastPctChangeRef.current = Date.now();
+    }
+  }, [activeTasks, syncLogsFromTask, task]);
 
   const isRunning =
     task && ["prepared", "queued", "running"].includes(task.status);
@@ -1629,8 +1948,9 @@ export default function LivePage() {
       setUploadingStep(false);
     }
   };
-  const isCompleted = task?.status === "completed";
-  const pct = isCompleted ? 100 : Math.round(task?.progress_pct || 0);
+  const displayTask = getEffectiveTask(task);
+  const isCompleted = displayTask?.status === "completed";
+  const pct = isCompleted ? 100 : Math.round(displayTask?.progress_pct || 0);
   // 경과 시간 (실시간 카운트)
   const [elapsedStr, setElapsedStr] = useState("--:--");
   useEffect(() => {
@@ -1759,46 +2079,39 @@ export default function LivePage() {
         const activeCount = activeDisplayTasks.length;
         const persistedCount = pendingQueueItems.length;
         const runningTask = activeDisplayTasks.find((item) => item.status === "running") || activeDisplayTasks[0] || null;
+        const queueChannels = collectQueueChannels(queueChannelTimes, pendingQueueItems, activeDisplayTasks);
         const channelCounts = queueEntries.reduce<Record<number, number>>((acc, entry) => {
           const ch = entry.kind === "queue" ? entry.item.channel || 1 : entry.item.channel || 1;
           acc[ch] = (acc[ch] || 0) + 1;
           return acc;
         }, {});
-        const timeToMinutes = (value: string | null | undefined) => {
-          if (!value) return Number.POSITIVE_INFINITY;
-          const [hh, mm] = value.split(":").map((part) => Number(part));
-          if (!Number.isFinite(hh) || !Number.isFinite(mm)) return Number.POSITIVE_INFINITY;
-          return hh * 60 + mm;
-        };
-        const channelsByTime = [1, 2, 3, 4].sort((a, b) => {
-          const diff = timeToMinutes(queueChannelTimes[String(a)]) - timeToMinutes(queueChannelTimes[String(b)]);
+        const nowForQueueSort = new Date();
+        const nowMinutes = nowForQueueSort.getHours() * 60 + nowForQueueSort.getMinutes();
+        const channelsByNextRun = [...queueChannels].sort((a, b) => {
+          const diff =
+            scheduledDelayMinutes(queueChannelTimes[String(a)], nowMinutes) -
+            scheduledDelayMinutes(queueChannelTimes[String(b)], nowMinutes);
           return diff || a - b;
         });
-        const liveNextEntries: { item: OneClickQueueItem; index: number; cycle: number }[] = [];
-        const timedItems: { item: OneClickQueueItem; index: number }[] = [];
-        pendingQueueItems.forEach((item, index) => {
-          if (index === liveNextEntries.length && isLiveNextQueueItem(item)) {
-            liveNextEntries.push({ item, index, cycle: -1 });
-          } else {
-            timedItems.push({ item, index });
-          }
-        });
-        const queueEntriesByTime: { item: OneClickQueueItem; index: number; cycle: number }[] = [];
-        const byChannel = new Map<number, { item: OneClickQueueItem; index: number }[]>();
-        timedItems.forEach(({ item, index }) => {
-          const ch = item.channel || 1;
-          const rows = byChannel.get(ch) || [];
-          rows.push({ item, index });
-          byChannel.set(ch, rows);
-        });
-        const maxCycle = Math.max(0, ...Array.from(byChannel.values()).map((rows) => rows.length));
-        for (let cycle = 0; cycle < maxCycle; cycle += 1) {
-          for (const ch of channelsByTime) {
-            const row = byChannel.get(ch)?.[cycle];
-            if (row) queueEntriesByTime.push({ ...row, cycle });
-          }
-        }
-        const visibleQueueEntries = [...liveNextEntries, ...queueEntriesByTime];
+        const channelSummary = queueChannels.map((ch) => ({
+          ch,
+          count: channelCounts[ch] || 0,
+          time: queueChannelTimeLabel(queueChannelTimes[String(ch)]),
+        }));
+        const allQueueEntries = pendingQueueItems.map((item, index) => ({
+          item,
+          index,
+          cycle: index,
+          dueMinutes: scheduledDelayMinutes(queueChannelTimes[String(item.channel || 1)], nowMinutes),
+        }));
+        const liveNextCount = pendingQueueItems.reduce(
+          (count, item, index) => (index === count && isLiveNextQueueItem(item) ? count + 1 : count),
+          0,
+        );
+        const visibleQueueEntries =
+          queueChannelFilter == null
+            ? allQueueEntries
+            : allQueueEntries.filter(({ item }) => Number(item.channel || 1) === queueChannelFilter);
         const nextQueueItems = visibleQueueEntries.slice(0, 2).map(({ item }) => item);
         const visibleQueueKeys = visibleQueueEntries.map(({ item, index }) => queueItemKey(item, index));
         const selectedVisibleCount = visibleQueueKeys.filter((key) => selectedQueueIds.has(key)).length;
@@ -1830,7 +2143,7 @@ export default function LivePage() {
           return (
             <div
               key={`queue-panel-${item.id || index}`}
-              className={`flex min-h-11 items-center gap-2 border-b border-border/70 px-3 py-1.5 text-sm last:border-b-0 hover:bg-blue-400/5 ${
+              className={`flex min-h-14 items-center gap-3 border-b border-border/70 px-4 py-2.5 text-base last:border-b-0 hover:bg-blue-400/5 ${
                 checked ? "bg-accent-primary/10" : ""
               }`}
               title={`${item.topic} — ${meta.sourceLabel} — ${meta.scheduleLabel}`}
@@ -1846,30 +2159,30 @@ export default function LivePage() {
                     return next;
                   });
                 }}
-                className="h-4 w-4 shrink-0 accent-accent-primary"
+                className="h-5 w-5 shrink-0 accent-accent-primary"
                 title="즉시 순차 실행 선택"
               />
-              <span className="w-12 shrink-0 rounded bg-blue-400/15 px-1.5 py-0.5 text-center text-[10px] font-bold text-blue-200">
+              <span className="w-14 shrink-0 rounded bg-blue-400/15 px-2 py-1 text-center text-sm font-bold text-blue-200">
                 #{index + 1}
               </span>
-              <span className="w-9 shrink-0 rounded bg-bg-secondary px-1.5 py-0.5 text-center text-[10px] font-semibold text-gray-300">
+              <span className={`w-16 shrink-0 rounded-md border px-2.5 py-1.5 text-center text-base font-black ${channelBadgeClass(item.channel)}`}>
                 CH{item.channel || 1}
               </span>
-              <span className="w-14 shrink-0 rounded border border-violet-400/30 bg-violet-400/10 px-1.5 py-0.5 text-center text-[10px] font-bold text-violet-200">
+              <span className="w-16 shrink-0 rounded border border-violet-400/30 bg-violet-400/10 px-2 py-1 text-center text-sm font-bold text-violet-200">
                 {formatEpisodeBadge(item)}
               </span>
               <div className="min-w-0 flex-1">
-                <div className="truncate font-semibold text-blue-100">{displayTitle}</div>
-                <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5 text-[11px]">
-                  <span className={`rounded border px-1.5 py-0.5 font-semibold ${meta.sourceClass}`}>
+                <div className="truncate text-base font-bold text-blue-50">{displayTitle}</div>
+                <div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-2 text-sm">
+                  <span className={`rounded border px-2 py-1 font-semibold ${meta.sourceClass}`}>
                     {meta.sourceLabel}
                   </span>
-                  <span className="rounded border border-emerald-400/25 bg-emerald-400/10 px-1.5 py-0.5 font-semibold text-emerald-200">
+                  <span className="rounded border border-emerald-400/25 bg-emerald-400/10 px-2 py-1 font-semibold text-emerald-200">
                     {meta.scheduleLabel}
                   </span>
                   <span className="text-gray-500">{meta.queuedAt}</span>
                   {isPromotedNext && (
-                    <span className="rounded border border-amber-300/40 bg-amber-300/15 px-1.5 py-0.5 font-bold text-amber-200">
+                    <span className="rounded border border-amber-300/40 bg-amber-300/15 px-2 py-1 font-bold text-amber-200">
                       다음 실행 #{liveNextRank}{nextStartLabel ? ` · 예상 ${nextStartLabel}` : ""}
                     </span>
                   )}
@@ -1881,21 +2194,21 @@ export default function LivePage() {
                   type="button"
                   onClick={() => void runQueueItemsNow([rowKey])}
                   disabled={queueBatchRunning}
-                  className={`inline-flex min-w-14 items-center justify-center gap-1 rounded border px-2 py-0.5 text-[10px] font-bold disabled:opacity-40 ${
+                  className={`inline-flex min-w-16 items-center justify-center gap-1.5 rounded border px-3 py-1.5 text-sm font-bold disabled:opacity-40 ${
                     isPromotedNext
                       ? "border-amber-300/50 bg-amber-300/15 text-amber-200 hover:bg-amber-300/25"
                       : "border-accent-success/40 bg-accent-success/10 text-accent-success hover:bg-accent-success/20"
                   }`}
                   title={isPromotedNext ? "다음 실행 예약 취소" : "자동 실행 시간을 무시하고 이 작업을 다음 순서로 실행"}
                 >
-                  <PlayCircle size={11} />
+                  <PlayCircle size={14} />
                   {isPromotedNext ? "취소" : "실행"}
                 </button>
                 <button
                   type="button"
                   onClick={() => void moveQueueItem(item.id, "top")}
                   disabled={isMoving || index === 0}
-                  className="rounded border border-border bg-bg-secondary px-1.5 py-0.5 text-[10px] font-semibold text-gray-400 hover:text-gray-100 disabled:opacity-30"
+                  className="rounded border border-border bg-bg-secondary px-2.5 py-1.5 text-sm font-semibold text-gray-300 hover:text-gray-100 disabled:opacity-30"
                   title="맨 위로"
                 >
                   맨위
@@ -1904,7 +2217,7 @@ export default function LivePage() {
                   type="button"
                   onClick={() => void moveQueueItem(item.id, "up")}
                   disabled={isMoving || index === 0}
-                  className="rounded border border-border bg-bg-secondary px-1.5 py-0.5 text-[10px] font-semibold text-gray-400 hover:text-gray-100 disabled:opacity-30"
+                  className="rounded border border-border bg-bg-secondary px-2.5 py-1.5 text-sm font-semibold text-gray-300 hover:text-gray-100 disabled:opacity-30"
                   title="한 칸 위"
                 >
                   ↑
@@ -1913,7 +2226,7 @@ export default function LivePage() {
                   type="button"
                   onClick={() => void moveQueueItem(item.id, "down")}
                   disabled={isMoving || index >= pendingQueueItems.length - 1}
-                  className="rounded border border-border bg-bg-secondary px-1.5 py-0.5 text-[10px] font-semibold text-gray-400 hover:text-gray-100 disabled:opacity-30"
+                  className="rounded border border-border bg-bg-secondary px-2.5 py-1.5 text-sm font-semibold text-gray-300 hover:text-gray-100 disabled:opacity-30"
                   title="한 칸 아래"
                 >
                   ↓
@@ -1922,10 +2235,10 @@ export default function LivePage() {
                   type="button"
                   onClick={() => void deleteQueueItem(item.id, rowKey, displayTitle)}
                   disabled={isMoving || queueBatchRunning}
-                  className="inline-flex items-center justify-center rounded border border-red-400/30 bg-red-400/10 px-1.5 py-0.5 text-[10px] font-semibold text-red-300 hover:bg-red-400/20 disabled:opacity-30"
+                  className="inline-flex items-center justify-center rounded border border-red-400/30 bg-red-400/10 px-2.5 py-1.5 text-sm font-semibold text-red-300 hover:bg-red-400/20 disabled:opacity-30"
                   title="대기열에서 삭제"
                 >
-                  <Trash2 size={11} />
+                  <Trash2 size={14} />
                 </button>
               </div>
             </div>
@@ -1944,16 +2257,12 @@ export default function LivePage() {
               <span className="rounded border border-blue-400/25 bg-blue-400/10 px-2 py-0.5 text-[11px] font-semibold text-blue-200">
                 대기 {persistedCount}
               </span>
-              {[1, 2, 3, 4].map((ch) => (
+              {channelSummary.map(({ ch, count }) => (
                 <span
                   key={`queue-count-${ch}`}
-                  className={`rounded border px-2 py-0.5 text-[11px] font-semibold ${
-                    channelCounts[ch]
-                      ? "border-border bg-bg-primary text-gray-300"
-                      : "border-border/60 bg-bg-primary/40 text-gray-600"
-                  }`}
+                  className={`rounded-md border px-3 py-1 text-sm font-black ${channelBadgeClass(ch, count > 0)}`}
                 >
-                  CH{ch} {channelCounts[ch] || 0}
+                  CH{ch} {count}
                 </span>
               ))}
               <div className="ml-auto flex items-center gap-2">
@@ -1991,7 +2300,7 @@ export default function LivePage() {
                         level: "info",
                       },
                     ]);
-                    lastPctValueRef.current = runningTask.progress_pct;
+                    lastPctValueRef.current = taskProgressHeartbeat(runningTask);
                     lastPctChangeRef.current = Date.now();
                     setStalled(false);
                   }}
@@ -2023,7 +2332,7 @@ export default function LivePage() {
                     <span className="shrink-0 rounded bg-blue-400/15 px-1.5 py-0.5 text-[10px] font-bold text-blue-200">
                       다음 {index + 1}
                     </span>
-                    <span className="shrink-0 rounded bg-bg-secondary px-1.5 py-0.5 text-[10px] font-semibold text-gray-300">
+                    <span className={`shrink-0 rounded-md border px-2.5 py-1 text-sm font-black ${channelBadgeClass(item.channel)}`}>
                       CH{item.channel || 1}
                     </span>
                     <span className="shrink-0 rounded border border-violet-400/30 bg-violet-400/10 px-1.5 py-0.5 text-[10px] font-bold text-violet-200">
@@ -2045,6 +2354,21 @@ export default function LivePage() {
                 </div>
               )}
             </div>
+            <div className="mt-2 grid grid-cols-2 gap-1.5 text-[11px] sm:grid-cols-4">
+              {channelSummary.map(({ ch, count, time }) => (
+                <div
+                  key={`queue-channel-summary-${ch}`}
+                  className={`flex min-w-0 items-center justify-between gap-2 rounded-lg border px-3 py-2 ${channelBadgeClass(ch, count > 0)}`}
+                  title={`CH${ch} 대기 ${count}건 · 실행 시간 ${time}`}
+                >
+                  <span className="shrink-0 text-sm font-black">CH{ch}</span>
+                  <span className="min-w-0 truncate text-xs opacity-90">{time}</span>
+                  <span className="shrink-0 rounded bg-black/25 px-2 py-0.5 text-sm font-black tabular-nums">
+                    {count}건
+                  </span>
+                </div>
+              ))}
+            </div>
 
             {queuePanelOpen && (
               <>
@@ -2055,16 +2379,44 @@ export default function LivePage() {
                   className="fixed inset-0 z-40 cursor-default bg-black/35"
                 />
                 <div className="fixed bottom-6 left-4 right-4 top-24 z-50 flex flex-col overflow-hidden rounded-xl border border-blue-400/25 bg-[#10101a] shadow-2xl shadow-black/50 lg:left-[18rem] lg:right-8">
-                  <div className="flex flex-wrap items-center gap-2 border-b border-border/70 px-4 py-3">
-                    <ListChecks size={15} className="text-blue-200" />
+                  <div className="flex flex-wrap items-center gap-3 border-b border-border/70 px-5 py-4">
+                    <ListChecks size={20} className="text-blue-200" />
                     <div className="mr-auto">
-                      <div className="text-sm font-bold text-gray-100">전체 작업 큐</div>
-                      <div className="text-[11px] text-gray-500">
-                        다음 실행 예약을 먼저, 나머지는 채널 작업 시간순으로 고정 정렬합니다. 현재 대기 {persistedCount}건.
+                      <div className="text-lg font-bold text-gray-100">전체 작업 큐</div>
+                      <div className="text-sm text-gray-400">
+                        현재 시각 기준 다음 실행이 빠른 순서로 정렬합니다. 채널 내부는 EP 오름차순입니다. 현재 대기 {persistedCount}건.
                       </div>
                     </div>
-                    <span className="rounded-md border border-blue-400/30 bg-blue-400/10 px-2.5 py-1 text-[11px] font-bold text-blue-200">
-                      작업 시간순 고정
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setQueueChannelFilter(null)}
+                        className={`rounded-md border px-3 py-1.5 text-sm font-bold transition-colors ${
+                          queueChannelFilter == null
+                            ? "border-accent-primary bg-accent-primary/20 text-accent-primary"
+                            : "border-border bg-bg-primary text-gray-400 hover:text-gray-200"
+                        }`}
+                      >
+                        All
+                      </button>
+                      {queueChannels.map((ch) => (
+                        <button
+                          key={`queue-filter-${ch}`}
+                          type="button"
+                          onClick={() => setQueueChannelFilter(ch)}
+                          className={`rounded-md border px-3 py-1.5 text-sm font-black transition-colors ${
+                            queueChannelFilter === ch
+                              ? channelBadgeClass(ch, true)
+                              : "border-border bg-bg-primary text-gray-400 hover:text-gray-200"
+                          }`}
+                          title={`CH${ch} ${channelCounts[ch] || 0}`}
+                        >
+                          CH{ch} {channelCounts[ch] || 0}
+                        </button>
+                      ))}
+                    </div>
+                    <span className="rounded-md border border-blue-400/30 bg-blue-400/10 px-3 py-1.5 text-sm font-bold text-blue-200">
+                      현재 기준 실행순
                     </span>
                     <button
                       type="button"
@@ -2080,7 +2432,7 @@ export default function LivePage() {
                         });
                       }}
                       disabled={visibleQueueKeys.length === 0}
-                      className="inline-flex items-center gap-1.5 rounded-md border border-border bg-bg-primary px-2.5 py-1 text-[11px] font-semibold text-gray-300 hover:bg-bg-tertiary disabled:opacity-40"
+                      className="inline-flex items-center gap-2 rounded-md border border-border bg-bg-primary px-3 py-2 text-sm font-semibold text-gray-300 hover:bg-bg-tertiary disabled:opacity-40"
                     >
                       {allVisibleSelected ? "전체 해제" : "전체 선택"}
                     </button>
@@ -2088,27 +2440,27 @@ export default function LivePage() {
                       type="button"
                       onClick={() => void runQueueItemsNow(visibleQueueKeys.filter((key) => selectedQueueIds.has(key)))}
                       disabled={selectedVisibleCount === 0 || queueBatchRunning}
-                      className="inline-flex items-center gap-1.5 rounded-md border border-accent-success/40 bg-accent-success/15 px-3 py-1 text-[11px] font-bold text-accent-success hover:bg-accent-success/25 disabled:opacity-40"
+                      className="inline-flex items-center gap-2 rounded-md border border-accent-success/40 bg-accent-success/15 px-4 py-2 text-sm font-bold text-accent-success hover:bg-accent-success/25 disabled:opacity-40"
                       title="체크한 작업을 큐 맨 앞으로 올리고 자동 실행 시간을 무시해서 순차 실행"
                     >
-                      {queueBatchRunning ? <Loader2 size={12} className="animate-spin" /> : <PlayCircle size={12} />}
+                      {queueBatchRunning ? <Loader2 size={15} className="animate-spin" /> : <PlayCircle size={15} />}
                       선택 {selectedVisibleCount}건 실행
                     </button>
                     <button
                       type="button"
                       onClick={handleRefresh}
-                      className="inline-flex items-center gap-1.5 rounded-md border border-border bg-bg-primary px-2.5 py-1 text-[11px] font-semibold text-gray-300 hover:bg-bg-tertiary"
+                      className="inline-flex items-center gap-2 rounded-md border border-border bg-bg-primary px-3 py-2 text-sm font-semibold text-gray-300 hover:bg-bg-tertiary"
                     >
-                      <RefreshCw size={12} />
+                      <RefreshCw size={15} />
                       새로고침
                     </button>
                     <button
                       type="button"
                       onClick={() => setQueuePanelOpen(false)}
-                      className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border bg-bg-primary text-gray-400 hover:text-gray-100"
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-border bg-bg-primary text-gray-300 hover:text-gray-100"
                       title="닫기"
                     >
-                      <X size={13} />
+                      <X size={17} />
                     </button>
                   </div>
                   <div className="min-h-0 flex-1 overflow-y-auto p-3">
@@ -2116,18 +2468,27 @@ export default function LivePage() {
                       <div className="rounded-lg border border-dashed border-border bg-bg-primary/35 px-4 py-8 text-center text-sm text-gray-500">
                         대기 중인 작업이 없습니다.
                       </div>
+                    ) : visibleQueueEntries.length === 0 ? (
+                      <div className="rounded-lg border border-dashed border-border bg-bg-primary/35 px-4 py-8 text-center text-sm text-gray-500">
+                        CH{queueChannelFilter} queue is empty.
+                      </div>
                     ) : (
                       <div className="overflow-hidden rounded-lg border border-border bg-bg-primary/40">
-                        <div className="flex flex-wrap items-center gap-2 border-b border-border/70 bg-bg-secondary/70 px-3 py-2 text-[11px] text-gray-400">
-                          <span className="font-bold text-gray-200">작업 시간순</span>
-                          {liveNextEntries.length > 0 && (
-                            <span className="rounded border border-amber-300/40 bg-amber-300/15 px-2 py-0.5 font-bold text-amber-200">
-                              다음 실행 {liveNextEntries.length}건
+                        <div className="flex flex-wrap items-center gap-2.5 border-b border-border/70 bg-bg-secondary/70 px-4 py-3 text-sm text-gray-300">
+                          <span className="font-bold text-gray-200">현재 큐 순서</span>
+                          {queueChannelFilter != null && (
+                            <span className={`rounded-md border px-3 py-1.5 text-sm font-black ${channelBadgeClass(queueChannelFilter, true)}`}>
+                              CH{queueChannelFilter} filter · {visibleQueueEntries.length}
                             </span>
                           )}
-                          {channelsByTime.map((ch) => (
-                            <span key={`time-order-${ch}`} className="rounded border border-border bg-bg-primary px-2 py-0.5 font-semibold">
-                              CH{ch} {queueChannelTimes[String(ch)] || "수동"}
+                          {liveNextCount > 0 && (
+                            <span className="rounded border border-amber-300/40 bg-amber-300/15 px-2.5 py-1 font-bold text-amber-200">
+                              다음 실행 {liveNextCount}건
+                            </span>
+                          )}
+                          {channelsByNextRun.map((ch) => (
+                            <span key={`time-order-${ch}`} className={`rounded-md border px-3 py-1.5 text-sm font-black ${channelBadgeClass(ch, (channelCounts[ch] || 0) > 0)}`}>
+                              CH{ch} {queueChannelTimeLabel(queueChannelTimes[String(ch)])} · {channelCounts[ch] || 0}건
                             </span>
                           ))}
                         </div>
@@ -2177,11 +2538,29 @@ export default function LivePage() {
                   <button
                     type="button"
                     onClick={() => loadRecoveryContent(recoveryChannel)}
-                    disabled={recoveryLoading}
+                    disabled={recoveryLoading || recoveryBulkQueuing}
                     className="inline-flex items-center gap-1.5 rounded-md border border-border bg-bg-primary px-2.5 py-1 text-[11px] font-semibold text-gray-300 hover:bg-bg-tertiary disabled:opacity-50"
                   >
                     <RefreshCw size={12} className={recoveryLoading ? "animate-spin" : ""} />
                     새로고침
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleRecoveryBulkReupload}
+                    disabled={recoveryBulkUploading || recoveryBulkQueuing || failedTasks.filter(isUploadRecoverableTask).length === 0}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-emerald-400/30 bg-emerald-400/10 px-2.5 py-1 text-[11px] font-semibold text-emerald-200 hover:bg-emerald-400/15 disabled:opacity-40"
+                  >
+                    <RotateCcw size={12} className={recoveryBulkUploading ? "animate-spin" : ""} />
+                    업로드 실패 {failedTasks.filter(isUploadRecoverableTask).length}건 재시도
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleRecoveryQueueAll}
+                    disabled={recoveryBulkQueuing || recoveryBulkUploading || recoveryLoading || failedTasks.length + orphanProjects.length === 0}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-amber-400/40 bg-amber-400/10 px-2.5 py-1 text-[11px] font-semibold text-amber-100 hover:bg-amber-400/15 disabled:opacity-40"
+                  >
+                    <RotateCcw size={12} className={recoveryBulkQueuing ? "animate-spin" : ""} />
+                    전체 복구 {failedTasks.length + orphanProjects.length}건
                   </button>
                   <button
                     type="button"
@@ -2207,19 +2586,33 @@ export default function LivePage() {
                         {failedTasks.map((item) => (
                           <div key={item.task_id} className="flex items-center gap-2 rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2">
                             <div className="min-w-0 flex-1">
-                              <div className="truncate text-sm font-semibold text-gray-200">{taskTitle(item)}</div>
+                              <div className="flex min-w-0 items-center gap-2">
+                                <div className="truncate text-sm font-semibold text-gray-200">{taskTitle(item)}</div>
+                                {isUploadRecoverableTask(item) && (
+                                  <span className="shrink-0 rounded border border-emerald-400/30 bg-emerald-400/10 px-1.5 py-0.5 text-[10px] font-bold text-emerald-200">
+                                    업로드만 남음
+                                  </span>
+                                )}
+                              </div>
                               <div className="text-xs text-gray-500">
                                 {item.channel ? `CH${item.channel} · ` : ""}{item.current_step_name || "단계 미상"} · {Math.round(item.progress_pct || 0)}%
                               </div>
                             </div>
+                            {isUploadRecoverableTask(item) && (
+                              <button
+                                onClick={() => void handleRecoveryReupload(item)}
+                                disabled={Boolean(recoveryUploadingId) || recoveryBulkUploading || recoveryBulkQueuing}
+                                className="shrink-0 rounded-md border border-emerald-400/30 bg-emerald-400/10 px-2.5 py-1 text-xs font-semibold text-emerald-200 hover:bg-emerald-400/15 disabled:opacity-40"
+                              >
+                                {recoveryUploadingId === item.task_id ? "업로드 중..." : "업로드 재시도"}
+                              </button>
+                            )}
                             <button
-                              onClick={() => {
-                                handleSelectFailedTask(item);
-                                setRecoveryOpen(false);
-                              }}
-                              className="shrink-0 rounded-md border border-red-400/30 bg-red-400/10 px-2.5 py-1 text-xs font-semibold text-red-200 hover:bg-red-400/15"
+                              onClick={() => void handleQueueFailedTask(item)}
+                              disabled={recoveryBulkQueuing || recoveringId === item.task_id}
+                              className="shrink-0 rounded-md border border-red-400/30 bg-red-400/10 px-2.5 py-1 text-xs font-semibold text-red-200 hover:bg-red-400/15 disabled:opacity-50"
                             >
-                              불러오기
+                              {recoveringId === item.task_id ? "처리 중..." : "큐 상단으로"}
                             </button>
                           </div>
                         ))}
@@ -2238,14 +2631,11 @@ export default function LivePage() {
                               </div>
                             </div>
                             <button
-                              onClick={() => {
-                                void handleRecoverOrphan(item.project_id);
-                                setRecoveryOpen(false);
-                              }}
-                              disabled={recoveringId === item.project_id}
+                              onClick={() => void handleRecoverOrphan(item.project_id)}
+                              disabled={recoveryBulkQueuing || recoveringId === item.project_id}
                               className="shrink-0 rounded-md border border-amber-400/30 bg-amber-400/10 px-2.5 py-1 text-xs font-semibold text-amber-200 hover:bg-amber-400/15 disabled:opacity-50"
                             >
-                              {recoveringId === item.project_id ? "불러오는 중..." : "불러오기"}
+                              {recoveringId === item.project_id ? "처리 중..." : "큐 상단으로"}
                             </button>
                           </div>
                         ))}
@@ -2299,6 +2689,20 @@ export default function LivePage() {
                   이어서 하기
                 </button>
                 {/* v1.1.53: 전체 초기화 버튼 */}
+                {task && isUploadRecoverableTask(task) && (
+                  <button
+                    onClick={handleReupload}
+                    disabled={uploadingStep}
+                    className="flex items-center gap-2 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 text-sm font-semibold px-5 py-2.5 rounded-lg border border-emerald-400/30 transition-colors disabled:opacity-50"
+                  >
+                    {uploadingStep ? (
+                      <Loader2 size={14} className="animate-spin" />
+                    ) : (
+                      <RotateCcw size={14} />
+                    )}
+                    업로드만 다시
+                  </button>
+                )}
                 <button
                   onClick={() => handleReset(2)}
                   disabled={resetting}
@@ -2406,7 +2810,7 @@ export default function LivePage() {
             화살표는 줄바꿈과 충돌하므로 xl 미만에서 숨김. */}
       {/* 본체: 로그 + 우측 패널
           v1.2.13: xl 미만에서는 세로 1열로 붕괴 (우측 패널이 아래로). */}
-      <div className="flex-1 grid grid-cols-1 xl:grid-cols-[1fr_360px] gap-3.5 lg:gap-5 min-h-0">
+      <div className="flex-1 grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(420px,30vw)] 2xl:grid-cols-[minmax(0,1fr)_minmax(460px,32vw)] gap-3.5 lg:gap-5 min-h-0">
         {/* 로그 */}
         <div className="bg-[#08080e] border border-border rounded-xl flex flex-col overflow-hidden">
           <div className="flex items-center gap-2.5 px-3.5 sm:px-4 lg:px-5 py-3 border-b border-border flex-shrink-0">
@@ -2425,6 +2829,33 @@ export default function LivePage() {
               {logs.length}줄
             </span>
           </div>
+          {isRunning && displayTask && (
+            <div className="border-b border-amber-400/30 bg-amber-400/10 px-3.5 sm:px-4 lg:px-5 py-3 flex-shrink-0">
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+                <span className="font-semibold text-amber-200">
+                  {displayTask.current_step_label || displayTask.current_step_name || "진행 중"}
+                </span>
+                {displayTask.current_step_total ? (
+                  <span className="font-mono text-gray-100">
+                    {(displayTask.current_step_completed ?? 0)} / {displayTask.current_step_total}
+                  </span>
+                ) : null}
+                {typeof displayTask.current_step_cut_progress_pct === "number" ? (
+                  <span className="font-mono text-cyan-200">
+                    컷 내부 {displayTask.current_step_cut_progress_pct.toFixed(0)}%
+                  </span>
+                ) : null}
+                <span className="font-mono text-amber-300">
+                  {(displayTask.progress_pct || 0).toFixed(1)}%
+                </span>
+              </div>
+              {(displayTask.current_step_progress_text || displayTask.sub_status) && (
+                <div className="mt-1 font-mono text-xs text-amber-100 truncate" title={displayTask.sub_status || displayTask.current_step_progress_text || ""}>
+                  {displayTask.current_step_progress_text || displayTask.sub_status}
+                </div>
+              )}
+            </div>
+          )}
           <div className="flex-1 overflow-y-auto px-3.5 sm:px-4 lg:px-5 py-3 font-mono text-sm leading-7 space-y-1.5">
             {logs.map((log, i) => (
               <div key={i} className="flex gap-3">
@@ -2439,10 +2870,10 @@ export default function LivePage() {
         </div>
 
         {/* 우측 패널 */}
-        <div className="flex flex-col gap-3 lg:gap-4 overflow-y-auto">
+        <div className="flex min-w-0 flex-col gap-3 lg:gap-4 overflow-y-auto">
           {/* 단계별 작업 활동 — 살아있는지/얼마 남았는지/멈췄는지 시각화 */}
           <ActivityPanel
-            task={task}
+            task={displayTask}
             isRunningTask={Boolean(isRunning)}
             clearingStep={clearing}
             rerunningStep={rerunningStep}
@@ -2464,7 +2895,7 @@ export default function LivePage() {
               }`}
             >
               {isRunning
-                ? `현재 단계: ${task?.current_step_name || "준비 중"}`
+                ? `현재 단계: ${displayTask?.current_step_name || "준비 중"}`
                 : isCompleted
                   ? "제작 완료"
                   : isFailed
@@ -2472,16 +2903,16 @@ export default function LivePage() {
                     : "대기 중"}
             </h3>
             <div className="space-y-3 text-sm">
-              {task?.current_step_completed !== undefined &&
-                task?.current_step_total && (
-                  <div className="flex justify-between">
+              {displayTask?.current_step_completed !== undefined &&
+                displayTask?.current_step_total && (
+                  <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1">
                     <span className="text-gray-500">처리 컷</span>
-                    <span className="text-gray-200 font-medium">
-                      {task.current_step_completed} / {task.current_step_total}
+                    <span className="min-w-0 text-right text-gray-200 font-medium tabular-nums">
+                      {displayTask.current_step_completed} / {displayTask.current_step_total}
                     </span>
                   </div>
                 )}
-              <div className="flex justify-between">
+              <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1">
                 <span className="text-gray-500">
                   <Clock size={13} className="inline mr-1.5" />
                   경과 시간
@@ -2489,7 +2920,7 @@ export default function LivePage() {
                 <span className="text-gray-200 font-mono">{elapsedStr}</span>
               </div>
               {estimatedRemaining !== null && isRunning && (
-                <div className="flex justify-between">
+                <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1">
                   <span className="text-gray-500">
                     <Timer size={13} className="inline mr-1.5" />
                     예상 잔여
@@ -2499,7 +2930,7 @@ export default function LivePage() {
                   </span>
                 </div>
               )}
-              <div className="flex justify-between">
+              <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1">
                 <span className="text-gray-500">전체 진행률</span>
                 <span
                   className={`font-bold ${
@@ -2513,7 +2944,7 @@ export default function LivePage() {
                   {pct}%
                 </span>
               </div>
-              <div className="flex justify-between">
+              <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1">
                 <span className="text-gray-500">총 컷 수</span>
                 <span className="text-gray-200">{task?.total_cuts || "-"}</span>
               </div>
@@ -2532,12 +2963,12 @@ export default function LivePage() {
               </h3>
               <div className="space-y-3 text-sm">
                 {task.estimate.estimated_cost_krw != null && (
-                  <div className="flex justify-between">
+                  <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1">
                     <span className="text-gray-500">예상 비용</span>
-                    <span className="text-gray-200 font-medium">
+                    <span className="min-w-0 text-right text-gray-200 font-medium tabular-nums">
                       {formatKrw(task.estimate.estimated_cost_krw)}
                       {task.estimate.estimated_cost_usd != null && (
-                        <span className="text-gray-500 ml-1.5">
+                        <span className="whitespace-nowrap text-gray-500 ml-1.5">
                           (${task.estimate.estimated_cost_usd.toFixed(2)})
                         </span>
                       )}
@@ -2545,15 +2976,15 @@ export default function LivePage() {
                   </div>
                 )}
                 {task.estimate.estimated_seconds != null && (
-                  <div className="flex justify-between">
+                  <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1">
                     <span className="text-gray-500">예상 소요</span>
-                    <span className="text-gray-200 font-medium">
+                    <span className="text-right text-gray-200 font-medium">
                       {formatDurationKo(task.estimate.estimated_seconds)}
                     </span>
                   </div>
                 )}
                 {task.estimate.cost_tier && (
-                  <div className="flex justify-between">
+                  <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1">
                     <span className="text-gray-500">비용 등급</span>
                     <span
                       className={`font-semibold ${
@@ -2583,10 +3014,10 @@ export default function LivePage() {
                         val > 0 && (
                           <div
                             key={key}
-                            className="flex justify-between text-sm"
+                            className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1 text-sm"
                           >
                             <span className="text-gray-500">{key}</span>
-                            <span className="text-gray-400">
+                            <span className="text-right text-gray-400 tabular-nums">
                               ${(val as number).toFixed(3)}
                             </span>
                           </div>
@@ -2605,10 +3036,10 @@ export default function LivePage() {
                         val > 0 && (
                           <div
                             key={key}
-                            className="flex justify-between text-sm"
+                            className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1 text-sm"
                           >
                             <span className="text-gray-500">{key}</span>
-                            <span className="text-gray-400">
+                            <span className="text-right text-gray-400">
                               {formatDurationKo(val as number)}
                             </span>
                           </div>
@@ -2624,3 +3055,4 @@ export default function LivePage() {
     </div>
   );
 }
+

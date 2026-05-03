@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
@@ -89,7 +89,7 @@ function PrivacyBadge({ status, publishAt }: { status?: string | null; publishAt
   );
 }
 
-export default function StudioVideosPage() {
+function StudioVideosPageInner() {
   const searchParams = useSearchParams();
   const projectId = (searchParams.get("project") || "").trim();
 
@@ -387,5 +387,13 @@ export default function StudioVideosPage() {
         </button>
       </div>
     </div>
+  );
+}
+
+export default function StudioVideosPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-sm text-gray-500">불러오는 중...</div>}>
+      <StudioVideosPageInner />
+    </Suspense>
   );
 }

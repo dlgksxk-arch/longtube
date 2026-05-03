@@ -12,6 +12,7 @@ from app.models.cut import Cut
 from app.config import DATA_DIR
 from app.services.tts.factory import get_tts_service
 from app.services.tts.narration_fit import generate_tts_with_auto_narration_fit
+from app.services.tts.pronunciation_normalizer import prepare_spoken_narration_for_tts
 from app.services.tts.voice_profile import (
     ensure_voice_profile_from_config,
     get_cached_voice_profile_from_config,
@@ -145,10 +146,16 @@ async def generate_all_voices(project_id: str, db: Session = Depends(get_db)):
             audio_dir = DATA_DIR / project_id / "audio"
             audio_dir.mkdir(parents=True, exist_ok=True)
             audio_path = str(audio_dir / f"cut_{cut_number}.wav")
+            spoken_narration = prepare_spoken_narration_for_tts(
+                narration,
+                project.config.get("language", "ko"),
+            )
+            spoken_cut_data = dict(cut_data)
+            spoken_cut_data["narration"] = spoken_narration
 
             result = await generate_tts_with_auto_narration_fit(
                 tts_service,
-                narration,
+                spoken_narration,
                 voice_id,
                 audio_path,
                 speed=speed,
@@ -157,16 +164,10 @@ async def generate_all_voices(project_id: str, db: Session = Depends(get_db)):
                 language=project.config.get("language", "ko"),
                 cut_number=cut_number,
                 total_cuts=len(script_cuts),
-                cut_data=cut_data,
+                cut_data=spoken_cut_data,
                 script=script,
                 log=lambda msg: print(f"[Voice] {msg}"),
             )
-            narration_changed = _sync_cut_narration_after_fit(
-                project_id, cut, cut_data, result.get("narration", narration)
-            )
-            if narration_changed:
-                _invalidate_voice_dependents(project)
-            script_dirty = narration_changed or script_dirty
 
             cut.audio_path = result["path"]
             cut.audio_duration = result.get("duration", 0.0)
@@ -298,9 +299,15 @@ async def generate_all_voices_async(project_id: str, db: Session = Depends(get_d
                     audio_dir = DATA_DIR / project_id / "audio"
                     audio_dir.mkdir(parents=True, exist_ok=True)
                     audio_path = str(audio_dir / f"cut_{cut_number}.mp3")
+                    spoken_narration = prepare_spoken_narration_for_tts(
+                        narration,
+                        proj.config.get("language", "ko"),
+                    )
+                    spoken_cut_data = dict(cut_data)
+                    spoken_cut_data["narration"] = spoken_narration
                     result = await generate_tts_with_auto_narration_fit(
                         tts_service,
-                        narration,
+                        spoken_narration,
                         voice_id,
                         audio_path,
                         speed=speed,
@@ -310,16 +317,10 @@ async def generate_all_voices_async(project_id: str, db: Session = Depends(get_d
                         language=proj.config.get("language", "ko"),
                         cut_number=cut_number,
                         total_cuts=len(cut_list),
-                        cut_data=cut_data,
+                        cut_data=spoken_cut_data,
                         script=script,
                         log=lambda msg: print(f"[Voice] {msg}"),
                     )
-                    narration_changed = _sync_cut_narration_after_fit(
-                        project_id, cut, cut_data, result.get("narration", narration)
-                    )
-                    if narration_changed:
-                        _invalidate_voice_dependents(proj)
-                    script_dirty = narration_changed or script_dirty
                     cut.audio_path = result["path"]
                     cut.audio_duration = result.get("duration", 0.0)
                     cut.status = "completed"
@@ -327,7 +328,7 @@ async def generate_all_voices_async(project_id: str, db: Session = Depends(get_d
                     try:
                         from app.services import spend_ledger
                         spend_ledger.record_tts(
-                            tts_model, chars=len(result.get("narration", narration)),
+                            tts_model, chars=len(narration),
                             project_id=project_id, note=f"studio cut_{cut_number}",
                         )
                     except Exception as _le:
@@ -499,9 +500,15 @@ async def resume_voices_async(project_id: str, db: Session = Depends(get_db)):
                     audio_dir = DATA_DIR / project_id / "audio"
                     audio_dir.mkdir(parents=True, exist_ok=True)
                     audio_path = str(audio_dir / f"cut_{cut_number}.mp3")
+                    spoken_narration = prepare_spoken_narration_for_tts(
+                        narration,
+                        proj.config.get("language", "ko"),
+                    )
+                    spoken_cut_data = dict(cut_data)
+                    spoken_cut_data["narration"] = spoken_narration
                     result = await generate_tts_with_auto_narration_fit(
                         tts_service,
-                        narration,
+                        spoken_narration,
                         voice_id,
                         audio_path,
                         speed=speed,
@@ -511,16 +518,10 @@ async def resume_voices_async(project_id: str, db: Session = Depends(get_db)):
                         language=proj.config.get("language", "ko"),
                         cut_number=cut_number,
                         total_cuts=len(cut_list),
-                        cut_data=cut_data,
+                        cut_data=spoken_cut_data,
                         script=script,
                         log=lambda msg: print(f"[Voice] {msg}"),
                     )
-                    narration_changed = _sync_cut_narration_after_fit(
-                        project_id, cut, cut_data, result.get("narration", narration)
-                    )
-                    if narration_changed:
-                        _invalidate_voice_dependents(proj)
-                    script_dirty = narration_changed or script_dirty
                     cut.audio_path = result["path"]
                     cut.audio_duration = result.get("duration", 0.0)
                     cut.status = "completed"
@@ -638,9 +639,16 @@ async def generate_one_voice(
             },
         )
 
+        spoken_narration = prepare_spoken_narration_for_tts(
+            cut.narration,
+            project.config.get("language", "ko"),
+        )
+        spoken_cut_data = dict(cut_data)
+        spoken_cut_data["narration"] = spoken_narration
+
         result = await generate_tts_with_auto_narration_fit(
             tts_service,
-            cut.narration,
+            spoken_narration,
             voice_id,
             audio_path,
             speed=speed,
@@ -649,15 +657,10 @@ async def generate_one_voice(
             language=project.config.get("language", "ko"),
             cut_number=cut_number,
             total_cuts=len(script_cuts) or 1,
-            cut_data=cut_data,
+            cut_data=spoken_cut_data,
             script=script,
             log=lambda msg: print(f"[Voice] {msg}"),
         )
-        script_dirty = _sync_cut_narration_after_fit(
-            project_id, cut, cut_data, result.get("narration", cut.narration)
-        )
-        if script_dirty:
-            _invalidate_voice_dependents(project)
 
         cut.audio_path = result["path"]
         cut.audio_duration = result.get("duration", 0.0)
@@ -672,8 +675,6 @@ async def generate_one_voice(
         except Exception as _le:
             print(f"[spend_ledger] studio single tts record skipped: {_le}")
         db.commit()
-        if script_dirty:
-            _save_script(project_id, script)
         _mark_voice_completed_if_ready(project_id, project, db)
 
         return {

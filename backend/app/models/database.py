@@ -120,6 +120,7 @@ def init_db():
     from app.models.preset_usage_record import PresetUsageRecord  # noqa
     from app.models.event import Event  # noqa
     from app.models.api_key_vault import ApiKeyVault  # noqa
+    from app.models.user import User  # noqa
     Base.metadata.create_all(bind=engine)
     # 기존 설치 호환 마이그레이션
     try:

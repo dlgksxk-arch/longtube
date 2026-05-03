@@ -198,6 +198,7 @@ export default function StepScript({ project, onUpdate, onCutsChange }: Props) {
             <option value="ko">🇰🇷 한국어</option>
             <option value="en">🇺🇸 English</option>
             <option value="ja">🇯🇵 日本語</option>
+            <option value="hi">Hindi</option>
           </select>
         </div>
         <div className="flex items-end">

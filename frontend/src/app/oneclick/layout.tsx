@@ -14,6 +14,7 @@ import {
   CalendarDays,
   Film,
   Home,
+  Upload,
   Power,
   LayoutDashboard,
   Youtube as YoutubeIcon,
@@ -28,6 +29,7 @@ import LocalServiceStatus from "@/components/common/LocalServiceStatus";
 
 const NAV = [
   { href: "/oneclick", label: "제작 큐", icon: ListTodo },
+  { href: "/oneclick/upload-pending", label: "업로드 대기", icon: Upload },
   { href: "/oneclick/live", label: "실시간 현황", icon: Activity },
   { href: "/oneclick/schedule", label: "스케줄", icon: CalendarDays },
   { href: "/oneclick/library", label: "완성작 관리", icon: Film },
@@ -53,6 +55,7 @@ function taskDisplayTitle(task: OneClickTask) {
 
 const ONECLICK_SUBNAV = [
   { href: "/oneclick", label: "제작 큐", icon: ListTodo },
+  { href: "/oneclick/upload-pending", label: "업로드 대기", icon: Upload },
   { href: "/oneclick/live", label: "실시간 현황", icon: Activity },
   { href: "/oneclick/schedule", label: "스케줄", icon: CalendarDays },
   { href: "/oneclick/library", label: "완성작 관리", icon: Film },
@@ -118,7 +121,7 @@ export default function OneClickLayout({
   const hasAnySchedule = activeChannels.length > 0;
   const flatSidebarNav = [
     TOP_NAV[0],
-    ...ONECLICK_SUBNAV.filter(({ href }) => href !== "/oneclick/library"),
+    ...ONECLICK_SUBNAV,
     ...TOP_NAV.filter(({ href }) => href !== "/" && href !== "/oneclick"),
   ];
 
@@ -146,6 +149,7 @@ export default function OneClickLayout({
         {/* 네비게이션 */}
         <nav className="p-2.5 lg:p-3 xl:p-4 space-y-1.5">
           {flatSidebarNav.map(({ href, label, icon: Icon }) => {
+            const displayLabel = href === "/oneclick/library" ? "작업기록" : label;
             const active =
               href === "/"
                 ? pathname === "/"
@@ -161,7 +165,7 @@ export default function OneClickLayout({
                 }`}
               >
                 <Icon size={20} />
-                <span className="truncate">{label}</span>
+                <span className="truncate">{displayLabel}</span>
               </Link>
             );
           })}

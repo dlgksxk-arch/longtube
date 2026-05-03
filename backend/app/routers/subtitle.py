@@ -2,14 +2,22 @@
 import json
 import os
 import re
+import hashlib
+import shutil
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from app.models.database import get_db
 from app.models.project import Project
 from app.models.cut import Cut
-from app.config import CUT_VIDEO_DURATION, DATA_DIR, FIRST_CUT_FADE_IN_SECONDS, resolve_project_dir
-from app.services.subtitle_service import generate_ass
+from app.config import (
+    CUT_VIDEO_DURATION,
+    DATA_DIR,
+    FIRST_CUT_FADE_IN_SECONDS,
+    NARRATION_VOLUME_GAIN,
+    resolve_project_dir,
+)
+from app.services.subtitle_service import DEFAULT_SUBTITLE_STYLE, generate_ass, generate_srt
 from app.services.shorts_service import (
     load_script as load_shorts_script,
     render_shorts_from_final,
@@ -31,7 +39,7 @@ def _load_script(project_id: str) -> dict:
 
 
 def _build_and_write_ass(project_id: str, project: Project, db: Session) -> tuple[str, int]:
-    """Build cut data, render ASS, and persist subtitles.ass to disk.
+    """Build cut data, render ASS/SRT, and persist subtitle files to disk.
 
     Shared by the explicit generate endpoint and the auto-generation path
     inside the render endpoint.
@@ -55,13 +63,7 @@ def _build_and_write_ass(project_id: str, project: Project, db: Session) -> tupl
             "duration_estimate": cut_script.get("duration_estimate", 5.0)
         })
 
-    style_config = project.config.get("subtitle_style", {
-        "font": "Pretendard Bold",
-        "size": 48,
-        "color": "#FFFFFF",
-        "outline_color": "#000000",
-        "position": "bottom"
-    })
+    style_config = project.config.get("subtitle_style", dict(DEFAULT_SUBTITLE_STYLE))
     aspect_ratio = project.config.get("aspect_ratio", "16:9")
 
     ass_content = generate_ass(cuts_data, style_config, aspect_ratio)
@@ -72,6 +74,10 @@ def _build_and_write_ass(project_id: str, project: Project, db: Session) -> tupl
 
     with open(subtitle_path, "w", encoding="utf-8") as f:
         f.write(ass_content)
+
+    srt_path = subtitle_dir / "subtitles.srt"
+    with open(srt_path, "w", encoding="utf-8") as f:
+        f.write(generate_srt(cuts_data))
 
     return str(subtitle_path), len(cuts_data)
 
@@ -92,6 +98,7 @@ def generate_subtitles(project_id: str, db: Session = Depends(get_db)):
         return {
             "status": "generated",
             "path": subtitle_path,
+            "srt_path": str(DATA_DIR / project_id / "subtitles" / "subtitles.srt"),
             "cuts": count,
         }
     except HTTPException:
@@ -152,6 +159,10 @@ async def upload_render_bgm(
         cfg["bgm_enabled"] = True
         cfg["bgm_path"] = f"bgm/{bgm_path.name}"
         cfg["bgm_volume"] = float(cfg.get("bgm_volume", 0.24) or 0.24)
+        if isinstance(cfg.get("audio"), dict):
+            cfg["audio"]["bgm_enabled"] = True
+            cfg["audio"]["bgm_path"] = cfg["bgm_path"]
+            cfg["audio"]["bgm_volume"] = cfg["bgm_volume"]
         project.config = cfg
         from sqlalchemy.orm.attributes import flag_modified
         flag_modified(project, "config")
@@ -184,15 +195,31 @@ async def generate_render_bgm(project_id: str, db: Session = Depends(get_db)):
         language=str(cfg.get("language") or "ko"),
     )
     target_duration = int(cfg.get("target_duration") or 600)
-    length_ms = min(max(target_duration * 1000, 30_000), 180_000)
-    bgm_abs = resolve_project_dir(project_id, cfg, create=True) / "bgm" / "generated_bgm.mp3"
+    length_ms = min(max(target_duration * 1000, 30_000), 60_000)
+    cache_key = hashlib.sha1(f"{prompt}|{length_ms}".encode("utf-8")).hexdigest()[:16]
+    bgm_rel = f"bgm/cache/{cache_key}.mp3"
+    bgm_abs = resolve_project_dir(project_id, cfg, create=True) / bgm_rel
 
     try:
-        result = await generate_bgm(prompt=prompt, output_path=bgm_abs, length_ms=length_ms)
+        if bgm_abs.exists() and bgm_abs.is_file() and bgm_abs.stat().st_size > 0:
+            result = {
+                "path": str(bgm_abs),
+                "size": bgm_abs.stat().st_size,
+                "length_ms": length_ms,
+                "prompt": prompt,
+                "cached": True,
+            }
+        else:
+            result = await generate_bgm(prompt=prompt, output_path=bgm_abs, length_ms=length_ms)
         cfg["bgm_enabled"] = True
-        cfg["bgm_path"] = "bgm/generated_bgm.mp3"
+        cfg["bgm_path"] = bgm_rel
         cfg["bgm_prompt_used"] = prompt
         cfg["bgm_volume"] = float(cfg.get("bgm_volume", 0.24) or 0.24)
+        if isinstance(cfg.get("audio"), dict):
+            cfg["audio"]["bgm_enabled"] = True
+            cfg["audio"]["bgm_path"] = bgm_rel
+            cfg["audio"]["bgm_prompt_used"] = prompt
+            cfg["audio"]["bgm_volume"] = cfg["bgm_volume"]
         project.config = cfg
         from sqlalchemy.orm.attributes import flag_modified
         flag_modified(project, "config")
@@ -205,6 +232,7 @@ async def generate_render_bgm(project_id: str, db: Session = Depends(get_db)):
             "prompt": prompt,
             "enabled": True,
             "volume": cfg["bgm_volume"],
+            "cached": bool(result.get("cached")),
         }
     except Exception as e:
         raise HTTPException(500, f"BGM generation failed: {str(e)}")
@@ -229,6 +257,9 @@ def delete_render_bgm(project_id: str, db: Session = Depends(get_db)):
             deleted = False
     cfg["bgm_enabled"] = False
     cfg["bgm_path"] = ""
+    if isinstance(cfg.get("audio"), dict):
+        cfg["audio"]["bgm_enabled"] = False
+        cfg["audio"]["bgm_path"] = ""
     project.config = cfg
     from sqlalchemy.orm.attributes import flag_modified
     flag_modified(project, "config")
@@ -356,7 +387,7 @@ async def _heal_cut_audio(project_id: str, db: Session) -> dict:
     return summary
 
 
-def _resolution_for_aspect(aspect_ratio: str, target_resolution: str = "720p") -> str:
+def _resolution_for_aspect(aspect_ratio: str, target_resolution: str = "1080p") -> str:
     if str(target_resolution).lower() in {"1080", "1080p", "fullhd", "fhd"}:
         if aspect_ratio == "9:16":
             return "1080x1920"
@@ -390,9 +421,10 @@ def _resolve_interlude_path(project_id: str, project: Project, kind: str) -> str
 
 def _resolve_bgm_path(project_id: str, project: Project) -> str | None:
     cfg = project.config or {}
-    if not bool(cfg.get("bgm_enabled", False)):
+    bgm_cfg = _read_bgm_config(cfg)
+    if not bgm_cfg["enabled"]:
         return None
-    raw = str(cfg.get("bgm_path") or "").strip()
+    raw = str(bgm_cfg["path"] or "").strip()
     if not raw:
         return None
     from pathlib import Path as _P
@@ -410,13 +442,80 @@ def _resolve_bgm_path(project_id: str, project: Project) -> str | None:
     return None
 
 
+def _read_bgm_config(cfg: dict | None) -> dict:
+    data = cfg or {}
+    audio = data.get("audio") if isinstance(data.get("audio"), dict) else {}
+
+    enabled_raw = data.get("bgm_enabled", audio.get("bgm_enabled", False))
+    path = data.get("bgm_path", audio.get("bgm_path", ""))
+    style_prompt = data.get("bgm_style_prompt", audio.get("bgm_style_prompt", ""))
+    ducking = str(data.get("ducking_strength", audio.get("ducking_strength", "normal")) or "normal").strip().lower()
+    if ducking not in {"low", "normal", "strong", "off", "none", "disabled"}:
+        ducking = "normal"
+
+    def _to_bool(value) -> bool:
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return False
+        text = str(value).strip().lower()
+        if text in {"1", "true", "yes", "y", "on", "enabled"}:
+            return True
+        if text in {"0", "false", "no", "n", "off", "disabled", "none", ""}:
+            return False
+        return bool(value)
+
+    def _to_float(value, default: float = 0.0) -> float:
+        try:
+            if value is not None and str(value).strip() != "":
+                return float(value)
+        except Exception:
+            pass
+        return default
+
+    volume = data.get("bgm_volume", audio.get("bgm_volume", None))
+    if volume is None:
+        db_value = data.get("bgm_volume_db", audio.get("bgm_volume_db", None))
+        try:
+            if db_value is not None and str(db_value).strip() != "":
+                volume = 10 ** (float(db_value) / 20.0)
+        except Exception:
+            volume = None
+
+    try:
+        volume_f = float(volume if volume is not None else 0.24)
+    except Exception:
+        volume_f = 0.24
+
+    return {
+        "enabled": _to_bool(enabled_raw),
+        "path": str(path or ""),
+        "style_prompt": str(style_prompt or ""),
+        "volume": max(0.0, min(1.0, volume_f)),
+        "ducking_strength": ducking,
+        "fade_in_sec": max(0.0, min(30.0, _to_float(data.get("fade_in_sec", audio.get("fade_in_sec", None)), 0.0))),
+        "fade_out_sec": max(0.0, min(30.0, _to_float(data.get("fade_out_sec", audio.get("fade_out_sec", None)), 0.0))),
+    }
+
+
+def _subtitle_delivery_mode(cfg: dict | None) -> str:
+    data = cfg or {}
+    mode = str(data.get("subtitle_delivery") or data.get("subtitle_mode") or "").strip().lower()
+    if mode in {"youtube", "youtube_caption", "youtube_captions", "srt", "external"}:
+        return "youtube_caption"
+    if mode in {"none", "off", "disabled"}:
+        return "none"
+    return "burn"
+
+
 async def _ensure_bgm_for_render(project_id: str, project: Project, db: Session) -> str | None:
     existing = _resolve_bgm_path(project_id, project)
     if existing:
         return existing
 
     cfg = dict(project.config or {})
-    if not bool(cfg.get("bgm_enabled", False)):
+    bgm_cfg = _read_bgm_config(cfg)
+    if not bgm_cfg["enabled"]:
         return None
 
     from app.services.bgm_service import build_bgm_prompt, generate_bgm
@@ -424,14 +523,41 @@ async def _ensure_bgm_for_render(project_id: str, project: Project, db: Session)
     prompt = build_bgm_prompt(
         topic=project.topic or "",
         title=project.title or "",
-        style_prompt=str(cfg.get("bgm_style_prompt") or ""),
+        style_prompt=str(bgm_cfg["style_prompt"] or ""),
         language=str(cfg.get("language") or "ko"),
     )
     target_duration = int(cfg.get("target_duration") or 600)
-    length_ms = min(max(target_duration * 1000, 30_000), 180_000)
-    bgm_rel = "bgm/generated_bgm.mp3"
-    bgm_abs = resolve_project_dir(project_id, cfg, create=True) / bgm_rel
-    print(f"[subtitle/render] generating BGM via ElevenLabs Music: {prompt!r}")
+    length_ms = min(max(target_duration * 1000, 30_000), 60_000)
+    cache_key = hashlib.sha1(f"{prompt}|{length_ms}".encode("utf-8")).hexdigest()[:16]
+    bgm_rel = f"bgm/cache/{cache_key}.mp3"
+    project_dir = resolve_project_dir(project_id, cfg, create=True)
+    bgm_abs = project_dir / bgm_rel
+    bgm_abs.parent.mkdir(parents=True, exist_ok=True)
+
+    template_project_id = str(cfg.get("template_project_id") or "").strip()
+    if template_project_id and not bgm_abs.exists():
+        template_bgm_abs = resolve_project_dir(template_project_id, create=False) / bgm_rel
+        if template_bgm_abs.exists() and template_bgm_abs.is_file():
+            shutil.copy2(template_bgm_abs, bgm_abs)
+            print(f"[subtitle/render] BGM cache copied from template: {bgm_rel}")
+
+    if bgm_abs.exists() and bgm_abs.is_file() and bgm_abs.stat().st_size > 0:
+        cfg["bgm_path"] = bgm_rel
+        cfg["bgm_prompt_used"] = prompt
+        cfg["bgm_volume"] = float(cfg.get("bgm_volume", bgm_cfg["volume"]) or bgm_cfg["volume"])
+        if isinstance(cfg.get("audio"), dict):
+            cfg["audio"]["bgm_enabled"] = True
+            cfg["audio"]["bgm_path"] = bgm_rel
+            cfg["audio"]["bgm_prompt_used"] = prompt
+            cfg["audio"]["bgm_volume"] = cfg["bgm_volume"]
+        project.config = cfg
+        from sqlalchemy.orm.attributes import flag_modified
+        flag_modified(project, "config")
+        db.commit()
+        print(f"[subtitle/render] BGM cache reused: {bgm_rel}")
+        return str(bgm_abs)
+
+    print(f"[subtitle/render] generating BGM via ElevenLabs Music ({length_ms}ms): {prompt!r}")
     result = await generate_bgm(
         prompt=prompt,
         output_path=bgm_abs,
@@ -439,6 +565,12 @@ async def _ensure_bgm_for_render(project_id: str, project: Project, db: Session)
     )
     cfg["bgm_path"] = bgm_rel
     cfg["bgm_prompt_used"] = prompt
+    cfg["bgm_volume"] = float(cfg.get("bgm_volume", bgm_cfg["volume"]) or bgm_cfg["volume"])
+    if isinstance(cfg.get("audio"), dict):
+        cfg["audio"]["bgm_enabled"] = True
+        cfg["audio"]["bgm_path"] = bgm_rel
+        cfg["audio"]["bgm_prompt_used"] = prompt
+        cfg["audio"]["bgm_volume"] = cfg["bgm_volume"]
     project.config = cfg
     from sqlalchemy.orm.attributes import flag_modified
     flag_modified(project, "config")
@@ -450,19 +582,61 @@ async def _ensure_bgm_for_render(project_id: str, project: Project, db: Session)
     return str(bgm_abs)
 
 
-async def _mix_bgm_into_video(input_path: str, bgm_path: str, output_path: str, volume: float) -> str:
+async def _mix_bgm_into_video(
+    input_path: str,
+    bgm_path: str,
+    output_path: str,
+    volume: float,
+    *,
+    ducking_strength: str = "normal",
+    fade_in_sec: float = 0.0,
+    fade_out_sec: float = 0.0,
+) -> str:
     ffmpeg_bin = find_ffmpeg()
     vol = max(0.0, min(1.0, float(volume)))
+    narration_gain = max(0.5, min(4.0, float(NARRATION_VOLUME_GAIN)))
     has_audio = await _video_has_audio(ffmpeg_bin, input_path)
+    duration = await FFmpegService.probe_duration(input_path)
+    fade_in = max(0.0, min(float(fade_in_sec or 0.0), max(0.0, duration / 2) if duration > 0 else 30.0))
+    fade_out = max(0.0, min(float(fade_out_sec or 0.0), max(0.0, duration / 2) if duration > 0 else 30.0))
+    bgm_filters = [
+        f"volume={vol:.4f}",
+        "aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo",
+    ]
+    if fade_in > 0:
+        bgm_filters.append(f"afade=t=in:st=0:d={fade_in:.3f}")
+    if fade_out > 0 and duration > 0:
+        bgm_filters.append(f"afade=t=out:st={max(0.0, duration - fade_out):.3f}:d={fade_out:.3f}")
+    bgm_filter = ",".join(bgm_filters)
+
     if has_audio:
+        duck = str(ducking_strength or "normal").strip().lower()
         filter_complex = (
-            f"[1:a]volume={vol:.4f},aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[bgm];"
-            f"[0:a]aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[main];"
-            f"[main][bgm]amix=inputs=2:duration=first:dropout_transition=2,alimiter=limit=0.95[aout]"
+            f"[1:a]{bgm_filter}[bgm];"
+            f"[0:a]volume={narration_gain:.4f},"
+            f"aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[main];"
         )
+        if duck in {"low", "normal", "strong"}:
+            duck_params = {
+                "low": ("0.080", "3"),
+                "normal": ("0.050", "6"),
+                "strong": ("0.030", "10"),
+            }[duck]
+            threshold, ratio = duck_params
+            filter_complex += (
+                f"[bgm][main]sidechaincompress=threshold={threshold}:ratio={ratio}:"
+                f"attack=80:release=650[ducked];"
+                f"[main][ducked]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,"
+                f"alimiter=limit=0.95[aout]"
+            )
+        else:
+            filter_complex += (
+                f"[main][bgm]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,"
+                f"alimiter=limit=0.95[aout]"
+            )
     else:
         filter_complex = (
-            f"[1:a]volume={vol:.4f},aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[aout]"
+            f"[1:a]{bgm_filter}[aout]"
         )
     cmd = [
         ffmpeg_bin, "-y",
@@ -485,6 +659,39 @@ async def _mix_bgm_into_video(input_path: str, bgm_path: str, output_path: str, 
     if rc != 0 or not os.path.exists(output_path) or os.path.getsize(output_path) <= 0:
         err_tail = (stderr or b"").decode(errors="replace")[-800:]
         raise RuntimeError(f"BGM mix failed: {err_tail}")
+    return output_path
+
+
+async def _apply_narration_gain_to_video(
+    input_path: str,
+    output_path: str,
+) -> str:
+    ffmpeg_bin = find_ffmpeg()
+    if not await _video_has_audio(ffmpeg_bin, input_path):
+        shutil.copyfile(input_path, output_path)
+        return output_path
+
+    narration_gain = max(0.5, min(4.0, float(NARRATION_VOLUME_GAIN)))
+    cmd = [
+        ffmpeg_bin, "-y",
+        "-i", input_path,
+        "-map", "0:v:0",
+        "-map", "0:a:0",
+        "-c:v", "copy",
+        "-af", f"volume={narration_gain:.4f},alimiter=limit=0.95",
+        "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
+        "-shortest",
+        output_path,
+    ]
+    rc, _, stderr = await run_subprocess(
+        cmd,
+        timeout=600.0,
+        capture_stdout=False,
+        capture_stderr=True,
+    )
+    if rc != 0 or not os.path.exists(output_path) or os.path.getsize(output_path) <= 0:
+        err_tail = (stderr or b"").decode(errors="replace")[-800:]
+        raise RuntimeError(f"Narration gain failed: {err_tail}")
     return output_path
 
 
@@ -521,7 +728,7 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
     output_path = output_dir / "final_with_subtitles.mp4"
 
     aspect_ratio = (project.config or {}).get("aspect_ratio", "16:9")
-    target_resolution = (project.config or {}).get("render_resolution", "720p")
+    target_resolution = (project.config or {}).get("render_resolution", "1080p")
     resolution = _resolution_for_aspect(aspect_ratio, target_resolution)
 
     # v1.1.55: 컷 단계에서 이미 자막을 번인했으면 본편 단계의 ASS 생성/번인은
@@ -529,8 +736,10 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
     # 변형돼 싱크가 깨지는 사고 차단. 기본 True — 옛 프로젝트는 config 에서
     # `cut_level_subtitles=False` 로 토글 가능.
     cut_level_subs = bool((project.config or {}).get("cut_level_subtitles", True))
+    subtitle_delivery = _subtitle_delivery_mode(project.config or {})
+    burn_main_subtitles = subtitle_delivery == "burn"
 
-    if not cut_level_subs:
+    if not cut_level_subs or subtitle_delivery == "youtube_caption":
         # ── Step 1: 자막 ASS 항상 새로 생성 (설정값이 바뀌었을 수 있음) ──
         try:
             print(f"[subtitle/render] generating subtitle ASS → {subtitle_file}")
@@ -646,10 +855,13 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
     # ── Step 5: 자막 번인 (본편만) ──
     # v1.1.55: cut_level_subtitles=True 면 컷 단계에서 이미 번인 — 건너뜀.
     body_sub_path = str(tmp_dir / "body_sub.mp4")
-    if cut_level_subs:
+    if cut_level_subs or not burn_main_subtitles:
         from shutil import copyfile as _cp
         _cp(body_path, body_sub_path)
-        print("[subtitle/render] cut_level_subtitles=True — 본편 burn 건너뜀")
+        if not burn_main_subtitles:
+            print(f"[subtitle/render] subtitle_delivery={subtitle_delivery} — main burn skipped")
+        else:
+            print("[subtitle/render] cut_level_subtitles=True — 본편 burn 건너뜀")
     else:
         try:
             t_burn = _t.time()
@@ -759,7 +971,8 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
         from shutil import copyfile
         copyfile(pre_final_path, final_nomusic_path)
 
-    bgm_enabled = bool((project.config or {}).get("bgm_enabled", False))
+    bgm_cfg = _read_bgm_config(project.config or {})
+    bgm_enabled = bool(bgm_cfg["enabled"])
     bgm_path = None
     try:
         bgm_path = await _ensure_bgm_for_render(project_id, project, db)
@@ -774,10 +987,22 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
     if bgm_path:
         try:
             t_bgm = _t.time()
-            volume = float((project.config or {}).get("bgm_volume", 0.24) or 0.24)
-            await _mix_bgm_into_video(final_nomusic_path, bgm_path, str(output_path), volume)
+            bgm_cfg = _read_bgm_config(project.config or {})
+            volume = float(bgm_cfg["volume"])
+            await _mix_bgm_into_video(
+                final_nomusic_path,
+                bgm_path,
+                str(output_path),
+                volume,
+                ducking_strength=str(bgm_cfg.get("ducking_strength") or "normal"),
+                fade_in_sec=float(bgm_cfg.get("fade_in_sec") or 0.0),
+                fade_out_sec=float(bgm_cfg.get("fade_out_sec") or 0.0),
+            )
             print(
                 f"[subtitle/render] BGM mixed volume={volume:.3f} "
+                f"narration_gain={NARRATION_VOLUME_GAIN:.2f} "
+                f"ducking={bgm_cfg.get('ducking_strength')} "
+                f"fade=({bgm_cfg.get('fade_in_sec')},{bgm_cfg.get('fade_out_sec')}) "
                 f"file={bgm_path} in {_t.time()-t_bgm:.1f}s"
             )
         except Exception as e:
@@ -791,8 +1016,21 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
             from shutil import copyfile
             copyfile(final_nomusic_path, str(output_path))
     else:
-        from shutil import copyfile
-        copyfile(final_nomusic_path, str(output_path))
+        try:
+            t_gain = _t.time()
+            await _apply_narration_gain_to_video(final_nomusic_path, str(output_path))
+            print(
+                f"[subtitle/render] narration gain={NARRATION_VOLUME_GAIN:.2f} "
+                f"applied in {_t.time()-t_gain:.1f}s"
+            )
+        except Exception as e:
+            import traceback
+            print(
+                f"[subtitle/render] NARRATION GAIN FAILED (non-fatal, using original audio): "
+                f"{e}\n{traceback.format_exc()}"
+            )
+            from shutil import copyfile
+            copyfile(final_nomusic_path, str(output_path))
 
     if not output_path.exists():
         raise HTTPException(500, "Final render reported success but output file is missing")
@@ -803,14 +1041,85 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
         shorts_enabled = bool((project.config or {}).get("shorts_enabled", True))
         if shorts_enabled:
             script_for_shorts = load_shorts_script(DATA_DIR / project_id)
-            shorts_segments = select_shorts_segments(script_for_shorts, count=2)
+            shorts_segments = select_shorts_segments(script_for_shorts, count=1)
+            cfg = project.config or {}
+            if isinstance(script_for_shorts, dict) and not script_for_shorts.get("language"):
+                script_for_shorts["language"] = (
+                    cfg.get("language")
+                    or cfg.get("script_language")
+                    or cfg.get("subtitle_language")
+                    or cfg.get("target_language")
+                )
+            shorts_channel_name = (
+                cfg.get("shorts_channel_name")
+                or cfg.get("channel_display_name")
+                or cfg.get("youtube_channel_name")
+                or cfg.get("brand_name")
+            )
+            raw_channel = cfg.get("channel") or cfg.get("youtube_channel")
+            try:
+                shorts_channel_id = int(raw_channel or 0)
+            except (TypeError, ValueError):
+                shorts_channel_id = 0
+            cached_channel_avatars = {
+                1: "https://yt3.ggpht.com/lZRG--gQU8wZ5Gzeethzm6NBlG6FD9Jx4QxR4djz4kOgIj-LS9Dm1fO0ruuMEhrZE1AjEFeXQ3Q=s88-c-k-c0x00ffffff-no-rj",
+                2: "https://yt3.ggpht.com/NY92X-Yu-tgLBOvUtCPJBhqmuM47ZILmU33lPBSKiPEeC06imNtxH6Kdd1EVldLmBtPG590miA=s88-c-k-c0x00ffffff-no-rj",
+                3: "https://yt3.ggpht.com/Kx-R4TCTg6YOnm5lXCQRpf4rh5bG41GHdFC-INtbN4Dx-OhsSm9-pds4ciqxsFnZ9o4PQKOygw=s88-c-k-c0x00ffffff-no-rj",
+                4: "https://yt3.ggpht.com/GmMBiNYytpUfw14ZP9SeX5kllM6j-uJcPhW0re1qcAz6n_FHUP1nTXKp_T2BmeFrxup9HYTm6Q=s88-c-k-c0x00ffffff-no-rj",
+            }
+            cached_channel_names = {
+                1: "10\ubd84\uc5ed\uacf5",
+                2: "Jerry's Archaeo",
+                3: "Whisper Hour",
+                4: "10 \u092e\u093f\u0928\u091f \u092a\u0932\u091f\u0935\u093e\u0930",
+            }
+            if not shorts_channel_name:
+                shorts_channel_name = cached_channel_names.get(shorts_channel_id)
+            shorts_channel_avatar_url = (
+                cfg.get("shorts_channel_avatar_url")
+                or cfg.get("channel_avatar_url")
+                or cached_channel_avatars.get(shorts_channel_id)
+            )
+            if not shorts_channel_name:
+                try:
+                    from app.services.youtube_service import YouTubeUploader
+
+                    ch = shorts_channel_id
+                    if ch >= 1:
+                        channel_info = YouTubeUploader(channel_id=ch).get_channel_info()
+                        shorts_channel_name = channel_info.get("title") or None
+                        shorts_channel_avatar_url = (
+                            channel_info.get("thumbnail")
+                            or shorts_channel_avatar_url
+                        )
+                except Exception as e:
+                    print(f"[subtitle/render] shorts channel name lookup skipped: {e}")
+            elif not shorts_channel_avatar_url:
+                try:
+                    from app.services.youtube_service import YouTubeUploader
+
+                    ch = shorts_channel_id
+                    if ch >= 1:
+                        shorts_channel_avatar_url = (
+                            YouTubeUploader(channel_id=ch).get_channel_info().get("thumbnail")
+                            or None
+                        )
+                except Exception as e:
+                    print(f"[subtitle/render] shorts channel avatar lookup skipped: {e}")
+            shorts_source_path = video_dir / "merged.mp4"
+            if not shorts_source_path.exists():
+                shorts_source_path = output_path
             shorts_results = await render_shorts_from_final(
-                output_path,
+                shorts_source_path,
                 output_dir,
                 shorts_segments,
                 script=script_for_shorts,
-                channel_name=(project.config or {}).get("shorts_channel_name") or project.title,
+                channel_name=shorts_channel_name,
+                channel_avatar_url=shorts_channel_avatar_url,
                 source_title=script_for_shorts.get("title") or project.title,
+                bgm_path=bgm_path,
+                bgm_volume=float((_read_bgm_config(project.config or {})).get("volume") or 0.24),
+                bgm_ducking_strength=str((_read_bgm_config(project.config or {})).get("ducking_strength") or "normal"),
             )
             shorts_meta_path = output_dir / "shorts" / "shorts.json"
             shorts_meta_path.parent.mkdir(parents=True, exist_ok=True)

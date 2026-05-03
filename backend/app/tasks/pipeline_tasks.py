@@ -10,6 +10,8 @@ from app.models.database import SessionLocal
 from app.models.project import Project
 from app.models.cut import Cut
 from app.services.title_utils import with_episode_prefix
+from app.services.youtube_metadata import expand_tags, format_description
+from app.services.multilingual_caption_service import upload_multilingual_captions
 
 celery_app = Celery("longtube", broker=REDIS_URL, backend=REDIS_URL)
 
@@ -150,7 +152,7 @@ def _ensure_project_layout(project_id: str):
     return project_dir
 
 
-def save_script(project_id: str, script: dict):
+def save_script(project_id: str, script: dict, language: str = "ko"):
     try:
         from app.services.shorts_service import annotate_script_shorts
         script = annotate_script_shorts(script)
@@ -381,7 +383,7 @@ def _step_script(project_id: str, config: dict):
         script.get("title") or project.title or project.topic,
         config.get("episode_number"),
     )
-    save_script(project_id, script)
+    save_script(project_id, script, config.get("language", "ko"))
 
     db.query(Cut).filter(Cut.project_id == project_id).delete()
     for c in script.get("cuts", []):
@@ -469,11 +471,13 @@ def _step_voice(project_id: str, config: dict):
     project = db.query(Project).filter(Project.id == project_id).first()
     topic = project.topic if project else ""
 
-    def _generate_tts_result(cut_data: dict, output_path: str, total_cuts: int) -> dict:
+    def _generate_tts_result(cut_data: dict, output_path: str, total_cuts: int, spoken_narration: str) -> dict:
+        spoken_cut_data = dict(cut_data)
+        spoken_cut_data["narration"] = spoken_narration
         return run_async(
             generate_tts_with_auto_narration_fit(
                 service,
-                cut_data.get("narration") or "",
+                spoken_narration,
                 voice_id,
                 output_path,
                 speed=speed,
@@ -483,7 +487,7 @@ def _step_voice(project_id: str, config: dict):
                 language=config.get("language", "ko"),
                 cut_number=int(cut_data.get("cut_number") or 0),
                 total_cuts=total_cuts,
-                cut_data=cut_data,
+                cut_data=spoken_cut_data,
                 script=script,
                 log=lambda msg: print(f"[Voice] {msg}"),
             )
@@ -493,7 +497,6 @@ def _step_voice(project_id: str, config: dict):
     script_dirty = False
     for cut_data in script_cuts:
         check_pause_or_cancel(project_id, 3)
-
         num = cut_data["cut_number"]
         output = str(project_dir / "audio" / f"cut_{num:03d}.mp3")
 
@@ -517,24 +520,20 @@ def _step_voice(project_id: str, config: dict):
                 except OSError:
                     pass
 
-        result = _generate_tts_result(cut_data, output, len(script_cuts))
-        final_narration = (result.get("narration") or cut_data.get("narration") or "").strip()
-        narration_changed = False
-        if final_narration and final_narration != (cut_data.get("narration") or "").strip():
-            print(
-                f"[Voice] Cut {num} narration auto-fit: "
-                f"{len(cut_data.get('narration') or '')}ch -> {len(final_narration)}ch"
-            )
-            cut_data["narration"] = final_narration
-            script_dirty = True
-            narration_changed = True
+        from app.services.tts.pronunciation_normalizer import prepare_spoken_narration_for_tts
+        original_narration = (cut_data.get("narration") or "").strip()
+        spoken_narration = prepare_spoken_narration_for_tts(
+            original_narration,
+            config.get("language", "ko"),
+        )
+        result = _generate_tts_result(cut_data, output, len(script_cuts), spoken_narration)
 
         # v1.1.55: 지출 기록 — TTS 는 문자수 * per_1k. 실제 과금 단위와 동일.
         try:
             from app.services import spend_ledger
             spend_ledger.record_tts(
                 tts_model,
-                chars=len(cut_data.get("narration") or ""),
+                chars=len(original_narration),
                 project_id=project_id,
                 note=f"cut_{num:03d}",
             )
@@ -548,20 +547,15 @@ def _step_voice(project_id: str, config: dict):
 
         cut = db.query(Cut).filter(Cut.project_id == project_id, Cut.cut_number == num).first()
         if cut:
-            if final_narration:
-                cut.narration = final_narration
             cut.audio_path = result["path"]
             cut.audio_duration = result["duration"]
             cut.status = "voice_done"
-            if narration_changed:
-                cut.video_path = None
-                cut.video_model = None
 
         track_progress(project_id, 3)
 
     db.commit()
     db.close()
-    save_script(project_id, script)
+    save_script(project_id, script, config.get("language", "ko"))
 
     # v1.2.25: cancel 키 해제.
     try:
@@ -576,19 +570,8 @@ def build_thumbnail_prompt(script: dict) -> str:
     script.json 에 thumbnail_prompt 가 있으면 그대로 사용하고,
     없으면 title 기반 기본 프롬프트를 반환한다.
     """
-    thumb_prompt = (script.get("thumbnail_prompt") or "").strip()
-    if thumb_prompt:
-        return thumb_prompt
-    title = script.get("title", "")
-    return (
-        f"A captivating, eye-catching YouTube thumbnail for '{title}'. "
-        f"A dramatic close-up scene with vivid emotion (wide-eyed surprise, "
-        f"intense curiosity, genuine awe). Cinematic lighting, high contrast, "
-        f"rich saturated colors, shallow depth of field. "
-        f"Designed to maximize viewer curiosity and clicks. "
-        f"16:9 landscape composition, 4K ultra-detailed photo quality. "
-        f"ABSOLUTELY NO text, letters, words, numbers, watermarks, or UI elements."
-    )
+    from app.services.thumbnail_service import build_standard_thumbnail_prompt
+    return build_standard_thumbnail_prompt(script)
 
 
 def _generate_thumbnail_sync(project_id: str, config: dict, script: dict):
@@ -605,7 +588,10 @@ def _generate_thumbnail_sync(project_id: str, config: dict, script: dict):
     cancel 키 세팅. _step_script 경로 안에서는 이미 세팅돼 있지만, 재생성 경로
     등 단독 호출 시에도 방어선이 서야 하므로 여기서도 한 번 더 건다.
     """
-    from app.services.image.prompt_builder import collect_reference_images
+    from app.services.image.prompt_builder import (
+        collect_reference_images,
+        should_enable_historical_guard_for_context,
+    )
     from app.services.thumbnail_service import (
         generate_ai_thumbnail,
         extract_thumbnail_text_parts,
@@ -630,9 +616,49 @@ def _generate_thumbnail_sync(project_id: str, config: dict, script: dict):
     # 상태: 생성 시작
     _redis_set(f"thumbnail:status:{project_id}", "generating")
 
+    try:
+        from app.services.thumbnail_service import ensure_standard_thumbnail
+
+        result_path = run_async(ensure_standard_thumbnail(
+            project_id=project_id,
+            config=config,
+            script=script,
+            title=script.get("title"),
+            topic=script.get("topic"),
+            episode_number=config.get("episode_number"),
+        ))
+        try:
+            from app.services import spend_ledger
+            from app.services.image.factory import DEFAULT_THUMBNAIL_MODEL
+            spend_ledger.record_image(
+                resolve_image_model(config.get("thumbnail_model") or DEFAULT_THUMBNAIL_MODEL),
+                n_images=1,
+                project_id=project_id,
+                note="thumbnail",
+            )
+        except Exception as _e:
+            print(f"[spend_ledger] thumbnail record skipped: {_e}")
+        _redis_set(f"thumbnail:status:{project_id}", "done")
+        print(f"[Thumbnail] generated: {_safe_console(result_path)}")
+        return
+    except Exception as e:
+        import traceback
+        err_detail = f"{type(e).__name__}: {e}"
+        _redis_set(f"thumbnail:status:{project_id}", f"failed:{err_detail[:300]}")
+        print(f"[Thumbnail] failed; continuing image cuts: {_safe_console(err_detail)}")
+        print(f"[Thumbnail] traceback:\n{_safe_console(traceback.format_exc())}")
+        return
+    finally:
+        try:
+            _set_cancel_key(None)
+        except Exception:
+            pass
+
     thumb_prompt = build_thumbnail_prompt(script)
+    from app.services.image.factory import DEFAULT_THUMBNAIL_MODEL
+
     image_model = resolve_image_model(
-        config.get("thumbnail_model") or config.get("image_model")
+        config.get("thumbnail_model") or DEFAULT_THUMBNAIL_MODEL
     )
 
     title = (script.get("title") or "").strip()
@@ -650,6 +676,12 @@ def _generate_thumbnail_sync(project_id: str, config: dict, script: dict):
         if p not in seen:
             seen.add(p)
             combined_refs.append(p)
+    enable_historical_guard = should_enable_historical_guard_for_context(
+        config,
+        project_id,
+        script.get("title"),
+        script.get("topic"),
+    )
 
     # v2.1.2 → v1.2.20: 레퍼런스 미지원 모델 처리.
     # ComfyUI 로컬: 레퍼런스만 무시 (모델 유지) — GPU 비용 0이라 사용자 의도 우선.
@@ -674,7 +706,11 @@ def _generate_thumbnail_sync(project_id: str, config: dict, script: dict):
     # v1.1.55: 공통 REFERENCE_STYLE_PREFIX 사용 — 컷/썸네일/재생성 문구 통일
     if combined_refs and thumb_prompt:
         from app.services.image.prompt_builder import apply_reference_style_prefix
-        thumb_prompt = apply_reference_style_prefix(thumb_prompt, has_reference=True)
+        thumb_prompt = apply_reference_style_prefix(
+            thumb_prompt,
+            has_reference=True,
+            enable_historical_guard=enable_historical_guard,
+        )
 
     try:
         result = run_async(generate_ai_thumbnail(
@@ -686,6 +722,7 @@ def _generate_thumbnail_sync(project_id: str, config: dict, script: dict):
             overlay_episode_label=overlay_episode_label,
             output_path=str(thumb_path),
             reference_images=combined_refs or None,
+            enable_historical_guard=enable_historical_guard,
         ))
         # v1.1.55: 썸네일 이미지 1장 지출 기록
         try:
@@ -735,10 +772,15 @@ def _step_image(project_id: str, config: dict):
     )
     from app.services.image.base import get_size
     from app.services.image.prompt_builder import (
+        append_prompt_specific_negative_prompt,
         build_image_prompt,
         collect_reference_images,
         collect_character_images,
         cut_has_character,
+        should_enable_historical_guard_for_context,
+        historical_negative_prompt,
+        map_negative_prompt,
+        text_negative_prompt,
     )
 
     # v1.1.56: 로컬 ComfyUI 는 동시 1 로 강제 (GPU 순차 큐).
@@ -757,6 +799,12 @@ def _step_image(project_id: str, config: dict):
     # v1.1.58: 레퍼런스가 있으면 global_style 무시 (레퍼런스가 스타일의 전부)
     global_style = "" if ref_images else config.get("image_global_prompt", "")
     character_description = (config.get("character_description") or "").strip()
+    enable_historical_guard = should_enable_historical_guard_for_context(
+        config,
+        project_id,
+        config.get("title"),
+        config.get("topic"),
+    )
     # v1.1.60: 캐릭터 이미지/설명이 실제로 있는 프리셋만 캐릭터 컷을 활성화한다.
     # 이게 없으면 cut_has_character() 가 1·4·7번에 무조건 "main character" 텍스트를
     # 주입해서, 스타일 레퍼런스에 등장하는 인물이 캐릭터로 차용되는 사고가 난다.
@@ -812,9 +860,33 @@ def _step_image(project_id: str, config: dict):
             pass
     # v1.1.59: 사용자 네거티브 프롬프트 주입 (ComfyUI 만 반영; 그 외 서비스는 무시)
     try:
-        service.negative_prompt = (config.get("image_negative_prompt") or "").strip()
+        negative_prompt = (config.get("image_negative_prompt") or "").strip()
+        text_negative = text_negative_prompt()
+        if text_negative and text_negative not in negative_prompt:
+            negative_prompt = f"{text_negative}, {negative_prompt}".strip(" ,")
+        map_negative = map_negative_prompt()
+        if map_negative and map_negative not in negative_prompt:
+            negative_prompt = f"{map_negative}, {negative_prompt}".strip(" ,")
+        guard_negative = historical_negative_prompt(
+            " ".join(
+                str(x or "")
+                for x in (
+                    project_id,
+                    config.get("title"),
+                    config.get("topic"),
+                    config.get("image_global_prompt"),
+                    script.get("title"),
+                    script.get("topic"),
+                )
+            ),
+            enable_historical_guard,
+        )
+        if guard_negative and guard_negative not in negative_prompt:
+            negative_prompt = f"{guard_negative}, {negative_prompt}".strip(" ,")
+        service.negative_prompt = negative_prompt
     except Exception:
         pass
+    base_negative_prompt = (getattr(service, "negative_prompt", "") or "").strip()
 
     db = SessionLocal()
     all_cuts = script.get("cuts", [])
@@ -908,6 +980,7 @@ def _step_image(project_id: str, config: dict):
                         has_reference=bool(ref_images),
                         has_character_slot=is_char_cut,
                         character_description=character_description,
+                        enable_historical_guard=enable_historical_guard,
                     )
 
                     # ★ 레퍼런스 이미지: 스타일 레퍼런스 + 캐릭터 슬롯이면 캐릭터 이미지
@@ -924,10 +997,15 @@ def _step_image(project_id: str, config: dict):
                             }
                         except Exception:
                             pass
+                        service.negative_prompt = append_prompt_specific_negative_prompt(
+                            base_negative_prompt,
+                            prompt,
+                        )
                         await service.generate(
                             prompt, width, height, output,
                             reference_images=all_refs if all_refs else None,
                         )
+                        service.negative_prompt = base_negative_prompt
                         # v1.1.55: 성공한 컷 이미지 1장 지출 기록
                         try:
                             from app.services import spend_ledger
@@ -943,8 +1021,10 @@ def _step_image(project_id: str, config: dict):
                             cut_row.status = "image_done"
                         track_progress(project_id, 4)
                     except _OperationCancelled:
+                        service.negative_prompt = base_negative_prompt
                         raise
                     except Exception as e:
+                        service.negative_prompt = base_negative_prompt
                         msg = f"컷 {num}/{len(all_cuts)} 이미지 생성 실패: {type(e).__name__}: {e}"
                         print(f"[Image] {msg}")
                         try:
@@ -1147,6 +1227,9 @@ def _step_video(project_id: str, config: dict):
 
     # v1.1.55: 컷 자막 스타일 — DEFAULT_CONFIG 의 subtitle_style 와 동일 키.
     subtitle_style_cfg = config.get("subtitle_style") or {}
+    cut_level_subtitles = bool(config.get("cut_level_subtitles", False))
+    if not cut_level_subtitles:
+        print("[Video] cut-level subtitles disabled; final render will burn subtitles once")
 
     db = SessionLocal()
     all_cuts = script.get("cuts", [])
@@ -1257,29 +1340,30 @@ def _step_video(project_id: str, config: dict):
                     # 머지/normalize 후에 자막 입히면 컷 길이 변경으로 싱크가
                     # 깨지는 사고 → 컷 단계에서 0~audio_duration 에 정확히
                     # 박아 둔다. 실패해도 영상 자체는 그대로.
-                    try:
-                        narration = (cut_data.get("narration") or "").strip()
-                        # 1) DB 에 audio_duration 이 이미 있으면 그거 사용
-                        # 2) 없으면 ffprobe 로 측정
-                        cut_row = (
-                            db.query(Cut)
-                            .filter(Cut.project_id == project_id, Cut.cut_number == num)
-                            .first()
-                        )
-                        dur = float(getattr(cut_row, "audio_duration", 0) or 0)
-                        if dur <= 0:
-                            dur = _probe_audio_seconds(aud)
-                        if narration and dur > 0:
-                            ok = await _burn_cut_subtitle(
-                                out, narration, dur,
-                                subtitle_style_cfg, aspect_ratio,
+                    if cut_level_subtitles:
+                        try:
+                            narration = (cut_data.get("narration") or "").strip()
+                            # 1) DB 에 audio_duration 이 이미 있으면 그거 사용
+                            # 2) 없으면 ffprobe 로 측정
+                            cut_row = (
+                                db.query(Cut)
+                                .filter(Cut.project_id == project_id, Cut.cut_number == num)
+                                .first()
                             )
-                            if ok:
-                                print(f"[Video] Cut {num} 자막 번인 완료 ({dur:.1f}s)")
-                            else:
-                                print(f"[Video] Cut {num} 자막 번인 건너뜀")
-                    except Exception as _se:
-                        print(f"[Video] Cut {num} subtitle stage 예외(무시): {_se}")
+                            dur = float(getattr(cut_row, "audio_duration", 0) or 0)
+                            if dur <= 0:
+                                dur = _probe_audio_seconds(aud)
+                            if narration and dur > 0:
+                                ok = await _burn_cut_subtitle(
+                                    out, narration, dur,
+                                    subtitle_style_cfg, aspect_ratio,
+                                )
+                                if ok:
+                                    print(f"[Video] Cut {num} 자막 번인 완료 ({dur:.1f}s)")
+                                else:
+                                    print(f"[Video] Cut {num} 자막 번인 건너뜀")
+                        except Exception as _se:
+                            print(f"[Video] Cut {num} subtitle stage 예외(무시): {_se}")
 
                     return num, out, used_model
 
@@ -1460,53 +1544,183 @@ def _step_upload(project_id: str, config: dict):
     ]
     _video_path = next((p for p in _candidates if _Path(p).exists()), _candidates[-1])
 
-    result = run_async(uploader.upload(
+    upload_title = with_episode_prefix(script.get("title", "Untitled"), config.get("episode_number"))
+    narration_seed = " ".join((c.get("narration") or "") for c in script.get("cuts", [])[:30] if isinstance(c, dict))
+    upload_description = format_description(
+        script.get("description", ""),
+        title=upload_title,
+        topic=script.get("title", ""),
+        narration=narration_seed,
+        language=config.get("language") or "ko",
+    )
+    upload_tags = expand_tags(
+        script.get("tags", []),
+        title=upload_title,
+        topic=script.get("title", ""),
+        narration=narration_seed,
+        language=config.get("language") or "ko",
+    )
+    try:
+        from app.services.thumbnail_service import ensure_standard_thumbnail
+        thumb_result = run_async(ensure_standard_thumbnail(
+            project_id=project_id,
+            config=config,
+            script=script,
+            title=script.get("title") or upload_title,
+            topic=script.get("topic") or script.get("title"),
+            episode_number=config.get("episode_number"),
+        ))
+        print(f"[upload] thumbnail ready: {thumb_result}")
+    except Exception as e:
+        print(f"[upload] thumbnail generation skipped: {e}")
+    thumbnail_upload_path = project_dir / "output" / "thumbnail.png"
+    if not thumbnail_upload_path.exists():
+        thumbnail_upload_path = project_dir / "images" / "cut_001.png"
+
+    existing_upload = uploader.find_existing_upload_by_title(upload_title)
+    if existing_upload:
+        existing_video_id = existing_upload.get("video_id")
+        result = {
+            "video_id": existing_video_id,
+            "url": existing_upload.get("url") or (
+                f"https://www.youtube.com/watch?v={existing_video_id}" if existing_video_id else None
+            ),
+            "already_uploaded": True,
+        }
+        print(f"[upload] main upload skipped, already exists: {result.get('url')}")
+    else:
+        result = run_async(uploader.upload(
         video_path=str(_video_path),
-        title=with_episode_prefix(script.get("title", "Untitled"), config.get("episode_number")),
-        description=script.get("description", ""),
-        tags=script.get("tags", []),
-        thumbnail_path=str(
+        title=upload_title,
+        description=upload_description,
+        tags=upload_tags,
+        thumbnail_path=None,
             # v1.1.57: AI 생성 썸네일 우선, 없으면 첫 번째 컷 이미지 폴백
-            project_dir / "output" / "thumbnail.png"
-            if _Path(project_dir / "output" / "thumbnail.png").exists()
-            else project_dir / "images" / "cut_001.png"
-        ),
         privacy="private",
-    ))
+        ))
+        verified = uploader.confirm_upload_visible_in_studio(
+            video_id=result.get("video_id"),
+            title=upload_title,
+        )
+        result = {**result, "studio_verified": True, "studio_record": verified}
+        if _Path(thumbnail_upload_path).exists() and result.get("video_id"):
+            try:
+                thumb_set = uploader.set_thumbnail(str(result.get("video_id")), str(thumbnail_upload_path))
+                result["thumbnail_uploaded"] = True
+                result["thumbnail_result"] = thumb_set
+            except Exception as exc:
+                result["thumbnail_error"] = str(exc)
+                print(f"[upload] thumbnail upload failed: {exc}")
+        print(f"[upload] Studio verified: {verified.get('url') or result.get('url')}")
+    caption_path = project_dir / "subtitles" / "subtitles.srt"
+    caption_upload = None
+    caption_error = None
+    if (
+        result.get("video_id")
+        and not result.get("already_uploaded")
+        and caption_path.exists()
+        and bool(config.get("youtube_captions_enabled", False))
+    ):
+        try:
+            caption_upload = run_async(upload_multilingual_captions(
+                uploader,
+                str(result.get("video_id")),
+                str(caption_path),
+                config,
+            ))
+            print(f"[upload] caption uploaded: {caption_upload}")
+        except Exception as exc:
+            caption_error = str(exc)
+            print(f"[upload] caption upload failed: {exc}")
 
     shorts_results = []
     if bool(config.get("shorts_upload_enabled", True)):
         shorts_dir = _output_dir / "shorts"
-        shorts_files = [shorts_dir / "short_1.mp4", shorts_dir / "short_2.mp4"]
+        shorts_files = [shorts_dir / "short_1.mp4"]
         for idx, shorts_path in enumerate(shorts_files, start=1):
             if not shorts_path.exists() or shorts_path.stat().st_size <= 0:
                 continue
             shorts_base_title = with_episode_prefix(script.get("title", "Untitled"), config.get("episode_number"))
-            shorts_title = f"{shorts_base_title[:82]} #Shorts {idx}"
-            shorts_description = (
-                (script.get("description", "") or "").strip()
-                + "\n\n#Shorts"
-            ).strip()
+            shorts_title = f"{shorts_base_title[:92]} #Shorts"
+            shorts_description = format_description(
+                upload_description,
+                title=shorts_title,
+                topic=script.get("title", ""),
+                narration=narration_seed,
+                language=config.get("language") or "ko",
+                shorts=True,
+            )
+            shorts_tags = expand_tags(
+                upload_tags,
+                title=shorts_title,
+                topic=script.get("title", ""),
+                narration=narration_seed,
+                language=config.get("language") or "ko",
+                shorts=True,
+            )
             try:
-                shorts_upload = run_async(uploader.upload(
-                    video_path=str(shorts_path),
-                    title=shorts_title[:100],
-                    description=shorts_description,
-                    tags=list(dict.fromkeys((script.get("tags", []) or []) + ["Shorts"])),
-                    thumbnail_path=None,
-                    privacy=str(config.get("youtube_privacy", "private") or "private"),
-                ))
+                existing_short = uploader.find_existing_upload_by_title(shorts_title[:100])
+                if existing_short:
+                    existing_short_id = existing_short.get("video_id")
+                    shorts_upload = {
+                        "video_id": existing_short_id,
+                        "url": existing_short.get("url") or (
+                            f"https://www.youtube.com/watch?v={existing_short_id}" if existing_short_id else None
+                        ),
+                        "already_uploaded": True,
+                    }
+                    print(f"[upload] shorts {idx} skipped, already exists: {shorts_upload.get('url')}")
+                else:
+                    shorts_upload = run_async(uploader.upload(
+                        video_path=str(shorts_path),
+                        title=shorts_title[:100],
+                        description=shorts_description,
+                        tags=shorts_tags,
+                        thumbnail_path=None,
+                        privacy=str(config.get("youtube_privacy", "private") or "private"),
+                    ))
+                    shorts_verified = uploader.confirm_upload_visible_in_studio(
+                        video_id=shorts_upload.get("video_id"),
+                        title=shorts_title[:100],
+                    )
+                    shorts_upload = {
+                        **shorts_upload,
+                        "studio_verified": True,
+                        "studio_record": shorts_verified,
+                    }
+                    print(
+                        "[upload] shorts Studio verified: "
+                        f"{shorts_verified.get('url') or shorts_upload.get('url')}"
+                    )
                 shorts_results.append({
                     "index": idx,
                     "path": str(shorts_path),
                     "url": shorts_upload.get("url"),
                     "video_id": shorts_upload.get("video_id"),
+                    "already_uploaded": bool(shorts_upload.get("already_uploaded")),
                 })
                 print(f"[upload] shorts {idx} uploaded: {shorts_upload.get('url')}")
             except Exception as exc:
                 print(f"[upload] shorts {idx} upload failed: {exc}")
 
     new_config = dict(config or {})
+    if result.get("thumbnail_error"):
+        new_config["youtube_thumbnail_error"] = str(result.get("thumbnail_error"))
+    if caption_upload:
+        new_config["youtube_captions"] = caption_upload
+        new_config["youtube_caption"] = caption_upload
+        new_config.pop("youtube_caption_error", None)
+        new_config.pop("youtube_caption_errors", None)
+    if caption_error:
+        new_config["youtube_caption_error"] = caption_error
+        new_config["youtube_caption_errors"] = {"all": caption_error}
     if shorts_results:
         new_config["shorts_uploads"] = shorts_results
     update_project(project_id, youtube_url=result["url"], config=new_config)
+    try:
+        from app.services.project_archive import archive_uploaded_project
+
+        archive_result = archive_uploaded_project(project_id, new_config)
+        print(f"[upload] uploaded project archive: {archive_result}")
+    except Exception as e:
+        print(f"[upload] uploaded project archive skipped: {e}")

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Upload, File as FileIcon, Image as ImageIcon, ExternalLink } from "lucide-react";
@@ -21,7 +21,7 @@ function fmtSize(bytes: number): string {
   return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
 }
 
-export default function StudioUploadPage() {
+function StudioUploadPageInner() {
   const searchParams = useSearchParams();
   const projectId = (searchParams.get("project") || "").trim();
 
@@ -223,13 +223,16 @@ export default function StudioUploadPage() {
             </div>
             <div>
               <label className="block text-xs text-gray-400 mb-1">언어</label>
-              <input
-                type="text"
+              <select
                 value={defaultLanguage}
                 onChange={(e) => setDefaultLanguage(e.target.value)}
-                placeholder="ko"
                 className="w-full bg-bg-primary border border-border rounded px-3 py-2 text-sm focus:outline-none focus:border-accent-primary"
-              />
+              >
+                <option value="ko">Korean (ko)</option>
+                <option value="en">English (en)</option>
+                <option value="ja">Japanese (ja)</option>
+                <option value="hi">Hindi (hi)</option>
+              </select>
             </div>
           </div>
 
@@ -263,5 +266,13 @@ export default function StudioUploadPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function StudioUploadPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-sm text-gray-500">불러오는 중...</div>}>
+      <StudioUploadPageInner />
+    </Suspense>
   );
 }

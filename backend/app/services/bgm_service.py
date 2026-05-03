@@ -46,8 +46,9 @@ async def generate_bgm(
     target = Path(output_path)
     target.parent.mkdir(parents=True, exist_ok=True)
 
-    # Keep generated loops moderate. The renderer loops this under the full video.
-    length_ms = max(10_000, min(int(length_ms or 60_000), 180_000))
+    # Keep generated loops short. The renderer loops this under the full video,
+    # so generating multi-minute music per upload only burns quota.
+    length_ms = max(10_000, min(int(length_ms or 60_000), 60_000))
 
     async with httpx.AsyncClient(timeout=300) as client:
         resp = await client.post(

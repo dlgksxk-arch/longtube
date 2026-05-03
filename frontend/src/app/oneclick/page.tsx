@@ -27,6 +27,8 @@ import {
   Calendar,
   Upload,
   Download,
+  ArrowUp,
+  ArrowDown,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import {
@@ -49,6 +51,39 @@ const CUT_BASED_STEPS = new Set([0, 1, 2, 3]);
 
 type StepState = "done" | "active" | "pending" | "failed";
 type ChannelListPageKey = "queue" | "active" | "completed" | "failed" | "orphans";
+const DEFAULT_CHANNEL_KEYS = ["1", "2", "3", "4"];
+
+function normalizeChannelMap(
+  value: Record<string, string | null | undefined> | null | undefined,
+  fallback = "",
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const ch of DEFAULT_CHANNEL_KEYS) out[ch] = fallback;
+  for (const [key, raw] of Object.entries(value || {})) {
+    const n = Number(key);
+    if (Number.isFinite(n) && n > 0) out[String(n)] = raw || fallback;
+  }
+  return out;
+}
+
+function collectChannelKeys({
+  queue,
+  tasks,
+  channelTimes,
+  channelPresets,
+}: {
+  queue: OneClickQueueItem[];
+  tasks: OneClickTask[];
+  channelTimes: Record<string, string>;
+  channelPresets: Record<string, string>;
+}) {
+  const keys = new Set<string>(DEFAULT_CHANNEL_KEYS);
+  for (const key of Object.keys(channelTimes || {})) if (Number(key) > 0) keys.add(String(Number(key)));
+  for (const key of Object.keys(channelPresets || {})) if (Number(key) > 0) keys.add(String(Number(key)));
+  for (const item of queue || []) if (Number(item.channel || 0) > 0) keys.add(String(Number(item.channel)));
+  for (const task of tasks || []) if (Number(task.channel || 0) > 0) keys.add(String(Number(task.channel)));
+  return Array.from(keys).sort((a, b) => Number(a) - Number(b));
+}
 
 function normalizeUploadTitle(title?: string | null): string {
   const raw = (title || "")
@@ -94,6 +129,14 @@ function normalizeQueueItems(items: OneClickQueueItem[] = []): OneClickQueueItem
       : ["", "", "", "", ""],
     core_content: it.core_content || "",
   }));
+}
+
+function isImmediateQueueItem(item: OneClickQueueItem): boolean {
+  const source = String(item.queued_source || "").toLowerCase();
+  const note = String(item.queued_note || "");
+  return source === "manual" && (
+    note.includes("\uc2e4\uc2dc\uac04 \ud604\ud669") || note.includes("\uc218\ub3d9 \uc2e4\ud589")
+  );
 }
 
 function parsePositiveInt(value: unknown): number | null {
@@ -389,6 +432,34 @@ function paginateItems<T>(items: T[], page: number, pageSize = LIST_PAGE_SIZE) {
   };
 }
 
+function episodeSortValue(value?: number | null) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? value
+    : Number.MAX_SAFE_INTEGER;
+}
+
+function sortByEpisodeAsc<T>(
+  items: T[],
+  getEpisode: (item: T) => number | null | undefined,
+  getTitle: (item: T) => string | null | undefined,
+) {
+  return [...items].sort((a, b) => {
+    const epDiff = episodeSortValue(getEpisode(a)) - episodeSortValue(getEpisode(b));
+    if (epDiff !== 0) return epDiff;
+    return String(getTitle(a) || "").localeCompare(String(getTitle(b) || ""), "ko");
+  });
+}
+
+function sortTasksByChannelEpisodeAsc(tasks: OneClickTask[]) {
+  return [...tasks].sort((a, b) => {
+    const chDiff = (a.channel || 1) - (b.channel || 1);
+    if (chDiff !== 0) return chDiff;
+    const epDiff = episodeSortValue(a.episode_number) - episodeSortValue(b.episode_number);
+    if (epDiff !== 0) return epDiff;
+    return String(a.topic || a.title || "").localeCompare(String(b.topic || b.title || ""), "ko");
+  });
+}
+
 function PaginationControls({
   page,
   totalPages,
@@ -471,7 +542,7 @@ export default function QueuePage() {
   const [recovering, setRecovering] = useState(false);
   // v1.2.6: 채널별 탭 필터 제거 — 채널별 섹션 구조로 전환 (탭 불필요).
   // v1.2.7: 채널 편집 모달 오픈 상태 — null 이면 닫힘. CH1~4 버튼 클릭시 해당 번호.
-  const [openChannel, setOpenChannel] = useState<"1" | "2" | "3" | "4" | null>(null);
+  const [openChannel, setOpenChannel] = useState<string | null>(null);
   // v1.2.9: 주제 편집 팝업(중첩). 어떤 queue index 를 편집하는지. null 이면 닫힘.
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
   // v1.2.28: 채널 편집 모달 — 실패 멀티셀렉트 + 고아 프로젝트 섹션
@@ -484,7 +555,8 @@ export default function QueuePage() {
   const [showAllFailures, setShowAllFailures] = useState(false);
   const [importingExcel, setImportingExcel] = useState(false);
   const [studioUploadedTaskIds, setStudioUploadedTaskIds] = useState<Set<string>>(new Set());
-  const studioFailedKeyRef = useRef("");
+  const [checkingStudioUploads, setCheckingStudioUploads] = useState(false);
+  const [studioLookupMessage, setStudioLookupMessage] = useState("");
   const excelInputRef = useRef<HTMLInputElement | null>(null);
   const [listPages, setListPages] = useState<Record<ChannelListPageKey, number>>({
     queue: 1,
@@ -505,30 +577,42 @@ export default function QueuePage() {
 
   const buildChannelPresetPayload = useCallback((): Record<string, string | null> => {
     const cp: Record<string, string | null> = {};
-    for (const ch of ["1", "2", "3", "4"]) {
+    for (const ch of collectChannelKeys({ queue, tasks, channelTimes, channelPresets })) {
       cp[ch] = (channelPresets[ch] || "").trim() || null;
     }
     return cp;
-  }, [channelPresets]);
+  }, [channelPresets, channelTimes, queue, tasks]);
 
   const syncUploadedFromStudio = useCallback(async (taskItems: OneClickTask[]) => {
     const failedOnly = taskItems.filter((t) => ["failed", "cancelled", "paused"].includes(t.status));
     if (failedOnly.length === 0) {
       setStudioUploadedTaskIds(new Set());
-      return;
+      setStudioLookupMessage("대조할 실패/중단 항목이 없습니다.");
+      return 0;
     }
+
+    const channels = Array.from(
+      new Set(
+        failedOnly
+          .map((task) => Number(task.channel || 1))
+          .filter((channel) => Number.isFinite(channel) && channel > 0),
+      ),
+    ).sort((a, b) => a - b);
 
     try {
       let pageToken: string | undefined;
       const uploadedTitles: string[] = [];
-      for (let i = 0; i < 5; i += 1) {
-        const res = await youtubeStudioApi.listVideos({ maxResults: 50, pageToken });
-        for (const video of res.items || []) {
-          const normalized = normalizeUploadTitle(video.title);
-          if (normalized) uploadedTitles.push(normalized);
+      for (const channelId of channels) {
+        pageToken = undefined;
+        for (let i = 0; i < 2; i += 1) {
+          const res = await youtubeStudioApi.listVideos({ maxResults: 50, pageToken, channelId });
+          for (const video of res.items || []) {
+            const normalized = normalizeUploadTitle(video.title);
+            if (normalized) uploadedTitles.push(`${channelId}:${normalized}`);
+          }
+          if (!res.next_page_token) break;
+          pageToken = res.next_page_token;
         }
-        if (!res.next_page_token) break;
-        pageToken = res.next_page_token;
       }
 
       const uploadedCounts = new Map<string, number>();
@@ -540,22 +624,38 @@ export default function QueuePage() {
       for (const task of failedOnly) {
         const normalized = normalizeUploadTitle(task.title || task.topic);
         if (!normalized) continue;
-        failedCounts.set(normalized, (failedCounts.get(normalized) || 0) + 1);
+        const key = `${Number(task.channel || 1)}:${normalized}`;
+        failedCounts.set(key, (failedCounts.get(key) || 0) + 1);
       }
 
       const next = new Set<string>();
       for (const task of failedOnly) {
         const normalized = normalizeUploadTitle(task.title || task.topic);
         if (!normalized) continue;
-        if ((failedCounts.get(normalized) || 0) !== 1) continue;
-        if ((uploadedCounts.get(normalized) || 0) !== 1) continue;
+        const key = `${Number(task.channel || 1)}:${normalized}`;
+        if ((failedCounts.get(key) || 0) !== 1) continue;
+        if ((uploadedCounts.get(key) || 0) !== 1) continue;
         next.add(task.task_id);
       }
       setStudioUploadedTaskIds(next);
+      setStudioLookupMessage(`YouTube 대조 완료: ${next.size}건은 이미 업로드됨으로 표시했습니다.`);
+      return next.size;
     } catch {
       setStudioUploadedTaskIds(new Set());
+      setStudioLookupMessage("YouTube 대조 실패: 인증/쿼타 상태를 확인하세요.");
+      return 0;
     }
   }, []);
+
+  const handleStudioLookup = useCallback(async () => {
+    setCheckingStudioUploads(true);
+    setStudioLookupMessage("");
+    try {
+      await syncUploadedFromStudio(tasks);
+    } finally {
+      setCheckingStudioUploads(false);
+    }
+  }, [syncUploadedFromStudio, tasks]);
 
   const load = useCallback(async () => {
     try {
@@ -569,28 +669,16 @@ export default function QueuePage() {
       if (!dirtyRef.current && !saveGuardRef.current) {
         setQueue(normalizeQueueItems(q.items || []));
         // v1.1.57: 채널별 시간
-        const ct = q.channel_times || {};
-        setChannelTimes({ "1": ct["1"] || "", "2": ct["2"] || "", "3": ct["3"] || "", "4": ct["4"] || "" });
-        const cp = q.channel_presets || {};
-        setChannelPresets({ "1": cp["1"] || "", "2": cp["2"] || "", "3": cp["3"] || "", "4": cp["4"] || "" });
+        setChannelTimes(normalizeChannelMap(q.channel_times, ""));
+        setChannelPresets(normalizeChannelMap(q.channel_presets, ""));
       }
       const nextTasks = t || [];
       setTasks(nextTasks);
       setProjects(p || []);
-
-      const failedKey = nextTasks
-        .filter((task) => ["failed", "cancelled", "paused"].includes(task.status))
-        .map((task) => task.task_id)
-        .sort()
-        .join("|");
-      if (failedKey !== studioFailedKeyRef.current) {
-        studioFailedKeyRef.current = failedKey;
-        void syncUploadedFromStudio(nextTasks);
-      }
     } catch {
       // ignore polling errors
     }
-  }, [syncUploadedFromStudio]);
+  }, []);
 
   // 초기 로드
   useEffect(() => {
@@ -641,6 +729,25 @@ export default function QueuePage() {
     setSaved(false);
     dirtyRef.current = true;  // v1.1.52: 폴링 덮어쓰기 방지
   };
+  const moveItemWithinChannel = useCallback((idx: number, direction: -1 | 1) => {
+    setQueue((prev) => {
+      const item = prev[idx];
+      if (!item) return prev;
+      const channel = item.channel || 1;
+      const channelIndexes = prev
+        .map((q, i) => ((q.channel || 1) === channel ? i : -1))
+        .filter((i) => i >= 0);
+      const currentPos = channelIndexes.indexOf(idx);
+      const targetIdx = channelIndexes[currentPos + direction];
+      if (currentPos < 0 || targetIdx == null) return prev;
+      const next = [...prev];
+      [next[idx], next[targetIdx]] = [next[targetIdx], next[idx]];
+      return next;
+    });
+    setSaved(false);
+    dirtyRef.current = true;
+  }, []);
+
   const removeItem = useCallback(async (idx: number) => {
     const next = queue.filter((_, i) => i !== idx);
     setQueue(next);
@@ -648,21 +755,22 @@ export default function QueuePage() {
     try {
       const clean = next.map((it) => ({ ...it, topic: (it.topic || "").trim() })).filter((it) => it.topic.length > 0);
       const ct: Record<string, string | null> = {};
-      for (const ch of ["1","2","3","4"]) ct[ch] = channelTimes[ch] || null;
+      for (const ch of collectChannelKeys({ queue: next, tasks, channelTimes, channelPresets })) {
+        ct[ch] = channelTimes[ch] || null;
+      }
       const res = await oneclickApi.setQueue({
         channel_times: ct,
         channel_presets: buildChannelPresetPayload(),
         items: clean,
       });
       setQueue(normalizeQueueItems(res.items || []));
-      const cp = res.channel_presets || {};
-      setChannelPresets({ "1": cp["1"] || "", "2": cp["2"] || "", "3": cp["3"] || "", "4": cp["4"] || "" });
+      setChannelPresets(normalizeChannelMap(res.channel_presets, ""));
       setSaved(true);
       dirtyRef.current = false;
       saveGuardRef.current = true;
       setTimeout(() => { saveGuardRef.current = false; }, 6000);
     } catch (e) { setErr((e as Error).message || "삭제 저장 실패"); }
-  }, [queue, channelTimes, buildChannelPresetPayload]);
+  }, [queue, tasks, channelTimes, channelPresets, buildChannelPresetPayload]);
   // v1.2.6: 채널별 섹션에서 호출 — ch 파라미터로 어느 채널에 넣을지 명시.
   // v1.2.9: 새 항목은 에피소드 상세 필드까지 기본값을 채워 생성 후 즉시
   // 편집 팝업을 띄워 사용자에게 주제·대사·핵심을 입력받는다. 반환값으로
@@ -697,7 +805,7 @@ export default function QueuePage() {
     const clean = queue.map((it) => ({ ...it, topic: (it.topic || "").trim() })).filter((it) => it.topic.length > 0);
     // v1.1.57: 채널별 시간 검증 + 정규화
     const ct: Record<string, string | null> = {};
-    for (const ch of ["1", "2", "3", "4"]) {
+    for (const ch of collectChannelKeys({ queue: clean, tasks, channelTimes, channelPresets })) {
       const v = (channelTimes[ch] || "").trim();
       if (!v) { ct[ch] = null; continue; }
       const m = /^(\d{1,2}):(\d{2})$/.exec(v);
@@ -712,10 +820,8 @@ export default function QueuePage() {
         items: clean,
       });
       setQueue(normalizeQueueItems(res.items || []));
-      const rct = res.channel_times || {};
-      setChannelTimes({ "1": rct["1"] || "", "2": rct["2"] || "", "3": rct["3"] || "", "4": rct["4"] || "" });
-      const cp = res.channel_presets || {};
-      setChannelPresets({ "1": cp["1"] || "", "2": cp["2"] || "", "3": cp["3"] || "", "4": cp["4"] || "" });
+      setChannelTimes(normalizeChannelMap(res.channel_times, ""));
+      setChannelPresets(normalizeChannelMap(res.channel_presets, ""));
       setSaved(true);
       dirtyRef.current = false;
       // v1.1.57: save 전에 출발한 폴링이 구 데이터로 덮어쓰는 것을 방지.
@@ -724,7 +830,7 @@ export default function QueuePage() {
       setTimeout(() => { saveGuardRef.current = false; }, 6000);
     } catch (e) { setErr((e as Error).message || "저장 실패"); }
     finally { setSaving(false); }
-  }, [queue, channelTimes, buildChannelPresetPayload]);
+  }, [queue, tasks, channelTimes, channelPresets, buildChannelPresetPayload]);
 
   const handleExcelImport = useCallback(async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -760,7 +866,7 @@ export default function QueuePage() {
         .map((it) => ({ ...it, topic: (it.topic || "").trim() }))
         .filter((it) => it.topic.length > 0);
       const ct: Record<string, string | null> = {};
-      for (const ch of ["1", "2", "3", "4"]) {
+      for (const ch of collectChannelKeys({ queue: clean, tasks, channelTimes: nextChannelTimes, channelPresets })) {
         const value = (nextChannelTimes[ch] || "").trim();
         if (!value) {
           ct[ch] = null;
@@ -779,10 +885,8 @@ export default function QueuePage() {
         items: clean,
       });
       setQueue(normalizeQueueItems(res.items || []));
-      const rct = res.channel_times || {};
-      setChannelTimes({ "1": rct["1"] || "", "2": rct["2"] || "", "3": rct["3"] || "", "4": rct["4"] || "" });
-      const cp = res.channel_presets || {};
-      setChannelPresets({ "1": cp["1"] || "", "2": cp["2"] || "", "3": cp["3"] || "", "4": cp["4"] || "" });
+      setChannelTimes(normalizeChannelMap(res.channel_times, ""));
+      setChannelPresets(normalizeChannelMap(res.channel_presets, ""));
       setSaved(true);
       dirtyRef.current = false;
       saveGuardRef.current = true;
@@ -792,7 +896,7 @@ export default function QueuePage() {
     } finally {
       setImportingExcel(false);
     }
-  }, [channelTimes, openChannel, projects, queue, buildChannelPresetPayload]);
+  }, [channelTimes, channelPresets, openChannel, projects, queue, tasks, buildChannelPresetPayload]);
 
   // v1.1.53: 큐 변경 시 자동저장 (2초 디바운스)
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -837,7 +941,6 @@ export default function QueuePage() {
     setErr(null);
     try {
       const hasRunning = await checkRunningAndWarn();
-      const channel = item.channel || 1;
       const selected = {
         ...item,
         topic: item.topic.trim(),
@@ -846,14 +949,16 @@ export default function QueuePage() {
         queued_note: "제작 큐에서 수동 실행",
       };
       const withoutSelected = queue.filter((_, i) => i !== idx);
-      const insertAt = withoutSelected.findIndex((it) => (it.channel || 1) === channel);
+      const insertAt = withoutSelected.findIndex((it) => !isImmediateQueueItem(it));
       const nextQueue = [...withoutSelected];
       nextQueue.splice(insertAt >= 0 ? insertAt : nextQueue.length, 0, selected);
       const clean = nextQueue
         .map((it) => ({ ...it, topic: (it.topic || "").trim() }))
         .filter((it) => it.topic.length > 0);
       const ct: Record<string, string | null> = {};
-      for (const ch of ["1","2","3","4"]) ct[ch] = channelTimes[ch] || null;
+      for (const ch of collectChannelKeys({ queue: clean, tasks, channelTimes, channelPresets })) {
+        ct[ch] = channelTimes[ch] || null;
+      }
       const saved = await oneclickApi.setQueue({
         channel_times: ct,
         channel_presets: buildChannelPresetPayload(),
@@ -863,12 +968,12 @@ export default function QueuePage() {
       saveGuardRef.current = true;
       setTimeout(() => { saveGuardRef.current = false; }, 6000);
       if (!hasRunning) {
-        await oneclickApi.runQueueNext(channel);
+        await oneclickApi.runQueueNext();
       }
       await load();
     } catch (e) { setErr((e as Error).message || "실행 실패"); }
     finally { removeBusy(itemId); }
-  }, [queue, channelTimes, load, checkRunningAndWarn, buildChannelPresetPayload]);
+  }, [queue, tasks, channelTimes, channelPresets, load, checkRunningAndWarn, buildChannelPresetPayload]);
 
   // 지금 1건 실행 (큐 맨 위)
   const handleRunNext = useCallback(async () => {
@@ -1178,9 +1283,26 @@ export default function QueuePage() {
 
 
 
-      {/* v1.2.7: CH 1~4 를 큰 버튼 그리드로. 클릭시 해당 채널 편집 모달 오픈. */}
+      {/* 채널은 queue/channel_times/tasks 에서 자동 수집. CH 추가 시 자동 표시. */}
+      <div className="flex items-center gap-2">
+        <button
+          onClick={handleStudioLookup}
+          disabled={checkingStudioUploads || rawFailedTasksAll.length === 0}
+          className="flex items-center gap-1.5 text-sm font-semibold bg-blue-500/15 text-blue-300 border border-blue-400/30 rounded-lg px-4 py-2.5 hover:bg-blue-500/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          title="누를 때만 YouTube Studio를 조회해서 이미 올라간 실패/중단 항목을 완료로 표시합니다."
+        >
+          {checkingStudioUploads ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+          YouTube 대조
+        </button>
+        {studioLookupMessage && (
+          <span className="text-xs text-blue-200 bg-blue-500/10 border border-blue-400/20 rounded-lg px-3 py-2">
+            {studioLookupMessage}
+          </span>
+        )}
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {(["1", "2", "3", "4"] as const).map((ch) => {
+        {collectChannelKeys({ queue, tasks, channelTimes, channelPresets }).map((ch) => {
           const n = parseInt(ch);
           const chActive = activeTasksAll.filter((t) => (t.channel || 1) === n);
           const chFailed = failedTasksAll.filter((t) => (t.channel || 1) === n);
@@ -1264,17 +1386,26 @@ export default function QueuePage() {
           .filter(({ q }) => (q.channel || 1) === n);
         const chActive = activeTasksAll.filter((t) => (t.channel || 1) === n);
         const chCompleted = completedTasksAll.filter((t) => (t.channel || 1) === n);
-        const chFailed = failedTasksAll.filter((t) => (t.channel || 1) === n);
+        const chFailed = sortByEpisodeAsc(
+          failedTasksAll.filter((t) => (t.channel || 1) === n),
+          (t) => t.episode_number,
+          (t) => t.topic || t.title,
+        );
         const queuePage = paginateItems(chQueue, listPages.queue);
         const activePage = paginateItems(chActive, listPages.active);
         const completedPage = paginateItems(chCompleted, listPages.completed);
         const failedPage = paginateItems(chFailed, listPages.failed);
-        const orphanPage = paginateItems(orphans, listPages.orphans);
+        const sortedOrphans = sortByEpisodeAsc(
+          orphans,
+          (o) => o.episode_number,
+          (o) => o.topic || o.title || o.project_id,
+        );
+        const orphanPage = paginateItems(sortedOrphans, listPages.orphans);
         const allFailedIds = chFailed.map((t) => t.task_id);
         const selectedFailedCount = allFailedIds.filter((id) => selectedFailed.has(id)).length;
         const allFailedSelected =
           allFailedIds.length > 0 && allFailedIds.every((id) => selectedFailed.has(id));
-        const allOrphanIds = orphans.map((o) => o.project_id);
+        const allOrphanIds = sortedOrphans.map((o) => o.project_id);
         const selectedOrphanCount = allOrphanIds.filter((id) => selectedOrphans.has(id)).length;
         const allOrphanSelected =
           allOrphanIds.length > 0 && allOrphanIds.every((id) => selectedOrphans.has(id));
@@ -1405,6 +1536,9 @@ export default function QueuePage() {
                           <ul className="space-y-1.5">
                             {queuePage.items.map(({ q, i }) => {
                               const itemKey = q.id || String(i);
+                              const channelOrderIndex = chQueue.findIndex((entry) => entry.i === i);
+                              const canMoveUp = channelOrderIndex > 0;
+                              const canMoveDown = channelOrderIndex >= 0 && channelOrderIndex < chQueue.length - 1;
                               return (
                                 <li
                                   key={itemKey}
@@ -1425,6 +1559,26 @@ export default function QueuePage() {
                                       projects={projects}
                                       channelPresets={channelPresets}
                                     />
+                                  </div>
+                                  <div className="flex flex-col gap-1">
+                                    <button
+                                      onClick={() => moveItemWithinChannel(i, -1)}
+                                      disabled={!canMoveUp}
+                                      className="text-gray-500 hover:text-gray-200 disabled:opacity-25 disabled:cursor-not-allowed"
+                                      aria-label="위로 이동"
+                                      title="위로 이동"
+                                    >
+                                      <ArrowUp size={12} />
+                                    </button>
+                                    <button
+                                      onClick={() => moveItemWithinChannel(i, 1)}
+                                      disabled={!canMoveDown}
+                                      className="text-gray-500 hover:text-gray-200 disabled:opacity-25 disabled:cursor-not-allowed"
+                                      aria-label="아래로 이동"
+                                      title="아래로 이동"
+                                    >
+                                      <ArrowDown size={12} />
+                                    </button>
                                   </div>
                                   <button
                                     onClick={() => handleRunItem(i)}
@@ -1498,6 +1652,22 @@ export default function QueuePage() {
                                     <Square size={10} /> 중지
                                   </button>
                                 </div>
+                                <div className="flex items-center justify-between gap-2 text-[11px] text-gray-400">
+                                  <span className="truncate">
+                                    {t.current_step_label || t.current_step_name || "진행 중"}
+                                    {(t.current_step_completed ?? 0) > 0 && t.current_step_total
+                                      ? ` · ${t.current_step_completed}/${t.current_step_total}`
+                                      : ""}
+                                  </span>
+                                  <span className="font-mono text-amber-300">
+                                    {(t.progress_pct || 0).toFixed(1)}%
+                                  </span>
+                                </div>
+                                {t.sub_status && (
+                                  <div className="rounded border border-amber-400/30 bg-amber-400/10 px-2 py-1 text-[11px] text-amber-200 truncate">
+                                    {t.sub_status}
+                                  </div>
+                                )}
                                 <ProgressBar pct={t.progress_pct || 0} />
                               </li>
                             ))}
@@ -1803,13 +1973,24 @@ export default function QueuePage() {
       })()}
 
       {showAllFailures && (() => {
-        const failedPage = paginateItems(failedTasksAll, listPages.failed);
-        const orphanPage = paginateItems(allOrphans, listPages.orphans);
-        const allFailedIds = failedTasksAll.map((t) => t.task_id);
+        const sortedFailedTasksAll = sortTasksByChannelEpisodeAsc(failedTasksAll);
+        const sortedAllOrphans = [...allOrphans].sort((a, b) => {
+          const chDiff = (a.channel || 1) - (b.channel || 1);
+          if (chDiff !== 0) return chDiff;
+          const epDiff = episodeSortValue(a.episode_number) - episodeSortValue(b.episode_number);
+          if (epDiff !== 0) return epDiff;
+          return String(a.topic || a.title || a.project_id || "").localeCompare(
+            String(b.topic || b.title || b.project_id || ""),
+            "ko",
+          );
+        });
+        const failedPage = paginateItems(sortedFailedTasksAll, listPages.failed);
+        const orphanPage = paginateItems(sortedAllOrphans, listPages.orphans);
+        const allFailedIds = sortedFailedTasksAll.map((t) => t.task_id);
         const selectedFailedCount = allFailedIds.filter((id) => selectedFailed.has(id)).length;
         const allFailedSelected =
           allFailedIds.length > 0 && allFailedIds.every((id) => selectedFailed.has(id));
-        const allOrphanIds = allOrphans.map((o) => o.project_id);
+        const allOrphanIds = sortedAllOrphans.map((o) => o.project_id);
         const selectedOrphanCount = allOrphanIds.filter((id) => selectedOrphans.has(id)).length;
         const allOrphanSelected =
           allOrphanIds.length > 0 && allOrphanIds.every((id) => selectedOrphans.has(id));

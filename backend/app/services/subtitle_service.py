@@ -4,11 +4,45 @@ import re
 from app.config import CUT_VIDEO_DURATION
 
 
+# Global burned-in subtitle look requested for long-form videos:
+# large white heavy text, thick black outline, bottom-center placement.
+DEFAULT_SUBTITLE_STYLE = {
+    "font": "Pretendard Bold",
+    "size": 64,
+    "color": "#FFFFFF",
+    "outline_color": "#000000",
+    "position": "bottom",
+    "outline_width": 6,
+    "shadow": 0,
+    "margin_v": 105,
+    "bold": True,
+    "bg_enabled": False,
+}
+
+
+def normalize_subtitle_style(style_config: dict | None) -> dict:
+    style = dict(DEFAULT_SUBTITLE_STYLE)
+    if isinstance(style_config, dict):
+        style.update(style_config)
+    return style
+
+
 def format_ass_time(seconds: float) -> str:
     h = int(seconds // 3600)
     m = int((seconds % 3600) // 60)
     s = seconds % 60
     return f"{h}:{m:02d}:{s:05.2f}"
+
+
+def format_srt_time(seconds: float) -> str:
+    total_ms = max(0, int(round(float(seconds) * 1000)))
+    ms = total_ms % 1000
+    total_s = total_ms // 1000
+    s = total_s % 60
+    total_m = total_s // 60
+    m = total_m % 60
+    h = total_m // 60
+    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
 
 def split_sentences(text: str) -> list[str]:
@@ -19,6 +53,10 @@ def split_sentences(text: str) -> list[str]:
 
 def _ass_escape(text: str) -> str:
     return (text or "").replace("\r", " ").replace("\n", " ").strip()
+
+
+def _srt_escape(text: str) -> str:
+    return re.sub(r"\s+", " ", (text or "").replace("\r", " ").replace("\n", " ")).strip()
 
 
 def _wrap_two_lines(text: str, aspect_ratio: str = "16:9") -> str:
@@ -101,6 +139,8 @@ def generate_ass(
         bg_color:       background hex color, "#RRGGBB" (default "#000000")
         bg_opacity:     0.0~1.0 — 1.0 이 완전 불투명 (default 0.6)
     """
+    style_config = normalize_subtitle_style(style_config)
+
     font = style_config.get("font", "Pretendard Bold")
     size = int(style_config.get("size", 48) or 48)
     color_hex = style_config.get("color", "#FFFFFF")
@@ -197,6 +237,49 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     return header + "\n".join(events) + "\n"
 
 
+def generate_srt(cuts: list[dict]) -> str:
+    """Build a timed SRT caption file from cuts.
+
+    This mirrors ``generate_ass`` timing: each cut occupies the fixed
+    CUT_VIDEO_DURATION window, and sentence captions are distributed across the
+    spoken part of that window. The file is meant for YouTube caption upload,
+    not burn-in rendering.
+    """
+    entries: list[str] = []
+    current_time = 0.0
+    index = 1
+
+    for cut in cuts:
+        cut_window = float(CUT_VIDEO_DURATION)
+        speech_dur = float(cut.get("actual_duration") or cut.get("duration_estimate") or cut_window)
+        if speech_dur <= 0:
+            speech_dur = cut_window
+        if speech_dur > cut_window:
+            speech_dur = cut_window
+
+        narration = cut.get("narration", "")
+        sentences = split_sentences(narration)
+        if not sentences:
+            current_time += cut_window
+            continue
+
+        sentence_dur = speech_dur / len(sentences)
+        for i, sentence in enumerate(sentences):
+            text = _srt_escape(sentence)
+            if not text:
+                continue
+            start = current_time + i * sentence_dur
+            end = current_time + (i + 1) * sentence_dur
+            entries.append(
+                f"{index}\n{format_srt_time(start)} --> {format_srt_time(end)}\n{text}\n"
+            )
+            index += 1
+
+        current_time += cut_window
+
+    return "\n".join(entries)
+
+
 def generate_single_cut_ass(
     narration: str,
     duration: float,
@@ -213,6 +296,8 @@ def generate_single_cut_ass(
     대해 문장 단위로 균등 분배.
     """
     # ── 헤더/스타일은 generate_ass 와 동일 로직을 재사용 ──
+    style_config = normalize_subtitle_style(style_config)
+
     font = style_config.get("font", "Pretendard Bold")
     size = int(style_config.get("size", 48) or 48)
     color_hex = style_config.get("color", "#FFFFFF")

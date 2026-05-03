@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { Suspense, useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
@@ -24,7 +24,7 @@ function studioHref(path: string, projectId?: string | null): string {
   return pid ? `${path}?project=${encodeURIComponent(pid)}` : path;
 }
 
-export default function CommentsPage() {
+function CommentsPageInner() {
   const searchParams = useSearchParams();
   const projectId = (searchParams.get("project") || "").trim();
 
@@ -327,5 +327,13 @@ export default function CommentsPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function CommentsPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-sm text-gray-500">불러오는 중...</div>}>
+      <CommentsPageInner />
+    </Suspense>
   );
 }

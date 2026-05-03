@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Plus, Trash2, Edit3, ListMusic, RefreshCw } from "lucide-react";
@@ -14,7 +14,7 @@ function studioHref(path: string, projectId?: string | null): string {
   return pid ? `${path}?project=${encodeURIComponent(pid)}` : path;
 }
 
-export default function PlaylistsPage() {
+function PlaylistsPageInner() {
   const searchParams = useSearchParams();
   const projectId = (searchParams.get("project") || "").trim();
 
@@ -273,5 +273,13 @@ export default function PlaylistsPage() {
         </>
       )}
     </div>
+  );
+}
+
+export default function PlaylistsPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-sm text-gray-500">불러오는 중...</div>}>
+      <PlaylistsPageInner />
+    </Suspense>
   );
 }

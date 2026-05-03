@@ -37,6 +37,8 @@ dump.rdb
 
 # YouTube OAuth token
 token.json
+token_ch*.json
+token_*.json
 client_secret*.json
 *.db
 data/
@@ -47,3 +49,12 @@ backend/logs/
 
 # TypeScript build cache
 *.tsbuildinfo
+
+# Local scratch / generated artifacts
+.claude/
+_archive/
+dumpcopy/
+tmp/
+tmp_*
+*.bak
+backend/spend_report.txt

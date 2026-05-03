@@ -739,6 +739,11 @@ def _compact_script_system_prompt(language: str, limits: dict, config: dict) -> 
         unit_rate = limits.get("chars_per_sec", "")
         unit_rate_label = "chars/sec"
         narration_lang = "Japanese"
+    elif lang == "hi":
+        unit = "words"
+        unit_rate = limits.get("words_per_sec", "")
+        unit_rate_label = "words/sec"
+        narration_lang = "Hindi"
     else:
         unit = "characters including spaces"
         unit_rate = limits.get("chars_per_sec", "")
@@ -754,6 +759,7 @@ Korean narration style:
 - Use those stiff endings sparingly, under about 20% of cuts, and never in 2 consecutive cuts.
 - Prefer connected endings and bridges: `-했는데요`, `-인데요`, `-하다 보니`, `-였거든요`, `-였죠`, `-고요`, `그런데`, `그러다 보니`.
 - Each cut should connect event -> reason, reason -> result, or reveal -> meaning. Do not write detached textbook sentences.
+- Spell year numbers out in the narration language for TTS. Example for Korean: write `오백사십사년`, not `544년`.
 - Bad: `수나라는 고구려를 공격했습니다. 고구려는 방어했습니다.`
 - Good: `수나라는 엄청난 병력을 밀어 넣었는데요, 고구려는 그 숫자 싸움에 그대로 말려들지 않았죠.`
 """
@@ -772,6 +778,9 @@ Required JSON shape:
       "cut_number": 1,
       "narration": "...",
       "image_prompt": "English visual scene only, no readable text",
+      "visual_period": "specific historical era or modern period, e.g. 'Indus Valley civilization, Mature Harappan period, c. 2600-1900 BCE'",
+      "visual_location": "specific place or environment, e.g. 'brick street near a drainage channel in Mohenjo-daro'",
+      "visual_evidence": "one short reason why this image matches the narration and period",
       "duration_estimate": 5.0,
       "scene_type": "title",
       "shorts_candidate": false,
@@ -800,6 +809,18 @@ Content contract:
 - Use factual wording. Do not invent exact dates, names, or numbers unless supplied by the user.
 - No subscribe/like requests.
 {korean_spoken_style}
+
+Historical and visual continuity contract:
+- Before writing cuts, internally lock the topic's era, region, material culture, clothing, architecture, tools, vehicles, weapons, rituals, and landscape.
+- Every cut must include visual_period, visual_location, and visual_evidence.
+- visual_period must be specific, not generic. Bad: "ancient India". Good: "Mature Harappan period, Indus Valley, c. 2600-1900 BCE".
+- visual_location must name a concrete environment where the narrated event could visually happen.
+- visual_evidence must explain the link between narration and image in one short phrase.
+- image_prompt must begin from those fields: period-correct place + period-correct objects + the exact narrated fact.
+- Do not use generic filler visuals such as DNA helix, glowing brain, abstract map, random temple wall, generic scholar, generic palace, generic battlefield, unless the narration explicitly discusses that object.
+- Do not mix eras or cultures. No anachronisms: modern clothes, modern buildings, guns, cars, screens, neon, national flags, printed books, paper notebooks, or readable writing unless the narration explicitly takes place in that period.
+- If the narration is about an abstract claim, visualize the closest concrete historical evidence or action from that cut, not a metaphor.
+- Consecutive cuts should feel like the same documentary world: consistent era, region, architecture, costume, and props, while varying camera angle and composition.
 
 Shorts metadata contract:
 - Mark exactly 2 independent shorts-worthy sections in the cuts.
@@ -901,6 +922,8 @@ def normalize_language_code(language: Any = "ko") -> str:
         return "ko"
     if value in {"ja", "jp", "jpn", "japanese"} or "일본" in value or "日本" in value:
         return "ja"
+    if value in {"hi", "hin", "hindi"} or "hindi" in value:
+        return "hi"
     if value in {"en", "eng", "english"} or value.startswith("en-"):
         return "en"
     return "ko"
@@ -939,7 +962,7 @@ def get_system_prompt(language: str = "ko", config: dict | None = None) -> str:
         return result
 
     def _limits_for_compact(lang: str) -> dict:
-        if lang == "en":
+        if lang in ("en", "hi"):
             wps = round(_profiled_words_per_sec(config, 2.5 * effective_speed), 1)
             target_words = max(1, int(round(((tts_min_sec + tts_max_sec) / 2) * wps)))
             max_words = max(1, int(math.floor(tts_max_sec * wps)))
@@ -976,7 +999,7 @@ def get_system_prompt(language: str = "ko", config: dict | None = None) -> str:
     if config.get("script_prompt_mode", "compact") == "compact":
         return _compact_script_system_prompt(language, _limits_for_compact(language), config)
 
-    if language == "en":
+    if language in ("en", "hi"):
         wps = round(_profiled_words_per_sec(config, 2.5 * effective_speed), 1)
         target_words = max(1, int(round(((tts_min_sec + tts_max_sec) / 2) * wps)))
         max_words = max(1, int(math.floor(tts_max_sec * wps)))
@@ -985,12 +1008,19 @@ def get_system_prompt(language: str = "ko", config: dict | None = None) -> str:
             min_words = max_words = target_words
         target_words = max(min_words, min(max_words, target_words))
         low = min_words
-        return _strip_added_visual_prompt_rules(_sub(SCRIPT_SYSTEM_PROMPT_EN, {
+        prompt = _sub(SCRIPT_SYSTEM_PROMPT_EN, {
             "tts_min_sec": tts_min_sec, "tts_max_sec": tts_max_sec, "tts_model": tts_model, "tts_speed": tts_speed,
             "words_per_sec": wps, "max_words": max_words,
             "target_words": target_words, "min_words": min_words,
             "target_range": f"{low}~{max_words}",
-        }))
+        })
+        if language == "hi":
+            prompt = prompt.replace(
+                "You are a YouTube longform video script writer.",
+                "You are a YouTube longform video script writer for a Hindi-speaking Indian audience. Write all title, description, tags, and narration in natural Hindi. Keep image prompts in English.",
+                1,
+            )
+        return _strip_added_visual_prompt_rules(prompt)
     if language == "ja":
         cps = round(_profiled_chars_per_sec(config, 5.5 * effective_speed), 1)
         target_chars = max(1, int(round(((tts_min_sec + tts_max_sec) / 2) * cps)))
@@ -1039,6 +1069,38 @@ class BaseLLMService(ABC):
     async def generate_script(self, topic: str, config: dict) -> dict:
         """주제와 설정을 받아 대본 JSON을 반환"""
         pass
+
+    @staticmethod
+    def strengthen_visual_context(script: dict) -> dict:
+        """Copy cut-level historical metadata into image_prompt for generators."""
+        if not isinstance(script, dict):
+            return script
+        cuts = script.get("cuts")
+        if not isinstance(cuts, list):
+            return script
+        for cut in cuts:
+            if not isinstance(cut, dict):
+                continue
+            image_prompt = str(cut.get("image_prompt") or "").strip()
+            period = str(cut.get("visual_period") or "").strip()
+            location = str(cut.get("visual_location") or "").strip()
+            evidence = str(cut.get("visual_evidence") or "").strip()
+            prefix_parts: list[str] = []
+            if period:
+                prefix_parts.append(f"historically accurate {period}")
+            if location:
+                prefix_parts.append(location)
+            if evidence:
+                prefix_parts.append(f"scene directly tied to the narration: {evidence}")
+            if not prefix_parts:
+                continue
+            prefix = ", ".join(prefix_parts)
+            if image_prompt:
+                if prefix.lower() not in image_prompt.lower():
+                    cut["image_prompt"] = f"{prefix}, {image_prompt}"
+            else:
+                cut["image_prompt"] = prefix
+        return script
 
     @staticmethod
     def validate_script_timing(script: dict, config: dict) -> list[dict]:
@@ -1469,6 +1531,7 @@ class BaseLLMService(ABC):
         return {
             "ko": "Korean (한국어)",
             "en": "English",
+            "hi": "Hindi",
             "ja": "Japanese (日本語)",
             "zh": "Chinese (中文)",
             "es": "Spanish (Español)",
@@ -1503,7 +1566,8 @@ class BaseLLMService(ABC):
             f"is in {lang_name}. No translations, no transliterations of English into "
             f"{lang_name}, no mixing.\n"
             f"\n"
-            f"Task: Produce 10 to {max_tags} YouTube tags that will help this specific "
+            f"Task: Produce as many useful YouTube tags as possible, ideally {max_tags}, "
+            f"while staying under YouTube tag limits. The tags must help this specific "
             f"long-form video be discovered. Mix broad category tags AND specific topical "
             f"tags drawn from the title / topic / script excerpt. Each tag under 30 "
             f"characters. No # symbols. No duplicates.\n"
@@ -1568,16 +1632,16 @@ class BaseLLMService(ABC):
             f"Think of it as what goes AFTER 'EP. N - '. Examples of good length: "
             f"'석유의 비밀', 'The truth about oil', '石油の真実'. "
             f"Examples of bad: full sentences, questions, anything over the limit.\n"
-            f'  - "description": string. 600 to 1500 characters. Written in {lang_name}. '
+            f'  - "description": string. 900 to 1800 characters. Written in {lang_name}. '
             f"Structure: (1) a 2-3 sentence hook that makes the viewer want to watch, "
             f"(2) a 3-5 sentence summary of what the video covers, "
             f"(3) 4-6 bullet-style lines listing key points or chapter highlights "
             f"(use '•' or '-' as the bullet marker), "
             f"(4) a short closing line inviting likes/comments/subscribes. "
-            f"Separate the sections with blank lines. Plain text only — no markdown headers.\n"
-            f'  - "tags": JSON array of 10 to {max_tags} strings. Each tag under 30 '
+            f"Separate the sections with blank lines and natural line breaks. Plain text only — no markdown headers.\n"
+            f'  - "tags": JSON array with as many useful tags as possible, ideally {max_tags} strings. Each tag under 30 '
             f"characters. All in {lang_name}. No # symbols. No duplicates. "
-            f"Mix broad category tags and specific topical tags.\n"
+            f"Mix broad category tags, niche topical tags, people/place/event tags, and search-intent tags.\n"
             f"\n"
             f"Do not output anything outside the JSON object.\n"
             f"\n"
@@ -1759,7 +1823,7 @@ class BaseLLMService(ABC):
         # 5-second unit rule (v1.1.26): cuts = ceil(duration / 5)
         # Uses ceil so 601s → 121 cuts (aligned with frontend expectedCuts)
         try:
-            cut_count = max(1, int(config.get("target_cuts") or 0))
+            cut_count = int(config.get("target_cuts") or 0)
         except (TypeError, ValueError):
             cut_count = 0
         if cut_count <= 0:
@@ -1775,7 +1839,7 @@ class BaseLLMService(ABC):
             target_low = int(target_range.split("~", 1)[0])
         except Exception:
             target_low = 1
-        timing_unit = "words" if language == "en" else "characters including spaces"
+        timing_unit = "words" if language in ("en", "hi") else "characters including spaces"
         timing_block_en = (
             f"★★★ NARRATION LENGTH TARGET ★★★\n"
             f"- Each narration must be {target_range} {timing_unit} for the configured voice.\n"
@@ -1831,6 +1895,20 @@ class BaseLLMService(ABC):
                     f"- 색상·팔레트·그림체 단어는 쓰지 마세요. 스타일은 첨부된 레퍼런스 이미지에서 가져갑니다.\n"
                 )
             style_instruction = f"\n\nCharacter reference context:\n{character_description}\n"
+
+        visual_contract = """
+
+*** HISTORICAL VISUAL CONTRACT - REQUIRED FOR EVERY CUT ***
+- Add these keys to every cut: visual_period, visual_location, visual_evidence.
+- visual_period must name the exact era/century/dynasty/culture when possible.
+- visual_location must name the concrete place/environment shown in the image.
+- visual_evidence must state why this scene belongs to this cut's narration.
+- image_prompt must visually match the narration, visual_period, and visual_location.
+- Use period-correct clothing, architecture, tools, weapons, vehicles, landscape, and materials.
+- No generic metaphor images, no random palaces/temples/scholars, no abstract DNA/brain/glowing symbols unless the narration explicitly says so.
+- No anachronisms: modern clothes, modern buildings, cars, guns, screens, neon, printed books, national flags, or readable text unless the story is actually modern.
+- Keep consecutive cuts in the same documentary world; vary camera angle, not the historical setting.
+"""
 
         # Script generation does not request or store video motion prompts.
 
@@ -2033,6 +2111,29 @@ class BaseLLMService(ABC):
                 f"\n"
                 f"Style: {style}\n"
                 f"Language: English"
+                f"{visual_contract}"
+                f"{style_instruction}"
+            )
+        if language == "hi":
+            return (
+                f"{constraints_block_en}"
+                f"{episode_block_en}"
+                f"{timing_block_en}"
+                f"Topic: {topic}\n"
+                f"Target duration: {duration_int} seconds\n"
+                f"\n"
+                f"*** HARD CONSTRAINT - 5-SECOND UNIT RULE (ABSOLUTE) ***\n"
+                f"- You MUST output EXACTLY {cut_count} cuts. Not {cut_count - 1}, not {cut_count + 1}. Exactly {cut_count}.\n"
+                f"- Every cut is EXACTLY 5 seconds long (duration_estimate = 5.0).\n"
+                f"- cut_number must run from 1 to {cut_count} with no gaps.\n"
+                f"- Total runtime = {cut_count} x 5 = {cut_count * 5} seconds.\n"
+                f"- If you output fewer or more than {cut_count} cuts, the pipeline will FAIL.\n"
+                f"\n"
+                f"Style: {style}\n"
+                f"Language: Hindi\n"
+                f"Write all title, description, tags, and narration in natural Hindi for an Indian audience.\n"
+                f"Keep image_prompt and thumbnail_prompt in English only."
+                f"{visual_contract}"
                 f"{style_instruction}"
             )
         if language == "ja":
@@ -2052,6 +2153,7 @@ class BaseLLMService(ABC):
                 f"\n"
                 f"\u30b9\u30bf\u30a4\u30eb: {style}\n"
                 f"\u8a00\u8a9e: \u65e5\u672c\u8a9e"
+                f"{visual_contract}"
                 f"{style_instruction}"
             )
         return (
@@ -2070,5 +2172,6 @@ class BaseLLMService(ABC):
             f"\n"
             f"\uc2a4\ud0c0\uc77c: {style}\n"
             f"\uc5b8\uc5b4: \ud55c\uad6d\uc5b4"
+            f"{visual_contract}"
             f"{style_instruction}"
         )

@@ -60,7 +60,13 @@ class GPTService(BaseLLMService):
                     f"script generation timed out after {request_timeout:.0f}s"
                 ) from exc
         raise_if_cancelled("gpt generate_script")
-        return json.loads(response.choices[0].message.content)
+        parsed = json.loads(response.choices[0].message.content)
+        cuts = parsed.get("cuts") or []
+        if len(cuts) != estimated_cuts:
+            raise ValueError(
+                f"script generation returned {len(cuts)} cuts, expected {estimated_cuts}"
+            )
+        return self.strengthen_visual_context(parsed)
 
     async def generate_tags(
         self,

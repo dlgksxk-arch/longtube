@@ -30,6 +30,7 @@ LEGACY_DATA_DIR = Path(
 CHANNELS_ROOT = _RAW_DATA_DIR / "channels"
 SYSTEM_DIR = _RAW_DATA_DIR / "_system"
 SYSTEM_PROJECTS_ROOT = SYSTEM_DIR / "projects"
+RESULT_ARCHIVE_DIR = Path(os.getenv("RESULT_ARCHIVE_DIR", r"D:\long_result"))
 
 DB_PATH = BASE_DIR / "data" / "longtube.db"                       # 로컬 DB
 
@@ -68,7 +69,7 @@ def _coerce_channel(value) -> int | None:
         ch = int(value)
     except (TypeError, ValueError):
         return None
-    return ch if 1 <= ch <= 4 else None
+    return ch if ch >= 1 else None
 
 
 def infer_project_channel(project_id: str, config: dict | None = None) -> int | None:
@@ -138,7 +139,15 @@ def resolve_project_dir(project_id: str, config: dict | None = None, create: boo
                 actual_path.mkdir(parents=True, exist_ok=True)
             return actual_path
 
-    for known_ch in range(1, 5):
+    channel_candidates: set[int] = set(range(1, 5))
+    try:
+        for child in CHANNELS_ROOT.iterdir():
+            m = re.fullmatch(r"CH([1-9]\d*)", child.name, flags=re.IGNORECASE)
+            if m:
+                channel_candidates.add(int(m.group(1)))
+    except Exception:
+        pass
+    for known_ch in sorted(channel_candidates):
         actual_path = get_channel_projects_root(known_ch) / pid
         if actual_path.exists():
             return actual_path
@@ -148,6 +157,10 @@ def resolve_project_dir(project_id: str, config: dict | None = None, create: boo
         if create:
             system_path.mkdir(parents=True, exist_ok=True)
         return system_path
+
+    archive_path = RESULT_ARCHIVE_DIR / pid
+    if archive_path.exists():
+        return archive_path
 
     legacy_path = LEGACY_DATA_DIR / pid
     if legacy_path.exists():
@@ -211,3 +224,7 @@ TTS_MAX_DURATION = 4.8
 # must not be accepted into the pipeline.
 TTS_HARD_MAX_DURATION = 4.8
 FIRST_CUT_FADE_IN_SECONDS = 0.5
+
+# Final render narration gain. This is applied at render/mix time so script text,
+# subtitles, and existing TTS files remain unchanged.
+NARRATION_VOLUME_GAIN = 2.6

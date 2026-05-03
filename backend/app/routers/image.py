@@ -12,6 +12,7 @@ from app.models.cut import Cut
 from app.config import DATA_DIR, BASE_DIR as _BASE_DIR_FOR_LOG
 from app.services.image.factory import get_image_service, resolve_image_model
 from app.services.image.base import get_size
+from app.services.image.prompt_builder import append_prompt_specific_negative_prompt
 
 router = APIRouter()
 
@@ -201,6 +202,7 @@ def _build_image_prompt(
     has_reference: bool = False,
     has_character_slot: bool = False,
     character_description: str = "",
+    enable_historical_guard: bool = False,
 ) -> str:
     """Build final prompt for image generation.
 
@@ -214,7 +216,38 @@ def _build_image_prompt(
         has_reference=has_reference,
         has_character_slot=has_character_slot,
         character_description=character_description,
+        enable_historical_guard=enable_historical_guard,
     )
+
+
+def _apply_historical_negative_prompt(image_service, config: dict, *context_values) -> bool:
+    from app.services.image.prompt_builder import (
+        historical_negative_prompt,
+        map_negative_prompt,
+        should_enable_historical_guard_for_context,
+        text_negative_prompt,
+    )
+
+    cfg = config or {}
+    enabled = should_enable_historical_guard_for_context(cfg, *context_values)
+    current_neg = (getattr(image_service, "negative_prompt", "") or "").strip()
+    text_negative = text_negative_prompt()
+    if text_negative and text_negative not in current_neg:
+        current_neg = f"{text_negative}, {current_neg}".strip(" ,")
+    map_negative = map_negative_prompt()
+    if map_negative and map_negative not in current_neg:
+        current_neg = f"{map_negative}, {current_neg}".strip(" ,")
+    if not enabled:
+        image_service.negative_prompt = current_neg
+        return False
+    guard_negative = historical_negative_prompt(
+        " ".join(str(x or "") for x in (*context_values, cfg.get("image_global_prompt"))),
+        True,
+    )
+    if guard_negative and guard_negative not in current_neg:
+        current_neg = f"{guard_negative}, {current_neg}".strip(" ,")
+    image_service.negative_prompt = current_neg
+    return True
 
 
 def _to_relative(project_id: str, abs_path: str) -> str:
@@ -345,6 +378,12 @@ async def generate_all_images(project_id: str, db: Session = Depends(get_db)):
 
     global_style = project.config.get("image_global_prompt", "")
     character_description = (project.config.get("character_description") or "").strip()
+    from app.services.image.prompt_builder import should_enable_historical_guard_for_context
+    enable_historical_guard = should_enable_historical_guard_for_context(
+        project.config, project_id, project.title, project.topic
+    )
+    _apply_historical_negative_prompt(image_service, project.config, project_id, project.title, project.topic)
+    base_negative_prompt = (getattr(image_service, "negative_prompt", "") or "").strip()
     ref_images = _collect_reference_images(project_id, project.config)
     char_images = _collect_character_images(project_id, project.config)
 
@@ -371,6 +410,7 @@ async def generate_all_images(project_id: str, db: Session = Depends(get_db)):
                 has_reference=bool(ref_images),
                 has_character_slot=is_character_cut,
                 character_description=character_description,
+                enable_historical_guard=enable_historical_guard,
             )
 
             # Reference images always attached (for style).
@@ -379,6 +419,10 @@ async def generate_all_images(project_id: str, db: Session = Depends(get_db)):
             if char_images and is_character_cut:
                 all_refs.extend(char_images)
 
+            image_service.negative_prompt = append_prompt_specific_negative_prompt(
+                base_negative_prompt,
+                prompt,
+            )
             result_path = await image_service.generate(
                 prompt,
                 width,
@@ -386,6 +430,7 @@ async def generate_all_images(project_id: str, db: Session = Depends(get_db)):
                 image_path,
                 reference_images=all_refs if all_refs else None,
             )
+            image_service.negative_prompt = base_negative_prompt
 
             cut.image_path = _to_relative(project_id, result_path)
             cut.image_model = image_model
@@ -400,6 +445,7 @@ async def generate_all_images(project_id: str, db: Session = Depends(get_db)):
                 "has_character": is_character_cut,
             })
         except Exception as e:
+            image_service.negative_prompt = base_negative_prompt
             cut.status = "failed"
             db.commit()
             results.append({
@@ -475,6 +521,12 @@ async def generate_all_images_async(project_id: str, db: Session = Depends(get_d
             ref_images = _collect_reference_images(project_id, proj.config)
             char_images = _collect_character_images(project_id, proj.config)
             character_description = (proj.config.get("character_description") or "").strip()
+            from app.services.image.prompt_builder import should_enable_historical_guard_for_context
+            enable_historical_guard = should_enable_historical_guard_for_context(
+                proj.config, project_id, proj.title, proj.topic
+            )
+            _apply_historical_negative_prompt(image_service, proj.config, project_id, proj.title, proj.topic)
+            base_negative_prompt = (getattr(image_service, "negative_prompt", "") or "").strip()
 
             cuts = local_db.query(Cut).filter(Cut.project_id == project_id).order_by(Cut.cut_number).all()
 
@@ -510,6 +562,7 @@ async def generate_all_images_async(project_id: str, db: Session = Depends(get_d
                         has_reference=bool(ref_images),
                         has_character_slot=is_character_cut,
                         character_description=character_description,
+                        enable_historical_guard=enable_historical_guard,
                     )
                     all_refs = list(ref_images)
                     if char_images and is_character_cut:
@@ -518,10 +571,15 @@ async def generate_all_images_async(project_id: str, db: Session = Depends(get_d
                     import time as _t
                     _s = _t.time()
                     try:
+                        image_service.negative_prompt = append_prompt_specific_negative_prompt(
+                            base_negative_prompt,
+                            prompt,
+                        )
                         result_path = await image_service.generate(
                             prompt, width, height, image_path,
                             reference_images=all_refs if all_refs else None,
                         )
+                        image_service.negative_prompt = base_negative_prompt
                         _ilog(f"_gen_one cut={cut.cut_number} SUCCESS in {_t.time()-_s:.1f}s → {result_path}")
                         cut.image_path = _to_relative(project_id, result_path)
                         cut.image_model = image_model
@@ -536,6 +594,7 @@ async def generate_all_images_async(project_id: str, db: Session = Depends(get_d
                         except Exception as _le:
                             print(f"[spend_ledger] studio image record skipped: {_le}")
                     except Exception as e:
+                        image_service.negative_prompt = base_negative_prompt
                         import traceback as _tb
                         print(f"[image] Cut {cut.cut_number} failed: {e}")
                         _ilog(f"_gen_one cut={cut.cut_number} FAILED after {_t.time()-_s:.1f}s: {type(e).__name__}: {e}\n{_tb.format_exc()[-800:]}")
@@ -673,6 +732,12 @@ async def resume_images_async(project_id: str, db: Session = Depends(get_db)):
             ref_images = _collect_reference_images(project_id, proj.config)
             char_images = _collect_character_images(project_id, proj.config)
             character_description = (proj.config.get("character_description") or "").strip()
+            from app.services.image.prompt_builder import should_enable_historical_guard_for_context
+            enable_historical_guard = should_enable_historical_guard_for_context(
+                proj.config, project_id, proj.title, proj.topic
+            )
+            _apply_historical_negative_prompt(image_service, proj.config, project_id, proj.title, proj.topic)
+            base_negative_prompt = (getattr(image_service, "negative_prompt", "") or "").strip()
 
             db_cuts = local_db.query(Cut).filter(Cut.project_id == project_id).order_by(Cut.cut_number).all()
             pending = [c for c in db_cuts if not c.image_path and c.image_prompt]
@@ -701,6 +766,7 @@ async def resume_images_async(project_id: str, db: Session = Depends(get_db)):
                         has_reference=bool(ref_images),
                         has_character_slot=is_character_cut,
                         character_description=character_description,
+                        enable_historical_guard=enable_historical_guard,
                     )
                     all_refs = list(ref_images)
                     if char_images and is_character_cut:
@@ -709,15 +775,21 @@ async def resume_images_async(project_id: str, db: Session = Depends(get_db)):
                     import time as _t
                     _s = _t.time()
                     try:
+                        image_service.negative_prompt = append_prompt_specific_negative_prompt(
+                            base_negative_prompt,
+                            prompt,
+                        )
                         result_path = await image_service.generate(
                             prompt, width, height, image_path,
                             reference_images=all_refs if all_refs else None,
                         )
+                        image_service.negative_prompt = base_negative_prompt
                         _ilog(f"resume _gen_one cut={cut.cut_number} SUCCESS in {_t.time()-_s:.1f}s → {result_path}")
                         cut.image_path = _to_relative(project_id, result_path)
                         cut.image_model = image_model
                         cut.status = "completed"
                     except Exception as e:
+                        image_service.negative_prompt = base_negative_prompt
                         import traceback
                         print(f"[image-resume] Cut {cut.cut_number} failed: {e}\n{traceback.format_exc()}")
                         _ilog(f"resume _gen_one cut={cut.cut_number} FAILED after {_t.time()-_s:.1f}s: {type(e).__name__}: {e}\n{traceback.format_exc()[-600:]}")
@@ -797,6 +869,12 @@ async def generate_one_image(
     width, height = get_size(aspect_ratio)
     global_style = project.config.get("image_global_prompt", "")
     character_description = (project.config.get("character_description") or "").strip()
+    from app.services.image.prompt_builder import should_enable_historical_guard_for_context
+    enable_historical_guard = should_enable_historical_guard_for_context(
+        project.config, project_id, project.title, project.topic
+    )
+    _apply_historical_negative_prompt(image_service, project.config, project_id, project.title, project.topic)
+    base_negative_prompt = (getattr(image_service, "negative_prompt", "") or "").strip()
     ref_images = _collect_reference_images(project_id, project.config)
     char_images = _collect_character_images(project_id, project.config)
 
@@ -812,12 +890,17 @@ async def generate_one_image(
             has_reference=bool(ref_images),
             has_character_slot=is_character_cut,
             character_description=character_description,
+            enable_historical_guard=enable_historical_guard,
         )
 
         all_refs = list(ref_images)
         if char_images and is_character_cut:
             all_refs.extend(char_images)
 
+        image_service.negative_prompt = append_prompt_specific_negative_prompt(
+            base_negative_prompt,
+            prompt,
+        )
         result_path = await image_service.generate(
             prompt,
             width,
@@ -825,6 +908,7 @@ async def generate_one_image(
             image_path,
             reference_images=all_refs if all_refs else None,
         )
+        image_service.negative_prompt = base_negative_prompt
 
         cut.image_path = _to_relative(project_id, result_path)
         cut.image_model = image_model
@@ -848,6 +932,7 @@ async def generate_one_image(
             "has_character": is_character_cut,
         }
     except Exception as e:
+        image_service.negative_prompt = base_negative_prompt
         cut.status = "failed"
         db.commit()
         raise HTTPException(500, f"Image generation failed: {str(e)}")

@@ -324,10 +324,10 @@ async def regenerate_thumbnail(task_id: str, body: ThumbnailRegenRequest = Thumb
     script = load_script(project_id)
     thumb_prompt = build_thumbnail_prompt(script)
 
-    from app.services.image.factory import resolve_image_model
+    from app.services.image.factory import DEFAULT_THUMBNAIL_MODEL, resolve_image_model
 
     image_model = resolve_image_model(
-        config.get("thumbnail_model") or config.get("image_model")
+        config.get("thumbnail_model") or DEFAULT_THUMBNAIL_MODEL
     )
     thumb_path = resolve_project_dir(project_id) / "output" / "thumbnail.png"
     thumb_path.parent.mkdir(parents=True, exist_ok=True)
@@ -378,9 +378,21 @@ async def regenerate_thumbnail(task_id: str, body: ThumbnailRegenRequest = Thumb
                 )
 
     # v1.1.55: 공통 REFERENCE_STYLE_PREFIX 사용 — 컷/썸네일/재생성 문구 통일
+    from app.services.image.prompt_builder import should_enable_historical_guard_for_context
+    enable_historical_guard = should_enable_historical_guard_for_context(
+        config,
+        project_id,
+        title,
+        script.get("topic") or script.get("title"),
+        thumb_prompt,
+    )
     if combined_refs and thumb_prompt:
         from app.services.image.prompt_builder import apply_reference_style_prefix
-        thumb_prompt = apply_reference_style_prefix(thumb_prompt, has_reference=True)
+        thumb_prompt = apply_reference_style_prefix(
+            thumb_prompt,
+            has_reference=True,
+            enable_historical_guard=enable_historical_guard,
+        )
 
     try:
         # v1.1.55: 스튜디오와 동일 — generate_ai_thumbnail + 텍스트 오버레이
@@ -393,6 +405,7 @@ async def regenerate_thumbnail(task_id: str, body: ThumbnailRegenRequest = Thumb
             overlay_episode_label=overlay_episode_label,
             output_path=str(thumb_path),
             reference_images=combined_refs or None,
+            enable_historical_guard=enable_historical_guard,
         )
         _redis_set(f"thumbnail:status:{project_id}", "done")
         return {"ok": True, "path": result["path"], "model": image_model, "overlay": result["overlay_applied"]}
@@ -455,8 +468,9 @@ async def manual_upload(task_id: str):
     task = oneclick_service.get_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="task not found")
-    if task["status"] != "completed":
-        raise HTTPException(status_code=400, detail="완료된 태스크만 업로드 가능합니다")
+    step_states = task.get("step_states") or {}
+    if task["status"] != "completed" and step_states.get("6") != "completed":
+        raise HTTPException(status_code=400, detail="최종 렌더링이 완료된 태스크만 업로드 가능합니다")
     try:
         result = await oneclick_service.manual_youtube_upload(task_id)
     except Exception as e:
@@ -520,6 +534,7 @@ class QueueStateModel(BaseModel):
     channel_presets: Optional[dict] = None
     # Internal automation lock. UI saves omit this, so service preserves existing dates.
     last_run_dates: Optional[dict] = None
+    allow_empty_items: bool = False
     items: List[QueueItemModel] = []
 
 
@@ -570,7 +585,7 @@ async def run_queue_next(channel: Optional[int] = None):
     async def 로 선언해서 FastAPI 이벤트 루프에서 직접 호출되게 함.
     `run_queue_top_now` 내부에서 asyncio.get_event_loop() 가 필요하기 때문.
     """
-    ch = int(channel) if channel else 1
+    ch = int(channel) if channel is not None else None
     try:
         task = oneclick_service.run_queue_top_now(ch)
     except ValueError as e:

@@ -23,13 +23,43 @@ import {
 } from "@/lib/api";
 
 const DAYS_KO = ["일", "월", "화", "수", "목", "금", "토"];
+const DEFAULT_CHANNELS = ["1", "2", "3", "4"];
+
+function normalizeChannelTimes(times?: Record<string, string | null | undefined> | null) {
+  const out: Record<string, string> = {};
+  for (const ch of DEFAULT_CHANNELS) out[ch] = "";
+  for (const [key, value] of Object.entries(times || {})) {
+    const ch = Number(key);
+    if (Number.isFinite(ch) && ch > 0) out[String(ch)] = value || "";
+  }
+  return out;
+}
+
+function collectChannels(queue: OneClickQueueState | null, channelTimes: Record<string, string>) {
+  const channels = new Set<string>(DEFAULT_CHANNELS);
+  for (const key of Object.keys(queue?.channel_times || {})) {
+    const ch = Number(key);
+    if (Number.isFinite(ch) && ch > 0) channels.add(String(ch));
+  }
+  for (const key of Object.keys(channelTimes || {})) {
+    const ch = Number(key);
+    if (Number.isFinite(ch) && ch > 0) channels.add(String(ch));
+  }
+  for (const item of queue?.items || []) {
+    const ch = Number(item.channel || 0);
+    if (Number.isFinite(ch) && ch > 0) channels.add(String(ch));
+  }
+  return Array.from(channels).sort((a, b) => Number(a) - Number(b));
+}
 
 export default function SchedulePage() {
   const [queue, setQueue] = useState<OneClickQueueState | null>(null);
   const [tasks, setTasks] = useState<OneClickTask[]>([]);
   const [loading, setLoading] = useState(true);
   // v1.1.57: 채널별 시간
-  const [channelTimes, setChannelTimes] = useState<Record<string, string>>({ "1": "", "2": "", "3": "", "4": "" });
+  const [channelTimes, setChannelTimes] = useState<Record<string, string>>(
+    normalizeChannelTimes(),
+  );
   const [editingTime, setEditingTime] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -47,8 +77,7 @@ export default function SchedulePage() {
         oneclickApi.list(),
       ]);
       setQueue(q);
-      const ct = q.channel_times || {};
-      setChannelTimes({ "1": ct["1"] || "", "2": ct["2"] || "", "3": ct["3"] || "", "4": ct["4"] || "" });
+      setChannelTimes(normalizeChannelTimes(q.channel_times));
       setTasks(t || []);
     } catch {}
     setLoading(false);
@@ -102,6 +131,7 @@ export default function SchedulePage() {
   const activeChannelKeys = Object.entries(queue?.channel_times || {})
     .filter(([, v]) => !!v)
     .map(([k]) => parseInt(k, 10));
+  const visibleChannelKeys = collectChannels(queue, channelTimes);
 
   if (hasAnySchedule && queue && queue.items.length > 0) {
     // 채널별로 아이템 분리
@@ -161,14 +191,13 @@ export default function SchedulePage() {
     setSaving(true);
     try {
       const ct: Record<string, string | null> = {};
-      for (const ch of ["1","2","3","4"]) ct[ch] = channelTimes[ch] || null;
+      for (const ch of visibleChannelKeys) ct[ch] = channelTimes[ch] || null;
       const res = await oneclickApi.setQueue({
         channel_times: ct,
         items: queue.items,
       });
       setQueue(res);
-      const rct = res.channel_times || {};
-      setChannelTimes({ "1": rct["1"] || "", "2": rct["2"] || "", "3": rct["3"] || "", "4": rct["4"] || "" });
+      setChannelTimes(normalizeChannelTimes(res.channel_times));
       setSaved(true);
       setEditingTime(false);
       setTimeout(() => setSaved(false), 2000);
@@ -252,7 +281,7 @@ export default function SchedulePage() {
           {editingTime ? (
             <div className="flex items-center gap-2 bg-bg-secondary border border-border rounded-lg px-3 py-1.5">
               <Clock size={14} className="text-gray-500" />
-              {(["1","2","3","4"] as const).map((ch) => (
+              {visibleChannelKeys.map((ch) => (
                 <div key={ch} className="flex items-center gap-1">
                   <span className={`text-sm font-bold ${
                     ch==="1"?"text-blue-400":ch==="2"?"text-green-400":ch==="3"?"text-amber-400":"text-purple-400"

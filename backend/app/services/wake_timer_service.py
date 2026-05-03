@@ -14,7 +14,7 @@ from xml.sax.saxutils import escape
 from app.config import SYSTEM_DIR
 
 
-CHANNELS = (1, 2, 3, 4)
+DEFAULT_CHANNELS = (1, 2, 3, 4)
 TASK_PREFIX = "LongTube Wake CH"
 WAKE_MARGIN_MINUTES = int(os.getenv("LONGTUBE_WAKE_MARGIN_MINUTES", "5"))
 
@@ -170,7 +170,15 @@ def _delete_task(channel: int) -> dict[str, Any]:
 def build_wake_plan(channel_times: dict[str, Any] | None) -> list[dict[str, Any]]:
     times = channel_times or {}
     plan: list[dict[str, Any]] = []
-    for channel in CHANNELS:
+    channels = set(DEFAULT_CHANNELS)
+    for key in times:
+        try:
+            channel = int(key)
+        except Exception:
+            continue
+        if channel > 0:
+            channels.add(channel)
+    for channel in sorted(channels):
         scheduled_time = _valid_hhmm(times.get(str(channel)))
         if scheduled_time:
             plan.append(

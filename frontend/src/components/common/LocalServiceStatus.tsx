@@ -7,6 +7,7 @@ import {
   type LocalServiceInfo,
   type LocalSystemStatus,
   type LocalServicesStatus,
+  type YoutubeQuotaStatus,
 } from "@/lib/api";
 import { APP_VERSION } from "@/lib/version";
 
@@ -233,21 +234,82 @@ function ResourceStrip({ rows, compact = false }: { rows: ResourceRow[]; compact
   );
 }
 
+function formatUnits(value?: number | null): string {
+  if (typeof value !== "number" || Number.isNaN(value)) return "--";
+  return value.toLocaleString("ko-KR");
+}
+
+function quotaTone(quota: YoutubeQuotaStatus | null, failed: boolean): ServiceTone {
+  if (failed || !quota) return "idle";
+  if (quota.remaining_units <= 0) return "fail";
+  if (quota.usage_pct >= 80) return "warn";
+  return "ok";
+}
+
+function YoutubeQuotaStrip({
+  quota,
+  failed,
+  compact = false,
+}: {
+  quota: YoutubeQuotaStatus | null;
+  failed: boolean;
+  compact?: boolean;
+}) {
+  const tone = quotaTone(quota, failed);
+  const pct = quota ? clampPercent(quota.usage_pct) ?? 0 : 0;
+  const used = quota ? formatUnits(quota.used_units) : "--";
+  const limit = quota ? formatUnits(quota.daily_limit) : "--";
+  const left = quota ? formatUnits(quota.remaining_units) : "--";
+  const uploadsLeft = quota ? quota.estimated_uploads_left : 0;
+  const detail = failed
+    ? "백엔드 연결 필요"
+    : quota
+      ? `잔량 ${left} · 업로드 약 ${uploadsLeft}개`
+      : "추정 대기";
+
+  return (
+    <div className={compact ? "px-2 pb-2" : "mt-2 border-t border-border/70 pt-2"}>
+      <div
+        className={compact ? "rounded-lg border border-border/60 bg-bg-primary/60 px-2 py-1.5" : "min-w-0"}
+        title={`YouTube quota: ${used} / ${limit} units - ${detail}`}
+      >
+        <div className="mb-1 flex items-center gap-2 text-[10px] leading-none">
+          <span className="w-7 flex-shrink-0 font-bold text-red-300">YT</span>
+          <span className={`w-12 flex-shrink-0 font-mono font-black ${TONE_TEXT[tone]}`}>
+            {quota ? `${Math.round(quota.usage_pct)}%` : "--"}
+          </span>
+          {!compact && <span className="min-w-0 truncate text-gray-500">{used} / {limit}</span>}
+        </div>
+        <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
+          <div
+            className={`h-full rounded-full transition-[width] duration-300 ${TONE_BAR[tone]}`}
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+        <div className="mt-1 truncate text-[9px] text-gray-500">{detail}</div>
+      </div>
+    </div>
+  );
+}
+
 export default function LocalServiceStatus({ variant = "sidebar", className = "" }: Props) {
   const [frontend, setFrontend] = useState<FrontendHealth | null>(null);
   const [frontendFailed, setFrontendFailed] = useState(false);
   const [data, setData] = useState<LocalServicesStatus | null>(null);
   const [backendFailed, setBackendFailed] = useState(false);
+  const [youtubeQuota, setYoutubeQuota] = useState<YoutubeQuotaStatus | null>(null);
+  const [youtubeQuotaFailed, setYoutubeQuotaFailed] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [frontendResult, localResult] = await Promise.allSettled([
+    const [frontendResult, localResult, youtubeQuotaResult] = await Promise.allSettled([
       fetch("/api/frontend-health", { cache: "no-store" }).then((res) => {
         if (!res.ok) throw new Error(`frontend HTTP ${res.status}`);
         return res.json() as Promise<FrontendHealth>;
       }),
       localServicesApi.status(),
+      localServicesApi.youtubeQuota(),
     ]);
 
     if (frontendResult.status === "fulfilled") {
@@ -262,6 +324,13 @@ export default function LocalServiceStatus({ variant = "sidebar", className = ""
       setBackendFailed(false);
     } else {
       setBackendFailed(true);
+    }
+
+    if (youtubeQuotaResult.status === "fulfilled") {
+      setYoutubeQuota(youtubeQuotaResult.value);
+      setYoutubeQuotaFailed(false);
+    } else {
+      setYoutubeQuotaFailed(true);
     }
     setLoading(false);
   }, []);
@@ -314,6 +383,7 @@ export default function LocalServiceStatus({ variant = "sidebar", className = ""
           ))}
         </div>
         <ResourceStrip rows={resourceRows} compact />
+        <YoutubeQuotaStrip quota={youtubeQuota} failed={youtubeQuotaFailed || backendFailed} compact />
       </div>
     );
   }
@@ -349,6 +419,7 @@ export default function LocalServiceStatus({ variant = "sidebar", className = ""
           ))}
         </div>
         <ResourceStrip rows={resourceRows} />
+        <YoutubeQuotaStrip quota={youtubeQuota} failed={youtubeQuotaFailed || backendFailed} />
       </div>
     </div>
   );

@@ -45,12 +45,149 @@ REFERENCE_STYLE_PREFIX = (
 NO_TEXT_DIRECTIVE = (
     " || ★ HARD CONSTRAINT — ABSOLUTELY NO TEXT, NO LETTERS, NO WORDS, NO NUMBERS, "
     "NO WRITING, NO TYPOGRAPHY, NO CAPTIONS, NO LABELS, NO SIGNS WITH READABLE "
-    "CHARACTERS, NO BOOK PAGES, NO NEWSPAPERS, NO BILLBOARDS WITH COPY, NO "
+    "CHARACTERS, NO BOOK PAGES WITH WRITING, NO NEWSPAPERS, NO BILLBOARDS WITH COPY, NO "
     "SCREEN TEXT, NO SUBTITLES, NO WATERMARKS anywhere in the image. All "
     "surfaces that might normally carry writing (signs, screens, posters, book "
     "covers, clothing, packaging) must be BLANK or show only abstract non-"
     "linguistic shapes. This is a hard requirement — any readable glyph is a "
     "failure."
+)
+
+NO_TEXT_NEGATIVE_PROMPT = (
+    "text, letters, words, numbers, writing, typography, captions, subtitles, labels, "
+    "sign, signage, readable sign, readable text, readable letters, readable words, "
+    "glyphs, characters, writing on book pages, fake book text, newspaper, poster text, billboard text, screen text, "
+    "watermark, logo, signature, title text, credits"
+)
+
+NO_MAP_DIRECTIVE = (
+    " || ★ HARD CONSTRAINT — ABSOLUTELY NO MAPS, NO CARTOGRAPHY, NO ATLAS VIEW, "
+    "NO TERRITORY MAP, NO BORDER MAP, NO ROUTE MAP, NO MIGRATION MAP, NO BATTLE "
+    "MAP, NO GEOGRAPHIC DIAGRAM, NO TOPOGRAPHIC VIEW, NO COUNTRY OUTLINE, NO "
+    "REGION OUTLINE, NO COASTLINE MAP, NO ARROWS ON A MAP, NO DOTTED ROUTE LINES, "
+    "NO LOCATION PINS, NO COMPASS ROSE, NO LEGEND, NO SCALE BAR, NO GLOBE, NO "
+    "SATELLITE VIEW. Depict the scene as a cinematic human-scale historical "
+    "moment, artifact, landscape, architecture, or action instead. This applies "
+    "even if the prompt mentions routes, migration, borders, kingdoms, territory, "
+    "or geography."
+)
+
+NO_MAP_NEGATIVE_PROMPT = (
+    "map, maps, cartography, atlas, territory map, border map, route map, migration map, "
+    "battle map, geographic diagram, topographic map, country outline, region outline, "
+    "coastline map, arrows on map, dotted route line, location pin, map marker, compass "
+    "rose, legend, scale bar, globe, satellite view"
+)
+
+BOOK_RENDER_DIRECTIVE = (
+    " || BOOK RENDERING LOCK - if any book, notebook, manuscript, codex, ledger, "
+    "journal, scripture, archive volume, page spread, or document appears, draw it "
+    "as one coherent physical object. For an open book: exactly one book, exactly "
+    "two facing pages, one central spine/gutter, aligned covers, curved page edges, "
+    "and stacked page thickness visible at the outer edges. No third page, no "
+    "duplicated open books fused together, no floating pages, no impossible folds, "
+    "no warped spine. All pages and covers must be blank paper or subtle paper "
+    "grain only: no fake writing, no rows of text-like lines, no glyphs, no symbols."
+)
+
+BOOK_RENDER_NEGATIVE_PROMPT = (
+    "extra book pages, three page spread, multiple fused books, duplicated open book, "
+    "warped book spine, broken book geometry, floating pages, detached pages, "
+    "impossible folded pages, melted book, fake writing on pages, rows of text lines, "
+    "pseudo text, scribbles on book, glyphs on book, symbols on pages"
+)
+
+KOREAN_HISTORY_ACCURACY_DIRECTIVE = (
+    " || HISTORICAL ACCURACY LOCK - this scene is Korean history. Match the exact "
+    "era, kingdom, region, clothing, architecture, weapons, armor, hairstyles, "
+    "ritual objects, and landscape implied by the subject. If the subject is "
+    "Goguryeo, Baekje, Silla, Gaya, Balhae, Gojoseon, Buyeo, Three Kingdoms, "
+    "Goryeo, or Joseon, use period-correct Korean visual culture only. "
+    "Do not mix in modern national symbols or anachronistic props. "
+    "Forbidden unless the prompt explicitly says the scene is in Japan: Japanese "
+    "flag, rising sun flag, red sun disc flag, torii gate, Shinto shrine, samurai, "
+    "ninja, katana, kimono, Japanese castle, Japanese text, modern flags, modern "
+    "uniforms, modern buildings, vehicles, power lines, neon signs, logos."
+)
+
+KOREAN_HISTORY_NEGATIVE_PROMPT = (
+    "Japanese flag, rising sun flag, red sun disc flag, hinomaru, torii gate, "
+    "Shinto shrine, samurai, ninja, katana, kimono, Japanese castle, Japanese text, "
+    "steamship, steamboat, steam engine, locomotive, train, railroad, railway, "
+    "factory chimney, smokestack, industrial machinery, modern flag, modern national "
+    "flag, modern uniform, modern building, car, truck, power line, neon sign, logo"
+)
+
+GENERAL_HISTORY_NEGATIVE_PROMPT = (
+    "anachronism, wrong era, mixed era, mixed culture, out of period object, "
+    "modern clothing, modern uniform, modern building, skyscraper, concrete city, "
+    "car, truck, bus, motorcycle, bicycle, train, railroad, railway, airplane, "
+    "helicopter, steamship, steamboat, steam engine, locomotive, factory, factory "
+    "chimney, smokestack, industrial machinery, gun, rifle, pistol, cannon unless "
+    "period-correct, electric light, power line, utility pole, neon sign, screen, "
+    "computer, phone, camera, printed newspaper, modern book, modern national flag, "
+    "logo, watermark, readable text"
+)
+
+INDIAN_HISTORY_ACCURACY_DIRECTIVE = (
+    " For Indian history scenes, use period-correct South Asian visual culture only: "
+    "regional clothing, architecture, tools, vehicles, ritual objects, landscapes, "
+    "and materials appropriate to the exact era named in the prompt. Never import "
+    "Japanese, East Asian, European industrial, or modern nationalist symbols unless "
+    "the narration explicitly places the scene there. Forbidden in Indian history: "
+    "Japanese flag, rising sun flag, red sun disc flag, torii gate, Shinto shrine, "
+    "samurai, ninja, katana, kimono, Japanese castle, Japanese text, steamship, "
+    "steamboat, locomotive, train, factory chimney, modern flags, cars, power lines, "
+    "neon signs, screens, logos."
+)
+
+INDIAN_HISTORY_NEGATIVE_PROMPT = (
+    "Japanese flag, rising sun flag, red sun disc flag, hinomaru, torii gate, "
+    "Shinto shrine, samurai, ninja, katana, kimono, Japanese castle, Japanese text, "
+    "East Asian temple, pagoda unless historically specified, steamship, steamboat, "
+    "steam engine, locomotive, train, railroad, railway, factory chimney, smokestack, "
+    "industrial machinery, British colonial uniform unless narration says colonial "
+    "period, modern Indian flag unless modern period, modern flag, modern building, "
+    "car, truck, power line, neon sign, logo"
+)
+
+GENERAL_HISTORY_ACCURACY_DIRECTIVE = (
+    " || HISTORICAL ACCURACY LOCK - match the exact era, region, clothing, "
+    "architecture, tools, weapons, vehicles, landscape, materials, and social "
+    "setting stated in the prompt. The image must depict concrete evidence or "
+    "action from the narration, not a generic metaphor. Avoid anachronisms: "
+    "modern clothing, modern buildings, cars, guns, screens, neon, printed books, "
+    "modern national flags, logos, or readable writing unless the prompt explicitly "
+    "places the scene in a modern period. Hard reject wrong-era objects such as "
+    "steamships, steamboats, trains, factories, electric poles, modern vehicles, "
+    "modern flags, foreign religious gates/shrines, and culturally unrelated "
+    "architecture unless the narration explicitly names them."
+)
+
+_KOREAN_HISTORY_RE = re.compile(
+    r"(고구려|goguryeo|koguryo|백제|baekje|paekche|신라|silla|가야|gaya|"
+    r"발해|balhae|고조선|gojoseon|부여|buyeo|삼국시대|three kingdoms|"
+    r"ancient korea|korean kingdom|korean kingdoms|"
+    r"고려|goryeo|koryo|조선|joseon|choson|백제의|신라의|고구려의)",
+    re.IGNORECASE,
+)
+
+_INDIAN_HISTORY_RE = re.compile(
+    r"(india|indian|bharat|harappa|harappan|mohenjo|daro|indus|vedic|veda|aryan|"
+    r"sanskrit|mauryan|maurya|gupta|magadha|ashoka|chandragupta|sindhu|"
+    r"hindustan|ancient india|indian civilization|indian civilisation|"
+    r"भार[ततीय]|हड़प्पा|सिंधु|मोहनजोदड़ो|वैदिक|मौर्य|गुप्त)",
+    re.IGNORECASE,
+)
+
+_EXPLICIT_JAPAN_RE = re.compile(
+    r"(japan|japanese|일본|왜국|yamato|일장기|hinomaru|samurai|shinto|torii)",
+    re.IGNORECASE,
+)
+
+_ONE_MINUTE_YEOKGONG_RE = re.compile(
+    r"(1\s*분\s*역공|일\s*분\s*역공|one\s*minute\s*yeokgong|one\s*minute\s*counter)",
+    re.IGNORECASE,
 )
 
 I2V_SAFE_STILL_DIRECTIVE = (
@@ -148,6 +285,13 @@ _QUADRUPED_SUBJECT_RE = re.compile(
 _CROP_RISK_RE = re.compile(
     r"\b(cropped|cut\s*off|out\s+of\s+frame|partial\s+body|fragmented|severed|"
     r"dismembered|detached|floating\s+limb|floating\s+hand|floating\s+leg)\b",
+    re.IGNORECASE,
+)
+_BOOK_OBJECT_RE = re.compile(
+    r"\b(book|books|notebook|manuscript|codex|ledger|journal|diary|scripture|"
+    r"archive\s+volume|page\s+spread|open\s+pages|document|scroll|library|"
+    r"bookshelf)\b|"
+    r"(책|서책|고서|고문서|문서|필사본|원고|두루마리|서재|책장|책상 위의 책)",
     re.IGNORECASE,
 )
 
@@ -283,7 +427,156 @@ def _append_no_text(prompt: str) -> str:
     return p + NO_TEXT_DIRECTIVE
 
 
-def apply_reference_style_prefix(prompt: str, has_reference: bool) -> str:
+def _append_no_maps(prompt: str) -> str:
+    p = (prompt or "").strip()
+    if not p:
+        return p
+    if "ABSOLUTELY NO MAPS" in p or "NO CARTOGRAPHY" in p:
+        return p
+    return p + NO_MAP_DIRECTIVE
+
+
+def needs_book_render_guard(prompt: str) -> bool:
+    return bool(_BOOK_OBJECT_RE.search(prompt or ""))
+
+
+def _append_book_render_guard(prompt: str) -> str:
+    p = (prompt or "").strip()
+    if not p or not needs_book_render_guard(p):
+        return p
+    if "BOOK RENDERING LOCK" in p:
+        return p
+    return p + BOOK_RENDER_DIRECTIVE
+
+
+def _apply_common_image_constraints(prompt: str, enable_historical_guard: bool = False) -> str:
+    p = apply_historical_accuracy_guard(prompt, enable_historical_guard)
+    p = _append_book_render_guard(p)
+    p = _append_no_text(p)
+    p = _append_no_maps(p)
+    return p
+
+
+def needs_korean_history_guard(prompt: str) -> bool:
+    return bool(_KOREAN_HISTORY_RE.search(prompt or ""))
+
+
+def apply_historical_accuracy_guard(prompt: str, enabled: bool = False) -> str:
+    p = (prompt or "").strip()
+    if not enabled:
+        return p
+    if not p or "HISTORICAL ACCURACY LOCK" in p:
+        return p
+    if not needs_korean_history_guard(p):
+        guard = GENERAL_HISTORY_ACCURACY_DIRECTIVE
+        if _INDIAN_HISTORY_RE.search(p):
+            guard += INDIAN_HISTORY_ACCURACY_DIRECTIVE
+        return p + guard
+
+    guard = KOREAN_HISTORY_ACCURACY_DIRECTIVE
+    if _EXPLICIT_JAPAN_RE.search(p):
+        guard = guard.replace(
+            "Forbidden unless the prompt explicitly says the scene is in Japan: ",
+            "Because the subject includes Japan/Yamato, include only the historically correct "
+            "period contact elements; still avoid modern Japanese symbols: ",
+        )
+    return p + guard
+
+
+def historical_negative_prompt(prompt: str, enabled: bool = False) -> str:
+    if not enabled:
+        return ""
+    p = prompt or ""
+    parts = [GENERAL_HISTORY_NEGATIVE_PROMPT, NO_TEXT_NEGATIVE_PROMPT, NO_MAP_NEGATIVE_PROMPT]
+    if needs_book_render_guard(p):
+        parts.append(BOOK_RENDER_NEGATIVE_PROMPT)
+    if needs_korean_history_guard(p):
+        parts.append(KOREAN_HISTORY_NEGATIVE_PROMPT)
+    if _INDIAN_HISTORY_RE.search(p):
+        parts.append(INDIAN_HISTORY_NEGATIVE_PROMPT)
+    out: list[str] = []
+    seen: set[str] = set()
+    for part in parts:
+        for token in [x.strip() for x in part.split(",") if x.strip()]:
+            key = token.lower()
+            if key not in seen:
+                seen.add(key)
+                out.append(token)
+    return ", ".join(out)
+
+
+def map_negative_prompt() -> str:
+    """Negative prompt tokens that block generated maps in every channel."""
+    return NO_MAP_NEGATIVE_PROMPT
+
+
+def text_negative_prompt() -> str:
+    """Negative prompt tokens that block generated text in every channel."""
+    return NO_TEXT_NEGATIVE_PROMPT
+
+
+def book_negative_prompt(prompt: str) -> str:
+    """Prompt-specific negative tokens for coherent blank books/documents."""
+    return BOOK_RENDER_NEGATIVE_PROMPT if needs_book_render_guard(prompt or "") else ""
+
+
+def append_prompt_specific_negative_prompt(base_negative: str, prompt: str) -> str:
+    current = (base_negative or "").strip()
+    extra = book_negative_prompt(prompt)
+    if extra and extra not in current:
+        current = f"{extra}, {current}".strip(" ,")
+    return current
+
+
+def should_enable_historical_guard_for_context(
+    config: dict | None = None,
+    *values,
+) -> bool:
+    cfg = config or {}
+    explicit = cfg.get("historical_accuracy_guard")
+    if explicit is True or str(explicit).strip().lower() in {"1", "true", "yes", "on"}:
+        return True
+    if explicit is False or str(explicit).strip().lower() in {"0", "false", "no", "off"}:
+        return False
+
+    haystack: list[str] = []
+    for key in (
+        "preset_name",
+        "preset_full_name",
+        "channel_name",
+        "youtube_channel_name",
+        "series_name",
+        "project_name",
+        "form_name",
+        "name",
+        "full_name",
+    ):
+        value = cfg.get(key)
+        if value is not None:
+            haystack.append(str(value))
+    haystack.extend(str(v) for v in values if v is not None)
+    joined = " ".join(haystack)
+    if _ONE_MINUTE_YEOKGONG_RE.search(joined):
+        return True
+    if str(cfg.get("language") or "").strip().lower() == "hi":
+        return True
+    return bool(
+        re.search(
+            r"(history|historical|ancient|civilization|civilisation|empire|kingdom|"
+            r"india|indian|bharat|harappa|harappan|mohenjo|indus|vedic|veda|aryan|"
+            r"sanskrit|mauryan|gupta|temple|fort|palace|dynasty)",
+            joined,
+            re.IGNORECASE,
+        )
+    )
+
+
+def apply_reference_style_prefix(
+    prompt: str,
+    has_reference: bool,
+    *,
+    enable_historical_guard: bool = False,
+) -> str:
     """썸네일/재생성 등 외부 경로용 프리픽스 적용 헬퍼.
 
     이미 프리픽스가 붙어 있으면 중복 부착을 피한다. has_reference=False 이면
@@ -294,7 +587,7 @@ def apply_reference_style_prefix(prompt: str, has_reference: bool) -> str:
     if has_reference:
         if "STYLE REFERENCE LOCK" not in p and not p.startswith("STYLE:"):
             p = REFERENCE_STYLE_PREFIX + p
-    return _append_no_text(p)
+    return _apply_common_image_constraints(p, enable_historical_guard)
 
 
 # ── 캐릭터 슬롯 규칙 ──
@@ -346,6 +639,7 @@ def build_image_prompt(
     has_reference: bool = False,
     has_character_slot: bool = False,
     character_description: str = "",
+    enable_historical_guard: bool = False,
 ) -> str:
     """최종 이미지 프롬프트 조합.
 
@@ -387,7 +681,7 @@ def build_image_prompt(
             parts.append(base)
 
         # v1.1.72: 모든 컷 프롬프트에 "문자 금지" 지시를 마지막에 강제 append
-        return _append_no_text(" ".join(parts).strip())
+        return _apply_common_image_constraints(" ".join(parts).strip(), enable_historical_guard)
 
     else:
         # ── 레퍼런스 없음: global_style 폴백 ──
@@ -406,4 +700,4 @@ def build_image_prompt(
                 )
 
         # v1.1.72: 레퍼런스 없는 경로에도 동일하게 "문자 금지" 지시 강제
-        return _append_no_text(" ".join(parts).strip())
+        return _apply_common_image_constraints(" ".join(parts).strip(), enable_historical_guard)

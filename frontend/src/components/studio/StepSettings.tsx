@@ -333,7 +333,7 @@ export default function StepSettings({ project, onUpdate, onNextStep, onDirtyCha
 
   // Subtitle preview helpers
   const subFont = config.subtitle_style?.font || "Pretendard Bold";
-  const subSize = config.subtitle_style?.size || 48;
+  const subSize = config.subtitle_style?.size || 64;
   const subColor = config.subtitle_style?.color || "#FFFFFF";
   const subOutline = config.subtitle_style?.outline_color || "#000000";
   const subPosition = config.subtitle_style?.position || "bottom";
@@ -517,6 +517,7 @@ export default function StepSettings({ project, onUpdate, onNextStep, onDirtyCha
               <option value="ko">한국어</option>
               <option value="en">English</option>
               <option value="ja">日本語</option>
+              <option value="hi">Hindi</option>
             </select>
           </div>
         </div>
@@ -691,7 +692,7 @@ export default function StepSettings({ project, onUpdate, onNextStep, onDirtyCha
             <label className="block text-xs text-gray-400 mb-1">크기</label>
             <input
               type="number"
-              value={config.subtitle_style?.size || 48}
+              value={config.subtitle_style?.size || 64}
               onChange={(e) => setConfig((prev) => ({
                 ...prev,
                 subtitle_style: { ...prev.subtitle_style, size: Number(e.target.value) },

@@ -46,6 +46,7 @@ async function request(
   const options: RequestInit = {
     method,
     headers: isFormData ? {} : { "Content-Type": "application/json" },
+    credentials: "include",
     signal: controller.signal,
   };
   if (body) {
@@ -103,6 +104,35 @@ export const api = {
     request("DELETE", path, undefined, false, signal),
   upload: (path: string, formData: FormData, signal?: AbortSignal) =>
     request("POST", path, formData, true, signal),
+};
+
+export interface AuthUser {
+  id: string;
+  username: string;
+  display_name: string | null;
+  role: "master" | "admin" | "user";
+  status: "pending" | "approved" | "rejected" | "disabled";
+  created_at?: string | null;
+  approved_at?: string | null;
+}
+
+export interface AuthMe {
+  authenticated: boolean;
+  user: AuthUser | null;
+}
+
+export const authApi = {
+  me: (): Promise<AuthMe> => api.get("/auth/me"),
+  login: (username: string, password: string): Promise<AuthUser> =>
+    api.post("/auth/login", { username, password }),
+  signup: (body: { username: string; password: string; display_name?: string }): Promise<AuthUser> =>
+    api.post("/auth/signup", body),
+  logout: (): Promise<{ ok: boolean }> => api.post("/auth/logout"),
+  pendingUsers: (): Promise<AuthUser[]> => api.get("/auth/users/pending"),
+  approveUser: (id: string, role: "user" | "admin" = "user"): Promise<AuthUser> =>
+    api.post(`/auth/users/${encodeURIComponent(id)}/approve`, { role }),
+  rejectUser: (id: string): Promise<AuthUser> =>
+    api.post(`/auth/users/${encodeURIComponent(id)}/reject`),
 };
 
 // ─── Models ───
@@ -166,10 +196,16 @@ export interface ProjectConfig {
     color: string;
     outline_color: string;
     position: string;
+    outline_width?: number;
+    shadow?: number;
+    margin_v?: number;
+    bold?: boolean;
     bg_enabled?: boolean;
     bg_color?: string;
     bg_opacity?: number;
   };
+  subtitle_delivery?: string;
+  youtube_captions_enabled?: boolean;
   /** v1.1.55: YouTube 공개 범위 — "private" | "unlisted" | "public" */
   youtube_privacy?: string;
   /** v1.1.55: YouTube 업로드 대상 채널 1~4. 0/null = 자동. */
@@ -813,8 +849,22 @@ export interface LocalServicesStatus {
   system?: LocalSystemStatus;
 }
 
+export interface YoutubeQuotaStatus {
+  status: "estimated" | string;
+  daily_limit: number;
+  used_units: number;
+  remaining_units: number;
+  usage_pct: number;
+  upload_units: number;
+  uploads_today: number;
+  estimated_uploads_left: number;
+  reset_basis: string;
+  date: string;
+}
+
 export const localServicesApi = {
   status: (): Promise<LocalServicesStatus> => api.get("/api-status/local-services"),
+  youtubeQuota: (): Promise<YoutubeQuotaStatus> => api.get("/api-status/youtube-quota"),
 };
 
 // ─── API Keys ───
@@ -1288,6 +1338,10 @@ export interface OneClickTask {
   current_step_completed?: number;
   current_step_total?: number;
   current_step_label?: string | null;
+  current_step_active_cut?: number | null;
+  current_step_cut_progress_pct?: number | null;
+  current_step_progress_text?: string | null;
+  sub_status?: string | null;
   triggered_by?: "manual" | "schedule";
   channel?: number;  // v1.1.58: 채널 1~4 (없으면 수동 실행)
   // v1.2.17: 에피소드 번호 — 완료/실패 목록의 EP 배지 표시에 사용
@@ -1443,7 +1497,7 @@ export const oneclickApi = {
   // v1.1.54: 완성작 관리
   getTaskDetail: (taskId: string): Promise<TaskDetail> =>
     api.get(`/oneclick/tasks/${taskId}/detail`),
-  manualUpload: (taskId: string): Promise<{ ok: boolean; youtube_url: string | null }> =>
+  manualUpload: (taskId: string): Promise<{ ok: boolean; pending?: boolean; message?: string; youtube_url: string | null }> =>
     api.postWithTimeout(`/oneclick/tasks/${taskId}/upload`, undefined, 30 * 60_000),
   bulkDelete: (taskIds: string[]): Promise<{ ok: boolean; deleted: number; freed_mb: number; skipped: string[] }> =>
     api.post(`/oneclick/tasks/bulk-delete`, { task_ids: taskIds }),

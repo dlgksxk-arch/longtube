@@ -571,8 +571,10 @@ def _dispatch_next_persisted_queue_item() -> Optional[int]:
     items = list(_QUEUE.get("items") or [])
     if not items:
         return None
+    if not _is_immediate_queue_item(items[0]):
+        return None
     try:
-        ch = int(items[0].get("channel") or 1)
+        ch = _queue_item_channel(items[0])
     except Exception:
         ch = 1
     try:
@@ -807,10 +809,17 @@ def _reconcile_task_outputs(task: dict[str, Any], *, clear_terminal_cursor: bool
         return False
 
     detected = _detect_completed_steps(project_id)
+    forced_completed_steps = {
+        str(step)
+        for step in (task.get("force_completed_steps") or [])
+        if str(step).strip()
+    }
     step_states = dict(task.get("step_states") or {})
     changed = False
 
     for step_key, state in detected.items():
+        if step_key in forced_completed_steps:
+            state = "completed"
         if step_states.get(step_key) != state:
             step_states[step_key] = state
             changed = True
@@ -821,6 +830,8 @@ def _reconcile_task_outputs(task: dict[str, Any], *, clear_terminal_cursor: bool
 
     completed_cuts = dict(task.get("completed_cuts_by_step") or {})
     for step_key in ("2", "3", "4", "5"):
+        if step_key in forced_completed_steps:
+            continue
         if step_states.get(step_key) != "completed" and completed_cuts.get(step_key):
             completed_cuts[step_key] = 0
             changed = True
@@ -3764,8 +3775,11 @@ def requeue_task(task_id: str) -> dict[str, Any]:
 
     status = task.get("status") or ""
     if status == "completed":
-        # 완성작은 라이브러리 관리 대상. 복귀 의미가 없어 거부.
-        raise ValueError("완성된 태스크는 복귀할 수 없습니다")
+        states = task.get("step_states") or {}
+        render_done = states.get("6") in ("completed", "done")
+        upload_done = states.get("7") in ("completed", "done")
+        if not render_done or upload_done:
+            raise ValueError("완성/업로드 완료 태스크는 복구할 수 없습니다")
     if status == "running":
         # 실행 중 태스크는 먼저 취소해야 함 — 자동 cancel+requeue 는 위험.
         raise ValueError("실행 중 태스크는 먼저 중단하세요")
@@ -3827,11 +3841,9 @@ def requeue_task(task_id: str) -> dict[str, Any]:
     # 복구된 아이템이 마지막 페이지로 밀려 "사라진 것처럼" 보였다. 같은 채널의
     # 첫 항목 앞에 넣어서 사용자가 즉시 확인 + 다음 자동 실행에 바로 반영되게 한다.
     items = list(_QUEUE.get("items") or [])
-    insert_at = len(items)
-    for _i, _it in enumerate(items):
-        if int(_it.get("channel") or 1) == channel:
-            insert_at = _i
-            break
+    insert_at = 0
+    while insert_at < len(items) and _is_immediate_queue_item(items[insert_at]):
+        insert_at += 1
     items.insert(insert_at, new_item)
     _QUEUE["items"] = items
     _QUEUE = _queue_normalize(_QUEUE)
@@ -3866,7 +3878,9 @@ def requeue_channel_failed(channel: int) -> dict[str, Any]:
     for t in list(_TASKS.values()):
         if int(t.get("channel") or 1) != channel:
             continue
-        if t.get("status") not in ("failed", "cancelled"):
+        states = t.get("step_states") or {}
+        upload_recoverable = states.get("6") in ("completed", "done") and states.get("7") not in ("completed", "done")
+        if t.get("status") not in ("failed", "cancelled", "paused") and not upload_recoverable:
             continue
         targets.append(t["task_id"])
 
@@ -4217,19 +4231,11 @@ def requeue_orphan_projects(
     # 맨 앞에 쌓임).
     if new_items:
         items = list(_QUEUE.get("items") or [])
-        # 채널별로 그룹화하여 맨 앞에 삽입.
-        by_channel: dict[int, list[dict]] = {}
-        for ni in new_items:
-            by_channel.setdefault(int(ni.get("channel") or 1), []).append(ni)
-        for ch_key, group in by_channel.items():
-            insert_at = len(items)
-            for _i, _it in enumerate(items):
-                if int(_it.get("channel") or 1) == ch_key:
-                    insert_at = _i
-                    break
-            # group 을 역순으로 하나씩 insert 하면 최종 순서가 유지된다.
-            for ni in reversed(group):
-                items.insert(insert_at, ni)
+        insert_at = 0
+        while insert_at < len(items) and _is_immediate_queue_item(items[insert_at]):
+            insert_at += 1
+        for offset, ni in enumerate(new_items):
+            items.insert(insert_at + offset, ni)
         _QUEUE["items"] = items
         _QUEUE = _queue_normalize(_QUEUE)
         _save_queue_to_disk()
@@ -4357,8 +4363,11 @@ async def manual_youtube_upload(task_id: str) -> dict:
     states = dict(task.get("step_states") or {})
     states["7"] = "running"
     task["step_states"] = states
+    task["status"] = "running"
     task["current_step"] = 7
     task["current_step_name"] = "유튜브 업로드"
+    task["finished_at"] = None
+    task["resume_from_step"] = 7
     task["error"] = None
     _add_log(task, "▶ 유튜브 수동 업로드 시작")
     _save_tasks_to_disk()
@@ -4369,8 +4378,10 @@ async def manual_youtube_upload(task_id: str) -> dict:
         states = dict(task.get("step_states") or {})
         states["7"] = "failed"
         task["step_states"] = states
+        task["status"] = "failed"
         task["current_step"] = None
         task["current_step_name"] = None
+        task["resume_from_step"] = 7
         task["error"] = f"유튜브 업로드 실패: {type(e).__name__}: {e}"
         _add_log(task, f"✗ 유튜브 수동 업로드 실패: {type(e).__name__}: {e}", "error")
         _save_tasks_to_disk()
@@ -4381,9 +4392,18 @@ async def manual_youtube_upload(task_id: str) -> dict:
     states = dict(task.get("step_states") or {})
     states["7"] = "completed"
     task["step_states"] = states
+    task["status"] = "completed"
+    task["progress_pct"] = 100.0
     task["current_step"] = None
     task["current_step_name"] = None
+    task["current_step_completed"] = 0
+    task["current_step_total"] = 0
+    task["current_step_label"] = None
+    task["sub_status"] = None
     task["error"] = None
+    task["youtube_url"] = project.youtube_url if project else None
+    task["finished_at"] = _utcnow_iso()
+    task.pop("resume_from_step", None)
     _add_log(task, "✓ 유튜브 수동 업로드 완료")
     _save_tasks_to_disk()
     return {
@@ -4530,6 +4550,104 @@ _queue_task: Optional[asyncio.Task] = None
 
 # 파일 I/O 직렬화용 락
 _queue_io_lock = asyncio.Lock()
+
+_QUEUE_EPISODE_FALLBACK = 10**9
+
+
+def _parse_queue_time_minutes(value: Any) -> Optional[int]:
+    if not isinstance(value, str):
+        return None
+    m = re.match(r"^\s*(\d{1,2}):(\d{2})\s*$", value)
+    if not m:
+        return None
+    try:
+        hour = int(m.group(1))
+        minute = int(m.group(2))
+    except ValueError:
+        return None
+    if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+        return None
+    return hour * 60 + minute
+
+
+def _queue_episode_sort_value(item: dict[str, Any]) -> int:
+    try:
+        ep = int(item.get("episode_number") or 0)
+    except (TypeError, ValueError):
+        ep = 0
+    return ep if ep > 0 else _QUEUE_EPISODE_FALLBACK
+
+
+def _queue_item_text_sort_value(item: dict[str, Any]) -> str:
+    return str(item.get("topic") or item.get("title") or "").casefold()
+
+
+def _queue_channel_due_key(
+    ch: int,
+    state: dict[str, Any],
+    *,
+    now: Optional[datetime] = None,
+) -> tuple[int, int, int]:
+    """Return the next scheduled slot for a channel."""
+    now = now or datetime.now()
+    ch_key = str(ch)
+    minute = _parse_queue_time_minutes((state.get("channel_times") or {}).get(ch_key))
+    if minute is None:
+        return (99, ch, ch)
+    today = now.date().isoformat()
+    last_run = (state.get("last_run_dates") or {}).get(ch_key)
+    day_offset = 1 if last_run == today else 0
+    return (day_offset, minute, ch)
+
+
+def _sort_queue_items_for_execution(
+    items: list[dict[str, Any]],
+    state: dict[str, Any],
+    *,
+    now: Optional[datetime] = None,
+) -> list[dict[str, Any]]:
+    """Sort queue rows into the same order the scheduler should consume them."""
+    immediate: list[dict[str, Any]] = []
+    normal: list[dict[str, Any]] = []
+    for item in items:
+        if _is_immediate_queue_item(item):
+            immediate.append(item)
+        else:
+            normal.append(item)
+
+    grouped: dict[int, list[dict[str, Any]]] = {ch: [] for ch in CHANNELS}
+    for item in normal:
+        grouped.setdefault(_queue_item_channel(item), []).append(item)
+
+    for group in grouped.values():
+        group.sort(
+            key=lambda item: (
+                _queue_episode_sort_value(item),
+                str(item.get("queued_at") or ""),
+                _queue_item_text_sort_value(item),
+                str(item.get("id") or ""),
+            )
+        )
+
+    channel_order = sorted(
+        [ch for ch, group in grouped.items() if group],
+        key=lambda ch: _queue_channel_due_key(ch, state, now=now),
+    )
+    merged: list[dict[str, Any]] = []
+    while any(grouped.get(ch) for ch in channel_order):
+        for ch in channel_order:
+            group = grouped.get(ch) or []
+            if group:
+                merged.append(group.pop(0))
+
+    return immediate + merged
+
+
+def _sort_queue_state_in_place(state: dict[str, Any]) -> None:
+    items = state.get("items")
+    if not isinstance(items, list) or len(items) < 2:
+        return
+    state["items"] = _sort_queue_items_for_execution(items, state)
 
 
 def _queue_normalize(raw: Any) -> dict[str, Any]:
@@ -4683,6 +4801,7 @@ def _load_queue_from_disk() -> None:
         if _QUEUE_FILE.exists():
             raw = json.loads(_QUEUE_FILE.read_text(encoding="utf-8"))
             _QUEUE = _queue_normalize(raw)
+            _sort_queue_state_in_place(_QUEUE)
             return
     except Exception as e:
         print(f"[oneclick.queue] load failed, falling back to default: {e}")
@@ -4702,6 +4821,7 @@ def _ensure_state_loaded() -> None:
 
 def _save_queue_to_disk() -> None:
     try:
+        _sort_queue_state_in_place(_QUEUE)
         _QUEUE_FILE.parent.mkdir(parents=True, exist_ok=True)
         _QUEUE_FILE.write_text(
             json.dumps(_QUEUE, ensure_ascii=False, indent=2),
@@ -4736,6 +4856,7 @@ def _resolve_item_preset(item: dict) -> Optional[str]:
 def get_queue() -> dict[str, Any]:
     """현재 큐 상태 반환 (UI 조회용). 복사본을 돌려준다."""
     _ensure_state_loaded()
+    _sort_queue_state_in_place(_QUEUE)
     return {
         "channel_times": dict(_QUEUE.get("channel_times") or {}),
         "last_run_dates": dict(_QUEUE.get("last_run_dates") or {}),
@@ -4752,6 +4873,7 @@ def set_queue(new_state: dict[str, Any]) -> dict[str, Any]:
     # last_run_dates 는 사용자가 바꿀 값이 아니므로 기존 값 유지.
     if not isinstance(new_state.get("last_run_dates"), dict):
         normalized["last_run_dates"] = dict(_QUEUE.get("last_run_dates") or {})
+    _sort_queue_state_in_place(normalized)
     _QUEUE = normalized
     _save_queue_to_disk()
     _sync_windows_wake_timers(reason="queue-save")
@@ -4800,6 +4922,24 @@ def _should_fire_channel(now: datetime, ch: int) -> bool:
     if lrd == today:
         return False
     return (now.hour, now.minute) >= (target_h, target_m)
+
+
+def _queue_item_channel(item: dict[str, Any] | None) -> int:
+    try:
+        ch = int((item or {}).get("channel") or 1)
+    except Exception:
+        ch = 1
+    return ch if ch in CHANNELS else 1
+
+
+def _is_immediate_queue_item(item: dict[str, Any] | None) -> bool:
+    if not item:
+        return False
+    source = str(item.get("queued_source") or "").lower()
+    note = str(item.get("queued_note") or "")
+    return source == "manual" and (
+        "\uc2e4\uc2dc\uac04 \ud604\ud669" in note or "\uc218\ub3d9 \uc2e4\ud589" in note
+    )
 
 
 async def _fire_queue_for_channel(ch: int, triggered_by: str = "schedule") -> bool:
@@ -4900,6 +5040,22 @@ async def _queue_loop() -> None:
             try:
                 now = datetime.now()
                 today = _today_iso()
+                items = list(_QUEUE.get("items") or [])
+                if items:
+                    if not _has_inflight_task():
+                        head = items[0]
+                        ch = _queue_item_channel(head)
+                        if _is_immediate_queue_item(head):
+                            await _fire_queue_for_channel(ch, "manual")
+                        elif _should_fire_channel(now, ch):
+                            fired = await _fire_queue_for_channel(ch)
+                            if fired:
+                                if "last_run_dates" not in _QUEUE:
+                                    _QUEUE["last_run_dates"] = {}
+                                _QUEUE["last_run_dates"][str(ch)] = today
+                                _save_queue_to_disk()
+                    await asyncio.sleep(30)
+                    continue
                 for ch in CHANNELS:
                     if _should_fire_channel(now, ch):
                         ch_items = [
@@ -4967,14 +5123,21 @@ def run_queue_top_now(channel=None):
     async 이벤트 루프가 필요하므로 라우터에서 async 로 호출한다.
     channel 미지정 시 채널 1 로 간주.
     """
+    _ensure_state_loaded()
     _clear_emergency_stop_guard()
-    target_ch = int(channel) if channel else 1
-    ch_items = [
-        it for it in (_QUEUE.get("items") or [])
-        if int(it.get("channel") or 1) == target_ch
-    ]
-    if not ch_items:
+    items = list(_QUEUE.get("items") or [])
+    if not items:
         return None
+    target_ch = _queue_item_channel(items[0])
+    if channel is not None:
+        try:
+            requested_ch = int(channel)
+        except (TypeError, ValueError):
+            requested_ch = target_ch
+        if requested_ch in CHANNELS:
+            if not any(_queue_item_channel(it) == requested_ch for it in items):
+                return None
+            target_ch = requested_ch
     before_ids = set(_TASKS.keys())
     try:
         loop = asyncio.get_event_loop()

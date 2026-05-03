@@ -27,7 +27,8 @@ if sys.platform == "win32":
     except Exception:
         pass
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
@@ -41,7 +42,7 @@ from app.models.database import init_db
 # v1.1.43: oneclick_service 에 "주제 큐 + 매일 HH:MM" 형태의 새 스케줄러가
 # 다시 붙었다 (구 17 행 그리드 와는 완전히 다른 모델). startup/shutdown 에서
 # `start_queue_scheduler` / `stop_queue_scheduler` 를 호출한다.
-from app.routers import projects, pipeline, script, voice, image, video, subtitle, interlude, youtube, youtube_studio, downloads, models, api_status, api_keys, api_balances, tasks, oneclick, assets
+from app.routers import projects, pipeline, script, voice, image, video, subtitle, interlude, youtube, youtube_studio, downloads, models, api_status, api_keys, api_balances, tasks, oneclick, assets, auth
 # v2.1.0 병렬 라우터. 구 라우터와 독립적으로 /api/v2/* 에 마운트된다.
 from app.routers.v2 import (
     keys as v2_keys,
@@ -166,7 +167,50 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+_AUTH_PUBLIC_API_PREFIXES = (
+    "/api/auth/login",
+    "/api/auth/signup",
+    "/api/auth/logout",
+    "/api/auth/me",
+    "/api/health",
+    "/api/api-status/local-services",
+)
+_AUTH_PUBLIC_EXACT_PATHS = ("/docs", "/redoc", "/openapi.json")
+
+
+def _is_public_auth_path(path: str) -> bool:
+    return path in _AUTH_PUBLIC_EXACT_PATHS or any(path.startswith(prefix) for prefix in _AUTH_PUBLIC_API_PREFIXES)
+
+
+@app.middleware("http")
+async def require_login_for_api_and_assets(request: Request, call_next):
+    path = request.url.path
+    if request.method == "OPTIONS" or _is_public_auth_path(path):
+        return await call_next(request)
+
+    if path.startswith("/api") or path.startswith("/assets"):
+        from app.models.database import SessionLocal
+        from app.models.user import User
+        from app.security.auth import SESSION_COOKIE_NAME, parse_session_token
+
+        payload = parse_session_token(request.cookies.get(SESSION_COOKIE_NAME))
+        if not payload:
+            return JSONResponse({"detail": "로그인이 필요합니다."}, status_code=401)
+
+        db = SessionLocal()
+        try:
+            user = db.query(User).filter(User.id == payload.get("sub")).first()
+            if not user or user.status != "approved":
+                return JSONResponse({"detail": "승인된 계정이 필요합니다."}, status_code=401)
+            request.state.user = user
+        finally:
+            db.close()
+
+    return await call_next(request)
+
 # Routers
+app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(projects.router, prefix="/api/projects", tags=["projects"])
 app.include_router(pipeline.router, prefix="/api/pipeline", tags=["pipeline"])
 app.include_router(script.router, prefix="/api/script", tags=["script"])

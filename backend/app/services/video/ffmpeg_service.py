@@ -1,4 +1,4 @@
-"""FFmpeg local video generation (Ken Burns effect)"""
+"""FFmpeg local video generation."""
 import asyncio
 import os
 from typing import Optional
@@ -14,9 +14,11 @@ def _resolve_ffmpeg_cmd(cmd: list[str]) -> list[str]:
 
 
 class FFmpegService(BaseVideoService):
+    """Legacy ffmpeg-kenburns id, now static/no-motion for all FFmpeg output."""
+
     def __init__(self):
         self.model_id = "ffmpeg-kenburns"
-        self.display_name = "FFmpeg Ken Burns"
+        self.display_name = "FFmpeg Static (legacy no motion)"
 
     @staticmethod
     async def _run_ffmpeg(cmd: list[str], timeout: float = 300.0) -> str:
@@ -45,30 +47,27 @@ class FFmpegService(BaseVideoService):
         aspect_ratio: str = "16:9",
         prompt: str = "",
     ) -> str:
-        """이미지 + Ken Burns 줌 효과 → 영상 클립 (오디오 있으면 포함)"""
+        """Image + optional audio -> static clip. No pan/zoom motion."""
         if not os.path.exists(image_path):
             raise FileNotFoundError(f"Image not found: {image_path}")
-
-        frames = int(duration * 30)
 
         # Output resolution from aspect_ratio
         if aspect_ratio == "9:16":
             resolution = "1080x1920"
-            up_w = 1620  # 1.5x for zoom headroom
         elif aspect_ratio == "1:1":
             resolution = "1080x1080"
-            up_w = 1620
+        elif aspect_ratio == "3:4":
+            resolution = "1080x1440"
         else:
             resolution = "1920x1080"
-            up_w = 2880  # 1.5x for zoom headroom, instead of 8000
 
         has_audio = bool(audio_path and os.path.exists(audio_path))
 
-        # Ken Burns zoom filter — scaled down for speed (was 8000, caused 60s+/cut)
+        # Static FFmpeg output only: no pan, no zoom, no motion effect.
+        pad_wh = resolution.replace("x", ":")
         vf = (
-            f"[0:v]scale={up_w}:-1,zoompan=z='min(zoom+0.0015,1.225)':"
-            f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
-            f"d={frames}:s={resolution}:fps=30[v]"
+            f"[0:v]scale={resolution}:force_original_aspect_ratio=decrease,"
+            f"pad={pad_wh}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30,format=yuv420p[v]"
         )
 
         if has_audio:

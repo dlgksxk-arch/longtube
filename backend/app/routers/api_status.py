@@ -3,15 +3,23 @@ import asyncio
 import os
 import subprocess
 import time
+from datetime import datetime
 from pathlib import Path
 import httpx
 from fastapi import APIRouter
+from sqlalchemy import func
 from app import config as cfg
+from app.models.api_log import ApiLog
+from app.models.database import SessionLocal
+from app.models.project import Project
 
 router = APIRouter()
 
 ENV_PATH = Path(__file__).resolve().parent.parent.parent / ".env"
 _SYSTEM_STATUS_CACHE: dict = {"ts": 0.0, "data": None}
+
+YOUTUBE_DEFAULT_DAILY_QUOTA = 10_000
+YOUTUBE_DEFAULT_UPLOAD_UNITS = 1_600
 
 
 def _read_env_file() -> dict:
@@ -752,6 +760,56 @@ async def check_local_services():
         },
         "comfyui": comfy,
         "system": system if isinstance(system, dict) else {"provider": "Local PC", "status": "error"},
+    }
+
+
+@router.get("/youtube-quota")
+def youtube_quota_status():
+    """Estimated YouTube Data API quota usage for today's uploads.
+
+    YouTube does not expose remaining Data API quota through the normal API, so
+    this reports a local estimate: successful uploads recorded today plus any
+    explicit youtube rows in api_logs.
+    """
+    daily_limit = int(os.getenv("YOUTUBE_DAILY_QUOTA_UNITS", str(YOUTUBE_DEFAULT_DAILY_QUOTA)) or YOUTUBE_DEFAULT_DAILY_QUOTA)
+    upload_units = int(os.getenv("YOUTUBE_UPLOAD_QUOTA_UNITS", str(YOUTUBE_DEFAULT_UPLOAD_UNITS)) or YOUTUBE_DEFAULT_UPLOAD_UNITS)
+    now = datetime.now()
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    db = SessionLocal()
+    try:
+        upload_count = (
+            db.query(func.count(Project.id))
+            .filter(Project.youtube_url.isnot(None))
+            .filter(Project.youtube_url != "")
+            .filter(Project.updated_at >= day_start)
+            .scalar()
+            or 0
+        )
+        logged_units = (
+            db.query(func.coalesce(func.sum(ApiLog.tokens_used), 0))
+            .filter(ApiLog.service == "youtube")
+            .filter(ApiLog.created_at >= day_start)
+            .scalar()
+            or 0
+        )
+    finally:
+        db.close()
+
+    upload_units_used = int(upload_count) * upload_units
+    used_units = max(int(logged_units or 0), upload_units_used)
+    remaining_units = max(0, daily_limit - used_units)
+    return {
+        "status": "estimated",
+        "daily_limit": daily_limit,
+        "used_units": used_units,
+        "remaining_units": remaining_units,
+        "usage_pct": round((used_units / daily_limit) * 100, 1) if daily_limit > 0 else 0,
+        "upload_units": upload_units,
+        "uploads_today": int(upload_count),
+        "estimated_uploads_left": remaining_units // upload_units if upload_units > 0 else 0,
+        "reset_basis": "local_day",
+        "date": day_start.date().isoformat(),
     }
 
 

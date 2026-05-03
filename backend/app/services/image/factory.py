@@ -10,6 +10,7 @@ from app.services.image.nano_banana_service import NanoBananaService
 from app.services.image.openai_image_service import OpenAIImageService
 
 DEFAULT_IMAGE_MODEL = "comfyui-dreamshaper-xl-longtube"
+DEFAULT_THUMBNAIL_MODEL = "nano-banana-2"
 
 IMAGE_REGISTRY: dict[str, dict] = {
     "comfyui-dreamshaper-xl": {

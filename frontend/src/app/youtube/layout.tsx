@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft,
   LayoutDashboard,
@@ -43,7 +43,7 @@ function getPresetChannelId(preset?: Project | null): number | undefined {
   return Number.isFinite(channelId) && channelId >= 1 && channelId <= 4 ? channelId : undefined;
 }
 
-export default function YouTubeStudioLayout({ children }: { children: React.ReactNode }) {
+function YouTubeStudioLayoutInner({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -256,5 +256,13 @@ export default function YouTubeStudioLayout({ children }: { children: React.Reac
         </main>
       </div>
     </div>
+  );
+}
+
+export default function YouTubeStudioLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-bg-primary p-8 text-sm text-gray-500">불러오는 중...</div>}>
+      <YouTubeStudioLayoutInner>{children}</YouTubeStudioLayoutInner>
+    </Suspense>
   );
 }

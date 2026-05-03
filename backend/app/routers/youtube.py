@@ -32,13 +32,17 @@ from app.services.youtube_service import (
 from app.services.thumbnail_service import (
     generate_thumbnail,
     generate_ai_thumbnail,
+    ensure_standard_thumbnail,
     ThumbnailError,
     extract_thumbnail_text_parts,
     normalize_episode_label,
 )
-from app.services.image.factory import resolve_image_model
+from app.services.image.factory import DEFAULT_THUMBNAIL_MODEL, resolve_image_model
 from app.services.llm.factory import get_llm_service
 from app.services.llm.base import BaseLLMService
+from app.services.title_utils import with_episode_prefix
+from app.services.youtube_metadata import DEFAULT_MAX_TAGS, clean_tags, expand_tags, format_description
+from app.services.multilingual_caption_service import upload_multilingual_captions
 
 router = APIRouter()
 
@@ -49,14 +53,14 @@ router = APIRouter()
 class TagRecommendRequest(BaseModel):
     title: Optional[str] = None
     topic: Optional[str] = None
-    max_tags: int = 15
+    max_tags: int = DEFAULT_MAX_TAGS
     language: Optional[str] = None  # None 이면 자동 감지 → config → "ko"
 
 
 class MetadataRecommendRequest(BaseModel):
     title: Optional[str] = None
     topic: Optional[str] = None
-    max_tags: int = 15
+    max_tags: int = DEFAULT_MAX_TAGS
     language: Optional[str] = None
     episode_number: Optional[int] = Field(
         default=None,
@@ -162,6 +166,20 @@ def _final_video_path(project_id: str) -> Optional[Path]:
 
 def _thumbnail_path(project_id: str) -> Path:
     return resolve_project_dir(project_id) / "output" / "thumbnail.png"
+
+
+def _caption_path(project_id: str) -> Path:
+    return resolve_project_dir(project_id) / "subtitles" / "subtitles.srt"
+
+
+def _should_upload_caption(config: Optional[dict]) -> bool:
+    cfg = config or {}
+    mode = str(cfg.get("subtitle_delivery") or cfg.get("subtitle_mode") or "").strip().lower()
+    if mode in {"youtube", "youtube_caption", "youtube_captions", "srt", "external"}:
+        return True
+    if mode in {"burn", "burned", "hardcoded", "none", "off", "disabled"}:
+        return False
+    return bool(cfg.get("youtube_captions_enabled", False))
 
 
 def _extract_video_id(url_or_id: Optional[str]) -> Optional[str]:
@@ -528,7 +546,7 @@ async def create_thumbnail(
     # ─── 모드 2/3: AI 기반 ───
     # image 모델 결정
     image_model_id = resolve_image_model(
-        body.image_model or config.get("image_model")
+        body.image_model or config.get("thumbnail_model") or DEFAULT_THUMBNAIL_MODEL
     )
 
     # 프롬프트 결정 (사용자 override → LLM → 템플릿 폴백)
@@ -629,9 +647,21 @@ async def create_thumbnail(
     # v1.1.55: 공통 REFERENCE_STYLE_PREFIX 사용 — 컷/썸네일/재생성 문구 통일.
     # 이미지 모델 서비스 레벨에서도 붙이지만, 서비스에 따라 다르게 붙을 수 있어
     # 여기서도 한 번 더 박는다 (apply_* 가 중복 검사로 이중 부착 방지).
+    from app.services.image.prompt_builder import should_enable_historical_guard_for_context
+    enable_historical_guard = should_enable_historical_guard_for_context(
+        config,
+        project_id,
+        project.title,
+        project.topic,
+        image_prompt,
+    )
     if combined_refs and image_prompt:
         from app.services.image.prompt_builder import apply_reference_style_prefix
-        image_prompt = apply_reference_style_prefix(image_prompt, has_reference=True)
+        image_prompt = apply_reference_style_prefix(
+            image_prompt,
+            has_reference=True,
+            enable_historical_guard=enable_historical_guard,
+        )
 
     try:
         result = await generate_ai_thumbnail(
@@ -642,6 +672,7 @@ async def create_thumbnail(
             overlay_subtitle=subtitle if body.mode == "ai_overlay" else None,
             overlay_episode_label=episode_label if body.mode == "ai_overlay" else None,
             reference_images=combined_refs or None,
+            enable_historical_guard=enable_historical_guard,
         )
     except ThumbnailError as e:
         raise HTTPException(500, f"AI 썸네일 생성 실패: {e}")
@@ -700,6 +731,7 @@ def _detect_language(text: str, fallback: str = "ko") -> str:
     if not text:
         return fallback
     hangul = 0
+    devanagari = 0
     kana = 0
     cjk = 0
     latin = 0
@@ -707,6 +739,8 @@ def _detect_language(text: str, fallback: str = "ko") -> str:
         o = ord(c)
         if 0xAC00 <= o <= 0xD7A3:
             hangul += 1
+        elif 0x0900 <= o <= 0x097F:
+            devanagari += 1
         elif 0x3040 <= o <= 0x30FF:
             kana += 1
         elif 0x4E00 <= o <= 0x9FFF:
@@ -716,6 +750,8 @@ def _detect_language(text: str, fallback: str = "ko") -> str:
 
     if kana >= 10:
         return "ja"
+    if devanagari >= 10:
+        return "hi"
     counts = {"ko": hangul, "zh": cjk, "en": latin}
     best = max(counts, key=counts.get)
     if counts[best] < 10:
@@ -753,22 +789,7 @@ def _collect_narration(db: Session, project_id: str, limit: int = 2500) -> str:
 
 
 def _clean_tag_list(tags: list, max_tags: int) -> list[str]:
-    seen: set[str] = set()
-    cleaned: list[str] = []
-    for t in tags or []:
-        if not isinstance(t, str):
-            continue
-        t = t.strip().lstrip("#").strip()
-        if not t or len(t) > 30:
-            continue
-        key = t.lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        cleaned.append(t)
-        if len(cleaned) >= max_tags:
-            break
-    return cleaned
+    return clean_tags(tags or [], max_tags=max_tags)
 
 
 @router.post("/{project_id}/tags/recommend")
@@ -813,6 +834,14 @@ async def recommend_tags(
     if not tags:
         source = "heuristic"
         tags = _heuristic_tags(title, topic, narration_snippet, body.max_tags)
+    tags = expand_tags(
+        tags,
+        title=title,
+        topic=topic,
+        narration=narration_snippet,
+        language=language,
+        max_tags=body.max_tags,
+    )
 
     return {
         "tags": _clean_tag_list(tags, body.max_tags),
@@ -886,7 +915,13 @@ async def recommend_metadata(
         source = "heuristic" if error or not final_tags_raw else "partial"
         seed = topic or narration_snippet[:300]
         final_description = seed
-    final_description = final_description[:5000]
+    final_description = format_description(
+        final_description,
+        title=final_title,
+        topic=topic,
+        narration=narration_snippet,
+        language=language,
+    )
 
     # tags 폴백
     if not final_tags_raw:
@@ -895,6 +930,14 @@ async def recommend_metadata(
             source = "partial"
     else:
         final_tags = final_tags_raw
+    final_tags = expand_tags(
+        final_tags,
+        title=final_title,
+        topic=topic,
+        narration=narration_snippet,
+        language=language,
+        max_tags=body.max_tags,
+    )
 
     return {
         "title": final_title[:100],
@@ -1006,7 +1049,10 @@ async def upload_to_youtube(
     if body.privacy not in VALID_PRIVACY:
         raise HTTPException(422, f"privacy 는 {sorted(VALID_PRIVACY)} 중 하나여야 합니다.")
 
-    title = (body.title or project.title or "Untitled").strip()
+    title = with_episode_prefix(
+        (body.title or project.title or "Untitled").strip(),
+        (project.config or {}).get("episode_number"),
+    )
     # v1.1.55-fix: description 폴백 우선순위에 script.json 의 description 추가
     #   body.description > config.youtube_description > script.json description > project.topic
     _cfg_desc = ((project.config or {}).get("youtube_description") or "").strip()
@@ -1022,11 +1068,44 @@ async def upload_to_youtube(
         except Exception:
             pass
     description = (body.description or _cfg_desc or _script_desc or project.topic or "").strip()
+    narration_seed = _collect_narration(db, project_id, limit=2500)
+    upload_language = body.language or (project.config or {}).get("language") or "ko"
+    description = format_description(
+        description,
+        title=title,
+        topic=project.topic or "",
+        narration=narration_seed,
+        language=upload_language,
+    )
+    upload_tags = expand_tags(
+        body.tags or [],
+        title=title,
+        topic=project.topic or "",
+        narration=narration_seed,
+        language=upload_language,
+        max_tags=DEFAULT_MAX_TAGS,
+    )
 
     # 썸네일 경로 결정
     thumb_path: Optional[str] = None
     if body.use_generated_thumbnail:
         tp = _thumbnail_path(project_id)
+        if not tp.exists():
+            try:
+                from app.tasks.pipeline_tasks import load_script
+
+                script = load_script(project_id) or {}
+                generated_thumb = await ensure_standard_thumbnail(
+                    project_id=project_id,
+                    config=project.config or {},
+                    script=script,
+                    title=script.get("title") or title,
+                    topic=project.topic,
+                    episode_number=(project.config or {}).get("episode_number"),
+                )
+                tp = Path(generated_thumb)
+            except Exception as e:
+                print(f"[youtube upload] thumbnail generation skipped: {e}")
         if tp.exists():
             thumb_path = str(tp)
 
@@ -1039,14 +1118,32 @@ async def upload_to_youtube(
             str(final_video),
             title,
             description,
-            body.tags or [],
-            thumb_path,
+            upload_tags,
+            None,
             body.privacy,
-            body.language,
+            upload_language,
             body.category_id,
             body.made_for_kids,
             None,  # progress_callback (아직 프론트로 연결 안 함)
         )
+        verified = await asyncio.to_thread(
+            uploader.confirm_upload_visible_in_studio,
+            video_id=result.get("video_id"),
+            title=title,
+        )
+        result = {**result, "studio_verified": True, "studio_record": verified}
+        if thumb_path and result.get("video_id"):
+            try:
+                thumb_result = await asyncio.to_thread(
+                    uploader.set_thumbnail,
+                    str(result.get("video_id")),
+                    thumb_path,
+                )
+                result["thumbnail_uploaded"] = True
+                result["thumbnail_result"] = thumb_result
+            except Exception as e:
+                result["thumbnail_error"] = str(e)
+                print(f"[youtube upload] thumbnail upload failed (non-fatal): {e}")
     except YouTubeAuthError as e:
         import traceback as _tb
         print(f"[youtube upload] AUTH error: {e}\n{_tb.format_exc()}")
@@ -1065,8 +1162,43 @@ async def upload_to_youtube(
         raise HTTPException(500, f"업로드는 성공했으나 URL 이 비어있습니다: {result!r}")
 
     # DB 에 YouTube URL 저장
+    caption_result = None
+    caption_error = None
+    caption_file = _caption_path(project_id)
+    if result.get("video_id") and _should_upload_caption(project.config or {}) and caption_file.exists():
+        try:
+            caption_result = await upload_multilingual_captions(
+                uploader,
+                str(result.get("video_id")),
+                str(caption_file),
+                {**(project.config or {}), "language": upload_language},
+            )
+        except Exception as e:
+            caption_error = str(e)
+            print(f"[youtube upload] caption upload failed (non-fatal): {e}")
+
     project.youtube_url = video_url
+    if caption_result or caption_error:
+        cfg = dict(project.config or {})
+        if caption_result:
+            cfg["youtube_captions"] = caption_result
+            cfg["youtube_caption"] = caption_result
+            cfg.pop("youtube_caption_error", None)
+            cfg.pop("youtube_caption_errors", None)
+        if caption_error:
+            cfg["youtube_caption_error"] = caption_error
+            cfg["youtube_caption_errors"] = {"all": caption_error}
+        project.config = cfg
+        from sqlalchemy.orm.attributes import flag_modified
+        flag_modified(project, "config")
     db.commit()
+    try:
+        from app.services.project_archive import archive_uploaded_project
+
+        archive_result = archive_uploaded_project(project_id, project.config or {})
+        print(f"[youtube upload] uploaded project archive: {archive_result}")
+    except Exception as e:
+        print(f"[youtube upload] uploaded project archive skipped: {e}")
 
     return {
         "status": "uploaded",
@@ -1077,6 +1209,9 @@ async def upload_to_youtube(
         "privacy": body.privacy,
         "thumbnail_used": thumb_path is not None,
         "thumbnail_error": result.get("thumbnail_error"),
+        "studio_verified": bool(result.get("studio_verified")),
+        "caption_uploaded": caption_result is not None,
+        "caption_error": caption_error,
     }
 
 

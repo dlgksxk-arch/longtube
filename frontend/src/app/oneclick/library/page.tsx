@@ -224,6 +224,29 @@ export default function LibraryPage() {
   const completed = tasks.filter((t) => t.status === "completed");
   const uploaded = completed.filter((t) => projects.get(t.project_id)?.youtube_url);
   const failed = tasks.filter((t) => t.status === "failed");
+  const formatDateTime = (value?: string | null) => {
+    if (!value) return "-";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "-";
+    return `${date.getMonth() + 1}/${date.getDate()} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+  };
+  const outputCountText = (label: string, count: number | null | undefined) =>
+    `${label} ${count && count > 0 ? count : "미생성"}`;
+  const countText = (count: number | null | undefined) =>
+    count && count > 0 ? String(count) : "미생성";
+  const taskOutputSummary = (task: OneClickTask) => {
+    const done = task.completed_cuts_by_step || {};
+    const stepDone = task.step_states || {};
+    return [
+      outputCountText("대본", done["2"]),
+      outputCountText("음성", done["3"]),
+      outputCountText("이미지", done["4"]),
+      outputCountText("영상", done["5"]),
+      outputCountText("렌더", stepDone["6"] === "completed" ? 1 : 0),
+      outputCountText("썸네일", task.thumbnail_status === "done" ? 1 : 0),
+      outputCountText("업로드", stepDone["7"] === "completed" ? 1 : 0),
+    ].join(" · ");
+  };
 
   if (loading) {
     return (
@@ -332,7 +355,20 @@ export default function LibraryPage() {
         </div>
       ) : (
         /* 카드 그리드 */
-        <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+        <div className="overflow-hidden rounded-lg border border-border bg-bg-secondary">
+          <div className="grid grid-cols-[minmax(260px,1fr)_70px_70px_70px_70px_70px_80px_80px_120px_120px_70px] items-center gap-3 border-b border-border px-4 py-2 text-sm font-semibold text-gray-500">
+            <div>작업</div>
+            <div>대본</div>
+            <div>음성</div>
+            <div>이미지</div>
+            <div>영상</div>
+            <div>렌더</div>
+            <div>썸네일</div>
+            <div>업로드</div>
+            <div>시작 시각</div>
+            <div>종료 시각</div>
+            <div>성공여부</div>
+          </div>
           {filtered.map((task) => {
             const project = projects.get(task.project_id);
             const hasYT = !!project?.youtube_url;
@@ -351,21 +387,21 @@ export default function LibraryPage() {
               <div
                 key={task.task_id}
                 onClick={() => selectMode ? toggleSelect(task.task_id) : openDetail(task)}
-                className={`bg-bg-secondary border rounded-xl overflow-hidden hover:border-white/10 transition-all group cursor-pointer relative ${
-                  isSelected ? "border-accent-primary ring-1 ring-accent-primary/40" : "border-border"
+                className={`grid grid-cols-[minmax(260px,1fr)_70px_70px_70px_70px_70px_80px_80px_120px_120px_70px] items-center gap-3 border-b border-border/70 px-4 py-2 text-sm last:border-b-0 hover:bg-white/[0.03] cursor-pointer ${
+                  isSelected ? "bg-accent-primary/10" : ""
                 }`}
               >
                 {/* 선택 체크박스 */}
                 {selectMode && (
-                  <div className={`absolute top-2 left-2 z-10 w-5 h-5 rounded border-2 flex items-center justify-center transition-colors ${
-                    isSelected ? "bg-accent-primary border-accent-primary" : "bg-black/50 border-white/30"
+                  <div className={`hidden ${
+                    isSelected ? "bg-accent-primary border-accent-primary" : "border-white/30"
                   }`}>
-                    {isSelected && <Check size={12} className="text-white" />}
+                    {isSelected && <Check size={10} className="text-white" />}
                   </div>
                 )}
 
                 {/* 썸네일 */}
-                <div className="aspect-video bg-bg-tertiary relative flex items-center justify-center overflow-hidden">
+                <div className="hidden">
                   {!isFailed && thumbPng ? (
                     <img
                       src={thumbPng}
@@ -403,11 +439,23 @@ export default function LibraryPage() {
                 </div>
 
                 {/* 정보 */}
-                <div className="p-3">
-                  <h4 className="text-sm font-semibold text-gray-200 mb-1.5 line-clamp-2 leading-snug">
+                <div className="contents">
+                  <h4 className="min-w-0 truncate font-medium text-gray-200">
                     {task.title || task.topic}
                   </h4>
-                  <div className="flex items-center gap-2 flex-wrap">
+                  <div className="text-gray-400 tabular-nums">{countText(task.completed_cuts_by_step?.["2"])}</div>
+                  <div className="text-gray-400 tabular-nums">{countText(task.completed_cuts_by_step?.["3"])}</div>
+                  <div className="text-gray-400 tabular-nums">{countText(task.completed_cuts_by_step?.["4"])}</div>
+                  <div className="text-gray-400 tabular-nums">{countText(task.completed_cuts_by_step?.["5"])}</div>
+                  <div className="text-gray-400 tabular-nums">{countText(task.step_states?.["6"] === "completed" ? 1 : 0)}</div>
+                  <div className="text-gray-400 tabular-nums">{countText(task.thumbnail_status === "done" ? 1 : 0)}</div>
+                  <div className="text-gray-400 tabular-nums">{countText(task.step_states?.["7"] === "completed" ? 1 : 0)}</div>
+                  <div className="text-gray-400">{formatDateTime(task.started_at || task.created_at)}</div>
+                  <div className="text-gray-400">{formatDateTime(task.finished_at)}</div>
+                  <div className={isFailed ? "font-semibold text-accent-danger" : "font-semibold text-accent-success"}>
+                    {isFailed ? "실패" : "성공"}
+                  </div>
+                  <div className="hidden">
                     <span className="text-sm text-gray-600">{dateLabel}</span>
                     {/* v1.1.58: 채널 배지 */}
                     {task.channel ? (

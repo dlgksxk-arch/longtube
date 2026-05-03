@@ -77,7 +77,7 @@ def _strip_script_motion_prompts(script: dict) -> dict:
     return script
 
 
-def _save_script(project_id: str, script: dict):
+def _save_script(project_id: str, script: dict, language: str = "ko"):
     """Save script.json to disk"""
     script = _strip_script_motion_prompts(script)
     script_path = DATA_DIR / project_id / "script.json"
@@ -168,7 +168,7 @@ async def generate_script(project_id: str, db: Session = Depends(get_db)):
 
     db.commit()
 
-    _save_script(project_id, script)
+    _save_script(project_id, script, (project.config or {}).get("language", "ko"))
     return script
 
 
@@ -292,7 +292,7 @@ async def generate_script_async(project_id: str, db: Session = Depends(get_db)):
                 proj.current_step = 2
             local_db.commit()
 
-            _save_script(project_id, script)
+            _save_script(project_id, script, config.get("language", "ko"))
             # v1.1.55-fix: 스튜디오 LLM 스크립트 생성 비용 기록
             try:
                 from app.services import spend_ledger
@@ -436,7 +436,7 @@ def add_cut(
         "image_prompt": image_prompt,
         "scene_type": body.scene_type
     })
-    _save_script(project_id, script)
+    _save_script(project_id, script, (project.config or {}).get("language", "ko"))
 
     return {
         "cut_number": cut.cut_number,
@@ -475,7 +475,7 @@ def reorder_cuts(
     script["cuts"] = [old_cuts[num] for num in body.order if num in old_cuts]
     for new_pos, cut_data in enumerate(script["cuts"], start=1):
         cut_data["cut_number"] = new_pos
-    _save_script(project_id, script)
+    _save_script(project_id, script, (project.config or {}).get("language", "ko"))
 
     return {"status": "reordered", "order": body.order}
 
@@ -538,7 +538,7 @@ def edit_cut(
             cut_data.pop("motion_prompt", None)
             cut_data.pop("video_motion_prompt", None)
             break
-    _save_script(project_id, script)
+    _save_script(project_id, script, (project.config or {}).get("language", "ko"))
 
     return {
         "cut_number": cut.cut_number,
@@ -575,7 +575,7 @@ def delete_cut(
 
     script = _load_script(project_id)
     script["cuts"] = [c for c in script.get("cuts", []) if c["cut_number"] != cut_number]
-    _save_script(project_id, script)
+    _save_script(project_id, script, (project.config or {}).get("language", "ko"))
 
     return {"status": "deleted", "cut_number": cut_number}
 

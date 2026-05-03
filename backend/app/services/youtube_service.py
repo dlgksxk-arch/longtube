@@ -1,67 +1,124 @@
-"""YouTube Data API v3 upload service.
+﻿"""YouTube Data API v3 upload service.
 
-OAuth: InstalledAppFlow 로컬 데스크탑 플로우. 최초 1회 브라우저 팝업 인증 후
-token.json 에 refresh token 저장. 이후부터는 자동 갱신.
+OAuth: InstalledAppFlow ë¡œì»¬ ë°ìŠ¤í¬íƒ‘ í”Œë¡œìš°. ìµœì´ˆ 1íšŒ ë¸Œë¼ìš°ì € íŒì—… ì¸ì¦ í›„
+token.json ì— refresh token ì €ìž¥. ì´í›„ë¶€í„°ëŠ” ìžë™ ê°±ì‹ .
 
-주의: `upload()` 는 네트워크 I/O 가 있지만 의도적으로 **sync** 로 구현되어 있습니다.
-FastAPI 라우터에서 `asyncio.to_thread(uploader.upload, ...)` 로 감싸 호출하세요.
-(googleapiclient 자체가 blocking resumable upload 를 쓰므로 async 로 포장해 봐야
-실제 이득이 없고, 라우터/서비스 간 sync/async 불일치만 유발합니다.)
+ì£¼ì˜: `upload()` ëŠ” ë„¤íŠ¸ì›Œí¬ I/O ê°€ ìžˆì§€ë§Œ ì˜ë„ì ìœ¼ë¡œ **sync** ë¡œ êµ¬í˜„ë˜ì–´ ìžˆìŠµë‹ˆë‹¤.
+FastAPI ë¼ìš°í„°ì—ì„œ `asyncio.to_thread(uploader.upload, ...)` ë¡œ ê°ì‹¸ í˜¸ì¶œí•˜ì„¸ìš”.
+(googleapiclient ìžì²´ê°€ blocking resumable upload ë¥¼ ì“°ë¯€ë¡œ async ë¡œ í¬ìž¥í•´ ë´ì•¼
+ì‹¤ì œ ì´ë“ì´ ì—†ê³ , ë¼ìš°í„°/ì„œë¹„ìŠ¤ ê°„ sync/async ë¶ˆì¼ì¹˜ë§Œ ìœ ë°œí•©ë‹ˆë‹¤.)
 """
 from __future__ import annotations
 
 import os
 import json
+import re
+import time
 from pathlib import Path
 from typing import Optional, Callable
 
+import httplib2
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
+from google_auth_httplib2 import AuthorizedHttp
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
 from app.config import YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET, BASE_DIR, DATA_DIR, resolve_project_dir
 
-# 업로드 + 썸네일 세팅 권한
+# ì—…ë¡œë“œ + ì¸ë„¤ì¼ ì„¸íŒ… ê¶Œí•œ
 SCOPES = [
     "https://www.googleapis.com/auth/youtube.upload",
+    "https://www.googleapis.com/auth/youtube.force-ssl",
     "https://www.googleapis.com/auth/youtube",
 ]
 
-# 전역 fallback 경로 (project_id 없이 생성된 uploader 를 위한 legacy 호환)
+# ì „ì—­ fallback ê²½ë¡œ (project_id ì—†ì´ ìƒì„±ëœ uploader ë¥¼ ìœ„í•œ legacy í˜¸í™˜)
 TOKEN_PATH = BASE_DIR / "token.json"
 CLIENT_SECRET_PATH = BASE_DIR / "client_secret.json"
 
 
 def _project_token_path(project_id: str) -> Path:
-    """프로젝트별 token.json 경로.
+    """í”„ë¡œì íŠ¸ë³„ token.json ê²½ë¡œ.
 
-    각 프로젝트 디렉토리 아래에 저장하면 프로젝트별로 다른 YouTube 계정을 연결할
-    수 있습니다. `DATA_DIR/{project_id}/youtube_token.json` 형태.
+    ê° í”„ë¡œì íŠ¸ ë””ë ‰í† ë¦¬ ì•„ëž˜ì— ì €ìž¥í•˜ë©´ í”„ë¡œì íŠ¸ë³„ë¡œ ë‹¤ë¥¸ YouTube ê³„ì •ì„ ì—°ê²°í• 
+    ìˆ˜ ìžˆìŠµë‹ˆë‹¤. `DATA_DIR/{project_id}/youtube_token.json` í˜•íƒœ.
     """
     return resolve_project_dir(project_id) / "youtube_token.json"
 
 
 def _channel_token_path(channel_id: int) -> Path:
-    """채널별 token.json 경로.
+    """ì±„ë„ë³„ token.json ê²½ë¡œ.
 
-    딸깍 큐의 CH1~CH4 가 실제로 서로 다른 YouTube 채널에 업로드되도록,
-    채널마다 별도의 OAuth 토큰을 저장한다.
-    `BASE_DIR/token_ch{N}.json` 형태.
+    ë”¸ê¹ íì˜ CH1~CH4 ê°€ ì‹¤ì œë¡œ ì„œë¡œ ë‹¤ë¥¸ YouTube ì±„ë„ì— ì—…ë¡œë“œë˜ë„ë¡,
+    ì±„ë„ë§ˆë‹¤ ë³„ë„ì˜ OAuth í† í°ì„ ì €ìž¥í•œë‹¤.
+    `BASE_DIR/token_ch{N}.json` í˜•íƒœ.
     """
     return BASE_DIR / f"token_ch{int(channel_id)}.json"
 
-# Privacy enum 값 (YouTube API 표준)
+# Privacy enum ê°’ (YouTube API í‘œì¤€)
 VALID_PRIVACY = {"private", "unlisted", "public"}
 
-# YouTube 카테고리 ID (대표적인 것만; 22=People & Blogs 기본값)
+# YouTube ì¹´í…Œê³ ë¦¬ ID (ëŒ€í‘œì ì¸ ê²ƒë§Œ; 22=People & Blogs ê¸°ë³¸ê°’)
 DEFAULT_CATEGORY_ID = "22"
+YOUTUBE_HTTP_TIMEOUT_SECONDS = 180
+YOUTUBE_UPLOAD_CHUNK_SIZE = 8 * 1024 * 1024
+YOUTUBE_UPLOAD_TRANSIENT_RETRIES = 8
+
+
+def _has_required_scopes(creds: Optional[Credentials]) -> bool:
+    if not creds:
+        return False
+    granted = set(getattr(creds, "scopes", None) or getattr(creds, "granted_scopes", None) or [])
+    if not granted:
+        return False
+    if "https://www.googleapis.com/auth/youtube" in granted:
+        return True
+    return set(SCOPES).issubset(granted)
+
+
+def _token_file_has_required_scopes(path: Path) -> bool:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    raw = data.get("scopes") or data.get("scope") or []
+    if isinstance(raw, str):
+        granted = set(raw.split())
+    else:
+        granted = {str(item) for item in raw}
+    if "https://www.googleapis.com/auth/youtube" in granted:
+        return True
+    return set(SCOPES).issubset(granted)
+
+
+def _load_credentials_from_token_file(path: Path) -> Credentials:
+    """Load credentials while preserving broad-scope legacy YouTube tokens."""
+    data = json.loads(path.read_text(encoding="utf-8"))
+    raw = data.get("scopes") or data.get("scope") or []
+    granted = set(raw.split()) if isinstance(raw, str) else {str(item) for item in raw}
+    if "https://www.googleapis.com/auth/youtube" in granted:
+        return Credentials.from_authorized_user_info(data)
+    return Credentials.from_authorized_user_info(data, SCOPES)
 
 
 def _friendly_youtube_error(prefix: str, e: Exception) -> str:
     msg = str(e)
     lowered = msg.lower()
+    if "youtube.thumbnail" in lowered and "doesn't have permissions" in lowered:
+        return (
+            f"{prefix}: 이 YouTube 채널은 현재 커스텀 썸네일 업로드 권한이 없습니다. "
+            "YouTube Studio의 채널 기능 자격요건에서 전화 인증/고급 기능을 활성화한 뒤 "
+            "썸네일만 다시 업로드하세요. (reason: customThumbnailPermissionDenied)"
+        )
+    if "uploadlimitexceeded" in lowered or "exceeded the number of videos" in lowered:
+        return (
+            f"{prefix}: YouTube 업로드 제한입니다. "
+            "이 계정은 현재 추가 영상을 업로드할 수 없습니다. "
+            "일일/계정 업로드 한도가 풀린 뒤 업로드만 다시 시도하세요. "
+            "(reason: uploadLimitExceeded)"
+        )
     if (
         "quotaexceeded" in lowered
         or "dailylimitexceeded" in lowered
@@ -69,17 +126,49 @@ def _friendly_youtube_error(prefix: str, e: Exception) -> str:
     ):
         return (
             f"{prefix}: YouTube API 할당량이 초과되었습니다. "
-            "잠시 후 다시 시도하거나 Google Cloud Console에서 YouTube Data API 할당량을 확인해주세요."
+            "잠시 후 다시 시도하거나 Google Cloud Console에서 YouTube Data API 할당량을 확인하세요. "
+            "(reason: quotaExceeded)"
         )
     return f"{prefix}: {e}"
 
 
+def _is_transient_upload_error(e: Exception) -> bool:
+    text = str(e).lower()
+    transient_needles = (
+        "timed out",
+        "timeout",
+        "read operation timed out",
+        "connection reset",
+        "connection aborted",
+        "temporarily unavailable",
+        "internal error",
+        "backend error",
+        "ssl",
+        "broken pipe",
+        "socket",
+    )
+    if any(needle in text for needle in transient_needles):
+        return True
+    status = getattr(getattr(e, "resp", None), "status", None)
+    try:
+        return int(status) in {500, 502, 503, 504}
+    except Exception:
+        return False
+
+
 class YouTubeAuthError(RuntimeError):
-    """OAuth 설정/플로우 실패 시."""
+    """OAuth ì„¤ì •/í”Œë¡œìš° ì‹¤íŒ¨ ì‹œ."""
 
 
 class YouTubeUploadError(RuntimeError):
-    """업로드/썸네일 API 호출 실패 시."""
+    """ì—…ë¡œë“œ/ì¸ë„¤ì¼ API í˜¸ì¶œ ì‹¤íŒ¨ ì‹œ."""
+
+
+def normalize_upload_title_for_match(title: str) -> str:
+    text = str(title or "").lower()
+    text = re.sub(r"#\s*shorts\b", "", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip(" -_[]()")
 
 
 class YouTubeUploader:
@@ -88,16 +177,16 @@ class YouTubeUploader:
         project_id: Optional[str] = None,
         channel_id: Optional[int] = None,
     ):
-        """YouTube 업로더.
+        """YouTube ì—…ë¡œë”.
 
-        토큰 우선순위:
-          1. channel_id 지정 시 → `BASE_DIR/token_ch{N}.json`
-          2. project_id 지정 시 → `DATA_DIR/{project_id}/youtube_token.json`
-          3. 둘 다 None → 전역 `BASE_DIR/token.json` (legacy)
+        í† í° ìš°ì„ ìˆœìœ„:
+          1. channel_id ì§€ì • ì‹œ â†’ `BASE_DIR/token_ch{N}.json`
+          2. project_id ì§€ì • ì‹œ â†’ `DATA_DIR/{project_id}/youtube_token.json`
+          3. ë‘˜ ë‹¤ None â†’ ì „ì—­ `BASE_DIR/token.json` (legacy)
 
         Args:
-            project_id: 프로젝트 ID.
-            channel_id: 딸깍 채널 번호 (1~4). 지정하면 채널별 토큰을 사용한다.
+            project_id: í”„ë¡œì íŠ¸ ID.
+            channel_id: ë”¸ê¹ ì±„ë„ ë²ˆí˜¸ (1~4). ì§€ì •í•˜ë©´ ì±„ë„ë³„ í† í°ì„ ì‚¬ìš©í•œë‹¤.
         """
         self.youtube = None
         self.project_id = project_id
@@ -108,35 +197,38 @@ class YouTubeUploader:
             self.token_path = _project_token_path(project_id)
         else:
             self.token_path = TOKEN_PATH
+        self._uploads_playlist_id: Optional[str] = None
 
     # ---------- OAuth ----------
 
     def authenticate(self) -> None:
-        """OAuth 2.0 인증. 최초 1회 브라우저 인증 후 token.json 저장.
+        """OAuth 2.0 ì¸ì¦. ìµœì´ˆ 1íšŒ ë¸Œë¼ìš°ì € ì¸ì¦ í›„ token.json ì €ìž¥.
 
-        이미 token.json 이 있으면 재사용. 만료됐으면 refresh_token 으로 자동 갱신.
-        client_secret.json 이 없으면 env 의 YOUTUBE_CLIENT_ID/SECRET 로 즉석 생성.
+        ì´ë¯¸ token.json ì´ ìžˆìœ¼ë©´ ìž¬ì‚¬ìš©. ë§Œë£Œëìœ¼ë©´ refresh_token ìœ¼ë¡œ ìžë™ ê°±ì‹ .
+        client_secret.json ì´ ì—†ìœ¼ë©´ env ì˜ YOUTUBE_CLIENT_ID/SECRET ë¡œ ì¦‰ì„ ìƒì„±.
         """
         creds = None
 
         if self.token_path.exists():
             try:
-                creds = Credentials.from_authorized_user_file(str(self.token_path), SCOPES)
+                creds = _load_credentials_from_token_file(self.token_path)
             except Exception as e:
-                raise YouTubeAuthError(f"token.json 로드 실패: {e}") from e
+                raise YouTubeAuthError(f"token.json ë¡œë“œ ì‹¤íŒ¨: {e}") from e
+            if not _token_file_has_required_scopes(self.token_path):
+                creds = None
 
         if not creds or not creds.valid:
             if creds and creds.expired and creds.refresh_token:
                 try:
                     creds.refresh(Request())
                 except Exception as e:
-                    raise YouTubeAuthError(f"토큰 갱신 실패: {e}") from e
+                    raise YouTubeAuthError(f"í† í° ê°±ì‹  ì‹¤íŒ¨: {e}") from e
             else:
                 if not CLIENT_SECRET_PATH.exists():
                     if not YOUTUBE_CLIENT_ID or not YOUTUBE_CLIENT_SECRET:
                         raise YouTubeAuthError(
-                            "YOUTUBE_CLIENT_ID / YOUTUBE_CLIENT_SECRET 환경변수가 설정되지 "
-                            "않았거나 client_secret.json 파일이 없습니다."
+                            "YOUTUBE_CLIENT_ID / YOUTUBE_CLIENT_SECRET í™˜ê²½ë³€ìˆ˜ê°€ ì„¤ì •ë˜ì§€ "
+                            "ì•Šì•˜ê±°ë‚˜ client_secret.json íŒŒì¼ì´ ì—†ìŠµë‹ˆë‹¤."
                         )
                     secret = {
                         "installed": {
@@ -151,38 +243,62 @@ class YouTubeUploader:
                         with open(CLIENT_SECRET_PATH, "w", encoding="utf-8") as f:
                             json.dump(secret, f)
                     except Exception as e:
-                        raise YouTubeAuthError(f"client_secret.json 생성 실패: {e}") from e
+                        raise YouTubeAuthError(f"client_secret.json ìƒì„± ì‹¤íŒ¨: {e}") from e
 
                 try:
                     flow = InstalledAppFlow.from_client_secrets_file(str(CLIENT_SECRET_PATH), SCOPES)
                     creds = flow.run_local_server(port=8090)
                 except Exception as e:
-                    raise YouTubeAuthError(f"OAuth 로컬 서버 플로우 실패: {e}") from e
+                    raise YouTubeAuthError(f"OAuth ë¡œì»¬ ì„œë²„ í”Œë¡œìš° ì‹¤íŒ¨: {e}") from e
 
             try:
                 self.token_path.parent.mkdir(parents=True, exist_ok=True)
                 with open(self.token_path, "w", encoding="utf-8") as f:
                     f.write(creds.to_json())
             except Exception as e:
-                raise YouTubeAuthError(f"token.json 저장 실패: {e}") from e
+                raise YouTubeAuthError(f"token.json ì €ìž¥ ì‹¤íŒ¨: {e}") from e
 
         try:
-            self.youtube = build("youtube", "v3", credentials=creds)
+            http_client = httplib2.Http(timeout=YOUTUBE_HTTP_TIMEOUT_SECONDS)
+            # YouTube resumable uploads use HTTP 308 "Resume Incomplete" as a
+            # normal progress response. httplib2 treats 308 as a redirect by
+            # default and can raise RedirectMissingLocation when no Location
+            # header is present, aborting otherwise healthy uploads.
+            try:
+                http_client.redirect_codes = frozenset(
+                    code for code in http_client.redirect_codes if code != 308
+                )
+            except Exception:
+                pass
+            http = AuthorizedHttp(
+                creds,
+                http=http_client,
+            )
+            self.youtube = build(
+                "youtube",
+                "v3",
+                http=http,
+                cache_discovery=False,
+            )
         except Exception as e:
-            raise YouTubeAuthError(f"youtube 클라이언트 빌드 실패: {e}") from e
+            raise YouTubeAuthError(f"youtube í´ë¼ì´ì–¸íŠ¸ ë¹Œë“œ ì‹¤íŒ¨: {e}") from e
 
     def is_authenticated(self) -> bool:
-        """token.json 이 있고 유효한 scope 로 로드 가능한지 non-destructive 체크."""
+        """token.json ì´ ìžˆê³  ìœ íš¨í•œ scope ë¡œ ë¡œë“œ ê°€ëŠ¥í•œì§€ non-destructive ì²´í¬."""
         if not self.token_path.exists():
             return False
         try:
-            creds = Credentials.from_authorized_user_file(str(self.token_path), SCOPES)
+            creds = _load_credentials_from_token_file(self.token_path)
         except Exception:
             return False
-        return creds is not None and (creds.valid or bool(creds.refresh_token))
+        return (
+            creds is not None
+            and _token_file_has_required_scopes(self.token_path)
+            and (creds.valid or bool(creds.refresh_token))
+        )
 
     def get_channel_info(self) -> dict:
-        """현재 인증된 계정의 YouTube 채널 정보 조회.
+        """í˜„ìž¬ ì¸ì¦ëœ ê³„ì •ì˜ YouTube ì±„ë„ ì •ë³´ ì¡°íšŒ.
 
         Returns:
             {
@@ -195,7 +311,7 @@ class YouTubeUploader:
             }
 
         Raises:
-            YouTubeAuthError: 인증 안 됐거나 API 호출 실패.
+            YouTubeAuthError: ì¸ì¦ ì•ˆ ëê±°ë‚˜ API í˜¸ì¶œ ì‹¤íŒ¨.
         """
         if self.youtube is None:
             self.authenticate()
@@ -205,12 +321,12 @@ class YouTubeUploader:
                 mine=True,
             ).execute()
         except Exception as e:
-            raise YouTubeAuthError(f"채널 정보 조회 실패: {e}") from e
+            raise YouTubeAuthError(f"ì±„ë„ ì •ë³´ ì¡°íšŒ ì‹¤íŒ¨: {e}") from e
 
         items = resp.get("items") or []
         if not items:
             raise YouTubeAuthError(
-                "인증된 계정에 연결된 YouTube 채널이 없습니다."
+                "ì¸ì¦ëœ ê³„ì •ì— ì—°ê²°ëœ YouTube ì±„ë„ì´ ì—†ìŠµë‹ˆë‹¤."
             )
         item = items[0]
         snippet = item.get("snippet") or {}
@@ -239,19 +355,19 @@ class YouTubeUploader:
         }
 
     def logout(self) -> bool:
-        """저장된 token.json 을 삭제해 다음 호출에서 재인증을 강제.
+        """ì €ìž¥ëœ token.json ì„ ì‚­ì œí•´ ë‹¤ìŒ í˜¸ì¶œì—ì„œ ìž¬ì¸ì¦ì„ ê°•ì œ.
 
-        프로젝트별 토큰이 설정돼 있으면 그 토큰만, 아니면 전역 토큰을 삭제합니다.
+        í”„ë¡œì íŠ¸ë³„ í† í°ì´ ì„¤ì •ë¼ ìžˆìœ¼ë©´ ê·¸ í† í°ë§Œ, ì•„ë‹ˆë©´ ì „ì—­ í† í°ì„ ì‚­ì œí•©ë‹ˆë‹¤.
 
         Returns:
-            실제로 파일을 지웠는지 여부.
+            ì‹¤ì œë¡œ íŒŒì¼ì„ ì§€ì› ëŠ”ì§€ ì—¬ë¶€.
         """
         if self.token_path.exists():
             try:
                 self.token_path.unlink()
                 return True
             except Exception as e:
-                raise YouTubeAuthError(f"token.json 삭제 실패: {e}") from e
+                raise YouTubeAuthError(f"token.json ì‚­ì œ ì‹¤íŒ¨: {e}") from e
         return False
 
     # ---------- Upload ----------
@@ -269,20 +385,20 @@ class YouTubeUploader:
         made_for_kids: bool = False,
         progress_callback: Optional[Callable[[int], None]] = None,
     ) -> dict:
-        """영상 업로드 + (선택) 썸네일 설정.
+        """ì˜ìƒ ì—…ë¡œë“œ + (ì„ íƒ) ì¸ë„¤ì¼ ì„¤ì •.
 
         Returns:
             {"video_id": str, "url": str}
 
         Raises:
-            YouTubeUploadError: API 호출 실패 시.
+            YouTubeUploadError: API í˜¸ì¶œ ì‹¤íŒ¨ ì‹œ.
         """
         if privacy not in VALID_PRIVACY:
             raise YouTubeUploadError(
-                f"유효하지 않은 privacy 값: {privacy!r} (허용: {sorted(VALID_PRIVACY)})"
+                f"ìœ íš¨í•˜ì§€ ì•Šì€ privacy ê°’: {privacy!r} (í—ˆìš©: {sorted(VALID_PRIVACY)})"
             )
         if not os.path.exists(video_path):
-            raise YouTubeUploadError(f"영상 파일이 존재하지 않음: {video_path}")
+            raise YouTubeUploadError(f"ì˜ìƒ íŒŒì¼ì´ ì¡´ìž¬í•˜ì§€ ì•ŠìŒ: {video_path}")
 
         if self.youtube is None:
             self.authenticate()
@@ -310,7 +426,7 @@ class YouTubeUploader:
                 video_path,
                 mimetype="video/mp4",
                 resumable=True,
-                chunksize=10 * 1024 * 1024,
+                chunksize=YOUTUBE_UPLOAD_CHUNK_SIZE,
             )
             request = self.youtube.videos().insert(
                 part="snippet,status",
@@ -319,29 +435,76 @@ class YouTubeUploader:
             )
 
             response = None
+            transient_errors = 0
             while response is None:
-                status, response = request.next_chunk()
+                try:
+                    status, response = request.next_chunk(num_retries=5)
+                    transient_errors = 0
+                except Exception as e:
+                    if not _is_transient_upload_error(e):
+                        raise
+                    transient_errors += 1
+                    if transient_errors > YOUTUBE_UPLOAD_TRANSIENT_RETRIES:
+                        existing = self.find_existing_upload_by_title(title, max_results=25)
+                        if existing:
+                            video_id = (existing.get("video_id") or "").strip()
+                            if video_id:
+                                return {
+                                    "video_id": video_id,
+                                    "url": existing.get("url") or f"https://youtube.com/watch?v={video_id}",
+                                    "title": existing.get("title") or title,
+                                    "already_uploaded": True,
+                                    "recovered_after_upload_timeout": True,
+                                }
+                        raise
+                    time.sleep(min(60, 5 * transient_errors))
+                    continue
                 if status and progress_callback:
                     try:
                         progress_callback(int(status.progress() * 100))
                     except Exception:
-                        pass  # 콜백 실패는 업로드를 막으면 안 됨
+                        pass  # ì½œë°± ì‹¤íŒ¨ëŠ” ì—…ë¡œë“œë¥¼ ë§‰ìœ¼ë©´ ì•ˆ ë¨
         except Exception as e:
-            raise YouTubeUploadError(f"영상 업로드 실패: {e}") from e
+            if _is_transient_upload_error(e):
+                existing = self.find_existing_upload_by_title(title, max_results=25)
+                if existing:
+                    video_id = (existing.get("video_id") or "").strip()
+                    if video_id:
+                        return {
+                            "video_id": video_id,
+                            "url": existing.get("url") or f"https://youtube.com/watch?v={video_id}",
+                            "title": existing.get("title") or title,
+                            "already_uploaded": True,
+                            "recovered_after_upload_timeout": True,
+                        }
+            err_text = str(e)
+            if "uploadLimitExceeded" in err_text or "exceeded the number of videos" in err_text:
+                raise YouTubeUploadError(
+                    "YouTube 업로드 제한: 이 계정은 현재 추가 영상을 업로드할 수 없습니다. "
+                    "일일/계정 업로드 한도가 풀린 뒤 업로드만 다시 시도하세요. "
+                    "(reason: uploadLimitExceeded)"
+                ) from e
+            raise YouTubeUploadError(_friendly_youtube_error("영상 업로드 실패", e)) from e
 
         video_id = response.get("id")
         if not video_id:
-            raise YouTubeUploadError(f"업로드 응답에 video id 가 없음: {response!r}")
+            raise YouTubeUploadError(f"ì—…ë¡œë“œ ì‘ë‹µì— video id ê°€ ì—†ìŒ: {response!r}")
 
-        # 썸네일 설정 (선택)
+        # ì¸ë„¤ì¼ ì„¤ì • (ì„ íƒ)
         if thumbnail_path and os.path.exists(thumbnail_path):
             try:
+                mime = "image/png"
+                lower = thumbnail_path.lower()
+                if lower.endswith(".jpg") or lower.endswith(".jpeg"):
+                    mime = "image/jpeg"
+                elif lower.endswith(".webp"):
+                    mime = "image/webp"
                 self.youtube.thumbnails().set(
                     videoId=video_id,
-                    media_body=MediaFileUpload(thumbnail_path, mimetype="image/png"),
-                ).execute()
+                    media_body=MediaFileUpload(thumbnail_path, mimetype=mime),
+                ).execute(num_retries=3)
             except Exception as e:
-                # 썸네일 실패해도 영상 자체는 업로드 성공이므로 dict 에 에러만 기록
+                # ì¸ë„¤ì¼ ì‹¤íŒ¨í•´ë„ ì˜ìƒ ìžì²´ëŠ” ì—…ë¡œë“œ ì„±ê³µì´ë¯€ë¡œ dict ì— ì—ëŸ¬ë§Œ ê¸°ë¡
                 return {
                     "video_id": video_id,
                     "url": f"https://youtube.com/watch?v={video_id}",
@@ -353,62 +516,132 @@ class YouTubeUploader:
             "url": f"https://youtube.com/watch?v={video_id}",
         }
 
+    def upload_caption(
+        self,
+        video_id: str,
+        caption_path: str,
+        language: str = "ko",
+        name: Optional[str] = None,
+        is_draft: bool = False,
+    ) -> dict:
+        """Upload a timed caption track to an existing YouTube video."""
+        if not video_id or not str(video_id).strip():
+            raise YouTubeUploadError("caption upload failed: video_id is empty")
+        if not os.path.exists(caption_path):
+            raise YouTubeUploadError(f"caption file does not exist: {caption_path}")
+
+        if self.youtube is None:
+            self.authenticate()
+
+        lang = (language or "ko").strip() or "ko"
+        body = {
+            "snippet": {
+                "videoId": str(video_id).strip(),
+                "language": lang,
+                "name": (name or lang).strip(),
+                "isDraft": bool(is_draft),
+            }
+        }
+        try:
+            media = MediaFileUpload(
+                caption_path,
+                mimetype="application/octet-stream",
+                resumable=False,
+            )
+            response = self.youtube.captions().insert(
+                part="snippet",
+                body=body,
+                media_body=media,
+            ).execute(num_retries=3)
+        except Exception as e:
+            raise YouTubeUploadError(f"caption upload failed: {e}") from e
+
+        return {
+            "caption_id": response.get("id"),
+            "language": lang,
+            "name": body["snippet"]["name"],
+        }
+
     # ---------- Delete ----------
 
     def delete_video(self, video_id: str) -> None:
-        """업로드된 영상을 YouTube 에서 삭제.
+        """ì—…ë¡œë“œëœ ì˜ìƒì„ YouTube ì—ì„œ ì‚­ì œ.
 
-        YouTube API 의 videos.delete 를 호출합니다. **복구 불가능** 한 작업이므로
-        호출 전에 사용자에게 반드시 확인을 받아야 합니다. 라우터 레이어에서
-        `confirm=True` 같은 명시적 플래그를 강제해 이중 안전장치를 두세요.
+        YouTube API ì˜ videos.delete ë¥¼ í˜¸ì¶œí•©ë‹ˆë‹¤. **ë³µêµ¬ ë¶ˆê°€ëŠ¥** í•œ ìž‘ì—…ì´ë¯€ë¡œ
+        í˜¸ì¶œ ì „ì— ì‚¬ìš©ìžì—ê²Œ ë°˜ë“œì‹œ í™•ì¸ì„ ë°›ì•„ì•¼ í•©ë‹ˆë‹¤. ë¼ìš°í„° ë ˆì´ì–´ì—ì„œ
+        `confirm=True` ê°™ì€ ëª…ì‹œì  í”Œëž˜ê·¸ë¥¼ ê°•ì œí•´ ì´ì¤‘ ì•ˆì „ìž¥ì¹˜ë¥¼ ë‘ì„¸ìš”.
 
         Args:
-            video_id: 삭제할 유튜브 video id (예: "dQw4w9WgXcQ").
+            video_id: ì‚­ì œí•  ìœ íŠœë¸Œ video id (ì˜ˆ: "dQw4w9WgXcQ").
 
         Raises:
-            YouTubeUploadError: video_id 가 비었거나 API 호출이 실패한 경우.
-            YouTubeAuthError: 인증 실패.
+            YouTubeUploadError: video_id ê°€ ë¹„ì—ˆê±°ë‚˜ API í˜¸ì¶œì´ ì‹¤íŒ¨í•œ ê²½ìš°.
+            YouTubeAuthError: ì¸ì¦ ì‹¤íŒ¨.
         """
         if not video_id or not str(video_id).strip():
-            raise YouTubeUploadError("video_id 가 비어있어 삭제할 수 없습니다.")
+            raise YouTubeUploadError("video_id ê°€ ë¹„ì–´ìžˆì–´ ì‚­ì œí•  ìˆ˜ ì—†ìŠµë‹ˆë‹¤.")
         if self.youtube is None:
             self.authenticate()
         try:
-            # videos.delete 는 성공 시 204 No Content — execute() 는 빈 dict 반환
+            # videos.delete ëŠ” ì„±ê³µ ì‹œ 204 No Content â€” execute() ëŠ” ë¹ˆ dict ë°˜í™˜
             self.youtube.videos().delete(id=str(video_id).strip()).execute()
         except Exception as e:
-            raise YouTubeUploadError(f"영상 삭제 실패: {e}") from e
+            raise YouTubeUploadError(f"ì˜ìƒ ì‚­ì œ ì‹¤íŒ¨: {e}") from e
 
-    # ---------- Studio: 영상 조회/편집 (v1.1.31) ----------
+    # ---------- Studio: ì˜ìƒ ì¡°íšŒ/íŽ¸ì§‘ (v1.1.31) ----------
     #
-    # 이 아래 메서드들은 LongTube 파이프라인 밖에서 이미 업로드되어 있는 영상도
-    # 관리하기 위한 일반 Studio 기능입니다. 모두 `youtube.force-ssl` + `youtube`
-    # scope 로 동작 — 추가 scope 없이 videos/playlists/commentThreads 전체 편집
-    # 가능. YouTube Analytics (조회수 그래프 등) 는 별도 scope 라 미구현.
+    # ì´ ì•„ëž˜ ë©”ì„œë“œë“¤ì€ LongTube íŒŒì´í”„ë¼ì¸ ë°–ì—ì„œ ì´ë¯¸ ì—…ë¡œë“œë˜ì–´ ìžˆëŠ” ì˜ìƒë„
+    # ê´€ë¦¬í•˜ê¸° ìœ„í•œ ì¼ë°˜ Studio ê¸°ëŠ¥ìž…ë‹ˆë‹¤. ëª¨ë‘ `youtube.force-ssl` + `youtube`
+    # scope ë¡œ ë™ìž‘ â€” ì¶”ê°€ scope ì—†ì´ videos/playlists/commentThreads ì „ì²´ íŽ¸ì§‘
+    # ê°€ëŠ¥. YouTube Analytics (ì¡°íšŒìˆ˜ ê·¸ëž˜í”„ ë“±) ëŠ” ë³„ë„ scope ë¼ ë¯¸êµ¬í˜„.
 
     def _ensure(self) -> None:
         if self.youtube is None:
             self.authenticate()
+
+    def _get_uploads_playlist_id(self) -> str:
+        """Return and cache this channel's uploads playlist id.
+
+        `channels.list(mine=True, part=contentDetails)` is cheap, but this
+        service may call it repeatedly during upload verification. Caching it
+        per uploader instance keeps the hot path lean.
+        """
+        self._ensure()
+        if self._uploads_playlist_id:
+            return self._uploads_playlist_id
+        resp = self.youtube.channels().list(
+            part="contentDetails",
+            mine=True,
+        ).execute()
+        items = resp.get("items") or []
+        if not items:
+            return ""
+        uploads_playlist_id = (
+            ((items[0].get("contentDetails") or {}).get("relatedPlaylists") or {}).get("uploads")
+            or ""
+        ).strip()
+        self._uploads_playlist_id = uploads_playlist_id
+        return uploads_playlist_id
 
     def list_my_videos(
         self,
         max_results: int = 50,
         page_token: Optional[str] = None,
         query: Optional[str] = None,
+        include_details: bool = True,
     ) -> dict:
-        """내 채널에 업로드된 영상 목록.
+        """ë‚´ ì±„ë„ì— ì—…ë¡œë“œëœ ì˜ìƒ ëª©ë¡.
 
-        구현 노트: `search.list(forMine=True, type=video)` 는 **업로드 쿼터
-        100 units** 를 쓰고 결과에 title/description/thumbnails/publishedAt 만
-        내려줌. 상세(조회수, 길이, privacyStatus, categoryId) 가 필요하면
-        이후 `videos.list(id=..,part=snippet,status,statistics,contentDetails)`
-        로 보강 호출이 필요하지만, 여기서는 UI 가 목록만 빨리 받아야 하므로
-        1차 응답을 그대로 반환하고 상세는 get_video 에서 따로 제공.
+        Quota note: this intentionally avoids `search.list(forMine=True, q=...)`.
+        YouTube charges that endpoint much more heavily than uploads playlist
+        reads, so text search is implemented as a small local scan over the
+        channel uploads playlist.
 
         Args:
-            max_results: 1~50. YouTube 제한.
-            page_token: 다음 페이지 토큰.
-            query: 제목 검색어 (있으면 forMine + q).
+            max_results: 1~50. YouTube ì œí•œ.
+            page_token: ë‹¤ìŒ íŽ˜ì´ì§€ í† í°.
+            query: title/description search text. Uses cheap local filtering.
+            include_details: add videos.list status/statistics/duration fields.
 
         Returns:
             {"items": [...], "next_page_token": str|None, "total_results": int}
@@ -418,61 +651,61 @@ class YouTubeUploader:
         search_query = (query or "").strip()
 
         try:
-            if search_query:
-                req_params: dict = {
-                    "part": "snippet",
-                    "forMine": True,
-                    "type": "video",
-                    "maxResults": requested_max,
-                    "order": "date",
-                    "q": search_query,
+            uploads_playlist_id = self._get_uploads_playlist_id()
+            if not uploads_playlist_id:
+                return {
+                    "items": [],
+                    "next_page_token": None,
+                    "prev_page_token": None,
+                    "total_results": 0,
                 }
-                if page_token:
-                    req_params["pageToken"] = page_token
-                resp = self.youtube.search().list(**req_params).execute()
-                raw_items = resp.get("items") or []
-                next_page_token = resp.get("nextPageToken")
-                prev_page_token = resp.get("prevPageToken")
-                total_results = (resp.get("pageInfo") or {}).get("totalResults")
-            else:
-                ch_resp = self.youtube.channels().list(
-                    part="contentDetails",
-                    mine=True,
-                ).execute()
-                ch_items = ch_resp.get("items") or []
-                if not ch_items:
-                    return {
-                        "items": [],
-                        "next_page_token": None,
-                        "prev_page_token": None,
-                        "total_results": 0,
-                    }
-                uploads_playlist_id = (
-                    ((ch_items[0].get("contentDetails") or {}).get("relatedPlaylists") or {}).get("uploads")
-                    or ""
-                ).strip()
-                if not uploads_playlist_id:
-                    return {
-                        "items": [],
-                        "next_page_token": None,
-                        "prev_page_token": None,
-                        "total_results": 0,
-                    }
 
+            raw_items = []
+            next_page_token = None
+            prev_page_token = None
+            total_results = 0
+            token = page_token
+            query_norm = normalize_upload_title_for_match(search_query)
+            max_pages = 4 if query_norm else 1
+
+            for _ in range(max_pages):
                 req: dict = {
                     "part": "snippet,contentDetails",
                     "playlistId": uploads_playlist_id,
-                    "maxResults": requested_max,
+                    "maxResults": 50 if query_norm else requested_max,
                 }
-                if page_token:
-                    req["pageToken"] = page_token
+                if token:
+                    req["pageToken"] = token
                 resp = self.youtube.playlistItems().list(**req).execute()
-                raw_items = resp.get("items") or []
+                page_items = resp.get("items") or []
                 next_page_token = resp.get("nextPageToken")
                 prev_page_token = resp.get("prevPageToken")
                 total_results = (resp.get("pageInfo") or {}).get("totalResults")
+
+                if query_norm:
+                    for it in page_items:
+                        sn = it.get("snippet") or {}
+                        haystack = normalize_upload_title_for_match(
+                            f"{sn.get('title') or ''} {sn.get('description') or ''}"
+                        )
+                        if query_norm in haystack:
+                            raw_items.append(it)
+                            if len(raw_items) >= requested_max:
+                                break
+                    if len(raw_items) >= requested_max or not next_page_token:
+                        break
+                    token = next_page_token
+                    continue
+
+                raw_items = page_items
+                break
+
+            if query_norm:
+                next_page_token = None
+                prev_page_token = None
+                total_results = len(raw_items)
         except Exception as e:
-            raise YouTubeUploadError(_friendly_youtube_error("영상 목록 조회 실패", e)) from e
+            raise YouTubeUploadError(_friendly_youtube_error("ì˜ìƒ ëª©ë¡ ì¡°íšŒ ì‹¤íŒ¨", e)) from e
 
         items = []
         video_ids: list[str] = []
@@ -508,8 +741,8 @@ class YouTubeUploader:
             })
             video_ids.append(vid)
 
-        # 보강: videos.list 로 status + statistics + contentDetails 붙이기
-        if video_ids:
+        # ë³´ê°•: videos.list ë¡œ status + statistics + contentDetails ë¶™ì´ê¸°
+        if include_details and video_ids:
             try:
                 det_resp = self.youtube.videos().list(
                     part="status,statistics,contentDetails",
@@ -532,8 +765,8 @@ class YouTubeUploader:
                     item["comment_count"] = _to_int(stats.get("commentCount"))
                     item["duration"] = cd.get("duration")  # ISO 8601
             except Exception as e:
-                # 보강 실패해도 목록은 반환
-                print(f"[youtube studio] videos.list 보강 실패 (non-fatal): {e}")
+                # ë³´ê°• ì‹¤íŒ¨í•´ë„ ëª©ë¡ì€ ë°˜í™˜
+                print(f"[youtube studio] videos.list ë³´ê°• ì‹¤íŒ¨ (non-fatal): {e}")
 
         return {
             "items": items,
@@ -542,24 +775,201 @@ class YouTubeUploader:
             "total_results": total_results,
         }
 
-    def get_video(self, video_id: str) -> dict:
-        """영상 1 건 상세.
+    def find_existing_upload_by_title(self, title: str, max_results: int = 10) -> Optional[dict]:
+        """Return an already-uploaded video with the same normalized title.
 
-        snippet + status + statistics + contentDetails 를 모두 포함.
+        This uses the uploads playlist, not `search.list(q=...)`. The search
+        endpoint is expensive enough to exhaust quota when every upload checks
+        for duplicates first.
+        """
+        wanted = normalize_upload_title_for_match(title)
+        if not wanted:
+            return None
+        token = None
+        pages = 0
+        while pages < 6:
+            data = self.list_my_videos(
+                max_results=max_results,
+                page_token=token,
+                include_details=False,
+            )
+            for item in data.get("items") or []:
+                if normalize_upload_title_for_match(item.get("title") or "") == wanted:
+                    video_id = (item.get("video_id") or "").strip()
+                    if video_id and not item.get("url"):
+                        item = {**item, "url": f"https://www.youtube.com/watch?v={video_id}"}
+                    return item
+            token = data.get("next_page_token")
+            if not token:
+                break
+            pages += 1
+        return None
+
+    def confirm_upload_visible_in_studio(
+        self,
+        *,
+        video_id: Optional[str] = None,
+        title: Optional[str] = None,
+        timeout_seconds: int = 120,
+        interval_seconds: int = 10,
+    ) -> dict:
+        """Wait until an uploaded video is visible in the channel's Studio list.
+
+        `videos.insert` returning a video id only means YouTube accepted the
+        resumable upload. For queue completion we want the stricter condition:
+        the authenticated channel's own uploads list can see the video. This
+        uses the uploads playlist path from `list_my_videos()` instead of
+        `search.list(q=...)` so upload-time verification does not burn the
+        expensive search quota.
+        """
+        vid = (video_id or "").strip()
+        wanted_title = normalize_upload_title_for_match(title or "")
+        deadline = time.monotonic() + max(1, int(timeout_seconds or 120))
+        interval = max(1, int(interval_seconds or 10))
+        last_seen_count = 0
+
+        while True:
+            data = self.list_my_videos(max_results=25)
+            items = data.get("items") or []
+            last_seen_count = len(items)
+            for item in items:
+                item_video_id = (item.get("video_id") or "").strip()
+                item_title = normalize_upload_title_for_match(item.get("title") or "")
+                id_matches = bool(vid and item_video_id == vid)
+                title_matches = bool(wanted_title and item_title == wanted_title)
+                if id_matches or (not vid and title_matches):
+                    return {
+                        **item,
+                        "url": item.get("url") or (
+                            f"https://www.youtube.com/watch?v={item_video_id}"
+                            if item_video_id
+                            else None
+                        ),
+                        "studio_verified": True,
+                        "verification_method": "uploads_playlist",
+                    }
+
+            if time.monotonic() >= deadline:
+                raise YouTubeUploadError(
+                    "YouTube 업로드 확인 실패: 업로드 API는 성공했지만 "
+                    "Studio 업로드 목록에서 영상을 확인하지 못했습니다. "
+                    f"(video_id={vid or '-'}, title={title or '-'}, last_seen={last_seen_count})"
+            )
+            time.sleep(interval)
+
+    def get_video_processing_state(self, video_id: str) -> dict:
+        """Return upload/processing state for one video."""
+        self._ensure()
+        vid = str(video_id or "").strip()
+        if not vid:
+            raise YouTubeUploadError("video_id is empty.")
+        try:
+            resp = self.youtube.videos().list(
+                part="snippet,status,processingDetails",
+                id=vid,
+            ).execute()
+        except Exception as e:
+            raise YouTubeUploadError(f"video processing lookup failed: {e}") from e
+        items = resp.get("items") or []
+        if not items:
+            raise YouTubeUploadError(f"video not found: {vid}")
+        item = items[0]
+        snippet = item.get("snippet") or {}
+        status = item.get("status") or {}
+        processing = item.get("processingDetails") or {}
+        upload_status = status.get("uploadStatus")
+        processing_status = processing.get("processingStatus")
+        failed_reason = (
+            status.get("failureReason")
+            or status.get("rejectionReason")
+            or processing.get("processingFailureReason")
+        )
+        processed = upload_status == "processed" or processing_status == "succeeded"
+        terminal_failure = upload_status in ("failed", "rejected", "deleted") or processing_status in (
+            "failed",
+            "terminated",
+        )
+        return {
+            "video_id": vid,
+            "title": snippet.get("title") or "",
+            "url": f"https://www.youtube.com/watch?v={vid}",
+            "upload_status": upload_status,
+            "processing_status": processing_status,
+            "processed": bool(processed and not terminal_failure),
+            "terminal_failure": bool(terminal_failure),
+            "failed_reason": failed_reason,
+        }
+
+    def confirm_upload_processed_in_studio(
+        self,
+        *,
+        video_id: Optional[str] = None,
+        title: Optional[str] = None,
+        timeout_seconds: int = 900,
+        interval_seconds: int = 20,
+    ) -> dict:
+        """Wait until Studio sees the upload and YouTube processing is done.
+
+        The upload API can return a video id while Studio still shows
+        "processing queued". Queue completion must wait for the processing
+        state, otherwise completed tasks can still be unusable in Studio.
+        """
+        visible = self.confirm_upload_visible_in_studio(
+            video_id=video_id,
+            title=title,
+            timeout_seconds=min(max(1, int(timeout_seconds or 900)), 120),
+            interval_seconds=interval_seconds,
+        )
+        vid = (video_id or visible.get("video_id") or "").strip()
+        if not vid:
+            raise YouTubeUploadError("YouTube processing check failed: video_id is empty.")
+
+        deadline = time.monotonic() + max(1, int(timeout_seconds or 900))
+        interval = max(1, int(interval_seconds or 20))
+        last_state: dict = {}
+        while True:
+            last_state = self.get_video_processing_state(vid)
+            if last_state.get("terminal_failure"):
+                raise YouTubeUploadError(
+                    "YouTube processing failed: "
+                    f"video_id={vid}, uploadStatus={last_state.get('upload_status')}, "
+                    f"processingStatus={last_state.get('processing_status')}, "
+                    f"reason={last_state.get('failed_reason') or '-'}"
+                )
+            if last_state.get("processed"):
+                return {
+                    **visible,
+                    **last_state,
+                    "studio_verified": True,
+                    "processing_verified": True,
+                    "verification_method": "uploads_playlist+videos.list",
+                }
+            if time.monotonic() >= deadline:
+                raise YouTubeUploadError(
+                    "YouTube upload is visible but still processing. "
+                    f"video_id={vid}, uploadStatus={last_state.get('upload_status') or '-'}, "
+                    f"processingStatus={last_state.get('processing_status') or '-'}"
+                )
+            time.sleep(interval)
+
+    def get_video(self, video_id: str) -> dict:
+        """ì˜ìƒ 1 ê±´ ìƒì„¸.
+
+        snippet + status + statistics + contentDetails ë¥¼ ëª¨ë‘ í¬í•¨.
         """
         self._ensure()
         if not video_id or not str(video_id).strip():
-            raise YouTubeUploadError("video_id 가 비어있습니다.")
+            raise YouTubeUploadError("video_id ê°€ ë¹„ì–´ìžˆìŠµë‹ˆë‹¤.")
         try:
             resp = self.youtube.videos().list(
                 part="snippet,status,statistics,contentDetails",
                 id=str(video_id).strip(),
             ).execute()
         except Exception as e:
-            raise YouTubeUploadError(f"영상 상세 조회 실패: {e}") from e
+            raise YouTubeUploadError(f"ì˜ìƒ ìƒì„¸ ì¡°íšŒ ì‹¤íŒ¨: {e}") from e
         items = resp.get("items") or []
         if not items:
-            raise YouTubeUploadError(f"영상을 찾을 수 없습니다: {video_id}")
+            raise YouTubeUploadError(f"ì˜ìƒì„ ì°¾ì„ ìˆ˜ ì—†ìŠµë‹ˆë‹¤: {video_id}")
         v = items[0]
         sn = v.get("snippet") or {}
         st = v.get("status") or {}
@@ -613,38 +1023,38 @@ class YouTubeUploader:
         embeddable: Optional[bool] = None,
         public_stats_viewable: Optional[bool] = None,
     ) -> dict:
-        """영상 메타데이터 업데이트.
+        """ì˜ìƒ ë©”íƒ€ë°ì´í„° ì—…ë°ì´íŠ¸.
 
-        YouTube 의 videos.update 는 `part` 에 포함된 리소스 필드를 **통째로**
-        덮어쓰므로 먼저 현재 값을 읽어와서 None 이 아닌 필드만 교체한 전체
-        snippet/status 를 다시 보내는 merge 방식으로 구현합니다.
+        YouTube ì˜ videos.update ëŠ” `part` ì— í¬í•¨ëœ ë¦¬ì†ŒìŠ¤ í•„ë“œë¥¼ **í†µì§¸ë¡œ**
+        ë®ì–´ì“°ë¯€ë¡œ ë¨¼ì € í˜„ìž¬ ê°’ì„ ì½ì–´ì™€ì„œ None ì´ ì•„ë‹Œ í•„ë“œë§Œ êµì²´í•œ ì „ì²´
+        snippet/status ë¥¼ ë‹¤ì‹œ ë³´ë‚´ëŠ” merge ë°©ì‹ìœ¼ë¡œ êµ¬í˜„í•©ë‹ˆë‹¤.
 
-        예약 게시: `privacy_status="private"` + `publish_at=<RFC3339>` 를
-        함께 넘기면 YouTube 가 해당 시각에 public 으로 자동 전환합니다. 이미
-        public 인 영상에 publish_at 을 넣으면 API 가 400 을 돌려줍니다.
+        ì˜ˆì•½ ê²Œì‹œ: `privacy_status="private"` + `publish_at=<RFC3339>` ë¥¼
+        í•¨ê»˜ ë„˜ê¸°ë©´ YouTube ê°€ í•´ë‹¹ ì‹œê°ì— public ìœ¼ë¡œ ìžë™ ì „í™˜í•©ë‹ˆë‹¤. ì´ë¯¸
+        public ì¸ ì˜ìƒì— publish_at ì„ ë„£ìœ¼ë©´ API ê°€ 400 ì„ ëŒë ¤ì¤ë‹ˆë‹¤.
 
         Raises:
-            YouTubeUploadError: API 실패.
+            YouTubeUploadError: API ì‹¤íŒ¨.
         """
         self._ensure()
         if not video_id or not str(video_id).strip():
-            raise YouTubeUploadError("video_id 가 비어있습니다.")
+            raise YouTubeUploadError("video_id ê°€ ë¹„ì–´ìžˆìŠµë‹ˆë‹¤.")
         if privacy_status is not None and privacy_status not in VALID_PRIVACY:
             raise YouTubeUploadError(
-                f"privacy_status 값이 유효하지 않습니다: {privacy_status!r}"
+                f"privacy_status ê°’ì´ ìœ íš¨í•˜ì§€ ì•ŠìŠµë‹ˆë‹¤: {privacy_status!r}"
             )
 
-        # 현재 영상 상태 읽어오기 (merge 기반)
+        # í˜„ìž¬ ì˜ìƒ ìƒíƒœ ì½ì–´ì˜¤ê¸° (merge ê¸°ë°˜)
         try:
             cur_resp = self.youtube.videos().list(
                 part="snippet,status",
                 id=str(video_id).strip(),
             ).execute()
         except Exception as e:
-            raise YouTubeUploadError(f"영상 현재 상태 조회 실패: {e}") from e
+            raise YouTubeUploadError(f"ì˜ìƒ í˜„ìž¬ ìƒíƒœ ì¡°íšŒ ì‹¤íŒ¨: {e}") from e
         cur_items = cur_resp.get("items") or []
         if not cur_items:
-            raise YouTubeUploadError(f"영상을 찾을 수 없습니다: {video_id}")
+            raise YouTubeUploadError(f"ì˜ìƒì„ ì°¾ì„ ìˆ˜ ì—†ìŠµë‹ˆë‹¤: {video_id}")
         cur = cur_items[0]
         cur_snippet = cur.get("snippet") or {}
         cur_status = cur.get("status") or {}
@@ -680,9 +1090,9 @@ class YouTubeUploader:
             new_status["embeddable"] = bool(embeddable)
         if public_stats_viewable is not None:
             new_status["publicStatsViewable"] = bool(public_stats_viewable)
-        # publish_at 예약은 privacyStatus 가 private 일 때만 유효
+        # publish_at ì˜ˆì•½ì€ privacyStatus ê°€ private ì¼ ë•Œë§Œ ìœ íš¨
         if new_status.get("publishAt") and new_status.get("privacyStatus") != "private":
-            # 예약 넣는데 public 이면 YouTube 가 거부 — 명시적으로 private 로 내림
+            # ì˜ˆì•½ ë„£ëŠ”ë° public ì´ë©´ YouTube ê°€ ê±°ë¶€ â€” ëª…ì‹œì ìœ¼ë¡œ private ë¡œ ë‚´ë¦¼
             new_status["privacyStatus"] = "private"
 
         body = {
@@ -696,7 +1106,7 @@ class YouTubeUploader:
                 body=body,
             ).execute()
         except Exception as e:
-            raise YouTubeUploadError(f"영상 업데이트 실패: {e}") from e
+            raise YouTubeUploadError(f"ì˜ìƒ ì—…ë°ì´íŠ¸ ì‹¤íŒ¨: {e}") from e
         return {
             "video_id": resp.get("id") or video_id,
             "snippet": resp.get("snippet") or {},
@@ -704,12 +1114,12 @@ class YouTubeUploader:
         }
 
     def set_thumbnail(self, video_id: str, thumbnail_path: str) -> dict:
-        """기존 영상의 썸네일 교체."""
+        """ê¸°ì¡´ ì˜ìƒì˜ ì¸ë„¤ì¼ êµì²´."""
         self._ensure()
         if not video_id or not str(video_id).strip():
-            raise YouTubeUploadError("video_id 가 비어있습니다.")
+            raise YouTubeUploadError("video_id ê°€ ë¹„ì–´ìžˆìŠµë‹ˆë‹¤.")
         if not os.path.exists(thumbnail_path):
-            raise YouTubeUploadError(f"썸네일 파일이 없습니다: {thumbnail_path}")
+            raise YouTubeUploadError(f"ì¸ë„¤ì¼ íŒŒì¼ì´ ì—†ìŠµë‹ˆë‹¤: {thumbnail_path}")
         mime = "image/png"
         lower = thumbnail_path.lower()
         if lower.endswith(".jpg") or lower.endswith(".jpeg"):
@@ -720,9 +1130,9 @@ class YouTubeUploader:
             self.youtube.thumbnails().set(
                 videoId=str(video_id).strip(),
                 media_body=MediaFileUpload(thumbnail_path, mimetype=mime),
-            ).execute()
+            ).execute(num_retries=3)
         except Exception as e:
-            raise YouTubeUploadError(f"썸네일 교체 실패: {e}") from e
+            raise YouTubeUploadError(_friendly_youtube_error("썸네일 교체 실패", e)) from e
         return {"video_id": video_id, "thumbnail_path": thumbnail_path}
 
     # ---------- Playlists ----------
@@ -736,7 +1146,7 @@ class YouTubeUploader:
                 maxResults=max(1, min(int(max_results or 50), 50)),
             ).execute()
         except Exception as e:
-            raise YouTubeUploadError(f"재생목록 조회 실패: {e}") from e
+            raise YouTubeUploadError(f"ìž¬ìƒëª©ë¡ ì¡°íšŒ ì‹¤íŒ¨: {e}") from e
         out = []
         for it in resp.get("items") or []:
             sn = it.get("snippet") or {}
@@ -769,10 +1179,10 @@ class YouTubeUploader:
         self._ensure()
         if privacy_status not in VALID_PRIVACY:
             raise YouTubeUploadError(
-                f"privacy_status 값이 유효하지 않습니다: {privacy_status!r}"
+                f"privacy_status ê°’ì´ ìœ íš¨í•˜ì§€ ì•ŠìŠµë‹ˆë‹¤: {privacy_status!r}"
             )
         if not title or not title.strip():
-            raise YouTubeUploadError("재생목록 title 이 비어있습니다.")
+            raise YouTubeUploadError("ìž¬ìƒëª©ë¡ title ì´ ë¹„ì–´ìžˆìŠµë‹ˆë‹¤.")
         try:
             resp = self.youtube.playlists().insert(
                 part="snippet,status",
@@ -785,7 +1195,7 @@ class YouTubeUploader:
                 },
             ).execute()
         except Exception as e:
-            raise YouTubeUploadError(f"재생목록 생성 실패: {e}") from e
+            raise YouTubeUploadError(f"ìž¬ìƒëª©ë¡ ìƒì„± ì‹¤íŒ¨: {e}") from e
         return {"playlist_id": resp.get("id"), "title": title.strip()}
 
     def update_playlist(
@@ -798,17 +1208,17 @@ class YouTubeUploader:
     ) -> dict:
         self._ensure()
         if not playlist_id:
-            raise YouTubeUploadError("playlist_id 가 비어있습니다.")
+            raise YouTubeUploadError("playlist_id ê°€ ë¹„ì–´ìžˆìŠµë‹ˆë‹¤.")
         try:
             cur = self.youtube.playlists().list(
                 part="snippet,status",
                 id=playlist_id,
             ).execute()
         except Exception as e:
-            raise YouTubeUploadError(f"재생목록 조회 실패: {e}") from e
+            raise YouTubeUploadError(f"ìž¬ìƒëª©ë¡ ì¡°íšŒ ì‹¤íŒ¨: {e}") from e
         items = cur.get("items") or []
         if not items:
-            raise YouTubeUploadError(f"재생목록을 찾을 수 없습니다: {playlist_id}")
+            raise YouTubeUploadError(f"ìž¬ìƒëª©ë¡ì„ ì°¾ì„ ìˆ˜ ì—†ìŠµë‹ˆë‹¤: {playlist_id}")
         cur_sn = items[0].get("snippet") or {}
         cur_st = items[0].get("status") or {}
         new_sn = {
@@ -822,7 +1232,7 @@ class YouTubeUploader:
         if privacy_status is not None:
             if privacy_status not in VALID_PRIVACY:
                 raise YouTubeUploadError(
-                    f"privacy_status 값이 유효하지 않습니다: {privacy_status!r}"
+                    f"privacy_status ê°’ì´ ìœ íš¨í•˜ì§€ ì•ŠìŠµë‹ˆë‹¤: {privacy_status!r}"
                 )
             new_st["privacyStatus"] = privacy_status
         try:
@@ -831,17 +1241,17 @@ class YouTubeUploader:
                 body={"id": playlist_id, "snippet": new_sn, "status": new_st},
             ).execute()
         except Exception as e:
-            raise YouTubeUploadError(f"재생목록 업데이트 실패: {e}") from e
+            raise YouTubeUploadError(f"ìž¬ìƒëª©ë¡ ì—…ë°ì´íŠ¸ ì‹¤íŒ¨: {e}") from e
         return {"playlist_id": resp.get("id"), "snippet": resp.get("snippet") or {}}
 
     def delete_playlist(self, playlist_id: str) -> None:
         self._ensure()
         if not playlist_id:
-            raise YouTubeUploadError("playlist_id 가 비어있습니다.")
+            raise YouTubeUploadError("playlist_id ê°€ ë¹„ì–´ìžˆìŠµë‹ˆë‹¤.")
         try:
             self.youtube.playlists().delete(id=playlist_id).execute()
         except Exception as e:
-            raise YouTubeUploadError(f"재생목록 삭제 실패: {e}") from e
+            raise YouTubeUploadError(f"ìž¬ìƒëª©ë¡ ì‚­ì œ ì‹¤íŒ¨: {e}") from e
 
     def list_playlist_items(
         self,
@@ -851,7 +1261,7 @@ class YouTubeUploader:
     ) -> dict:
         self._ensure()
         if not playlist_id:
-            raise YouTubeUploadError("playlist_id 가 비어있습니다.")
+            raise YouTubeUploadError("playlist_id ê°€ ë¹„ì–´ìžˆìŠµë‹ˆë‹¤.")
         try:
             req: dict = {
                 "part": "snippet,contentDetails",
@@ -862,7 +1272,7 @@ class YouTubeUploader:
                 req["pageToken"] = page_token
             resp = self.youtube.playlistItems().list(**req).execute()
         except Exception as e:
-            raise YouTubeUploadError(f"재생목록 항목 조회 실패: {e}") from e
+            raise YouTubeUploadError(f"ìž¬ìƒëª©ë¡ í•­ëª© ì¡°íšŒ ì‹¤íŒ¨: {e}") from e
         out = []
         for it in resp.get("items") or []:
             sn = it.get("snippet") or {}
@@ -891,7 +1301,7 @@ class YouTubeUploader:
     def add_to_playlist(self, playlist_id: str, video_id: str) -> dict:
         self._ensure()
         if not playlist_id or not video_id:
-            raise YouTubeUploadError("playlist_id 또는 video_id 가 비어있습니다.")
+            raise YouTubeUploadError("playlist_id ë˜ëŠ” video_id ê°€ ë¹„ì–´ìžˆìŠµë‹ˆë‹¤.")
         try:
             resp = self.youtube.playlistItems().insert(
                 part="snippet",
@@ -903,17 +1313,17 @@ class YouTubeUploader:
                 },
             ).execute()
         except Exception as e:
-            raise YouTubeUploadError(f"재생목록 항목 추가 실패: {e}") from e
+            raise YouTubeUploadError(f"ìž¬ìƒëª©ë¡ í•­ëª© ì¶”ê°€ ì‹¤íŒ¨: {e}") from e
         return {"item_id": resp.get("id"), "playlist_id": playlist_id, "video_id": video_id}
 
     def remove_from_playlist(self, item_id: str) -> None:
         self._ensure()
         if not item_id:
-            raise YouTubeUploadError("item_id 가 비어있습니다.")
+            raise YouTubeUploadError("item_id ê°€ ë¹„ì–´ìžˆìŠµë‹ˆë‹¤.")
         try:
             self.youtube.playlistItems().delete(id=item_id).execute()
         except Exception as e:
-            raise YouTubeUploadError(f"재생목록 항목 제거 실패: {e}") from e
+            raise YouTubeUploadError(f"ìž¬ìƒëª©ë¡ í•­ëª© ì œê±° ì‹¤íŒ¨: {e}") from e
 
     # ---------- Comments ----------
 
@@ -924,10 +1334,10 @@ class YouTubeUploader:
         page_token: Optional[str] = None,
         order: str = "time",
     ) -> dict:
-        """영상의 최상위 댓글 스레드. `order` 는 "time" 또는 "relevance"."""
+        """ì˜ìƒì˜ ìµœìƒìœ„ ëŒ“ê¸€ ìŠ¤ë ˆë“œ. `order` ëŠ” "time" ë˜ëŠ” "relevance"."""
         self._ensure()
         if not video_id:
-            raise YouTubeUploadError("video_id 가 비어있습니다.")
+            raise YouTubeUploadError("video_id ê°€ ë¹„ì–´ìžˆìŠµë‹ˆë‹¤.")
         try:
             req: dict = {
                 "part": "snippet,replies",
@@ -940,7 +1350,7 @@ class YouTubeUploader:
                 req["pageToken"] = page_token
             resp = self.youtube.commentThreads().list(**req).execute()
         except Exception as e:
-            raise YouTubeUploadError(f"댓글 조회 실패: {e}") from e
+            raise YouTubeUploadError(f"ëŒ“ê¸€ ì¡°íšŒ ì‹¤íŒ¨: {e}") from e
         out = []
         for it in resp.get("items") or []:
             sn = (it.get("snippet") or {})
@@ -978,10 +1388,10 @@ class YouTubeUploader:
         }
 
     def reply_to_comment(self, parent_comment_id: str, text: str) -> dict:
-        """기존 댓글 스레드에 답글 작성."""
+        """ê¸°ì¡´ ëŒ“ê¸€ ìŠ¤ë ˆë“œì— ë‹µê¸€ ìž‘ì„±."""
         self._ensure()
         if not parent_comment_id or not text or not text.strip():
-            raise YouTubeUploadError("parent_comment_id 또는 text 가 비어있습니다.")
+            raise YouTubeUploadError("parent_comment_id ë˜ëŠ” text ê°€ ë¹„ì–´ìžˆìŠµë‹ˆë‹¤.")
         try:
             resp = self.youtube.comments().insert(
                 part="snippet",
@@ -993,7 +1403,7 @@ class YouTubeUploader:
                 },
             ).execute()
         except Exception as e:
-            raise YouTubeUploadError(f"답글 작성 실패: {e}") from e
+            raise YouTubeUploadError(f"ë‹µê¸€ ìž‘ì„± ì‹¤íŒ¨: {e}") from e
         sn = resp.get("snippet") or {}
         return {
             "comment_id": resp.get("id"),
@@ -1008,14 +1418,14 @@ class YouTubeUploader:
         status: str,
         ban_author: bool = False,
     ) -> None:
-        """댓글 모더레이션 상태 변경.
+        """ëŒ“ê¸€ ëª¨ë”ë ˆì´ì…˜ ìƒíƒœ ë³€ê²½.
 
         status: "heldForReview" | "published" | "rejected"
         """
         self._ensure()
         if status not in ("heldForReview", "published", "rejected"):
             raise YouTubeUploadError(
-                f"moderation status 값이 유효하지 않습니다: {status!r}"
+                f"moderation status ê°’ì´ ìœ íš¨í•˜ì§€ ì•ŠìŠµë‹ˆë‹¤: {status!r}"
             )
         try:
             self.youtube.comments().setModerationStatus(
@@ -1024,32 +1434,32 @@ class YouTubeUploader:
                 banAuthor=bool(ban_author),
             ).execute()
         except Exception as e:
-            raise YouTubeUploadError(f"댓글 모더레이션 실패: {e}") from e
+            raise YouTubeUploadError(f"ëŒ“ê¸€ ëª¨ë”ë ˆì´ì…˜ ì‹¤íŒ¨: {e}") from e
 
     def delete_comment(self, comment_id: str) -> None:
-        """댓글 삭제 (본인 영상의 댓글만)."""
+        """ëŒ“ê¸€ ì‚­ì œ (ë³¸ì¸ ì˜ìƒì˜ ëŒ“ê¸€ë§Œ)."""
         self._ensure()
         if not comment_id:
-            raise YouTubeUploadError("comment_id 가 비어있습니다.")
+            raise YouTubeUploadError("comment_id ê°€ ë¹„ì–´ìžˆìŠµë‹ˆë‹¤.")
         try:
             self.youtube.comments().delete(id=comment_id).execute()
         except Exception as e:
-            raise YouTubeUploadError(f"댓글 삭제 실패: {e}") from e
+            raise YouTubeUploadError(f"ëŒ“ê¸€ ì‚­ì œ ì‹¤íŒ¨: {e}") from e
 
     def mark_comment_as_spam(self, comment_id: str) -> None:
-        """댓글을 스팸으로 신고."""
+        """ëŒ“ê¸€ì„ ìŠ¤íŒ¸ìœ¼ë¡œ ì‹ ê³ ."""
         self._ensure()
         if not comment_id:
-            raise YouTubeUploadError("comment_id 가 비어있습니다.")
+            raise YouTubeUploadError("comment_id ê°€ ë¹„ì–´ìžˆìŠµë‹ˆë‹¤.")
         try:
             self.youtube.comments().markAsSpam(id=comment_id).execute()
         except Exception as e:
-            raise YouTubeUploadError(f"댓글 스팸 처리 실패: {e}") from e
+            raise YouTubeUploadError(f"ëŒ“ê¸€ ìŠ¤íŒ¸ ì²˜ë¦¬ ì‹¤íŒ¨: {e}") from e
 
     # ---------- Categories ----------
 
     def list_video_categories(self, region_code: str = "KR") -> list[dict]:
-        """카테고리 드롭다운 데이터."""
+        """ì¹´í…Œê³ ë¦¬ ë“œë¡­ë‹¤ìš´ ë°ì´í„°."""
         self._ensure()
         try:
             resp = self.youtube.videoCategories().list(
@@ -1057,11 +1467,11 @@ class YouTubeUploader:
                 regionCode=region_code or "KR",
             ).execute()
         except Exception as e:
-            raise YouTubeUploadError(f"카테고리 조회 실패: {e}") from e
+            raise YouTubeUploadError(f"ì¹´í…Œê³ ë¦¬ ì¡°íšŒ ì‹¤íŒ¨: {e}") from e
         out = []
         for it in resp.get("items") or []:
             sn = it.get("snippet") or {}
-            # assignable=False 인 카테고리는 업로드 시 쓸 수 없음
+            # assignable=False ì¸ ì¹´í…Œê³ ë¦¬ëŠ” ì—…ë¡œë“œ ì‹œ ì“¸ ìˆ˜ ì—†ìŒ
             if not sn.get("assignable", True):
                 continue
             out.append({

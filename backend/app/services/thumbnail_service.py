@@ -20,6 +20,10 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import base64
+import html
+import subprocess
+import tempfile
 from pathlib import Path
 from typing import Optional
 
@@ -47,9 +51,153 @@ FONT_CANDIDATES = [
     "/Library/Fonts/Arial Bold.ttf",
 ]
 
+DEVANAGARI_FONT_CANDIDATES = [
+    r"C:\Windows\Fonts\NirmalaB.ttf",
+    r"C:\Windows\Fonts\Nirmala.ttf",
+    r"C:\Windows\Fonts\NirmalaS.ttf",
+    r"C:\Windows\Fonts\Mangal.ttf",
+    r"C:\Windows\Fonts\Kokila.ttf",
+    r"C:\Windows\Fonts\Aparajita.ttf",
+    "/usr/share/fonts/truetype/noto/NotoSansDevanagari-Bold.ttf",
+    "/usr/share/fonts/truetype/noto/NotoSansDevanagari-Regular.ttf",
+]
+
+KOREAN_FONT_CANDIDATES = [
+    r"C:\Windows\Fonts\malgunbd.ttf",
+    r"C:\Windows\Fonts\NotoSansKR-Bold.ttf",
+    r"C:\Windows\Fonts\NotoSansKR-Black.ttf",
+    r"C:\Windows\Fonts\NotoSansCJKkr-Bold.otf",
+    r"C:\Windows\Fonts\NotoSansCJKkr-Black.otf",
+    r"C:\Windows\Fonts\NotoSansKR-VF.ttf",
+    r"C:\Windows\Fonts\malgun.ttf",
+    "/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf",
+    "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
+    "/System/Library/Fonts/AppleSDGothicNeo.ttc",
+]
+
 
 class ThumbnailError(RuntimeError):
     pass
+
+
+def build_standard_thumbnail_prompt(script: Optional[dict] = None, title: Optional[str] = None) -> str:
+    """Build the single thumbnail prompt used by pipeline, oneclick, scheduler, and uploads."""
+    script = script or {}
+    thumb_prompt = (script.get("thumbnail_prompt") or "").strip()
+    if thumb_prompt:
+        return thumb_prompt
+    clean_title = (title or script.get("title") or "Untitled").strip()
+    topic_hint = (script.get("topic") or clean_title).strip()
+    return (
+        f"A captivating, eye-catching YouTube thumbnail about this topic: {topic_hint}. "
+        f"A dramatic close-up scene with vivid emotion (wide-eyed surprise, "
+        f"intense curiosity, genuine awe). Cinematic lighting, high contrast, "
+        f"rich saturated colors, shallow depth of field. "
+        f"Designed to maximize viewer curiosity and clicks. "
+        f"16:9 landscape composition, 4K ultra-detailed photo quality. "
+        f"Do not draw the video title. Do not draw any writing. "
+        f"ABSOLUTELY NO text, letters, words, numbers, watermarks, or UI elements."
+    )
+
+
+async def ensure_standard_thumbnail(
+    project_id: str,
+    config: Optional[dict] = None,
+    script: Optional[dict] = None,
+    title: Optional[str] = None,
+    topic: Optional[str] = None,
+    episode_number: Optional[object] = None,
+    overwrite: bool = False,
+) -> str:
+    """Generate output/thumbnail.png with the shared AI+overlay logic and return its path."""
+    from app.services.image.factory import (
+        DEFAULT_THUMBNAIL_MODEL,
+        get_image_service,
+        resolve_image_model,
+        IMAGE_REGISTRY,
+    )
+    from app.services.image.prompt_builder import (
+        apply_reference_style_prefix,
+        collect_character_images,
+        collect_reference_images,
+        should_enable_historical_guard_for_context,
+    )
+
+    config = config or {}
+    script = script or {}
+    project_dir = resolve_project_dir(project_id, config)
+    thumb_path = project_dir / "output" / "thumbnail.png"
+    if not overwrite and thumb_path.exists() and thumb_path.stat().st_size > 100:
+        return str(thumb_path)
+
+    thumb_path.parent.mkdir(parents=True, exist_ok=True)
+    prompt_title = (title or script.get("title") or topic or "Untitled").strip()
+    thumb_prompt = build_standard_thumbnail_prompt(script, prompt_title)
+    image_model = resolve_image_model(config.get("thumbnail_model") or DEFAULT_THUMBNAIL_MODEL)
+
+    overlay_title, extracted_episode_label = extract_thumbnail_text_parts(prompt_title, None)
+    ep_raw = episode_number if episode_number is not None else config.get("episode_number")
+    overlay_episode_label = normalize_episode_label(str(ep_raw)) if ep_raw else extracted_episode_label
+
+    char_paths = collect_character_images(project_id, config)
+    ref_paths = collect_reference_images(project_id, config)
+    seen: set[str] = set()
+    combined_refs: list[str] = []
+    for p in [*char_paths, *ref_paths]:
+        if p not in seen:
+            seen.add(p)
+            combined_refs.append(p)
+
+    enable_historical_guard = should_enable_historical_guard_for_context(
+        config,
+        project_id,
+        prompt_title,
+        topic or script.get("topic"),
+    )
+
+    if combined_refs:
+        probe = get_image_service(image_model)
+        if not getattr(probe, "supports_reference_images", False):
+            is_comfyui = IMAGE_REGISTRY.get(image_model, {}).get("provider") == "comfyui"
+            if is_comfyui:
+                combined_refs = []
+            else:
+                raise ThumbnailError(
+                    f"Selected thumbnail model '{image_model}' does not support reference images."
+                )
+
+    if combined_refs and thumb_prompt:
+        thumb_prompt = apply_reference_style_prefix(
+            thumb_prompt,
+            has_reference=True,
+            enable_historical_guard=enable_historical_guard,
+        )
+
+    try:
+        result = await generate_ai_thumbnail(
+            project_id=project_id,
+            image_prompt=thumb_prompt,
+            image_model_id=image_model,
+            overlay_title_text=overlay_title,
+            overlay_subtitle=None,
+            overlay_episode_label=overlay_episode_label,
+            output_path=str(thumb_path),
+            reference_images=combined_refs or None,
+            enable_historical_guard=enable_historical_guard,
+        )
+        return str(result.get("path") or thumb_path)
+    except Exception:
+        base_cut = project_dir / "images" / "cut_001.png"
+        if not base_cut.exists():
+            raise
+        return generate_thumbnail(
+            project_id=project_id,
+            title=overlay_title or prompt_title,
+            base_image_path=str(base_cut),
+            output_path=str(thumb_path),
+            episode_label=overlay_episode_label,
+        )
+
 
 
 def normalize_episode_label(label: Optional[str]) -> Optional[str]:
@@ -90,9 +238,101 @@ def extract_thumbnail_text_parts(
     return clean_title, final_label
 
 
-def _find_font(size: int) -> ImageFont.ImageFont:
+def _has_devanagari(text: Optional[str]) -> bool:
+    return any(0x0900 <= ord(ch) <= 0x097F for ch in (text or ""))
+
+
+def _find_browser_executable() -> Optional[str]:
+    candidates = [
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+        shutil.which("chrome"),
+        shutil.which("msedge"),
+        shutil.which("chromium"),
+        shutil.which("google-chrome"),
+    ]
+    for candidate in candidates:
+        if candidate and os.path.exists(candidate):
+            return str(candidate)
+    return None
+
+
+def _render_devanagari_thumbnail_with_browser(
+    *,
+    base_image_path: Optional[str],
+    output_path: str,
+    title: str,
+    episode_label: Optional[str],
+    subtitle: Optional[str],
+) -> Optional[str]:
+    """Render Hindi/Devanagari overlays through Chrome for proper shaping."""
+    browser = _find_browser_executable()
+    if not browser or not base_image_path or not os.path.exists(base_image_path):
+        return None
+
+    bg_data = base64.b64encode(Path(base_image_path).read_bytes()).decode("ascii")
+    ep = html.escape(normalize_episode_label(episode_label) or (episode_label or "").strip())
+    title_html = html.escape(title.strip())
+    subtitle_html = html.escape((subtitle or "").strip())
+    badge_block = f'<div class="top">{ep}</div>' if ep else ""
+    subtitle_block = f'<div class="subtitle">{subtitle_html}</div>' if subtitle_html else ""
+    html_doc = f"""<!doctype html>
+<html><head><meta charset="utf-8"><style>
+*{{box-sizing:border-box}}
+body{{margin:0;width:{THUMB_W}px;height:{THUMB_H}px;overflow:hidden;background:#111}}
+.canvas{{position:relative;width:{THUMB_W}px;height:{THUMB_H}px;font-family:"Nirmala UI","Mangal","Arial Unicode MS",sans-serif;background-image:linear-gradient(90deg,rgba(0,0,0,.52),rgba(0,0,0,.10) 45%,rgba(0,0,0,.45)),url(data:image/png;base64,{bg_data});background-size:cover;background-position:center}}
+.top{{position:absolute;left:60px;top:40px;padding:8px 16px 9px;border-radius:14px;background:#ffd32a;color:#111;font-weight:900;font-size:38px;line-height:1;box-shadow:0 5px 15px rgba(0,0,0,.35)}}
+.panel{{position:absolute;left:56px;right:56px;bottom:46px;padding:24px 32px 28px;border-radius:18px;background:rgba(0,0,0,.80);border:3px solid rgba(255,211,42,.92);box-shadow:0 14px 38px rgba(0,0,0,.55)}}
+.title{{color:#fff;font-weight:900;font-size:74px;line-height:1.08;letter-spacing:0;text-shadow:0 4px 0 rgba(0,0,0,.70),0 0 18px rgba(0,0,0,.65);white-space:normal;text-wrap:balance}}
+.subtitle{{margin-top:12px;color:#ffe736;font-weight:900;font-size:78px;line-height:1.08;letter-spacing:0;text-shadow:0 4px 0 rgba(0,0,0,.75),0 0 18px rgba(0,0,0,.65);white-space:normal;text-wrap:balance}}
+</style></head><body><div class="canvas">{badge_block}<div class="panel"><div class="title">{title_html}</div>{subtitle_block}</div></div></body></html>"""
+
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            html_path = tmp_dir / "thumbnail.html"
+            png_path = tmp_dir / "thumbnail.png"
+            html_path.write_text(html_doc, encoding="utf-8")
+            subprocess.run(
+                [
+                    browser,
+                    "--headless=new",
+                    "--disable-gpu",
+                    "--hide-scrollbars",
+                    f"--window-size={THUMB_W},{THUMB_H}",
+                    f"--screenshot={png_path}",
+                    html_path.as_uri(),
+                ],
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            if not png_path.exists() or png_path.stat().st_size < 10_000:
+                return None
+            Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(png_path, output_path)
+            return output_path
+    except Exception as e:
+        print(f"[thumbnail] browser Devanagari render failed; falling back to Pillow: {e}")
+        return None
+
+
+def _has_hangul(text: Optional[str]) -> bool:
+    return any(0xAC00 <= ord(ch) <= 0xD7A3 for ch in (text or ""))
+
+
+def _find_font(size: int, text: Optional[str] = None) -> ImageFont.ImageFont:
     """가능한 한 한글 지원 + 볼드 폰트를 찾아 반환. 실패 시 default."""
-    for path in FONT_CANDIDATES:
+    if _has_devanagari(text):
+        candidates = [*DEVANAGARI_FONT_CANDIDATES, *FONT_CANDIDATES]
+    elif _has_hangul(text):
+        candidates = [*KOREAN_FONT_CANDIDATES, *FONT_CANDIDATES]
+    else:
+        candidates = FONT_CANDIDATES
+    for path in candidates:
         try:
             if os.path.exists(path):
                 return ImageFont.truetype(path, size=size)
@@ -214,11 +454,11 @@ def _fit_font(
 ) -> ImageFont.ImageFont:
     """주어진 너비/높이 안에 들어가는 가장 큰 폰트를 후보 중에서 선택."""
     for size in candidates:
-        font = _find_font(size)
+        font = _find_font(size, text)
         w, h = _text_size(draw, text, font)
         if w <= max_w and h <= max_h:
             return font
-    return _find_font(candidates[-1])
+    return _find_font(candidates[-1], text)
 
 
 def _draw_rounded_box(
@@ -244,9 +484,24 @@ def _draw_stroked_text(
     fill,
     stroke_fill=TEXT_STROKE,
     stroke_width: int = 6,
+    embolden: int = 0,
 ) -> None:
     try:
         draw.text(xy, text, font=font, fill=fill, stroke_width=stroke_width, stroke_fill=stroke_fill)
+        if embolden > 0:
+            x, y = xy
+            offsets = [
+                (-embolden, 0),
+                (embolden, 0),
+                (0, -embolden),
+                (0, embolden),
+                (-embolden, -embolden),
+                (embolden, -embolden),
+                (-embolden, embolden),
+                (embolden, embolden),
+            ]
+            for dx, dy in offsets:
+                draw.text((x + dx, y + dy), text, font=font, fill=fill)
     except TypeError:
         draw.text(xy, text, font=font, fill=fill)
 
@@ -291,6 +546,17 @@ def generate_thumbnail(
     else:
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 
+    if _has_devanagari(" ".join([title or "", subtitle or "", episode_label or ""])):
+        browser_output = _render_devanagari_thumbnail_with_browser(
+            base_image_path=base_image_path,
+            output_path=output_path,
+            title=title,
+            episode_label=episode_label,
+            subtitle=subtitle,
+        )
+        if browser_output:
+            return browser_output
+
     # ── 배경 ──
     if base_image_path and os.path.exists(base_image_path):
         try:
@@ -330,7 +596,7 @@ def generate_thumbnail(
 
     def pick_title_font() -> tuple[ImageFont.ImageFont, list[str]]:
         for size in candidates:
-            f = _find_font(size)
+            f = _find_font(size, text)
             lines = _wrap_text(text, f, max_text_w, draw)
             if not lines:
                 continue
@@ -341,25 +607,29 @@ def generate_thumbnail(
             if total_h <= max_title_block_h:
                 return f, lines
         # 폴백: 가장 작은 폰트
-        f = _find_font(candidates[-1])
+        f = _find_font(candidates[-1], text)
         return f, _wrap_text(text, f, max_text_w, draw) or [text]
 
     title_font, title_lines = pick_title_font()
     title_size = getattr(title_font, "size", 96)
     # 아웃라인 두께는 폰트 크기에 비례 (굵은 카툰풍)
     title_stroke_w = max(6, min(14, title_size // 9))
+    title_embolden = max(2, min(5, title_size // 42))
 
     # subtitle — 있을 때만. title 보다 작게.
     sub_font = None
     sub_stroke_w = 0
     if sub:
         sub_size = max(44, int(title_size * 0.55))
-        sub_font = _find_font(sub_size)
+        sub_font = _find_font(sub_size, sub)
         # 너무 길면 쪼개지 않고 폰트만 낮춤
         while _text_size(draw, sub, sub_font)[0] > max_text_w and sub_size > 32:
             sub_size -= 4
-            sub_font = _find_font(sub_size)
+            sub_font = _find_font(sub_size, sub)
         sub_stroke_w = max(4, min(10, sub_size // 10))
+        sub_embolden = max(2, min(4, sub_size // 40))
+    else:
+        sub_embolden = 0
 
     # 라인 높이
     def line_h(font):
@@ -426,6 +696,7 @@ def generate_thumbnail(
             fill=fill,
             stroke_fill=(0, 0, 0),
             stroke_width=title_stroke_w,
+            embolden=title_embolden,
         )
 
     if sub_placed and sub_font is not None:
@@ -438,6 +709,7 @@ def generate_thumbnail(
             fill=(255, 226, 32),
             stroke_fill=(0, 0, 0),
             stroke_width=sub_stroke_w,
+            embolden=sub_embolden,
         )
 
     # ── 좌상단 EP 배지 ──
@@ -495,6 +767,7 @@ async def generate_ai_thumbnail(
     overlay_episode_label: Optional[str] = None,
     output_path: Optional[str] = None,
     reference_images: Optional[list[str]] = None,
+    enable_historical_guard: bool = False,
 ) -> dict:
     """AI image 모델로 1280x720 배경을 생성하고 선택적으로 텍스트 오버레이.
 
@@ -541,6 +814,31 @@ async def generate_ai_thumbnail(
         image_service = get_image_service(image_model_id)
     except Exception as e:
         raise ThumbnailError(f"image 모델 로드 실패 ({image_model_id}): {e}") from e
+
+    from app.services.image.prompt_builder import (
+        append_prompt_specific_negative_prompt,
+        apply_reference_style_prefix,
+        historical_negative_prompt,
+        map_negative_prompt,
+        text_negative_prompt,
+    )
+
+    image_prompt = apply_reference_style_prefix(
+        image_prompt,
+        has_reference=bool(reference_images),
+        enable_historical_guard=enable_historical_guard,
+    )
+    try:
+        current_neg = (getattr(image_service, "negative_prompt", "") or "").strip()
+        for required_negative in (text_negative_prompt(), map_negative_prompt()):
+            if required_negative and required_negative not in current_neg:
+                current_neg = f"{required_negative}, {current_neg}".strip(" ,")
+        guard_negative = historical_negative_prompt(image_prompt, enable_historical_guard)
+        if guard_negative and guard_negative not in current_neg:
+            current_neg = f"{guard_negative}, {current_neg}".strip(" ,")
+        image_service.negative_prompt = append_prompt_specific_negative_prompt(current_neg, image_prompt)
+    except Exception:
+        pass
 
     try:
         saved_bg = await image_service.generate(

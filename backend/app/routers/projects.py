@@ -9,7 +9,8 @@ from typing import Optional
 from app.models.database import get_db
 from app.models.project import Project
 from app.services.estimation_service import estimate_project
-from app.services.image.factory import DEFAULT_IMAGE_MODEL
+from app.services.image.factory import DEFAULT_IMAGE_MODEL, DEFAULT_THUMBNAIL_MODEL
+from app.services.subtitle_service import DEFAULT_SUBTITLE_STYLE
 from app.services.video.factory import DEFAULT_VIDEO_MODEL
 from app.config import resolve_project_dir
 import os
@@ -36,6 +37,7 @@ DEFAULT_CONFIG = {
     "style": "news_explainer",
     "script_model": "claude-sonnet-4-6",
     "image_model": DEFAULT_IMAGE_MODEL,
+    "thumbnail_model": DEFAULT_THUMBNAIL_MODEL,
     "video_model": DEFAULT_VIDEO_MODEL,
     # v2.1.1: AI 영상 생성 활성화 여부. False 면 모든 컷이 Ken Burns 폴백 (비용 0, GPU 0)
     "enable_ai_video": True,
@@ -45,30 +47,27 @@ DEFAULT_CONFIG = {
     # v1.1.55: 인트로 강제 AI 컷 수. 양수면 컷 1..N 은 video_target_selection
     # 과 무관하게 무조건 primary video_model 로 생성한다. 0 이면 비활성.
     "ai_video_first_n": 5,
-    # v1.1.55: 컷별 영상 생성 직후 자기 대사 자막을 바로 번인 → 머지 후
-    # 싱크 깨짐 차단. False 로 토글하면 옛 방식(머지 후 본편 ASS 번인) 사용.
-    "cut_level_subtitles": True,
+    # Subtitles are burned once during final render so the current studio
+    # subtitle settings are reflected and shorts do not inherit duplicate text.
+    "cut_level_subtitles": False,
     "tts_model": "openai-tts",
     "tts_voice_id": "alloy",
     # 음성 속도: 1.0=기본, <1.0=느리게, >1.0=빠르게.
     # OpenAI TTS: 0.25~4.0, ElevenLabs: 0.7~1.2 에서 clamp.
     "tts_speed": 1.0,
     "language": "ko",
+    "subtitle_delivery": "burn",
+    "youtube_captions_enabled": False,
+    "caption_languages": ["en", "ko", "hi"],
     "auto_pause_after_step": True,
     # v1.1.55: YouTube 공개 범위 — 프리셋 설정에서 관리
     "youtube_privacy": "private",
     # v2.1.3: 최종 렌더 BGM. bgm_path 는 DATA_DIR/{project_id} 기준 상대 경로.
-    "bgm_enabled": False,
+    "bgm_enabled": True,
     "bgm_path": "",
-    "bgm_style_prompt": "",
+    "bgm_style_prompt": "subtle cinematic documentary background music, instrumental only, no vocals, no lyrics, soft percussion, low tension, supports narration",
     "bgm_volume": 0.24,
-    "subtitle_style": {
-        "font": "Pretendard Bold",
-        "size": 48,
-        "color": "#FFFFFF",
-        "outline_color": "#000000",
-        "position": "bottom",
-    },
+    "subtitle_style": dict(DEFAULT_SUBTITLE_STYLE),
 }
 
 
