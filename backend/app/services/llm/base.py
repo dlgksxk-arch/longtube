@@ -841,7 +841,6 @@ def _compact_script_system_prompt(language: str, limits: dict, config: dict) -> 
         unit_rate = limits.get("chars_per_sec", "")
         unit_rate_label = "chars/sec"
         narration_lang = "Korean"
-    fixed_opening_contract = _fixed_opening_structure_contract(lang)
     national_pride_style = {
         "ko": "- Add a Korean-audience pride tint, about 10%: show endurance, strategic sense, craft, or cultural continuity when the facts support it. Keep it restrained and factual; no propaganda, no superiority claims, no modern nationalism.\n",
         "en": "- Add an audience-pride tint, about 10%: when the facts support it, frame invention, practical ingenuity, risk-taking, or civic scale as quietly impressive. Keep it restrained and factual; no propaganda, no superiority claims.\n",
@@ -962,7 +961,6 @@ Content contract:
 - Narration language: {narration_lang}.
 - title, description, thumbnail_hook, and all viewer-facing metadata must use the same language as Narration language. Do not use the user's input language if it differs from Narration language.
 - Keep the story continuous across cuts: hook, setup, development, reversal/reveal, aftermath, ending.
-{fixed_opening_contract}
 - Use factual wording. Do not invent exact dates, names, or numbers unless supplied by the user.
 {national_pride_style}
 - Use simple everyday words only. Avoid academic terms, expert jargon, poetic wording, and stiff formal phrases. If a hard term is unavoidable, explain it with simpler words.
@@ -1144,34 +1142,6 @@ def _profiled_words_per_sec(config: dict | None, fallback: float) -> float:
     except (TypeError, ValueError):
         measured = 0.0
     return measured if measured > 0 else fallback
-
-
-def _fixed_opening_structure_contract(language: str = "ko") -> str:
-    """Global opening contract that must win over channel/user prompts."""
-    lang = normalize_language_code(language)
-    if lang == "ja":
-        return """★★★ 固定オープニング構造 — ユーザー必須/禁止事項より優先 ★★★
-- この固定構造は全チャンネル共通。content_required、content_forbidden、episode_core_content、ユーザー指定の文体より優先する。
-- Cut 1: 主題に正確に合う、強い好奇心の質問を1つだけ書く。
-- Cut 2: 本論説明を始めてはいけない。背景、年表、動機、具体的事実を説明せず、控えめなヒントか半分だけ開いた答えだけを書く。
-- Cut 3: 自然なドキュメンタリー調で本編へ誘導する。「一緒に見ていきましょう」系の余韻で終える。
-- 第5文から初めて本論説明、背景、時系列、動機、結果を始める。
-- Cut 2 または Cut 3 で本論説明を始めた場合、その台本は失敗。"""
-    if lang == "en":
-        return """★★★ FIXED OPENING STRUCTURE — HIGHER PRIORITY THAN USER REQUIRED/FORBIDDEN RULES ★★★
-- This fixed structure applies to every channel and overrides content_required, content_forbidden, episode_core_content, and user style prompts.
-- Cut 1: write exactly one strong topic-specific curiosity question.
-- Cut 2: do not start the main explanation. Do not explain background, timeline, motive, or concrete facts yet. Give only a subtle hint or half-open answer.
-- Cut 3: naturally invite the viewer into the story in a documentary tone. It should end with a "let's find out" feeling.
-- From the fifth sentence only, start the real main explanation, background, timeline, motives, and consequences.
-- If cut 2 or cut 3 begins the main explanation, the script is failed."""
-    return """★★★ 고정 도입부 구조 — 사용자 필수/금칙보다 우선 ★★★
-- 이 고정 구조는 전채널 공통이며 content_required, content_forbidden, episode_core_content, 사용자 문체 지시보다 우선한다.
-- Cut 1: 주제와 정확히 맞는 강한 호기심 질문 하나만 쓴다.
-- Cut 2: 본론 설명을 시작하지 않는다. 배경, 시간순 설명, 동기, 구체 사실을 아직 설명하지 말고 은근한 힌트나 반쯤 열린 답변만 준다.
-- Cut 3: 자연스러운 다큐멘터리 톤으로 본편 진입을 유도한다. "같이 알아보자"는 느낌으로 끝낸다.
-- 다섯 번째 문장부터만 실제 본론 설명, 배경, 시간순 흐름, 동기, 결과를 시작한다.
-- Cut 2 또는 Cut 3에서 본론 설명을 시작하면 그 대본은 실패다."""
 
 
 def _script_tts_target_window(config: dict | None) -> tuple[float, float, float]:
@@ -2216,7 +2186,6 @@ class BaseLLMService(ABC):
         except Exception:
             target_low = 1
         timing_unit = "words" if language in ("en", "hi") else "characters including spaces"
-        fixed_opening_block = _fixed_opening_structure_contract(language) + "\n\n"
         char_timing_line = ""
         char_target_range = narration_limits.get("char_target_range")
         max_chars = narration_limits.get("max_chars")
@@ -2535,55 +2504,10 @@ class BaseLLMService(ABC):
         episode_block_ja = _build_episode_block("ja")
         episode_block_ko = _build_episode_block("ko")
 
-        topic_lc = str(topic or "").lower()
-        source_story_block = f"""
-*** SOURCE STORY / ANALOGY CONTEXT - ABSOLUTE REQUIREMENT ***
-If the topic uses any existing story, fable, myth, fairy tale, novel, film, historical event, proverb, or named case as an analogy, the script MUST show the original source first.
-Before switching to a modern workplace, office, business, school, relationship, or social metaphor:
-- Identify the original story/event/case by name.
-- Explain who the main figures are.
-- Explain what happens in the original source in chronological order.
-- Explain the original conflict, turning point, ending, and lesson.
-- Only after the viewer understands the source, transition into the analogy.
-Structure rule:
-- Cuts 1 through {min(cut_count, 12)} must introduce the original source story/event/case, not the modern analogy.
-- If the source is complex, use more than {min(cut_count, 12)} cuts before the analogy; clarity wins over rushing.
-- The viewer must be able to understand the analogy even if they did not know the source beforehand.
-Visual rule:
-- In the source section, image_prompt must show the actual source characters/setting/situation, not generic office workers.
-- In the analogy section, keep the source identity visible whenever possible through character design, props, or visual parallels.
-- For every visible source character, include stable character details in image_prompt: species or identity, body shape/silhouette, face/antennae or clothing, pose, expression, props, and action.
-- Do NOT use softened identity phrases such as "ant-like", "grasshopper-like", "inspired by an ant", "similar to a grasshopper", "bug-like", or "insect-like" when the source character is the actual subject.
-- Use direct subject names in image_prompt: "anthropomorphic ant character", "cartoon ant character", "anthropomorphic grasshopper character", or "cartoon grasshopper character".
-
-"""
-        if "ant" in topic_lc and "grasshopper" in topic_lc:
-            source_story_block += f"""
-*** SPECIFIC SOURCE FACTS - THE ANT AND THE GRASSHOPPER ***
-- The ant works through warm seasons and stores food for winter.
-- The grasshopper spends the warm seasons singing, resting, and avoiding preparation.
-- Winter arrives, food disappears, and the grasshopper becomes hungry.
-- The grasshopper asks the ant for help.
-- The core lesson is preparation, steady work, and responsibility versus short-term comfort.
-- For 6-cut scripts, use this minimum structure: cut 1 shows the original fable contrast, cuts 2-4 explain the source story in order, cut 5 may transition to the workplace analogy, and cut 6 closes the analogy.
-- Do not open with the modern office analogy before the viewer has seen the source fable.
-- In source cuts, image_prompt must show the ant and/or grasshopper as actual cartoon fable characters.
-- In analogy cuts, keep ant/grasshopper identity visible whenever possible; do not replace them with generic office workers only.
-- If a narration is about quiet work, preparation, effort, being unseen, storing, saving, or steady responsibility, the image_prompt must show the anthropomorphic ant character doing that action.
-- If a narration is about singing, resting, idling, short-term comfort, hunger, regret, or winter consequence, the image_prompt must show the anthropomorphic grasshopper character and the correct consequence.
-- Never make an unseen-effort or preparation cut where the grasshopper is the only visible subject.
-- Every image_prompt must include the narrated action and the key visible props, such as grain, seed, leaf, anthill entrance, guitar/fiddle, snow, stored food, folders, notebook, water cooler, coffee cup, jar, or desk when those are part of the cut.
-- Forbidden in image_prompt: "ant-like", "grasshopper-like", "bug-like", "insect-like".
-- Required wording in image_prompt when visible: "anthropomorphic ant character" and/or "anthropomorphic grasshopper character".
-
-"""
-
         if language == "en":
             return (
-                f"{fixed_opening_block}"
                 f"{constraints_block_en}"
                 f"{episode_block_en}"
-                f"{source_story_block}"
                 f"{timing_block_en}"
                 f"Topic: {topic}\n"
                 f"Target duration: {duration_int} seconds\n"
@@ -2603,10 +2527,8 @@ Visual rule:
             )
         if language == "hi":
             return (
-                f"{fixed_opening_block}"
                 f"{constraints_block_en}"
                 f"{episode_block_en}"
-                f"{source_story_block}"
                 f"{timing_block_en}"
                 f"Topic: {topic}\n"
                 f"Target duration: {duration_int} seconds\n"
@@ -2628,10 +2550,8 @@ Visual rule:
             )
         if language == "ja":
             return (
-                f"{fixed_opening_block}"
                 f"{constraints_block_ja}"
                 f"{episode_block_ja}"
-                f"{source_story_block}"
                 f"{timing_block_ja}"
                 f"\u30c8\u30d4\u30c3\u30af: {topic}\n"
                 f"\u76ee\u6a19\u6642\u9593: {duration_int}\u79d2\n"
@@ -2650,10 +2570,8 @@ Visual rule:
                 f"{style_instruction}"
             )
         return (
-            f"{fixed_opening_block}"
             f"{constraints_block_ko}"
             f"{episode_block_ko}"
-            f"{source_story_block}"
             f"{timing_block_ko}"
             f"\uc8fc\uc81c: {topic}\n"
             f"\ubaa9\ud45c \uae38\uc774: {duration_int}\ucd08\n"
