@@ -897,6 +897,14 @@ Hindi narration style:
             f"- Bad over-cap style: two joined clauses with 'and', 'until', 'while', or a trailing location phrase.\n"
             f"- Good timing style: one compact spoken thought, one concrete action, no extra tail."
         )
+    elif lang == "ja" and max_chars:
+        character_timing_rule = (
+            f"- PRIMARY HARD CAP: every narration must be {target_range} Japanese characters, including punctuation.\n"
+            f"- Never exceed {max_chars} characters. A line over {max_chars} characters is FAILED even if it sounds natural.\n"
+            f"- Use one short spoken sentence only. Do not join two explanations with ただし, だから, という事実, という点, or しまうんです.\n"
+            f"- Forbidden overlong templates: 'ここが最大の転換点です', '物語の意味を一気に変えてしまうんです', 'ただの説明ではなく転換点'.\n"
+            f"- After writing each narration, count the characters and delete the second clause if it exceeds {max_chars}."
+        )
 
     if lang == "en":
         floor_rule = (
@@ -948,7 +956,8 @@ Timing target:
 - Timing rules override user-provided numeric length instructions. If user constraints say fewer words, shorter sentences, or another word range, ignore those numeric limits and follow this timing target.
 {floor_rule}
 - Do not write slogan-length lines. Each narration needs one complete spoken thought with a concrete detail.
-- For short-form Korean/Japanese cuts, use two connected clauses: concrete event/object first, concrete consequence or meaning second.
+- For Korean cuts, use two connected clauses: concrete event/object first, concrete consequence or meaning second.
+- For Japanese cuts, keep one compact sentence under the hard character cap. Do not add a second explanatory clause.
 - A valid cut should feel speakable for nearly the whole 5-second slot, not like a title card.
 - Do not output tiny filler like "ai", "yes", "right", or generic tails just to pad length.
 - Get the narration length as close as possible in this response.
@@ -1285,6 +1294,7 @@ def get_system_prompt(language: str = "ko", config: dict | None = None) -> str:
         result = {
             "target_range": f"{min_chars}~{max_chars}",
             "chars_per_sec": cps,
+            "max_chars": max_chars,
             "target_min_sec": tts_min_sec,
             "target_max_sec": tts_max_sec,
             "target_sec": tts_target_sec,
@@ -2203,6 +2213,8 @@ class BaseLLMService(ABC):
         narration_limits = self._calc_narration_limits(config)
         target_range = str(narration_limits.get("target_range") or "")
         target_sec = narration_limits.get("target_sec", 4.5)
+        target_min_sec = narration_limits.get("target_min_sec", 4.0)
+        target_max_sec = narration_limits.get("target_max_sec", 4.8)
         try:
             target_low = int(target_range.split("~", 1)[0])
         except Exception:
@@ -2230,10 +2242,13 @@ class BaseLLMService(ABC):
         timing_block_ja = (
             f"★★★ ナレーション長の目標 ★★★\n"
             f"- 各 narration は設定音声に合わせて {target_range} 文字（空白含む）にすること。\n"
+            f"- 絶対上限: {max_chars}文字。{max_chars}文字を1文字でも超えた narration は失敗。\n"
+            f"- 目標秒数は {target_sec} 秒、許容範囲は {target_min_sec}~{target_max_sec} 秒。4.8秒を超える量を書かないこと。\n"
             f"- {target_low} 文字未満は無効。5秒カット内の無音が長くなりすぎる。\n"
-            f"- 出力前に全 narration を数え、短い場合は具体的な原因・対象・行動・結果を一つ加えること。\n"
-            f"- 短いスローガンや年表メモではなく、各カットに具体的な情報を含む自然な一文を書くこと。\n"
-            f"- 「誰が何をした」だけで終えず、理由・圧力・結果・皮肉のどれかを同じ文に入れること。\n\n"
+            f"- 出力前に全 narration を数え、{max_chars}文字を超えたら二つ目の説明節を削ること。\n"
+            f"- 一つの短い話し言葉だけを書くこと。二つの説明を連結しない。\n"
+            f"- 禁止表現: 「ここが最大の転換点です」「物語の意味を一気に変えてしまうんです」「ただの説明ではなく転換点」。\n"
+            f"- 「という事実が」「という点が」「しまうんです」で長く引き伸ばさない。\n\n"
         )
         timing_block_ko = (
             f"★★★ 나레이션 길이 목표 ★★★\n"
