@@ -1137,13 +1137,19 @@ export default function LivePage() {
       const items = [...(queueState.items || [])];
       const now = new Date();
       const nowMinutes = now.getHours() * 60 + now.getMinutes();
+      const channelSeen = new Map<number, number>();
       const sorted = items
-        .map((item, index) => ({ item, index }))
+        .map((item, index) => {
+          const channel = Number(item.channel || 1);
+          const channelOrder = channelSeen.get(channel) || 0;
+          channelSeen.set(channel, channelOrder + 1);
+          return { item, index, channelOrder };
+        })
         .sort((a, b) => {
           const aDelay = scheduledDelayMinutes(queueState.channel_times?.[String(a.item.channel || 1)], nowMinutes);
           const bDelay = scheduledDelayMinutes(queueState.channel_times?.[String(b.item.channel || 1)], nowMinutes);
-          const diff = aDelay - bDelay || a.index - b.index;
-          return direction === "asc" ? diff : -diff;
+          const timeDiff = direction === "asc" ? aDelay - bDelay : bDelay - aDelay;
+          return a.channelOrder - b.channelOrder || timeDiff || a.index - b.index;
         })
         .map(({ item }) => item);
       const updated = await oneclickApi.setQueue({
