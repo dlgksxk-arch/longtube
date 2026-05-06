@@ -32,6 +32,28 @@ def _safe_console(value) -> str:
     return str(value).encode("ascii", "backslashreplace").decode("ascii")
 
 
+def _resolve_image_reuse_seconds(config: dict, db) -> int:
+    """Use the current template value for oneclick projects before generating images."""
+    try:
+        reuse_seconds = int(float((config or {}).get("image_reuse_group_seconds") or 0))
+    except (TypeError, ValueError):
+        reuse_seconds = 0
+
+    cfg = config or {}
+    template_project_id = cfg.get("template_project_id")
+    if not cfg.get("__oneclick__") or not template_project_id:
+        return reuse_seconds
+
+    try:
+        tmpl = db.query(Project).filter(Project.id == template_project_id).first()
+        tmpl_cfg = (tmpl.config or {}) if tmpl else {}
+        if "image_reuse_group_seconds" in tmpl_cfg:
+            return int(float(tmpl_cfg.get("image_reuse_group_seconds") or 0))
+    except Exception as e:
+        print(f"[Image] template image reuse lookup skipped: {e}")
+    return reuse_seconds
+
+
 def _redis_set(key, value):
     """v1.2.29: redis 가 중간에 죽어도 예외를 밖으로 올리지 않는다.
     redis 실패는 무시하고 `_progress_mem` 에 반드시 기록해, 같은 프로세스 안의
@@ -1044,10 +1066,7 @@ def _step_image(project_id: str, config: dict):
                     pass
     except Exception as _e:
         print(f"[Image] shorts cut reuse guard skipped: {_e}")
-    try:
-        reuse_seconds = int(float(config.get("image_reuse_group_seconds") or 0))
-    except (TypeError, ValueError):
-        reuse_seconds = 0
+    reuse_seconds = _resolve_image_reuse_seconds(config, db)
     reuse_group_cuts = 0
     if reuse_seconds > 0:
         reuse_group_cuts = max(1, round(reuse_seconds / float(CUT_VIDEO_DURATION)))

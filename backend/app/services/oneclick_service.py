@@ -3973,6 +3973,7 @@ def prepare_task(
             db_refresh = SessionLocal()
             try:
                 base = dict(DEFAULT_CONFIG)
+                old_cfg = dict(project.config or {})
                 if template_project_id:
                     tmpl = (
                         db_refresh.query(Project)
@@ -3987,7 +3988,6 @@ def prepare_task(
                 # __oneclick__ 마커 유지 + 기존 target_duration 보존
                 base["__oneclick__"] = True
                 base["auto_pause_after_step"] = False
-                old_cfg = dict(project.config or {})
                 _force_oneclick_main_length(base)
 
                 # v1.2.9: 에피소드 상세 — 재사용 시에도 최신값으로 갱신.
@@ -4140,6 +4140,51 @@ def prepare_task(
 
         task_id = str(uuid.uuid4())[:8]
         config = dict(project.config or {})
+        try:
+            from app.routers.projects import DEFAULT_CONFIG
+            db_refresh = SessionLocal()
+            try:
+                refreshed = dict(DEFAULT_CONFIG)
+                preset_id = template_project_id or config.get("template_project_id")
+                if preset_id:
+                    tmpl = (
+                        db_refresh.query(Project)
+                        .filter(Project.id == preset_id)
+                        .first()
+                    )
+                    if tmpl and tmpl.config:
+                        refreshed.update(tmpl.config)
+                    refreshed["template_project_id"] = preset_id
+                refreshed["__oneclick__"] = True
+                refreshed["auto_pause_after_step"] = False
+                _force_oneclick_main_length(refreshed)
+                for key in (
+                    "episode_openings",
+                    "episode_endings",
+                    "episode_core_content",
+                    "episode_number",
+                    "next_episode_preview",
+                    "channel",
+                ):
+                    if key in config and key not in refreshed:
+                        refreshed[key] = config[key]
+                proj_in_db = (
+                    db_refresh.query(Project)
+                    .filter(Project.id == project.id)
+                    .first()
+                )
+                if proj_in_db:
+                    proj_in_db.config = refreshed
+                    from sqlalchemy.orm.attributes import flag_modified
+                    flag_modified(proj_in_db, "config")
+                    db_refresh.commit()
+                    db_refresh.refresh(proj_in_db)
+                    project = proj_in_db
+                    config = dict(project.config or {})
+            finally:
+                db_refresh.close()
+        except Exception as e:
+            print(f"[oneclick] 기존 미완성 프로젝트 config 갱신 실패: {e}")
         estimate = estimate_project(config)
         task = _make_task_record(
             task_id,
