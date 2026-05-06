@@ -100,13 +100,7 @@ DEFAULT_NEGATIVE_PROMPT = (
     "handwriting, printed text, any text, title, caption, inscription, "
     "distorted, ugly, deformed, bad anatomy, extra fingers, extra limbs, "
     "extra legs, five legs, extra arms, mutated hands, fused limbs, "
-    "malformed limbs, too many legs, too many arms, jpeg artifacts, "
-    "modern national flag, state flag, country flag, national emblem, flagpole, "
-    "banner resembling a national flag, tricolor flag, horizontal tricolor, vertical "
-    "tricolor, canton stars, flag stripes, national color blocks, "
-    "Japanese flag, hinomaru, rising sun flag, rising sun rays, red sun disc, "
-    "red circle on white background, centered red circle, centered red disc, "
-    "white field with red circle, red radial rays, sunburst flag, imperial Japanese flag"
+    "malformed limbs, too many legs, too many arms, jpeg artifacts"
 )
 
 # SD 1.5 계열 (512 훈련) — 해상도 강제 매핑 대상

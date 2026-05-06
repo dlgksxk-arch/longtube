@@ -102,15 +102,6 @@ BOOK_RENDER_NEGATIVE_PROMPT = (
     "pseudo text, scribbles on book, glyphs on book, symbols on pages"
 )
 
-NO_MODERN_FLAG_MOTIF_NEGATIVE_PROMPT = (
-    "modern national flag, state flag, country flag, national emblem, flagpole, "
-    "banner resembling a national flag, tricolor flag, horizontal tricolor, vertical "
-    "tricolor, canton stars, flag stripes, national color blocks, "
-    "Japanese flag, hinomaru, rising sun flag, rising sun rays, red sun disc, "
-    "red circle on white background, centered red circle, centered red disc, "
-    "white field with red circle, red radial rays, sunburst flag, imperial Japanese flag"
-)
-
 _FLAG_MOTIF_POSITIVE_PATTERNS: tuple[str, ...] = (
     r"\bmodern\s+national\s+flags?\b",
     r"\bnational\s+flags?\b",
@@ -652,7 +643,7 @@ def book_negative_prompt(prompt: str) -> str:
 
 def append_prompt_specific_negative_prompt(base_negative: str, prompt: str) -> str:
     current = (base_negative or "").strip()
-    extras = [NO_MODERN_FLAG_MOTIF_NEGATIVE_PROMPT, book_negative_prompt(prompt)]
+    extras = [book_negative_prompt(prompt)]
     for extra in extras:
         if extra and extra not in current:
             current = f"{extra}, {current}".strip(" ,")
@@ -660,8 +651,8 @@ def append_prompt_specific_negative_prompt(base_negative: str, prompt: str) -> s
 
 
 def symbol_negative_prompt() -> str:
-    """Negative prompt tokens that block modern national flag-like motifs."""
-    return NO_MODERN_FLAG_MOTIF_NEGATIVE_PROMPT
+    """Negative prompt tokens for symbol generation."""
+    return ""
 
 
 def should_enable_historical_guard_for_context(
