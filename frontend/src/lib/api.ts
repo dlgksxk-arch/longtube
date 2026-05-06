@@ -1569,6 +1569,7 @@ export const oneclickApi = {
     };
     queue_item: OneClickQueueItem;
     deleted_bytes: number;
+    archived_path?: string | null;
   }> => api.post(`/oneclick/tasks/${taskId}/requeue`),
   // v1.2.23: 채널별 실패/취소 전부 복귀.
   requeueChannelFailed: (channel: number): Promise<{

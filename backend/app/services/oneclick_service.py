@@ -5177,7 +5177,6 @@ def _cleanup_project_files(project_id: str | None, config: dict | None = None) -
     """프로젝트 디렉토리 삭제. 삭제한 바이트 수 반환."""
     if not project_id:
         return 0
-    import shutil
     total = 0
     for project_dir in _project_cleanup_paths(str(project_id), config):
         if not project_dir.exists():
@@ -5188,6 +5187,34 @@ def _cleanup_project_files(project_id: str | None, config: dict | None = None) -
         except Exception as e:
             print(f"[oneclick] 디스크 정리 실패 ({project_id}): {e}")
     return total
+
+
+def _archive_project_files(project_id: str | None, config: dict | None = None) -> tuple[int, str | None]:
+    """완료 프로젝트 디렉토리를 삭제하지 않고 _system 백업 폴더로 이동한다."""
+    if not project_id:
+        return 0, None
+    pid = str(project_id)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_root = SYSTEM_DIR / f"requeue_completed_backup_{stamp}"
+    total = 0
+    first_target: str | None = None
+    moved = 0
+    for project_dir in _project_cleanup_paths(pid, config):
+        if not project_dir.exists():
+            continue
+        try:
+            size = _dir_size(project_dir)
+            backup_root.mkdir(parents=True, exist_ok=True)
+            target = backup_root / project_dir.name
+            if target.exists():
+                moved += 1
+                target = backup_root / f"{project_dir.name}_{moved}"
+            shutil.move(str(project_dir), str(target))
+            total += size
+            first_target = first_target or str(target)
+        except Exception as e:
+            print(f"[oneclick] 완료 프로젝트 백업 이동 실패 ({project_id}): {e}")
+    return total, first_target
 
 
 def _dir_size(path) -> int:
@@ -5285,15 +5312,15 @@ def _inspect_project_progress(project_id: str | None, total_cuts: int | None) ->
 
 
 def requeue_task(task_id: str) -> dict[str, Any]:
-    """실패/취소된 태스크를 "초기화 + 대기 큐 복귀" 로 되돌린다.
+    """완료/실패/취소된 태스크를 "초기화 + 대기 큐 복귀" 로 되돌린다.
 
     v1.2.22 — 사용자가 실패 카드의 ⟳ 버튼을 눌렀을 때 호출.
     동작:
       1) 태스크 조회 — 없으면 KeyError
-      2) 상태가 completed / running 이면 거부 (ValueError)
+      2) 상태가 running 이면 거부 (ValueError)
       3) 프로젝트 폴더 진행률 관찰 (리포트용)
       4) Redis cancel 플래그 + asyncio Task cancel (혹시 살아있으면)
-      5) 프로젝트 폴더 전체 삭제
+      5) 프로젝트 폴더 전체 삭제. completed 는 삭제 대신 _system 아래로 백업 이동
       6) _TASKS 에서 해당 태스크 제거
       7) topic / openings / endings / core_content / episode_number /
          template_project_id / channel / target_duration 을 보존한 새 큐
@@ -5308,12 +5335,6 @@ def requeue_task(task_id: str) -> dict[str, Any]:
         raise KeyError(f"task not found: {task_id}")
 
     status = task.get("status") or ""
-    if status == "completed":
-        states = task.get("step_states") or {}
-        render_done = states.get("6") in ("completed", "done")
-        upload_done = states.get("7") in ("completed", "done")
-        if not render_done or upload_done:
-            raise ValueError("완성/업로드 완료 태스크는 복구할 수 없습니다")
     if status == "running":
         # 실행 중 태스크는 먼저 취소해야 함 — 자동 cancel+requeue 는 위험.
         raise ValueError("실행 중 태스크는 먼저 중단하세요")
@@ -5341,10 +5362,7 @@ def requeue_task(task_id: str) -> dict[str, Any]:
             pass
     _ACTIVE_RUNS.pop(task_id, None)
 
-    # 3) 디스크 정리
-    deleted_bytes = _cleanup_project_files(pid, task.get("config") if isinstance(task.get("config"), dict) else None)
-
-    # 4) 에피소드 상세 추출 (프로젝트 config → 큐 아이템 으로 되돌림).
+    # 3) 에피소드 상세 추출 (프로젝트 config → 큐 아이템 으로 되돌림).
     project = _load_project(pid) if pid else None
     cfg = dict(project.config or {}) if project else {}
     openings = cfg.get("episode_openings") or []
@@ -5352,6 +5370,16 @@ def requeue_task(task_id: str) -> dict[str, Any]:
     core = cfg.get("episode_core_content") or ""
     ep_num = cfg.get("episode_number") or task.get("episode_number")
     next_preview = cfg.get("next_episode_preview") or ""
+
+    # 4) 디스크 정리. 완료 작업은 산출물을 바로 삭제하지 않고 백업으로 이동한다.
+    cleanup_config = task.get("config") if isinstance(task.get("config"), dict) else None
+    archived_path: str | None = None
+    if status == "completed":
+        deleted_bytes, archived_path = _archive_project_files(pid, cleanup_config)
+    else:
+        deleted_bytes = _cleanup_project_files(pid, cleanup_config)
+    _delete_project_db_record(pid)
+
     new_item = {
         "id": uuid.uuid4().hex[:8],
         "topic": str(task.get("topic") or "").strip() or "(주제 없음)",
@@ -5366,7 +5394,7 @@ def requeue_task(task_id: str) -> dict[str, Any]:
         "next_episode_preview": str(next_preview or "").strip(),
         "queued_source": "requeue",
         "queued_at": _utcnow_iso(),
-        "queued_note": "실패/중단 태스크 복구",
+        "queued_note": "완료 태스크 큐 복귀" if status == "completed" else "실패/중단 태스크 복구",
         "requeued_from_task_id": task_id,
     }
 
@@ -5394,6 +5422,7 @@ def requeue_task(task_id: str) -> dict[str, Any]:
         "progress": progress,
         "queue_item": new_item,
         "deleted_bytes": deleted_bytes,
+        "archived_path": archived_path,
     }
 
 

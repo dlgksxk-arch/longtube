@@ -462,6 +462,7 @@ export default function LivePage() {
   const [recoveryLoading, setRecoveryLoading] = useState(false);
   const [recoveryChannel, setRecoveryChannel] = useState<number | null>(null);
   const [failedTasks, setFailedTasks] = useState<OneClickTask[]>([]);
+  const [completedTasks, setCompletedTasks] = useState<OneClickTask[]>([]);
   const [orphanProjects, setOrphanProjects] = useState<OrphanProject[]>([]);
   const [recoveringId, setRecoveringId] = useState<string | null>(null);
   const [recoveryUploadingId, setRecoveryUploadingId] = useState<string | null>(null);
@@ -1327,14 +1328,23 @@ export default function LivePage() {
             );
           },
         );
+      const completed = (tasks || [])
+        .filter((t) => t.status === "completed")
+        .filter((t) => channel == null || Number(t.channel || 0) === channel)
+        .sort(
+          (a, b) =>
+            timeValue(b.finished_at || b.created_at) -
+            timeValue(a.finished_at || a.created_at),
+        );
       const orphans = [...(orphanRes.items || [])].sort(
         (a, b) => timeValue(b.created_at) - timeValue(a.created_at),
       );
       setFailedTasks(failed);
+      setCompletedTasks(completed);
       setOrphanProjects(orphans);
       addLog(
-        `[시스템] 복구 대상 로드: 실패 ${failed.length}건 / 고아 ${orphanRes.count || 0}건`,
-        failed.length || orphanRes.count ? "warn" : "muted",
+        `[시스템] 작업기록 로드: 완료 ${completed.length}건 / 실패 ${failed.length}건 / 고아 ${orphanRes.count || 0}건`,
+        completed.length || failed.length || orphanRes.count ? "warn" : "muted",
       );
     } catch (e: any) {
       addLog(`[오류] 복구 대상 로드 실패: ${e?.message || e}`, "error");
@@ -1367,6 +1377,25 @@ export default function LivePage() {
       await handleRefresh();
     } catch (e: any) {
       addLog(`[오류] 제작 큐 배치 실패: ${taskTitle(failed)} - ${e?.message || e}`, "error");
+    } finally {
+      setRecoveringId(null);
+    }
+  };
+
+  const handleQueueCompletedTask = async (completed: OneClickTask) => {
+    if (!confirm(`완료된 작업을 백업 후 제작 큐 상단으로 복귀합니다.\n${taskTitle(completed)}\n계속할까요?`)) return;
+    setRecoveringId(completed.task_id);
+    try {
+      const result = await oneclickApi.requeueTask(completed.task_id);
+      markServerSync();
+      addLog(
+        `[시스템] 완료 작업 큐 복귀: ${taskTitle(completed)} (CH${result.channel})${result.archived_path ? ` · 백업: ${result.archived_path}` : ""}`,
+        "success",
+      );
+      await loadRecoveryContent(recoveryChannel);
+      await handleRefresh();
+    } catch (e: any) {
+      addLog(`[오류] 완료 작업 큐 복귀 실패: ${taskTitle(completed)} - ${e?.message || e}`, "error");
     } finally {
       setRecoveringId(null);
     }
@@ -2186,7 +2215,7 @@ export default function LivePage() {
                   className="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/15 px-3 text-xs font-bold text-amber-200 hover:bg-amber-500/25"
                 >
                   <AlertTriangle size={13} />
-                  실패/고아 가져오기
+                  작업기록 복귀
                 </button>
               </div>
             </div>
@@ -2468,9 +2497,9 @@ export default function LivePage() {
                   <div className="mr-auto flex min-w-[160px] items-center gap-2">
                     <AlertTriangle size={14} className="text-amber-300" />
                     <div>
-                      <div className="text-sm font-bold text-gray-100">실패/고아 가져오기</div>
+                      <div className="text-sm font-bold text-gray-100">작업기록 큐 복귀</div>
                       <div className="text-[11px] text-gray-500">
-                        실패 {failedTasks.length}건 · 고아 {orphanProjects.length}건
+                        완료 {completedTasks.length}건 · 실패 {failedTasks.length}건 · 고아 {orphanProjects.length}건
                       </div>
                     </div>
                   </div>
@@ -2532,10 +2561,32 @@ export default function LivePage() {
                     <Loader2 size={14} className="animate-spin" />
                     복구 대상 불러오는 중...
                   </div>
-                ) : failedTasks.length === 0 && orphanProjects.length === 0 ? (
-                  <div className="text-sm text-gray-500">불러올 실패/고아 컨텐츠가 없습니다.</div>
+                ) : completedTasks.length === 0 && failedTasks.length === 0 && orphanProjects.length === 0 ? (
+                  <div className="text-sm text-gray-500">불러올 작업기록이 없습니다.</div>
                 ) : (
-                  <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 xl:grid-cols-3 gap-3">
+                    <div>
+                      <div className="mb-2 text-xs font-bold text-emerald-300">완료 태스크 {completedTasks.length}건</div>
+                      <div className="space-y-2 max-h-44 overflow-y-auto pr-1">
+                        {completedTasks.map((item) => (
+                          <div key={item.task_id} className="flex items-center gap-2 rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3 py-2">
+                            <div className="min-w-0 flex-1">
+                              <div className="truncate text-sm font-semibold text-gray-200">{taskTitle(item)}</div>
+                              <div className="text-xs text-gray-500">
+                                {item.channel ? `CH${item.channel} · ` : ""}{getTaskFailureStepName(item)} · {Math.round(item.progress_pct || 0)}%
+                              </div>
+                            </div>
+                            <button
+                              onClick={() => void handleQueueCompletedTask(item)}
+                              disabled={recoveryBulkQueuing || recoveringId === item.task_id}
+                              className="shrink-0 rounded-md border border-emerald-400/30 bg-emerald-400/10 px-2.5 py-1 text-xs font-semibold text-emerald-200 hover:bg-emerald-400/15 disabled:opacity-50"
+                            >
+                              {recoveringId === item.task_id ? "처리 중..." : "큐 복귀"}
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
                     <div>
                       <div className="mb-2 text-xs font-bold text-red-300">실패/중단 태스크 {failedTasks.length}건</div>
                       <div className="space-y-2 max-h-44 overflow-y-auto pr-1">

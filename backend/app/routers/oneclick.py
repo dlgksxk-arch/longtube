@@ -218,10 +218,11 @@ def delete_task(task_id: str):
 
 @router.post("/tasks/{task_id}/requeue")
 def requeue_task_endpoint(task_id: str):
-    """v1.2.23 — 실패/취소 태스크를 "초기화 + 대기 큐 복귀" 한다.
+    """v1.2.23 — 완료/실패/취소 태스크를 "초기화 + 대기 큐 복귀" 한다.
 
-    프로젝트 폴더 전체를 삭제하고 해당 주제를 채널의 대기 큐 맨 뒤에
-    다시 올린다. 에피소드 상세(오프닝/엔딩/본문/번호)는 보존된다.
+    실패/취소 작업은 프로젝트 폴더를 삭제하고, 완료 작업은 백업 폴더로
+    이동한 뒤 해당 주제를 채널 대기 큐에 다시 올린다.
+    에피소드 상세(오프닝/엔딩/본문/번호)는 보존된다.
     """
     try:
         return oneclick_service.requeue_task(task_id)
