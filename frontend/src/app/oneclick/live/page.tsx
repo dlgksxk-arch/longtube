@@ -2922,7 +2922,7 @@ export default function LivePage() {
                             : "border-border/70 bg-bg-primary/35"
                     }`}
                   >
-                    <div className="grid grid-cols-[58px_44px_minmax(0,1fr)_72px_48px] items-center gap-2">
+                    <div className="grid grid-cols-[58px_44px_minmax(0,1fr)_72px_48px_48px] items-center gap-2">
                       <div className="truncate text-sm font-black text-gray-100" title={row.label}>{row.label}</div>
                       <div className={`truncate text-xs font-bold ${row.isActive ? "text-accent-primary" : "text-gray-500"}`}>
                           {row.isActive ? "진행" : row.state === "done" ? "완료" : row.state === "failed" ? "실패" : "대기"}
@@ -2938,6 +2938,26 @@ export default function LivePage() {
                         title="이 단계부터 재개"
                       >
                         재개
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleClearStep(Number(row.key), row.label)}
+                        disabled={
+                          Number(row.key) > 6 ||
+                          row.state === "pending" ||
+                          clearing === Number(row.key) ||
+                          ["running", "queued", "prepared"].includes(displayTask?.status || "")
+                        }
+                        className="justify-self-end rounded border border-red-400/30 bg-red-400/10 px-1.5 py-1 text-[10px] font-bold text-red-300 hover:bg-red-400/20 disabled:cursor-not-allowed disabled:opacity-35"
+                        title={
+                          ["running", "queued", "prepared"].includes(displayTask?.status || "")
+                            ? "작업 중에는 결과물을 삭제할 수 없습니다. 먼저 중단하세요."
+                            : Number(row.key) > 6
+                              ? "업로드 단계는 삭제 대상 결과물이 없습니다."
+                              : "이 단계 결과물 삭제"
+                        }
+                      >
+                        {clearing === Number(row.key) ? "삭제중" : "삭제"}
                       </button>
                     </div>
                     <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-bg-primary">
