@@ -78,7 +78,7 @@ DEFAULT_CONFIG = {
 
 def normalize_default_config(config: dict) -> dict:
     cfg = dict(config or {})
-    if not cfg.get("image_reuse_group_seconds"):
+    if "image_reuse_group_seconds" not in cfg:
         try:
             target_duration = int(float(cfg.get("target_duration") or 0))
         except (TypeError, ValueError):
