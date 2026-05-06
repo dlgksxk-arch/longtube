@@ -1177,17 +1177,17 @@ def _script_tts_target_window(config: dict | None) -> tuple[float, float, float]
     """
     cfg = config or {}
     try:
-        target = float(cfg.get("script_tts_target_sec") or 4.5)
+        target = float(cfg.get("script_tts_target_sec") or 4.4)
     except (TypeError, ValueError):
-        target = 4.5
+        target = 4.4
     try:
-        tolerance = float(cfg.get("script_tts_tolerance_sec") or 0.3)
+        tolerance = float(cfg.get("script_tts_tolerance_sec") or 0.4)
     except (TypeError, ValueError):
-        tolerance = 0.3
+        tolerance = 0.4
 
-    target = max(3.2, min(4.7, target))
+    target = max(4.0, min(4.7, target))
     tolerance = max(0.05, min(0.5, tolerance))
-    min_sec = max(4.3, target - tolerance)
+    min_sec = max(4.0, target - tolerance)
     max_sec = min(4.8, target + tolerance)
     if min_sec > max_sec:
         min_sec = max_sec = target
@@ -1244,7 +1244,7 @@ def get_system_prompt(language: str = "ko", config: dict | None = None) -> str:
             raw_cps = _profiled_chars_per_sec(config, 12.0 * effective_speed)
             wps = round(raw_wps, 3)
             cps = round(raw_cps, 3)
-            extra_words = 2 if lang == "en" else 0
+            extra_words = 0
             extra_chars = max(0, int(round(extra_words * (cps / max(wps, 0.1)))))
             target_words = max(1, int(round(tts_target_sec * wps)))
             max_words = max(1, int(math.floor(tts_max_sec * wps)))
@@ -2143,7 +2143,7 @@ class BaseLLMService(ABC):
             # 영어 TTS: 기본 ~2.5 단어/초
             words_per_sec = _profiled_words_per_sec(config, 2.5 * speed)
             chars_per_sec = _profiled_chars_per_sec(config, 12.0 * speed)
-            extra_words = 2 if language == "en" else 0
+            extra_words = 0
             extra_chars = max(0, int(round(extra_words * (chars_per_sec / max(words_per_sec, 0.1)))))
             target_words = max(1, int(round(target_secs * words_per_sec)))
             max_words = max(1, int(math.floor(max_secs * words_per_sec)))

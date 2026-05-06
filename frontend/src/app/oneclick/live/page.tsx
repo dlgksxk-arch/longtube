@@ -46,7 +46,6 @@ import {
 import {
   channelBadgeClass,
   collectQueueChannels,
-  compareQueueByEpisodeWithinChannel,
   DEFAULT_QUEUE_CHANNEL_TIMES,
   episodePrefix,
   formatEpisodeBadge,
@@ -54,6 +53,7 @@ import {
   isLiveNextQueueItem,
   normalizeQueueChannelTimes,
   queueChannelTimeLabel,
+  queueEpisodeSortValue,
   queueItemKey,
   queueTitle,
   scheduledDelayMinutes,
@@ -1127,6 +1127,39 @@ export default function LivePage() {
       addLog(`[오류] 대기열 순서 변경 실패: ${e?.message || e}`, "error");
     } finally {
       setMovingQueueId(null);
+    }
+  };
+
+  const sortQueueItems = async (direction: "asc" | "desc") => {
+    if (movingQueueId || queueBatchRunning) return;
+    setQueueBatchRunning(true);
+    try {
+      const queueState = await oneclickApi.getQueue();
+      const items = [...(queueState.items || [])];
+      const sorted = items
+        .map((item, index) => ({ item, index }))
+        .sort((a, b) => {
+          const channelDiff = Number(a.item.channel || 1) - Number(b.item.channel || 1);
+          const episodeDiff = queueEpisodeSortValue(a.item) - queueEpisodeSortValue(b.item);
+          const titleDiff = queueTitle(a.item).localeCompare(queueTitle(b.item), "ko-KR", { numeric: true });
+          const diff = channelDiff || episodeDiff || titleDiff || a.index - b.index;
+          return direction === "asc" ? diff : -diff;
+        })
+        .map(({ item }) => item);
+      const updated = await oneclickApi.setQueue({
+        channel_times: queueState.channel_times,
+        channel_presets: queueState.channel_presets,
+        items: sorted,
+      });
+      setPendingQueueItems(updated.items || []);
+      setQueueChannelTimes(normalizeQueueChannelTimes(updated.channel_times));
+      setSelectedQueueIds(new Set());
+      markServerSync();
+      addLog(`[시스템] 전체 작업큐 순차 정렬: ${direction === "asc" ? "오름차순" : "내림차순"}`, "success");
+    } catch (e: any) {
+      addLog(`[오류] 대기열 순차 정렬 실패: ${e?.message || e}`, "error");
+    } finally {
+      setQueueBatchRunning(false);
     }
   };
 
@@ -2401,6 +2434,24 @@ export default function LivePage() {
                     <span className="rounded-md border border-blue-400/30 bg-blue-400/10 px-3 py-1.5 text-sm font-bold text-blue-200">
                       현재 기준 실행순
                     </span>
+                    <button
+                      type="button"
+                      onClick={() => void sortQueueItems("asc")}
+                      disabled={pendingQueueItems.length < 2 || queueBatchRunning}
+                      className="inline-flex items-center gap-2 rounded-md border border-emerald-400/35 bg-emerald-400/10 px-3 py-2 text-sm font-bold text-emerald-200 hover:bg-emerald-400/20 disabled:opacity-40"
+                      title="전체 큐를 CH 오름차순, EP 오름차순으로 저장"
+                    >
+                      오름차순
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void sortQueueItems("desc")}
+                      disabled={pendingQueueItems.length < 2 || queueBatchRunning}
+                      className="inline-flex items-center gap-2 rounded-md border border-amber-400/35 bg-amber-400/10 px-3 py-2 text-sm font-bold text-amber-200 hover:bg-amber-400/20 disabled:opacity-40"
+                      title="전체 큐를 CH 내림차순, EP 내림차순으로 저장"
+                    >
+                      내림차순
+                    </button>
                     <button
                       type="button"
                       onClick={() => {
