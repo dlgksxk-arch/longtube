@@ -1,6 +1,13 @@
 """Base LLM service interface"""
 import math
 import re
+"""Single source of truth for script-generation prompts.
+
+Script-generation prompts must stay in this file only, regardless of channel,
+preset, or model count. Do not add channel-specific or preset-specific script
+prompt files; edit the default prompt logic here.
+"""
+
 from abc import ABC, abstractmethod
 from typing import Any, Optional
 

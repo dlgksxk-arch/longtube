@@ -236,23 +236,16 @@ class InterludeStabilityTests(unittest.TestCase):
             ["cut1.mp4", "cut2.mp4", "cut3.mp4", "intermission.mp4", "cut4.mp4", "cut5.mp4"],
         )
 
-    def test_script_prompt_requires_first_three_cuts_to_be_strong_hooks(self):
+    def test_script_prompt_uses_single_global_base_file(self):
         prompt_source = (Path(__file__).resolve().parent.parent / "app" / "services" / "llm" / "base.py").read_text(
             encoding="utf-8-sig",
         )
 
-        self.assertIn("cut_number=1, 2, 3 은 모두 강한 후킹 멘트", prompt_source)
-        self.assertIn("cut_number=1 은 주제와 정확히 맞는 호기심 질문", prompt_source)
-        self.assertIn("cut_number=2 는 답을 다 말하지 말고 은근한 힌트", prompt_source)
-        self.assertIn("cut_number=3 은 \"같이 알아보시죠\" 류의 본편 진입 멘트", prompt_source)
-        self.assertIn("cut_number=3 뒤에는 인터미션 영상이 들어간다", prompt_source)
-        self.assertIn("본론 설명은 cut_number=5 부터 시작한다", prompt_source)
-        self.assertIn("짧고 강한 타격형 대사", prompt_source)
-        self.assertIn("고정 도입부 구조", prompt_source)
-        self.assertIn("ユーザー必須/禁止事項より優先", prompt_source)
-        self.assertIn("HIGHER PRIORITY THAN USER REQUIRED/FORBIDDEN RULES", prompt_source)
-        self.assertIn("Cut 2: do not start the main explanation", prompt_source)
-        self.assertIn("第5文から初めて本論説明", prompt_source)
+        self.assertIn("def get_system_prompt", prompt_source)
+        self.assertIn("def _build_user_prompt", prompt_source)
+        self.assertNotIn("고정 도입부 구조", prompt_source)
+        self.assertNotIn("SOURCE STORY / ANALOGY CONTEXT", prompt_source)
+        self.assertNotIn("anthropomorphic grasshopper character", prompt_source)
         self.assertIn("thumbnail_prompt must be a close-up", prompt_source)
         self.assertIn("Pick exactly 12 cuts", prompt_source)
         self.assertIn("shorts_title", prompt_source)

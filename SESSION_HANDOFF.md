@@ -3,6 +3,13 @@
 Saved at: 2026-05-06 18:12 +09:00
 Workspace: `C:\Users\Ai_M9\Desktop\longtube`
 
+## 최상위 절대 지킴
+
+- 채널 증가, 채널 수, 프리셋 수와 무관하게 대본 생성 프롬프트 소스는 단 1개 파일만 사용합니다.
+- 전역 대본 생성은 반드시 `backend/app/services/llm/base.py`만 사용합니다.
+- 추가 대본 생성 프롬프트 파일, 채널별 대본 생성 프롬프트, 프리셋별 대본 생성 프롬프트를 절대 만들지 않습니다.
+- 대본 생성 기본 프롬프트 수정은 `backend/app/services/llm/base.py` 안에서만 허용합니다.
+
 ## Start Rule
 
 - 새 세션 시작 순서:

@@ -2,6 +2,13 @@
 
 > 새 세션 시작 절차는 `docs/SESSION_PROTOCOL.md` 를 따른다.
 
+## 최상위 절대 지킴
+
+- 대본 생성 프롬프트 소스는 채널/프리셋 수와 무관하게 단 1개 파일만 사용합니다.
+- 전역 대본 생성은 `backend/app/services/llm/base.py`만 사용합니다.
+- 추가 대본 생성 프롬프트 파일, 채널별/프리셋별 대본 생성 프롬프트는 절대 만들지 않습니다.
+- 기본 생성 프롬프트 수정만 허용하며, 수정 위치는 `backend/app/services/llm/base.py`입니다.
+
 ## 한줄 요약
 주제 입력 → 대본(Claude/GPT) → 음성(ElevenLabs/OpenAI) → 이미지(7종) → 영상(ComfyUI/Kling/FFmpeg) → 자막 → 유튜브 업로드 자동화. 단계별 일시중지·편집·재시작 가능. 1인 사용자 로컬 운용.
 
