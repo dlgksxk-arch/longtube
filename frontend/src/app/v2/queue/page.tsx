@@ -79,6 +79,22 @@ function statusTone(s: string): { dot: "ok" | "idle" | "fail" | "warn"; label: s
   return { dot: "idle", label: "대기" };
 }
 
+function buildTopicTemplate(topic: string, core: string, order: string): string {
+  const parts = [`[주제]\n${topic.trim()}`];
+  const c = core.trim();
+  const o = order.trim();
+  if (c) parts.push(`[핵심 사항]\n${c}`);
+  if (o) parts.push(`[순서]\n${o}`);
+  return parts.join("\n\n");
+}
+
+function displayTopic(raw: string): string {
+  const text = raw || "";
+  const match = /\[주제\]\s*\n([^\n]+)/.exec(text);
+  if (match) return match[1].slice(0, 120);
+  return text.split("\n")[0]?.slice(0, 120) ?? "";
+}
+
 export default function V2QueuePage() {
   const idp = useId();
   const [items, setItems] = useState<QueueItem[] | null>(null);
@@ -90,6 +106,8 @@ export default function V2QueuePage() {
   const [addOpen, setAddOpen] = useState(false);
   const [addPresetId, setAddPresetId] = useState<number | null>(null);
   const [addTopic, setAddTopic] = useState("");
+  const [addCore, setAddCore] = useState("");
+  const [addOrder, setAddOrder] = useState("");
   const [addPreviewEp, setAddPreviewEp] = useState<number | null>(null);
   const [addSubmitting, setAddSubmitting] = useState(false);
   const [addErr, setAddErr] = useState<string | null>(null);
@@ -158,6 +176,8 @@ export default function V2QueuePage() {
   const openAdd = () => {
     setAddPresetId(null);
     setAddTopic("");
+    setAddCore("");
+    setAddOrder("");
     setAddPreviewEp(null);
     setAddErr(null);
     setAddOpen(true);
@@ -165,6 +185,7 @@ export default function V2QueuePage() {
 
   const submitAdd = async () => {
     if (!addPresetId || !addTopic.trim()) return;
+    const topicRaw = buildTopicTemplate(addTopic, addCore, addOrder);
     setAddSubmitting(true);
     setAddErr(null);
     try {
@@ -173,7 +194,7 @@ export default function V2QueuePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           preset_id: addPresetId,
-          topic_raw: addTopic,
+          topic_raw: topicRaw,
         }),
       });
       if (!res.ok) {
@@ -292,7 +313,7 @@ export default function V2QueuePage() {
           {filtered.map((q) => {
             const c = channelColor(q.channel_id);
             const tone = statusTone(q.status);
-            const firstLine = q.topic_raw.split("\n")[0]?.slice(0, 120) ?? "";
+            const firstLine = displayTopic(q.topic_raw);
             return (
               <li
                 key={q.id}
@@ -440,20 +461,52 @@ export default function V2QueuePage() {
               htmlFor={`${idp}-topic`}
               className="block text-xs text-gray-400 mb-1"
             >
-              주제 (멀티라인 자유 입력)
+              주제
             </label>
-            <textarea
+            <input
               id={`${idp}-topic`}
+              type="text"
               value={addTopic}
               onChange={(e) => setAddTopic(e.target.value)}
-              rows={8}
-              className="w-full bg-bg-tertiary border border-border rounded-md px-3 py-2 text-sm text-gray-100 font-mono"
-              placeholder={
-                "Ep.01 주제 - …\n첫대사 - …\n핵심소재 - …\n(원하는 만큼)"
-              }
+              className="w-full bg-bg-tertiary border border-border rounded-md px-3 py-2 text-sm text-gray-100"
+              placeholder="예: 히미코는 정말 일본 첫 여왕이었을까"
+            />
+          </div>
+
+          <div>
+            <label
+              htmlFor={`${idp}-core`}
+              className="block text-xs text-gray-400 mb-1"
+            >
+              핵심 사항
+            </label>
+            <textarea
+              id={`${idp}-core`}
+              value={addCore}
+              onChange={(e) => setAddCore(e.target.value)}
+              rows={5}
+              className="w-full bg-bg-tertiary border border-border rounded-md px-3 py-2 text-sm text-gray-100"
+              placeholder={"반드시 다룰 핵심만 입력합니다.\n대본 문장이나 첫 대사는 입력하지 않습니다."}
+            />
+          </div>
+
+          <div>
+            <label
+              htmlFor={`${idp}-order`}
+              className="block text-xs text-gray-400 mb-1"
+            >
+              순서
+            </label>
+            <textarea
+              id={`${idp}-order`}
+              value={addOrder}
+              onChange={(e) => setAddOrder(e.target.value)}
+              rows={5}
+              className="w-full bg-bg-tertiary border border-border rounded-md px-3 py-2 text-sm text-gray-100"
+              placeholder={"1. 도입에서 던질 질문\n2. 먼저 확인할 배경\n3. 마지막에 정리할 결론"}
             />
             <p className="mt-1 text-xs text-gray-500">
-              검증 없음. 첫 줄 제목 부분만 의미 보존 다듬기가 적용됩니다.
+              입력값은 주제, 핵심 사항, 순서만 저장합니다.
             </p>
           </div>
 

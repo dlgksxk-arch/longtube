@@ -69,6 +69,7 @@ function emptyItem(templateId?: string, targetDuration?: number | null): OneClic
   return {
     id: genLocalId(),
     topic: "",
+    core_content: "",
     template_project_id: templateId ?? null,
     target_duration: targetDuration ?? null,
     channel: 1,
@@ -265,6 +266,7 @@ export default function OneClickWidget() {
       .map((it) => ({
         ...it,
         topic: (it.topic || "").trim(),
+        core_content: (it.core_content || "").trim(),
       }))
       .filter((it) => it.topic.length > 0);
 
@@ -301,6 +303,7 @@ export default function OneClickWidget() {
           template_project_id: it.template_project_id || null,
           target_duration: it.target_duration ?? null,
           channel: it.channel || 1,
+          core_content: it.core_content || "",
           queued_source: it.queued_source || "manual",
           queued_at: it.queued_at || new Date().toISOString(),
           queued_note: it.queued_note || "스튜디오 위젯에서 직접 추가",
@@ -710,6 +713,16 @@ function QueueRow(props: {
     item.target_duration && item.target_duration > 0
       ? Math.max(1, Math.round(item.target_duration / 60))
       : "";
+  const { core: corePart, order: orderPart } = splitPlanningContent(item.core_content || "");
+
+  const updatePlanningContent = (next: { core?: string; order?: string }) => {
+    onChange({
+      core_content: buildPlanningContent(
+        next.core ?? corePart,
+        next.order ?? orderPart,
+      ),
+    });
+  };
 
   return (
     <div className="flex items-start gap-2 bg-bg-tertiary border border-border rounded p-2">
@@ -720,8 +733,22 @@ function QueueRow(props: {
         <input
           value={item.topic}
           onChange={(e) => onChange({ topic: e.target.value })}
-          placeholder="주제를 입력하세요"
+          placeholder="주제"
           className="w-full text-sm bg-bg-primary border border-border rounded px-2 py-1.5 text-gray-100 focus:border-accent-primary outline-none"
+        />
+        <textarea
+          value={corePart}
+          onChange={(e) => updatePlanningContent({ core: e.target.value })}
+          rows={2}
+          placeholder="핵심 사항"
+          className="w-full resize-y text-xs bg-bg-primary border border-border rounded px-2 py-1.5 text-gray-100 focus:border-accent-primary outline-none"
+        />
+        <textarea
+          value={orderPart}
+          onChange={(e) => updatePlanningContent({ order: e.target.value })}
+          rows={2}
+          placeholder={"순서\n1. \n2. \n3."}
+          className="w-full resize-y text-xs bg-bg-primary border border-border rounded px-2 py-1.5 text-gray-100 focus:border-accent-primary outline-none"
         />
         <div className="flex items-center gap-2">
           {/* 채널 선택 */}
@@ -794,4 +821,27 @@ function QueueRow(props: {
       </button>
     </div>
   );
+}
+
+function splitPlanningContent(value: string): { core: string; order: string } {
+  const text = value || "";
+  const orderMatch = /(?:^|\n)\[순서\]\n?/m.exec(text);
+  if (!orderMatch) {
+    return {
+      core: text.replace(/^\[핵심 사항\]\n?/m, "").trim(),
+      order: "",
+    };
+  }
+  const before = text.slice(0, orderMatch.index).replace(/^\[핵심 사항\]\n?/m, "");
+  const after = text.slice(orderMatch.index + orderMatch[0].length);
+  return { core: before.trim(), order: after.trim() };
+}
+
+function buildPlanningContent(core: string, order: string): string {
+  const parts: string[] = [];
+  const c = (core || "").trim();
+  const o = (order || "").trim();
+  if (c) parts.push(`[핵심 사항]\n${c}`);
+  if (o) parts.push(`[순서]\n${o}`);
+  return parts.join("\n\n");
 }
