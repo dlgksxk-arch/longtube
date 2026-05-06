@@ -53,7 +53,6 @@ import {
   isLiveNextQueueItem,
   normalizeQueueChannelTimes,
   queueChannelTimeLabel,
-  queueEpisodeSortValue,
   queueItemKey,
   queueTitle,
   scheduledDelayMinutes,
@@ -1136,13 +1135,14 @@ export default function LivePage() {
     try {
       const queueState = await oneclickApi.getQueue();
       const items = [...(queueState.items || [])];
+      const now = new Date();
+      const nowMinutes = now.getHours() * 60 + now.getMinutes();
       const sorted = items
         .map((item, index) => ({ item, index }))
         .sort((a, b) => {
-          const channelDiff = Number(a.item.channel || 1) - Number(b.item.channel || 1);
-          const episodeDiff = queueEpisodeSortValue(a.item) - queueEpisodeSortValue(b.item);
-          const titleDiff = queueTitle(a.item).localeCompare(queueTitle(b.item), "ko-KR", { numeric: true });
-          const diff = channelDiff || episodeDiff || titleDiff || a.index - b.index;
+          const aDelay = scheduledDelayMinutes(queueState.channel_times?.[String(a.item.channel || 1)], nowMinutes);
+          const bDelay = scheduledDelayMinutes(queueState.channel_times?.[String(b.item.channel || 1)], nowMinutes);
+          const diff = aDelay - bDelay || a.index - b.index;
           return direction === "asc" ? diff : -diff;
         })
         .map(({ item }) => item);
