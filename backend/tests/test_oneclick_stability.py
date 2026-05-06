@@ -243,11 +243,16 @@ class InterludeStabilityTests(unittest.TestCase):
 
         self.assertIn("def get_system_prompt", prompt_source)
         self.assertIn("def _build_user_prompt", prompt_source)
-        self.assertNotIn("고정 도입부 구조", prompt_source)
+        self.assertIn("SCRIPT_SYSTEM_PROMPT_TEMPLATE", prompt_source)
+        self.assertIn("수익이 중요한 유튜브 자동화 파이프라인용 대본 생성기", prompt_source)
+        self.assertIn("고정 도입부 구조", prompt_source)
         self.assertNotIn("SOURCE STORY / ANALOGY CONTEXT", prompt_source)
         self.assertNotIn("anthropomorphic grasshopper character", prompt_source)
-        self.assertIn("thumbnail_prompt must be a close-up", prompt_source)
-        self.assertIn("Pick exactly 12 cuts", prompt_source)
+        self.assertNotIn("SCRIPT_SYSTEM_PROMPT_KO", prompt_source)
+        self.assertNotIn("SCRIPT_SYSTEM_PROMPT_EN", prompt_source)
+        self.assertNotIn("SCRIPT_SYSTEM_PROMPT_JA", prompt_source)
+        self.assertIn("thumbnail_prompt는 가장 중요한 인물", prompt_source)
+        self.assertIn("정확히 12개의 컷", prompt_source)
         self.assertIn("shorts_title", prompt_source)
         self.assertIn("visual_year", prompt_source)
         self.assertIn("Year/period: ...; Exact place: ...; Scene: ...", prompt_source)
@@ -379,13 +384,12 @@ class HistoricalImagePromptStabilityTests(unittest.TestCase):
             encoding="utf-8-sig",
         )
 
-        self.assertIn("clothing, hairstyle, headwear, jewelry/accessories", prompt_source)
-        self.assertIn("image_prompt must name visible period evidence", prompt_source)
-        self.assertIn("Visible costume, hair, armor, tools, and props must prove the exact period", prompt_source)
-        self.assertIn("plain conservative period-plausible objects", prompt_source)
-        self.assertIn("fake glyphs, fake kanji, pseudo calligraphy, crests, emblems", prompt_source)
-        self.assertIn("visual_year must name the exact visible year", prompt_source)
-        self.assertIn("exact country/region + city/province/site", prompt_source)
+        self.assertIn("의복, 머리모양, 머리 장식, 장신구", prompt_source)
+        self.assertIn("image_prompt에 보이는 시대 증거를 적어야 합니다", prompt_source)
+        self.assertIn("시대에 맞을 법한 평범한 사물", prompt_source)
+        self.assertIn("가짜 문자, 가짜 한자, 가짜 서예", prompt_source)
+        self.assertIn("visual_year는 정확한 보이는 연도", prompt_source)
+        self.assertIn("visual_location은 일반 배경이 아니라 구체적인 공간", prompt_source)
 
     def test_visual_context_injects_year_and_exact_place_into_image_prompt(self):
         script = {

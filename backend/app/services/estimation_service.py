@@ -22,7 +22,7 @@ from app.services.video.factory import DEFAULT_VIDEO_MODEL, VIDEO_REGISTRY, reso
 # 상수 — 산정 가정
 # --------------------------------------------------------------------------- #
 
-# 컷당 길이 (초). base.py SCRIPT_SYSTEM_PROMPT_KO 가 "각 컷 나레이션은 5초 분량"
+# 컷당 길이 (초). base.py SCRIPT_SYSTEM_PROMPT_TEMPLATE 이 5초 컷을 기준으로 한다.
 # 을 강제하므로 고정.
 SECONDS_PER_CUT = 5
 
