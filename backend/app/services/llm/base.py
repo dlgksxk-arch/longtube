@@ -843,11 +843,11 @@ def _compact_script_system_prompt(language: str, limits: dict, config: dict) -> 
         narration_lang = "Korean"
     fixed_opening_contract = _fixed_opening_structure_contract(lang)
     national_pride_style = {
-        "ko": "- Add a very light Korean-audience pride tint, about 2%: show endurance, strategic sense, craft, or cultural continuity when the facts support it. Keep it restrained and factual; no propaganda, no superiority claims, no modern nationalism.\n",
-        "en": "- Add a very light audience-pride tint, about 2%: when the facts support it, frame invention, practical ingenuity, risk-taking, or civic scale as quietly impressive. Keep it restrained and factual; no propaganda, no superiority claims.\n",
-        "ja": "- 事実に基づく範囲で、日本語視聴者向けのごく薄い誇りを2%だけ入れること。粘り強さ、制度化、工夫、文化的連続性を静かに感じさせる程度にし、宣伝・優越表現・現代ナショナリズムは禁止。\n",
-        "hi": "- Add a very light Indian-audience pride tint, about 2%: when the facts support it, let civilizational depth, political skill, intellectual tradition, or social scale feel quietly weighty. Keep it restrained and factual; no propaganda, no superiority claims.\n",
-    }.get(lang, "- Add a very light local-audience pride tint, about 2%, only when facts support it. Keep it restrained and factual; no propaganda or superiority claims.\n")
+        "ko": "- Add a Korean-audience pride tint, about 10%: show endurance, strategic sense, craft, or cultural continuity when the facts support it. Keep it restrained and factual; no propaganda, no superiority claims, no modern nationalism.\n",
+        "en": "- Add an audience-pride tint, about 10%: when the facts support it, frame invention, practical ingenuity, risk-taking, or civic scale as quietly impressive. Keep it restrained and factual; no propaganda, no superiority claims.\n",
+        "ja": "- 事実に基づく範囲で、日本語視聴者向けの誇りを10%ほど入れること。粘り強さ、制度化、工夫、文化的連続性を静かに感じさせる程度にし、宣伝・優越表現・現代ナショナリズムは禁止。\n",
+        "hi": "- Add an Indian-audience pride tint, about 10%: when the facts support it, let civilizational depth, political skill, intellectual tradition, or social scale feel quietly weighty. Keep it restrained and factual; no propaganda, no superiority claims.\n",
+    }.get(lang, "- Add a local-audience pride tint, about 10%, only when facts support it. Keep it restrained and factual; no propaganda or superiority claims.\n")
 
     korean_spoken_style = ""
     if lang == "ko":
@@ -858,7 +858,7 @@ Korean narration style:
 - Use those stiff endings sparingly, under about 20% of cuts, and never in 2 consecutive cuts.
 - Prefer connected endings and bridges: `-했는데요`, `-인데요`, `-하다 보니`, `-였거든요`, `-였죠`, `-고요`, `그런데`, `그러다 보니`.
 - Each cut should connect event -> reason, reason -> result, or reveal -> meaning. Do not write detached textbook sentences.
-- Spell year numbers out in the narration language for TTS. Example for Korean: write `오백사십사년`, not `544년`.
+- When writing Korean king names, separate `왕` with a space: `문무 왕`, `광개토대 왕`, `선덕여 왕`.
 - Bad: `수나라는 고구려를 공격했습니다. 고구려는 방어했습니다.`
 - Good: `수나라는 엄청난 병력을 밀어 넣었는데요, 고구려는 그 숫자 싸움에 그대로 말려들지 않았죠.`
 """
@@ -867,7 +867,6 @@ Korean narration style:
     if lang == "en":
         spoken_style = """
 English narration style:
-- Write like a calm documentary narrator speaking to one viewer, not like a report card or timeline caption.
 - Prefer conversational connectors: `but`, `so`, `then`, `still`, `because`, `by then`, `that meant`.
 - Use varied sentence shapes. Mix one sentence and two short connected sentences across cuts.
 - Avoid stiff textbook phrasing: `lived peacefully`, `arrived in the household`, `was punished`, `finally prevailed`, `throughout history`.
@@ -892,18 +891,15 @@ Hindi narration style:
             f"- PRIMARY HARD CAP: every narration must be {char_target_range} total characters, "
             f"including spaces and punctuation. Never exceed {max_chars} characters.\n"
             f"- Character count overrides word count. A line with valid words but more than {max_chars} characters is FAILED.\n"
-            f"- Proper nouns are expensive. If a line contains long names, use fewer words.\n"
             f"- After writing each narration, count the characters. If it is over {max_chars}, delete a clause, adjective, or prepositional phrase before returning JSON.\n"
             f"- Bad over-cap style: two joined clauses with 'and', 'until', 'while', or a trailing location phrase.\n"
-            f"- Good timing style: one compact spoken thought, one concrete action, no extra tail."
+            f"- Good timing style: one concrete action, no extra tail."
         )
     elif lang == "ja" and max_chars:
         character_timing_rule = (
             f"- PRIMARY HARD CAP: every narration must be {target_range} Japanese characters, including punctuation.\n"
             f"- Never exceed {max_chars} characters. A line over {max_chars} characters is FAILED even if it sounds natural.\n"
-            f"- Use one short spoken sentence only. Do not join two explanations with ただし, だから, という事実, という点, or しまうんです.\n"
-            f"- Forbidden overlong templates: 'ここが最大の転換点です', '物語の意味を一気に変えてしまうんです', 'ただの説明ではなく転換点'.\n"
-            f"- After writing each narration, count the characters and delete the second clause if it exceeds {max_chars}."
+            f"- Use one short spoken sentence only."
         )
 
     if lang == "en":
@@ -947,7 +943,6 @@ Required JSON shape:
 
 Timing target:
 - ABSOLUTE TOP RULE: no cut may exceed 5.0 seconds.
-- Every cut is a fixed 5.0-second video slot.
 - Write every narration to land as close as possible to {target_sec} seconds with the configured voice.
 - Acceptable script-writing window: {min_sec}~{max_sec} seconds. Do not merely aim anywhere inside the window; aim near {target_sec}s.
 - Write the spoken narration itself for {min_sec}~{max_sec}s.
@@ -976,25 +971,12 @@ Content contract:
 {korean_spoken_style}
 
 Historical and visual continuity contract:
-- Before writing cuts, internally lock the topic's exact time period, season/time-of-day when relevant, region, place type, material culture, clothing, hairstyle, headwear, jewelry/accessories, architecture, tools, weapons, armor, vehicles, vessels, furniture, rituals, everyday objects, landscape, materials, and recurring character designs.
-- Every cut must include visual_year, visual_period, visual_location, and visual_evidence.
-- visual_year must name the exact visible year, or the tightest honest date range if the exact year is not known. Use forms like "1592", "c. 1590-1591", or "late 16th century before 1592"; never leave it generic.
-- visual_period must be specific, not generic. For history, name the era, ruler/dynasty/culture, and date range when possible. For modern or fable scenes, name the story world plus season/time context, e.g. "classic fable world, warm summer day" or "modern office, late evening".
-- visual_location must name a concrete space, not a generic background: exact country/region + city/province/site when known + place type + interior/exterior. Examples: "Hizen Nagoya castle council room, northern Kyushu, interior", "Busan coastal village, Joseon Korea, exterior at night".
-- visual_evidence must explain the link between narration and image in one short phrase.
-- image_prompt must begin with the visible year/date range and exact space before any character or action. Required shape: "Year/period: ...; Exact place: ...; Scene: ..."
 - image_prompt must include those fields: visual_year + visual_period + visual_location + period/place-correct objects + exact narrated action.
-- In historical cuts, image_prompt must name visible period evidence: period-correct clothing, hairstyle or headwear, tools, weapons, armor, jewelry/accessories, furniture, buildings, vehicles, vessels, ritual objects, everyday objects, and materials when any of them are visible.
-- For historically disputed subjects or disputed wording, add wording that it is disputed or controversial.
-- Do not use FLAG visuals that do not match the era, space, or place.
-- Use only clothing, vehicles, objects, weapons, armor, lifestyle, and buildings that match the era, space, and place.
 - If a recurring character appears, image_prompt must include stable character detail: species/person identity, body shape, face/antennae or silhouette, clothing/props if any, pose, expression, and action.
 - Keep the same character design details across cuts; vary pose/action/composition, not the character identity.
 - Do not use generic filler visuals such as DNA helix, glowing brain, abstract map, random temple wall, generic scholar, generic palace, generic battlefield, unless the narration explicitly discusses that object.
 - Do not use generic fantasy costume, cosplay, stage costume, or famous wrong-era looks.
 - If exact visual details are uncertain, use plain conservative period-plausible objects and avoid recognizable later inventions.
-- Do not mix eras or cultures. No anachronisms: modern clothes, modern hairstyles, modern jewelry, modern buildings, guns, cars, screens, neon, national flags, printed books, paper notebooks, or readable writing unless the narration explicitly takes place in that period.
-- If the narration is about an abstract claim, visualize the closest concrete historical evidence or action from that cut, not a metaphor.
 - Consecutive cuts should feel like the same documentary world: consistent era, region, architecture, costume, and props, while varying camera angle and composition.
 
 Thumbnail contract:
@@ -1018,12 +1000,22 @@ Shorts metadata contract:
 Image contract:
 - image_prompt must be English.
 - image_prompt describes only visible scene, object, composition, or character pose.
-- Use simple English only in image_prompt. Prefer concrete visible words like person, room, road, boat, table, door, wall, field, river. Avoid hard words, art jargon, academic terms, poetic words, and abstract words.
 - Never request readable text, letters, numbers, logos, watermarks, subtitles, UI labels, posters with words, screens with words, fake glyphs, fake kanji, pseudo calligraphy, crests, emblems, or decorative symbol marks.
-- Any visible sign, wall hanging, banner, flag, armor plate, ship sail, book cover, box, or label must be blank and unmarked unless the story is actually about a specific visible mark.
+- Any visible sign, wall hanging, banner, armor plate, ship sail, book cover, box, or label must be blank and unmarked unless the story is actually about a specific visible mark.
+- Before writing cuts, internally lock the topic's exact time period, season/time-of-day when relevant, region, place type, material culture, clothing, hairstyle, headwear, jewelry/accessories, architecture, tools, weapons, armor, vehicles, vessels, furniture, rituals, everyday objects, landscape, materials, and recurring character designs.
+- Every cut must include visual_year, visual_period, visual_location, and visual_evidence.
+- visual_year must name the exact visible year, or the tightest honest date range if the exact year is not known.
+- visual_period must be specific, not generic. For history, name the era, ruler/dynasty/culture, and date range when possible.
+- visual_location must name a concrete space, not a generic background.
+- visual_evidence must explain the link between narration and image in one short phrase.
+- image_prompt must begin with the visible year/date range and exact space before any character or action. Required shape: "Year/period: ...; Exact place: ...; Scene: ..."
+- In historical cuts, image_prompt must name visible period evidence: period-correct clothing, hairstyle or headwear, tools, weapons, armor, jewelry/accessories, furniture, buildings, vehicles, vessels, ritual objects, everyday objects, and materials when any of them are visible.
 - For historically disputed subjects or disputed wording, add wording that it is disputed or controversial.
 - Do not use FLAG visuals that do not match the era, space, or place.
 - Use only clothing, vehicles, objects, weapons, armor, lifestyle, and buildings that match the era, space, and place.
+- Do not mix eras or cultures.
+- No anachronisms: modern clothes, modern hairstyles, modern jewelry, modern buildings, guns, cars, screens, neon, national flags, printed books, paper notebooks, or readable writing unless the narration explicitly takes place in that period.
+- If the narration is about an abstract claim, visualize the closest concrete historical evidence or action from that cut, not a metaphor.
 """
 
 
@@ -2251,10 +2243,7 @@ class BaseLLMService(ABC):
             f"- 絶対上限: {max_chars}文字。{max_chars}文字を1文字でも超えた narration は失敗。\n"
             f"- 目標秒数は {target_sec} 秒、許容範囲は {target_min_sec}~{target_max_sec} 秒。\n"
             f"- {target_low} 文字未満は無効。5秒カット内の無音が長くなりすぎる。\n"
-            f"- 出力前に全 narration を数え、{max_chars}文字を超えたら二つ目の説明節を削ること。\n"
-            f"- 一つの短い話し言葉だけを書くこと。二つの説明を連結しない。\n"
-            f"- 禁止表現: 「ここが最大の転換点です」「物語の意味を一気に変えてしまうんです」「ただの説明ではなく転換点」。\n"
-            f"- 「という事実が」「という点が」「しまうんです」で長く引き伸ばさない。\n\n"
+            f"- 一つの短い話し言葉だけを書くこと。\n\n"
         )
         timing_block_ko = (
             f"★★★ 나레이션 길이 목표 ★★★\n"
@@ -2264,6 +2253,7 @@ class BaseLLMService(ABC):
             f"- 출력 직전에 모든 narration 글자 수를 직접 세고, 짧으면 그 컷의 구체 원인·대상·행동·결과 중 하나를 더 넣으세요.\n"
             f"- 제목처럼 짧게 쓰지 마세요. 5초 대부분을 채우는 한 호흡 문장이어야 합니다.\n"
             f"- 각 narration 은 반드시 두 부분으로 구성하세요: 구체 사건/대상 + 구체 결과/의미.\n"
+            f"- 왕의 이름을 명명할 때 `왕`은 띄어쓰기 후에 생성합니다. 예: 문무 왕, 광개토대 왕, 선덕여 왕.\n"
             f"- 부족한 글자 수는 해당 컷의 구체 원인, 사건, 대상, 결과를 한 조각 더 넣어 해결하세요.\n\n"
         )
         # v1.1.30: image_global_prompt 는 이미지 생성 시 레퍼런스 이미지에서만 스타일을
@@ -2304,7 +2294,7 @@ class BaseLLMService(ABC):
 
         visual_contract = """
 
-*** HISTORICAL VISUAL CONTRACT - REQUIRED FOR EVERY CUT ***
+*** IMAGE PROMPT RULES - REQUIRED FOR EVERY CUT ***
 - Add these keys to every cut: visual_year, visual_period, visual_location, visual_evidence.
 - visual_year must name the exact visible year, or the tightest honest date range if exact year is not known.
 - visual_period must name the exact era/century/dynasty/culture when possible.
@@ -2601,7 +2591,7 @@ Visual rule:
                 f"\u2605\u2605\u2605 HARD CONSTRAINT \u2014 5-SECOND UNIT RULE (ABSOLUTE) \u2605\u2605\u2605\n"
                 f"- ABSOLUTE TOP RULE: no cut may exceed 5.0 seconds.\n"
                 f"- You MUST output EXACTLY {cut_count} cuts. Not {cut_count - 1}, not {cut_count + 1}. Exactly {cut_count}.\n"
-                f"- Every cut is EXACTLY 5 seconds long (duration_estimate = 5.0).\n"
+                f"- Set duration_estimate = 5.0 for every cut.\n"
                 f"- cut_number must run from 1 to {cut_count} with no gaps.\n"
                 f"- Total runtime = {cut_count} \u00d7 5 = {cut_count * 5} seconds.\n"
                 f"- If you output fewer or more than {cut_count} cuts, the pipeline will FAIL.\n"
@@ -2624,7 +2614,7 @@ Visual rule:
                 f"*** HARD CONSTRAINT - 5-SECOND UNIT RULE (ABSOLUTE) ***\n"
                 f"- ABSOLUTE TOP RULE: no cut may exceed 5.0 seconds.\n"
                 f"- You MUST output EXACTLY {cut_count} cuts. Not {cut_count - 1}, not {cut_count + 1}. Exactly {cut_count}.\n"
-                f"- Every cut is EXACTLY 5 seconds long (duration_estimate = 5.0).\n"
+                f"- Set duration_estimate = 5.0 for every cut.\n"
                 f"- cut_number must run from 1 to {cut_count} with no gaps.\n"
                 f"- Total runtime = {cut_count} x 5 = {cut_count * 5} seconds.\n"
                 f"- If you output fewer or more than {cut_count} cuts, the pipeline will FAIL.\n"
@@ -2649,7 +2639,7 @@ Visual rule:
                 f"\u2605\u2605\u2605 \u7d76\u5bfe\u5236\u7d04 \u2014 5\u79d2\u5358\u4f4d\u30eb\u30fc\u30eb\uff08\u5fc5\u305a\u5b88\u308b\u3053\u3068\uff09 \u2605\u2605\u2605\n"
                 f"- \u6700\u4e0a\u4f4d\u7d76\u5bfe\u30eb\u30fc\u30eb: 1\u30ab\u30c3\u30c8\u306f5.0\u79d2\u3092\u8d85\u3048\u3066\u306f\u3044\u3051\u307e\u305b\u3093\u3002\n"
                 f"- \u5fc5\u305a\u6b63\u78ba\u306b {cut_count} \u30ab\u30c3\u30c8\u3092\u51fa\u529b\u3059\u308b\u3053\u3068\u3002{cut_count - 1}\u3067\u3082{cut_count + 1}\u3067\u3082\u306a\u304f\u3001{cut_count} \u3061\u3087\u3046\u3069\u3002\n"
-                f"- \u5168\u30ab\u30c3\u30c8\u306f\u6b63\u78ba\u306b5\u79d2\uff08duration_estimate = 5.0\uff09\u3002\n"
+                f"- \u5168\u30ab\u30c3\u30c8\u306e duration_estimate \u306f 5.0 \u306b\u3059\u308b\u3053\u3068\u3002\n"
                 f"- cut_number \u306f 1 \u304b\u3089 {cut_count} \u307e\u3067\u6b20\u756a\u306a\u304f\u9023\u756a\u3002\n"
                 f"- \u7dcf\u518d\u751f\u6642\u9593 = {cut_count} \u00d7 5 = {cut_count * 5} \u79d2\u3002\n"
                 f"- {cut_count} \u30ab\u30c3\u30c8\u4ee5\u5916\u3092\u51fa\u529b\u3059\u308b\u3068\u30d1\u30a4\u30d7\u30e9\u30a4\u30f3\u304c\u5931\u6557\u3057\u307e\u3059\u3002\n"
@@ -2671,7 +2661,7 @@ Visual rule:
             f"\u2605\u2605\u2605 \uc808\ub300 \uc81c\uc57d \u2014 5\ucd08 \ub2e8\uc704 \uaddc\uce59 (\ubc18\ub4dc\uc2dc \uc9c0\ud0ac \uac83) \u2605\u2605\u2605\n"
             f"- \ucd5c\uc0c1\uc704 \uc808\ub300 \uaddc\uce59: \uc808\ub300 \ucef7\ub2f9 5\ucd08\ub97c \ub118\uc9c0 \uc54a\uc2b5\ub2c8\ub2e4.\n"
             f"- \ubc18\ub4dc\uc2dc \uc815\ud655\ud788 {cut_count}\uac1c\uc758 \ucef7\uc744 \ucd9c\ub825\ud558\uc138\uc694. {cut_count - 1}\uac1c\ub3c4 {cut_count + 1}\uac1c\ub3c4 \uc544\ub2cc, \uc815\ud655\ud788 {cut_count}\uac1c.\n"
-            f"- \ubaa8\ub4e0 \ucef7\uc740 \uc815\ud655\ud788 5\ucd08 \uae38\uc774\uc785\ub2c8\ub2e4 (duration_estimate = 5.0).\n"
+            f"- \ubaa8\ub4e0 \ucef7\uc758 duration_estimate \ub294 5.0\uc73c\ub85c \uc124\uc815\ud569\ub2c8\ub2e4.\n"
             f"- cut_number\ub294 1\ubd80\ud130 {cut_count}\uae4c\uc9c0 \ube60\uc9d0\uc5c6\uc774 \uc5f0\uc18d\ub418\uc5b4\uc57c \ud569\ub2c8\ub2e4.\n"
             f"- \ucd1d \uc7ac\uc0dd \uc2dc\uac04 = {cut_count} \u00d7 5 = {cut_count * 5}\ucd08.\n"
             f"- {cut_count}\uac1c\uac00 \uc544\ub2cc \ucef7 \uc218\ub97c \ucd9c\ub825\ud558\uba74 \ud30c\uc774\ud504\ub77c\uc778\uc774 \uc2e4\ud328\ud569\ub2c8\ub2e4.\n"
