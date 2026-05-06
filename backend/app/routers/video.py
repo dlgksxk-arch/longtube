@@ -27,6 +27,7 @@ from app.models.cut import Cut
 from app.config import DATA_DIR, CUT_VIDEO_DURATION
 from app.services.video.factory import DEFAULT_VIDEO_MODEL, get_video_service, resolve_video_model
 from app.services.video.ffmpeg_service import FFmpegService
+from app.services.subtitle_service import burn_cut_subtitle_file
 
 router = APIRouter()
 
@@ -726,6 +727,18 @@ async def generate_all_videos(project_id: str, db: Session = Depends(get_db)):
                 aspect_ratio=aspect_ratio,
                 prompt=motion_prompt,
             )
+            narration = (
+                (script_cut_map.get(int(cut.cut_number), {}) or {}).get("narration")
+                or cut.narration
+                or ""
+            )
+            await burn_cut_subtitle_file(
+                result_path,
+                narration,
+                aspect_ratio=aspect_ratio,
+                style_config=(project.config or {}).get("subtitle_style") or {},
+                duration=CUT_VIDEO_DURATION,
+            )
 
             cut.video_path = _to_relative(project_id, result_path)
             cut.video_model = used_model
@@ -925,6 +938,7 @@ async def generate_all_videos_async(project_id: str, db: Session = Depends(get_d
                     "image_path": c.image_path,
                     "audio_path": c.audio_path,
                     "audio_duration": c.audio_duration or 5.0,
+                    "narration": c.narration or "",
                     "script_cut": script_cut_map.get(int(c.cut_number), {}),
                 })
             local_db.close()
@@ -1049,6 +1063,18 @@ async def generate_all_videos_async(project_id: str, db: Session = Depends(get_d
                         )
                         elapsed = _t.time() - _s
                         print(f"[video-async] cut {cut_number} DONE in {elapsed:.1f}s (source={source})")
+                        narration = (
+                            (spec.get("script_cut") or {}).get("narration")
+                            or spec.get("narration")
+                            or ""
+                        )
+                        await burn_cut_subtitle_file(
+                            result_path,
+                            narration,
+                            aspect_ratio=aspect_ratio,
+                            style_config=(proj_config or {}).get("subtitle_style") or {},
+                            duration=CUT_VIDEO_DURATION,
+                        )
                         counts[source] += 1
                         cut_results[cut_number] = result_path
 
@@ -1340,6 +1366,7 @@ async def resume_videos_async(project_id: str, db: Session = Depends(get_db)):
                         "image_path": c.image_path,
                         "audio_path": c.audio_path,
                         "audio_duration": c.audio_duration or 5.0,
+                        "narration": c.narration or "",
                         "script_cut": script_cut_map.get(int(c.cut_number), {}),
                     })
 
@@ -1438,6 +1465,18 @@ async def resume_videos_async(project_id: str, db: Session = Depends(get_db)):
                         )
                         elapsed = _t.time() - _s
                         print(f"[video-resume] cut {cut_number} DONE in {elapsed:.1f}s (source={source})")
+                        narration = (
+                            (spec.get("script_cut") or {}).get("narration")
+                            or spec.get("narration")
+                            or ""
+                        )
+                        await burn_cut_subtitle_file(
+                            result_path,
+                            narration,
+                            aspect_ratio=aspect_ratio,
+                            style_config=(proj_config or {}).get("subtitle_style") or {},
+                            duration=CUT_VIDEO_DURATION,
+                        )
                         counts[source] += 1
                         cut_results[cut_number] = result_path
 

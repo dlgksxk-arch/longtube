@@ -108,6 +108,20 @@ def _migrate_scheduled_episodes() -> None:
         conn.execute(text("PRAGMA foreign_keys=ON"))
 
 
+def _migrate_cut_audio_timing_columns() -> None:
+    """Add optional audio timing metadata to existing cuts tables."""
+    with engine.begin() as conn:
+        try:
+            cols = conn.execute(text("PRAGMA table_info(cuts)")).fetchall()
+        except Exception:
+            return
+        if not cols:
+            return
+        col_names = {c[1] for c in cols}
+        if "audio_original_duration" not in col_names:
+            conn.execute(text("ALTER TABLE cuts ADD COLUMN audio_original_duration REAL"))
+
+
 def init_db():
     from app.models.project import Project  # noqa
     from app.models.cut import Cut  # noqa
@@ -128,6 +142,11 @@ def init_db():
     except Exception as e:
         # 마이그레이션 실패는 앱 기동을 막지 않는다. 로그만 남긴다.
         print(f"[db] scheduled_episodes 마이그레이션 경고: {e}")
+
+    try:
+        _migrate_cut_audio_timing_columns()
+    except Exception as e:
+        print(f"[db] cuts audio timing migration warning: {e}")
 
 
 def get_db():

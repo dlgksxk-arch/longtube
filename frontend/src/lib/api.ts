@@ -4,14 +4,13 @@
 //   2) 브라우저에서 로드된 호스트명 + :8000 (같은 머신에서 프런트/백이 도는 전형적 셋업)
 //   3) 로컬 개발 폴백 http://127.0.0.1:8000
 // 2)를 쓰면 192.168.x.x 로 접속한 다른 PC 도 자동으로 그 IP 의 백엔드를 바라본다.
-// 단, localhost 는 Windows IPv6 해석 흔들림을 피하려고 127.0.0.1 로 고정한다.
+// 인증 쿠키가 같은 호스트에 저장되도록 브라우저에서 열린 호스트명을 그대로 쓴다.
 const _envApi = process.env.NEXT_PUBLIC_API_BASE;
 const _envAsset = process.env.NEXT_PUBLIC_ASSET_BASE;
 function _deriveAssetBase(): string {
   if (_envAsset) return _envAsset.replace(/\/$/, "");
   if (typeof window !== "undefined" && window.location?.hostname) {
-    const hostname =
-      window.location.hostname === "localhost" ? "127.0.0.1" : window.location.hostname;
+    const hostname = window.location.hostname;
     return `${window.location.protocol}//${hostname}:8000`;
   }
   return "http://127.0.0.1:8000";
@@ -167,6 +166,8 @@ export interface ProjectConfig {
   video_model: string;
   // v1.1.36: 영상 제작 대상 — "all" | "every_3" | "every_4" | "every_5" | "character_only"
   video_target_selection?: string;
+  /** 0=컷마다 이미지 생성. 60=60초마다 1장 생성 후 같은 구간 컷에 재사용. */
+  image_reuse_group_seconds?: number;
   tts_model: string;
   tts_voice_id: string;
   tts_voice_lang?: string;
@@ -191,6 +192,7 @@ export interface ProjectConfig {
   character_images?: string[];
   logo_images?: string[];
   subtitle_style: {
+    preset?: string;
     font: string;
     size: number;
     color: string;
@@ -240,7 +242,9 @@ export interface ProjectEstimate {
   cost_breakdown: {
     llm_script: number;
     image_generation: number;
+    thumbnail?: number;
     tts: number;
+    tts_billable?: number;
     video: number;
   };
   time_breakdown: {
@@ -253,6 +257,7 @@ export interface ProjectEstimate {
   models_used: {
     script: string;
     image: string;
+    thumbnail?: string;
     tts: string;
     video: string;
   };
@@ -288,6 +293,7 @@ export interface Cut {
   duration_estimate?: number;
   audio_path?: string;
   audio_duration?: number;
+  audio_original_duration?: number;
   image_path?: string;
   image_model?: string;
   video_path?: string;
@@ -688,7 +694,7 @@ export interface InterludeEntry {
   filename?: string;
   size_bytes?: number;
   duration?: number;
-  source?: "upload";
+  source?: "upload" | "disk";
 }
 
 export interface InterludeState {
@@ -696,7 +702,8 @@ export interface InterludeState {
   opening: InterludeEntry | null;
   intermission: InterludeEntry | null;
   ending: InterludeEntry | null;
-  intermission_every_sec: number;
+  intermission_every_cuts: number;
+  intermission_every_sec?: number;
 }
 
 export interface InterludeUploadResult {
@@ -717,14 +724,15 @@ export interface InterludeComposeResult {
   cuts_used: number;
   opening_used: boolean;
   intermission_used: boolean;
-  intermission_every_sec: number;
+  intermission_every_cuts: number;
+  intermission_seconds: number;
   ending_used: boolean;
 }
 
 export const interludeApi = {
   get: (id: string): Promise<InterludeState> =>
     api.get(`/interlude/${id}`),
-  updateConfig: (id: string, body: { intermission_every_sec?: number }): Promise<{ status: string; intermission_every_sec: number }> =>
+  updateConfig: (id: string, body: { intermission_every_cuts?: number; intermission_every_sec?: number }): Promise<{ status: string; intermission_every_cuts: number; intermission_every_sec?: number }> =>
     api.put(`/interlude/${id}/config`, body),
   upload: (
     id: string,
@@ -738,7 +746,7 @@ export const interludeApi = {
   },
   remove: (id: string, kind: InterludeKind): Promise<{ status: string; kind: InterludeKind }> =>
     api.delete(`/interlude/${id}/${kind}`),
-  compose: (id: string, body: { intermission_every_sec?: number } = {}): Promise<InterludeComposeResult> =>
+  compose: (id: string, body: { intermission_every_cuts?: number; intermission_every_sec?: number } = {}): Promise<InterludeComposeResult> =>
     api.post(`/interlude/${id}/compose`, body),
 };
 
@@ -860,11 +868,28 @@ export interface YoutubeQuotaStatus {
   estimated_uploads_left: number;
   reset_basis: string;
   date: string;
+  quota_window_start_pt?: string;
+  quota_window_start_utc?: string;
+  next_reset_pt?: string;
+  next_reset_utc?: string;
 }
 
 export const localServicesApi = {
   status: (): Promise<LocalServicesStatus> => api.get("/api-status/local-services"),
   youtubeQuota: (): Promise<YoutubeQuotaStatus> => api.get("/api-status/youtube-quota"),
+  control: (
+    service: "backend" | "comfyui" | "all",
+    action: "start" | "restart",
+  ): Promise<{ ok: boolean; service: string; action: string; status?: string; detail?: string }> =>
+    fetch(`/api/local-services/${service}/${action}`, {
+      method: "POST",
+      credentials: "include",
+      cache: "no-store",
+    }).then(async (res) => {
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body?.detail || `서비스 제어 실패 (${res.status})`);
+      return body;
+    }),
 };
 
 // ─── API Keys ───
@@ -900,9 +925,24 @@ export interface ApiBalanceRow {
   display_initial: string | null;   // 초기 입력값 표시용
 }
 
+export interface ApiSpendLogRow {
+  ts: string;
+  provider: string;
+  amount_usd: number;
+  kind: string;
+  model: string;
+  project_id: string;
+  units: number | null;
+  note: string;
+}
+
 export const apiBalancesApi = {
   list: (): Promise<{ balances: ApiBalanceRow[]; default_units: string[] }> =>
     api.get("/api-balances"),
+  logs: (limit = 100, provider?: string): Promise<{ logs: ApiSpendLogRow[]; count: number }> =>
+    api.get(
+      `/api-balances/logs?limit=${limit}${provider ? `&provider=${encodeURIComponent(provider)}` : ""}`,
+    ),
   save: (provider: string, amount: number, unit: string, note?: string, lowThreshold?: number | null) =>
     api.put("/api-balances", {
       provider,
@@ -1342,6 +1382,12 @@ export interface OneClickTask {
   current_step_cut_progress_pct?: number | null;
   current_step_progress_text?: string | null;
   sub_status?: string | null;
+  safety?: {
+    last_change_at?: string;
+    stale_seconds?: number;
+    stalled_warned?: boolean;
+    stalled_stopped?: boolean;
+  };
   triggered_by?: "manual" | "schedule";
   channel?: number;  // v1.1.58: 채널 1~4 (없으면 수동 실행)
   // v1.2.17: 에피소드 번호 — 완료/실패 목록의 EP 배지 표시에 사용
@@ -1470,7 +1516,7 @@ export const oneclickApi = {
     comfyui_interrupt: boolean;
     comfyui_queue_cleared: boolean;
     errors: string[];
-  }> => api.post(`/oneclick/emergency-stop`),
+  }> => api.postWithTimeout(`/oneclick/emergency-stop`, undefined, 60_000),
   // v1.2.27: ComfyUI 큐만 리셋 (태스크는 계속). stall 자동 복구용.
   comfyuiReset: (): Promise<{
     ok: boolean;
@@ -1543,6 +1589,16 @@ export const oneclickApi = {
 
   // v1.1.43: 주제 큐
   getQueue: (): Promise<OneClickQueueState> => api.get(`/oneclick/queue`),
+  getAutoProduction: (): Promise<{ enabled: boolean; remaining_seconds: number }> =>
+    api.get(`/oneclick/queue/auto-production`),
+  setAutoProduction: (enabled: boolean): Promise<{ enabled: boolean; remaining_seconds: number }> =>
+    api.post(`/oneclick/queue/auto-production`, { enabled }),
+  getSafety: (): Promise<{
+    status: "ok" | "alert" | string;
+    last_event?: { ts: string; kind: string; message: string; payload?: Record<string, unknown> } | null;
+    running?: { task_id: string; project_id: string; title: string; current_step: number | null; current_step_name: string | null; safety?: Record<string, unknown> }[];
+    auto_production?: { enabled: boolean; remaining_seconds: number };
+  }> => api.get(`/oneclick/safety`),
   queueTemplateUrl: (): string => `/api/oneclick/queue-template`,
   setQueue: (body: {
     channel_times: Record<string, string | null>;

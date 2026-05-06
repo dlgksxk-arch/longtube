@@ -40,7 +40,7 @@ from app.config import DATA_DIR, resolve_project_dir
 from app.models.database import SessionLocal
 from app.models.project import Project
 from app.models.scheduled_episode import ScheduledEpisode
-from app.services.multilingual_caption_service import upload_multilingual_captions
+from app.services.multilingual_caption_service import should_upload_youtube_captions, upload_multilingual_captions
 
 # ─── 전역 상태 ──────────────────────────────────────────────────
 # lifespan 에서 start_scheduler() 로 생성, stop_scheduler() 로 취소.
@@ -408,7 +408,7 @@ async def _run_episode(episode: ScheduledEpisode) -> None:
 
     video_url = result.get("url") or ""
     caption_path = resolve_project_dir(project_id) / "subtitles" / "subtitles.srt"
-    if result.get("video_id") and caption_path.exists() and bool(config.get("youtube_captions_enabled", False)):
+    if result.get("video_id") and caption_path.exists() and should_upload_youtube_captions(config):
         try:
             caption_result = await upload_multilingual_captions(
                 uploader,
@@ -590,12 +590,14 @@ async def _generate_thumbnail_for_episode(
     if not image_prompt:
         image_prompt = BaseLLMService._fallback_thumbnail_prompt(title, title, language)
 
-    # 오버레이: EP 배지 + title hook
-    # LLM 이 반환한 "EP. N - hook" 에서 hook 부분만 뽑아 오버레이에 크게 박는다.
-    overlay_title = title
-    prefix = f"EP. {episode_number} - "
-    if title.startswith(prefix):
-        overlay_title = title[len(prefix):]
+    from app.services.thumbnail_service import (
+        build_clickbait_thumbnail_overlay,
+        extract_thumbnail_text_parts,
+        suppress_foreign_hangul_thumbnail_overlay,
+    )
+    overlay_seed = build_clickbait_thumbnail_overlay(script, title, config)
+    overlay_title, _ = extract_thumbnail_text_parts(overlay_seed or title, None)
+    overlay_title = suppress_foreign_hangul_thumbnail_overlay(overlay_title, config)
 
     result = await generate_ai_thumbnail(
         project_id=project_id,

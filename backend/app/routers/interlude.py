@@ -34,12 +34,15 @@ from app.services.video.ffmpeg_service import FFmpegService
 from app.services.interlude_service import (
     VALID_KINDS,
     DEFAULT_INTERMISSION_EVERY,
+    INTERMISSION_CLIP_SECONDS,
     ffprobe_duration as _ffprobe_duration,
     save_uploaded_video,
     delete_uploaded_video,
+    existing_kind_path,
 )
 
 router = APIRouter()
+FIRST_INTERMISSION_AFTER_CUTS = 3
 
 
 # ---------- 헬퍼 ----------
@@ -76,8 +79,15 @@ def _get_interlude_config(project: Project) -> dict:
     """Always returns a dict (copy) so caller can mutate safely."""
     cfg = dict(project.config or {})
     inter = dict(cfg.get("interlude") or {})
-    if "intermission_every_sec" not in inter:
-        inter["intermission_every_sec"] = DEFAULT_INTERMISSION_EVERY
+    if "intermission_every_cuts" not in inter:
+        legacy_sec = inter.get("intermission_every_sec")
+        if legacy_sec:
+            try:
+                inter["intermission_every_cuts"] = max(1, int(round(float(legacy_sec) / float(CUT_VIDEO_DURATION))))
+            except (TypeError, ValueError):
+                inter["intermission_every_cuts"] = DEFAULT_INTERMISSION_EVERY
+        else:
+            inter["intermission_every_cuts"] = DEFAULT_INTERMISSION_EVERY
     return inter
 
 
@@ -90,21 +100,65 @@ def _save_interlude_config(project: Project, inter: dict, db: Session) -> None:
     db.commit()
 
 
+def _build_body_sequence_with_intermission(
+    cut_entries: list[tuple[str, float]],
+    intermission: Optional[str],
+    every_cuts: int,
+) -> tuple[list[str], int]:
+    body_sequence: list[str] = []
+    intermission_count = 0
+    every = max(1, int(every_cuts or DEFAULT_INTERMISSION_EVERY))
+
+    for idx, (path, dur) in enumerate(cut_entries):
+        body_sequence.append(path)
+        if not intermission or idx == len(cut_entries) - 1:
+            continue
+
+        cut_count = idx + 1
+        should_insert = cut_count == FIRST_INTERMISSION_AFTER_CUTS
+        if cut_count != FIRST_INTERMISSION_AFTER_CUTS and cut_count % every == 0:
+            should_insert = True
+
+        if should_insert:
+            body_sequence.append(intermission)
+            intermission_count += 1
+
+    return body_sequence, intermission_count
+
+
+async def _prepare_intermission_clip(input_path: str, output_path: str, resolution: str) -> str:
+    pad_wh = resolution.replace("x", ":")
+    vf = (
+        f"scale={resolution}:force_original_aspect_ratio=decrease,"
+        f"pad={pad_wh}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30,format=yuv420p"
+    )
+    await FFmpegService._run_ffmpeg([
+        "ffmpeg", "-y",
+        "-i", input_path,
+        "-t", f"{INTERMISSION_CLIP_SECONDS:.3f}",
+        "-vf", vf,
+        "-map", "0:v:0",
+        "-map", "0:a?",
+        "-af", "apad",
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "20",
+        "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
+        "-pix_fmt", "yuv420p",
+        output_path,
+    ], timeout=180.0)
+    return output_path
+
+
 # ---------- Pydantic 스키마 ----------
 
 
 class InterludeConfigUpdate(BaseModel):
-    intermission_every_sec: Optional[int] = Field(
-        default=None, ge=30, le=1800,
-        description="본편 중간에 인터미션을 끼워넣을 간격(초). 기본 180(3분).",
-    )
+    intermission_every_cuts: Optional[int] = Field(default=None, ge=1, le=1000)
+    intermission_every_sec: Optional[int] = Field(default=None, ge=1, le=18000)
 
 
 class InterludeComposeRequest(BaseModel):
-    intermission_every_sec: Optional[int] = Field(
-        default=None, ge=30, le=1800,
-        description="override 인터미션 간격(초). 없으면 config 값 사용.",
-    )
+    intermission_every_cuts: Optional[int] = Field(default=None, ge=1, le=1000)
+    intermission_every_sec: Optional[int] = Field(default=None, ge=1, le=18000)
 
 
 # ---------- 엔드포인트: 조회 ----------
@@ -118,13 +172,26 @@ def get_interludes(project_id: str, db: Session = Depends(get_db)):
         raise HTTPException(404, "Project not found")
 
     inter = _get_interlude_config(project)
-    # disk 존재 여부 검증 — DB 에 기록은 남아 있는데 파일이 사라진 경우 null 처리.
+    # disk 존재 여부 검증 + config 누락 시 실제 업로드 슬롯 폴백.
     for kind in VALID_KINDS:
         entry = inter.get(kind)
-        if not entry:
+        vp = entry.get("video_path") if entry else None
+        if vp and _resolve_under_project(project_id, vp).exists():
+            inter[kind] = entry
             continue
-        vp = entry.get("video_path")
-        if vp and not _resolve_under_project(project_id, vp).exists():
+
+        found = existing_kind_path(_interlude_dir(project_id), kind)
+        if found:
+            inter[kind] = {
+                **(entry or {}),
+                "video_path": _to_rel(project_id, str(found)),
+                "filename": (entry or {}).get("filename") or found.name,
+                "size_bytes": found.stat().st_size,
+                "source": (entry or {}).get("source") or "disk",
+            }
+            continue
+
+        if entry:
             entry["video_path"] = None
         inter[kind] = entry
 
@@ -133,9 +200,8 @@ def get_interludes(project_id: str, db: Session = Depends(get_db)):
         "opening": inter.get("opening"),
         "intermission": inter.get("intermission"),
         "ending": inter.get("ending"),
-        "intermission_every_sec": inter.get(
-            "intermission_every_sec", DEFAULT_INTERMISSION_EVERY
-        ),
+        "intermission_every_cuts": inter.get("intermission_every_cuts", DEFAULT_INTERMISSION_EVERY),
+        "intermission_every_sec": inter.get("intermission_every_sec"),
     }
 
 
@@ -145,17 +211,23 @@ def update_interlude_config(
     body: InterludeConfigUpdate,
     db: Session = Depends(get_db),
 ):
-    """intermission_every_sec 등 설정값 갱신."""
+    """Update intermission settings."""
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(404, "Project not found")
 
     inter = _get_interlude_config(project)
-    if body.intermission_every_sec is not None:
-        inter["intermission_every_sec"] = body.intermission_every_sec
+    if body.intermission_every_cuts is not None:
+        inter["intermission_every_cuts"] = body.intermission_every_cuts
+    elif body.intermission_every_sec is not None:
+        inter["intermission_every_cuts"] = max(
+            1,
+            int(round(float(body.intermission_every_sec) / float(CUT_VIDEO_DURATION))),
+        )
     _save_interlude_config(project, inter, db)
     return {
         "status": "updated",
+        "intermission_every_cuts": inter.get("intermission_every_cuts"),
         "intermission_every_sec": inter.get("intermission_every_sec"),
     }
 
@@ -241,6 +313,7 @@ async def build_interlude_sequence(
     project_id: str,
     db: Session,
     *,
+    override_every_cuts: Optional[int] = None,
     override_every_sec: Optional[int] = None,
 ) -> dict:
     """본편 컷 + 업로드된 간지 영상 시퀀스를 조립해 ``final_with_interludes.mp4`` 를 생성.
@@ -258,7 +331,7 @@ async def build_interlude_sequence(
           "opening_used": True,
           "intermission_used": True,
           "ending_used": True,
-          "intermission_every_sec": 180,
+          "intermission_every_cuts": 250,
         }
     """
     cuts = (
@@ -290,17 +363,22 @@ async def build_interlude_sequence(
         return {"status": "skipped", "reason": "no cut video files on disk"}
 
     inter = _get_interlude_config(project)
-    every = override_every_sec or int(
-        inter.get("intermission_every_sec") or DEFAULT_INTERMISSION_EVERY
-    )
+    if override_every_cuts:
+        every = max(1, int(override_every_cuts))
+    elif override_every_sec:
+        every = max(1, int(round(float(override_every_sec) / float(CUT_VIDEO_DURATION))))
+    else:
+        every = int(inter.get("intermission_every_cuts") or DEFAULT_INTERMISSION_EVERY)
 
     def _inter_abs(kind: str) -> Optional[str]:
         entry = inter.get(kind) or {}
         vp = entry.get("video_path")
-        if not vp:
-            return None
-        abs_p = _resolve_under_project(project_id, vp)
-        return str(abs_p) if abs_p.exists() else None
+        if vp:
+            abs_p = _resolve_under_project(project_id, vp)
+            if abs_p.exists() and abs_p.is_file():
+                return str(abs_p)
+        found = existing_kind_path(_interlude_dir(project_id), kind)
+        return str(found) if found else None
 
     opening = _inter_abs("opening")
     intermission = _inter_abs("intermission")
@@ -309,31 +387,6 @@ async def build_interlude_sequence(
     if not (opening or intermission or ending):
         return {"status": "skipped", "reason": "no interlude clips uploaded"}
 
-    # 컷 클립과 업로드 영상은 코덱/해상도가 다를 수 있다.
-    # v2.1.1: 오프닝 뒤 / 엔딩 앞에 0.5초 크로스페이드 적용.
-    # 1) 본편 시퀀스 구성
-    body_sequence: list[str] = []
-
-    accumulated = 0.0
-    for idx, (path, dur) in enumerate(cut_entries):
-        body_sequence.append(path)
-        accumulated += dur
-        is_last = idx == len(cut_entries) - 1
-        if intermission and not is_last and accumulated >= every:
-            body_sequence.append(intermission)
-            accumulated = 0.0
-
-    if not body_sequence:
-        return {"status": "skipped", "reason": "no body clips"}
-
-    # 2) 본편을 먼저 stream copy 병합
-    output_dir = _output_dir(project_id)
-    body_path = str(output_dir / "body_merged.mp4")
-    ff = FFmpegService()
-    await ff.merge_videos(body_sequence, body_path)
-
-    # 3) 오프닝 + 본편을 크로스페이드로 이어붙이기
-    FADE_SEC = 0.5
     aspect_ratio = (project.config or {}).get("aspect_ratio", "16:9")
     if aspect_ratio == "9:16":
         resolution = "1080x1920"
@@ -342,6 +395,34 @@ async def build_interlude_sequence(
     else:
         resolution = "1920x1080"
 
+    output_dir = _output_dir(project_id)
+    prepared_intermission = None
+    if intermission:
+        prepared_intermission = await _prepare_intermission_clip(
+            intermission,
+            str(output_dir / "intermission_3s.mp4"),
+            resolution,
+        )
+
+    # 컷 클립과 업로드 영상은 코덱/해상도가 다를 수 있다.
+    # v2.1.1: 오프닝 뒤 / 엔딩 앞에 0.5초 크로스페이드 적용.
+    # 1) 본편 시퀀스 구성
+    body_sequence, intermission_count = _build_body_sequence_with_intermission(
+        cut_entries,
+        prepared_intermission,
+        every,
+    )
+
+    if not body_sequence:
+        return {"status": "skipped", "reason": "no body clips"}
+
+    # 2) 본편을 먼저 stream copy 병합
+    body_path = str(output_dir / "body_merged.mp4")
+    ff = FFmpegService()
+    await ff.merge_videos(body_sequence, body_path)
+
+    # 3) 오프닝 + 본편을 크로스페이드로 이어붙이기
+    FADE_SEC = 0.5
     current = body_path
     if opening:
         opening_body_path = str(output_dir / "opening_body.mp4")
@@ -381,9 +462,11 @@ async def build_interlude_sequence(
         "total_clips": len(body_sequence) + (1 if opening else 0) + (1 if ending else 0),
         "cuts_used": len(cut_entries),
         "opening_used": bool(opening),
-        "intermission_used": bool(intermission),
+        "intermission_used": bool(intermission_count),
+        "intermission_count": intermission_count,
         "ending_used": bool(ending),
-        "intermission_every_sec": every,
+        "intermission_every_cuts": every,
+        "intermission_seconds": INTERMISSION_CLIP_SECONDS,
     }
 
 
@@ -411,6 +494,7 @@ async def compose_with_interludes(
             project,
             project_id,
             db,
+            override_every_cuts=body.intermission_every_cuts,
             override_every_sec=body.intermission_every_sec,
         )
     except Exception as e:

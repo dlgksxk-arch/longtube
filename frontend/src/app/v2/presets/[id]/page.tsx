@@ -250,7 +250,7 @@ export default function V2PresetEditPage() {
   //   - 목표 길이는 분 단위(정수) 로 입력받고, 저장은 초(target_duration_*_sec) 로도
   //     함께 써서 기존 파이프라인 하위호환.
   //   - 인트로/본문/아웃트로는 자유 textarea + 드롭다운 추천값.
-  //   - 인터미션은 N분마다 / 총 N회 둘 다 입력. 파이프라인은 둘 중 있는 값을 우선.
+  //   - 인터미션은 N컷마다 / 총 N회 둘 다 입력. 파이프라인은 둘 중 있는 값을 우선.
   //   - 업로드 슬롯은 별도 state (interlude). 여기는 숫자/텍스트만 관리.
   const [structure, setStructure] = useState<{
     target_duration_min_min: string;   // 최소 목표 길이 (분)
@@ -258,7 +258,7 @@ export default function V2PresetEditPage() {
     intro_template: string;
     body_template: string;
     outro_template: string;
-    intermission_every_min: string;    // N분마다
+    intermission_every_min: string;    // N컷마다
     intermission_total_count: string;  // 총 N회 (선택)
   }>({
     target_duration_min_min: "",
@@ -663,15 +663,15 @@ export default function V2PresetEditPage() {
   );
 
   const changeIntermissionEvery = useCallback(
-    async (sec: number) => {
+    async (cuts: number) => {
       if (!detail) return;
-      if (!Number.isFinite(sec) || sec < 30 || sec > 1800) return;
+      if (!Number.isFinite(cuts) || cuts < 1 || cuts > 1000) return;
       try {
-        const j = await presetInterludeApi.updateConfig(detail.id, sec);
+        const j = await presetInterludeApi.updateConfig(detail.id, cuts);
         setInterludes(j);
       } catch (e) {
         // 입력 중 노이즈 에러는 UI 에 덮어쓰지 않는다.
-        console.warn("intermission_every_sec update failed", e);
+        console.warn("intermission_every_cuts update failed", e);
       }
     },
     [detail],
@@ -785,7 +785,7 @@ export default function V2PresetEditPage() {
       nextConfig.bgm_enabled = audio.bgm_enabled;
       nextConfig.bgm_style_prompt = audio.bgm_style_prompt;
       nextConfig.bgm_volume_db = bgmVolumeDb;
-      nextConfig.bgm_volume = dbToLinearVolume(bgmVolumeDb) ?? 0.24;
+      nextConfig.bgm_volume = dbToLinearVolume(bgmVolumeDb) ?? 0.42;
 
       const body: Record<string, unknown> = { config: nextConfig };
       if (name.trim() !== detail.name) body.name = name.trim();
@@ -1765,19 +1765,18 @@ function StructureSection({
         <div className="grid grid-cols-2 gap-3">
           <NumField
             id={`${idp}-inter-every`}
-            label="N분마다"
+            label="N컷마다"
             value={value.intermission_every_min}
             onChange={(v) => {
               patch("intermission_every_min", v);
-              // 백엔드의 intermission_every_sec 도 즉시 맞춤(초 환산).
               const n = Number(v);
               if (Number.isFinite(n) && n >= 1) {
-                onChangeIntermissionEvery(Math.round(n * 60));
+                onChangeIntermissionEvery(Math.round(n));
               }
             }}
-            placeholder="예: 3"
+            placeholder="예: 250"
             min={1}
-            max={30}
+            max={1000}
           />
           <NumField
             id={`${idp}-inter-total`}
@@ -1790,8 +1789,8 @@ function StructureSection({
           />
         </div>
         <p className="mt-1 text-[11px] text-gray-500">
-          두 값 모두 있으면 &quot;N분마다&quot; 가 우선이고 최대 &quot;총 N회&quot; 만큼만 삽입합니다.
-          기본 주기는 3분(180초) 입니다.
+          두 값 모두 있으면 &quot;N컷마다&quot; 가 우선이고 최대 &quot;총 N회&quot; 만큼만 삽입합니다.
+          기본 주기는 250컷입니다.
         </p>
       </div>
 

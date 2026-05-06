@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import random
-import re
 from pathlib import Path
 from typing import Optional
 
@@ -36,118 +35,6 @@ def _pad_image_to_canvas(path: str, width: int, height: int) -> None:
         canvas.convert("RGB").save(image_path)
 
 
-_MYLORA_TRIGGER_PREFIX = "MYLORA, lt_roundhead_style"
-
-# v2.0.75: 이전에는 trigger 외에 "warm beige cartoon icon, thick dark brown outline,
-# simple flat editorial illustration, clean shape language" 4개를 강제로 prepend
-# 했는데, 이 토큰들이 LoRA 학습 분포와 정확히 일치하지 않아 텍스트 가이드와
-# LoRA 가 충돌해 결과가 흐물거리는 원인이었다. 트리거만 남기고 모두 제거.
-_MYLORA_STYLE_PREFIX = _MYLORA_TRIGGER_PREFIX
-
-# v2.0.75: 매체 자체 키워드(사진/세피아/흑백)만 차단. 카메라·조명·구도 용어
-# (close up / macro / dramatic lighting / depth of field 등) 는 살려서 대본 LLM
-# 이 만든 영화적 묘사가 화면에 반영되도록 한다.
-_MYLORA_NEGATIVE_PROMPT = (
-    "detailed background, scenery, room, city, corridor, landscape, furniture, "
-    "rooftop, library, workbench, skyline, realistic, photorealistic, realistic photo, "
-    "photograph, photographic, cinematic lighting, complex lighting, depth of field, "
-    "sepia, black and white, monochrome, grayscale, vintage photo, historical photo, "
-    "eyes, mouth, nose, eyebrows, facial features, face details, expression, "
-    "second character, duplicate character, multiple characters, crowd, "
-    "sign, placard, speech bubble, caption box, floating panel, "
-    "colored background, gradient background, cast shadow, heavy shadow, "
-    "tiny readable letters, keyboard letters, keycap symbols, screen text, "
-    "logo, watermark, text, words, letters, numbers"
-)
-
-_MYLORA_REALISM_TOKENS = (
-    "photorealistic",
-    "photo-realistic",
-    "realistic photo",
-    "photograph",
-    "photographic",
-    "vintage photo",
-    "historical photo",
-    "black and white",
-    "black-and-white",
-    "monochrome",
-    "grayscale",
-    "sepia",
-)
-
-def _shape_mylora_prompt(prompt: str) -> str:
-    scene = (prompt or "").strip()
-    scene = re.sub(r"\bMYLORA\b\s*,?", "", scene, flags=re.IGNORECASE)
-    scene = re.sub(r"\blt_roundhead_style\b\s*,?", "", scene, flags=re.IGNORECASE)
-    for token in _MYLORA_REALISM_TOKENS:
-        scene = re.sub(re.escape(token), "", scene, flags=re.IGNORECASE)
-    scene = re.sub(
-        r"\b(scene|scenery|background|room|city|corridor|landscape|furniture|"
-        r"rooftop|library|workbench|skyline|atmospheric|cinematic|dramatic|"
-        r"detailed|complex|realistic|no readable text|white background)\b",
-        "",
-        scene,
-        flags=re.IGNORECASE,
-    )
-    scene = re.sub(r"\s*,\s*,+", ",", scene)
-    scene = re.sub(r"\s{2,}", " ", scene).strip(" ,.;")
-    lowered = scene.lower()
-    if re.search(r"\b(character|person|figure|mascot|round[- ]?head|faceless|writing_character)\b", lowered):
-        if "writing" in lowered:
-            subject = "character_pose, writing_character, single faceless round-head character, blank face"
-            style = "warm honey-beige cartoon"
-        else:
-            subject = "front standing single faceless round-head character, blank face, arms at sides"
-            style = "warm beige cartoon icon"
-    elif "globe" in lowered:
-        subject = "globe"
-        style = "warm beige cartoon icon"
-    else:
-        subject = re.sub(r"\b(a|an|the|of|with|on|in|at|beside|above|under)\b", " ", scene, flags=re.IGNORECASE)
-        subject = re.sub(r"\s{2,}", " ", subject).strip(" ,.;")
-        if not subject:
-            subject = "simple object icon"
-        subject = f"daily_object, {subject}"
-        style = "warm honey-beige cartoon object"
-    return (
-        f"{_MYLORA_TRIGGER_PREFIX}, {subject}, {style}, thick dark brown outline, white background"
-    )
-    # 사용자 프롬프트에 트리거가 이미 있다면 중복 방지 위해 한 번만 남게 제거
-    scene = re.sub(r"\bMYLORA\b\s*,?", "", scene, flags=re.IGNORECASE)
-    scene = re.sub(r"\blt_roundhead_style\b\s*,?", "", scene, flags=re.IGNORECASE)
-    for token in _MYLORA_REALISM_TOKENS:
-        scene = re.sub(re.escape(token), "", scene, flags=re.IGNORECASE)
-    scene = re.sub(r"\s*,\s*,+", ",", scene)
-    scene = re.sub(r"\s{2,}", " ", scene).strip(" ,.;")
-    if not scene:
-        return _MYLORA_TRIGGER_PREFIX
-    # v2.0.75: 이전의 "simplified icon scene of {scene}, white background,
-    # no readable text" 강제 wrap 제거. 사용자/대본 LLM 이 적은 묘사를 그대로
-    # 통과시키고 트리거만 앞에 붙인다.
-    return f"{_MYLORA_TRIGGER_PREFIX}, {scene}"
-
-
-def _apply_mylora_profile(graph: dict, shaped_prompt: str) -> None:
-    text = (shaped_prompt or "").lower()
-    if "writing_character" in text:
-        lora_name = "MYLORA-step00002000.safetensors"
-        strength = 0.65
-    elif "front standing" in text and "round-head character" in text:
-        lora_name = "MYLORA.safetensors"
-        strength = 0.75
-    else:
-        lora_name = "MYLORA.safetensors"
-        strength = 0.85
-
-    for node in (graph or {}).values():
-        if not isinstance(node, dict) or node.get("class_type") != "LoraLoader":
-            continue
-        inputs = node.setdefault("inputs", {})
-        inputs["lora_name"] = lora_name
-        inputs["strength_model"] = strength
-        inputs["strength_clip"] = strength
-
-
 # 워크플로 JSON 파일 매핑 (레퍼런스 이미지 없을 때)
 _WORKFLOW_FILES = {
     "comfyui-flux2-turbo": "flux2_turbo_text2img.json",
@@ -157,12 +44,7 @@ _WORKFLOW_FILES = {
     "comfyui-revanimated": "revanimated_v2_text2img.json",
     "comfyui-meinamix": "meinamix_v12_text2img.json",
     "comfyui-dreamshaper-xl": "dreamshaper_xl_lightning_text2img.json",
-    "comfyui-dreamshaper-xl-vector": "dreamshaper_xl_vector_text2img.json",
-    "comfyui-dreamshaper-xl-mylora": "dreamshaper_xl_mylora_text2img.json",
     "comfyui-dreamshaper-xl-longtube": "dreamshaper_xl_longtube_text2img.json",
-    "comfyui-dreamshaper-xl-longtube-2k": "dreamshaper_xl_longtube_2k_text2img.json",
-    "comfyui-dreamshaper-xl-longtube-3k": "dreamshaper_xl_longtube_3k_text2img.json",
-    # Qwen-Image-Edit 는 t2i 전용 워크플로가 없음 (레퍼런스 필수). ref 워크플로만 등록.
 }
 
 # v1.1.61: 레퍼런스 이미지가 있을 때 사용할 전용 워크플로.
@@ -175,7 +57,6 @@ _WORKFLOW_FILES_REF = {
     "comfyui-revanimated": "revanimated_v2_text2img_ref.json",
     "comfyui-meinamix": "meinamix_v12_text2img_ref.json",
     "comfyui-dreamshaper-xl": "dreamshaper_xl_lightning_text2img_ref.json",
-    "comfyui-qwen-image-edit-2509": "qwen_image_edit_2509_text2img_ref.json",
 }
 
 # 모델별 표시명
@@ -186,17 +67,12 @@ _DISPLAY_NAMES = {
     "comfyui-toonyou": "ComfyUI ToonYou Beta 6 (local, cartoon)",
     "comfyui-revanimated": "ComfyUI ReV Animated v2 Rebirth (local, 2.5D)",
     "comfyui-meinamix": "ComfyUI MeinaMix v12 (local, anime)",
-    "comfyui-dreamshaper-xl": "ComfyUI DreamShaper XL Lightning (local, SDXL)",
-    "comfyui-dreamshaper-xl-vector": "ComfyUI DreamShaper XL + Vector Art (카툰/벡터, local)",
-    "comfyui-dreamshaper-xl-mylora": "ComfyUI DreamShaper XL + MYLORA (local)",
-    "comfyui-dreamshaper-xl-longtube": "ComfyUI DreamShaper XL + longtube_style_v1.safetensors (final, local)",
-    "comfyui-dreamshaper-xl-longtube-2k": "ComfyUI DreamShaper XL + longtube_style_v1-step00002000.safetensors (2K, local)",
-    "comfyui-dreamshaper-xl-longtube-3k": "ComfyUI DreamShaper XL + longtube_style_v1-step00003000.safetensors (3K, local)",
-    "comfyui-qwen-image-edit-2509": "ComfyUI Qwen-Image-Edit 2509 fp8 (local, ref 필수)",
+    "comfyui-dreamshaper-xl": "ComfyUI SDXL Lightning (local)",
+    "comfyui-dreamshaper-xl-longtube": "ComfyUI SDXL 로컬모델 v1",
 }
 
 # SDXL 계열 (1024 훈련) — 해상도 강제 매핑 대상
-_SDXL_FAMILY = {"comfyui-dreamshaper-xl", "comfyui-dreamshaper-xl-vector", "comfyui-dreamshaper-xl-mylora", "comfyui-dreamshaper-xl-longtube", "comfyui-dreamshaper-xl-longtube-2k", "comfyui-dreamshaper-xl-longtube-3k"}
+_SDXL_FAMILY = {"comfyui-dreamshaper-xl", "comfyui-dreamshaper-xl-longtube"}
 
 _SDXL_DIMS = {
     "16:9": (1344, 768),
@@ -207,7 +83,7 @@ _SDXL_DIMS = {
 }
 
 # Qwen-Image 계열 (1328 native, 64 배수 권장). 레퍼런스 필수.
-_QWEN_FAMILY = {"comfyui-qwen-image-edit-2509"}
+_QWEN_FAMILY = set()
 
 _QWEN_DIMS = {
     "16:9": (1344, 768),
@@ -224,7 +100,13 @@ DEFAULT_NEGATIVE_PROMPT = (
     "handwriting, printed text, any text, title, caption, inscription, "
     "distorted, ugly, deformed, bad anatomy, extra fingers, extra limbs, "
     "extra legs, five legs, extra arms, mutated hands, fused limbs, "
-    "malformed limbs, too many legs, too many arms, jpeg artifacts"
+    "malformed limbs, too many legs, too many arms, jpeg artifacts, "
+    "modern national flag, state flag, country flag, national emblem, flagpole, "
+    "banner resembling a national flag, tricolor flag, horizontal tricolor, vertical "
+    "tricolor, canton stars, flag stripes, national color blocks, "
+    "Japanese flag, hinomaru, rising sun flag, rising sun rays, red sun disc, "
+    "red circle on white background, centered red circle, centered red disc, "
+    "white field with red circle, red radial rays, sunburst flag, imperial Japanese flag"
 )
 
 # SD 1.5 계열 (512 훈련) — 해상도 강제 매핑 대상
@@ -427,9 +309,6 @@ class ComfyUIImageService(BaseImageService):
         seed = random.randint(0, 2**31 - 1)
         prefix = f"longtube/{Path(output_path).stem}"
         pad_canvas: tuple[int, int] | None = None
-        if self.model_id == "comfyui-dreamshaper-xl-mylora" and w != h:
-            pad_canvas = (w, h)
-            w, h = _SDXL_DIMS.get("1:1", (1024, 1024))
 
         neg = (self.negative_prompt or "").strip() or DEFAULT_NEGATIVE_PROMPT
 
@@ -498,13 +377,7 @@ class ComfyUIImageService(BaseImageService):
         final_prompt_text = (prompt or "").strip() or "an image"
 
         # LoRA 트리거 워드 자동 삽입
-        if self.model_id == "comfyui-dreamshaper-xl-vector":
-            if "vector" not in final_prompt_text.lower():
-                final_prompt_text = f"vector, {final_prompt_text}"
-        elif self.model_id == "comfyui-dreamshaper-xl-mylora":
-            final_prompt_text = _shape_mylora_prompt(final_prompt_text)
-            neg = f"{_MYLORA_NEGATIVE_PROMPT}, {neg}"
-        elif self.model_id.startswith("comfyui-dreamshaper-xl-longtube"):
+        if self.model_id.startswith("comfyui-dreamshaper-xl-longtube"):
             if "longtubestyle" not in final_prompt_text.lower():
                 final_prompt_text = f"longtubestyle, simple cartoon illustration, round head, thick outlines, {final_prompt_text}"
         subs = {
@@ -521,8 +394,6 @@ class ComfyUIImageService(BaseImageService):
         )
 
         graph = comfyui_client.render_workflow(self._template, subs)
-        if self.model_id == "comfyui-dreamshaper-xl-mylora":
-            _apply_mylora_profile(graph, final_prompt_text)
         label = self._context_label()
         summary = self._workflow_summary(graph)
         loras = ", ".join(summary.get("loras") or []) or "none"

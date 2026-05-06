@@ -27,6 +27,7 @@ import {
   apiStatusApi,
   type ProviderInfo,
   type ApiBalanceRow,
+  type ApiSpendLogRow,
   type ApiStatusInfo,
 } from "@/lib/api";
 
@@ -71,6 +72,7 @@ const emptyRow = (): RowState => ({
 export default function SettingsPage() {
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [balances, setBalances] = useState<ApiBalanceRow[]>([]);
+  const [apiLogs, setApiLogs] = useState<ApiSpendLogRow[]>([]);
   const [statuses, setStatuses] = useState<ApiStatusInfo[]>([]);
   const [rows, setRows] = useState<Record<string, RowState>>({});
   const [loading, setLoading] = useState(true);
@@ -84,14 +86,16 @@ export default function SettingsPage() {
   const load = async () => {
     setLoading(true);
     try {
-      const [p, b, s] = await Promise.all([
+      const [p, b, s, l] = await Promise.all([
         apiKeysApi.listProviders().catch(() => ({ providers: [] })),
         apiBalancesApi.list().catch(() => ({ balances: [], default_units: [] })),
         apiStatusApi.check().catch(() => ({ apis: [] })),
+        apiBalancesApi.logs(80).catch(() => ({ logs: [], count: 0 })),
       ]);
       setProviders(p.providers || []);
       setBalances(b.balances || []);
       setStatuses(s.apis || []);
+      setApiLogs(l.logs || []);
       if (b.default_units && b.default_units.length) setDefaultUnits(b.default_units);
 
       // 기존 rows state 는 유지하되, 새로 조회된 값으로 초기 unit 을 맞춘다.
@@ -500,6 +504,64 @@ export default function SettingsPage() {
               </div>
             );
           })}
+        </div>
+
+        <div className="mt-8 bg-bg-secondary border border-border rounded-lg p-5">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-base font-semibold">API 호출 로그</h2>
+            <button
+              onClick={load}
+              disabled={loading}
+              className="p-2 rounded hover:bg-bg-tertiary text-gray-400 hover:text-white disabled:opacity-50"
+              title="새로고침"
+            >
+              <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
+            </button>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead className="text-gray-400 border-b border-border">
+                <tr>
+                  <th className="text-left py-2 pr-3 font-medium">시간</th>
+                  <th className="text-left py-2 pr-3 font-medium">제공자</th>
+                  <th className="text-left py-2 pr-3 font-medium">종류</th>
+                  <th className="text-left py-2 pr-3 font-medium">모델</th>
+                  <th className="text-right py-2 pr-3 font-medium">단위</th>
+                  <th className="text-right py-2 pr-3 font-medium">비용</th>
+                  <th className="text-left py-2 font-medium">메모</th>
+                </tr>
+              </thead>
+              <tbody>
+                {apiLogs.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="py-6 text-center text-gray-500">
+                      아직 기록된 API 호출이 없습니다.
+                    </td>
+                  </tr>
+                ) : (
+                  apiLogs.map((log, idx) => (
+                    <tr key={`${log.ts}-${idx}`} className="border-b border-border/60 last:border-b-0">
+                      <td className="py-2 pr-3 whitespace-nowrap text-gray-400">
+                        {new Date(log.ts).toLocaleString("ko-KR")}
+                      </td>
+                      <td className="py-2 pr-3 whitespace-nowrap">{log.provider}</td>
+                      <td className="py-2 pr-3 whitespace-nowrap text-gray-300">{log.kind}</td>
+                      <td className="py-2 pr-3 whitespace-nowrap text-gray-300">{log.model || "-"}</td>
+                      <td className="py-2 pr-3 text-right text-gray-300">
+                        {log.units == null ? "-" : Number(log.units).toLocaleString("ko-KR")}
+                      </td>
+                      <td className="py-2 pr-3 text-right text-gray-300">
+                        ${Number(log.amount_usd || 0).toFixed(6)}
+                      </td>
+                      <td className="py-2 text-gray-400 max-w-[260px] truncate" title={log.note || ""}>
+                        {log.note || "-"}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
 
         {loading && (

@@ -68,6 +68,7 @@ export interface InterludeState {
   opening: InterludeEntry;
   intermission: InterludeEntry;
   ending: InterludeEntry;
+  intermission_every_cuts: number;
   intermission_every_sec: number;
 }
 
@@ -80,17 +81,17 @@ export async function getPresetInterludes(
   return (await res.json()) as InterludeState;
 }
 
-/** 인터미션 주기(초) 업데이트. 1 ≤ every_sec ≤ 1800. */
+/** 인터미션 주기(컷) 업데이트. 1 ≤ every_cuts ≤ 1000. */
 export async function updatePresetInterludeConfig(
   presetId: number,
-  intermissionEverySec: number,
+  intermissionEveryCuts: number,
 ): Promise<InterludeState> {
   const res = await fetch(
     v2Url(`/v2/presets/${presetId}/interlude/config`),
     {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ intermission_every_sec: intermissionEverySec }),
+      body: JSON.stringify({ intermission_every_cuts: intermissionEveryCuts }),
     },
   );
   if (!res.ok) {

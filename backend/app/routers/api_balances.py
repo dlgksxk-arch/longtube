@@ -30,7 +30,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from app.config import DATA_DIR
@@ -146,6 +146,17 @@ async def list_balances():
     data = _load()
     out = [_build_row(p, data.get(p)) for p in ALLOWED_PROVIDERS]
     return {"balances": out, "default_units": DEFAULT_UNITS}
+
+
+@router.get("/logs")
+async def list_spend_logs(
+    limit: int = Query(100, ge=1, le=1000),
+    provider: Optional[str] = None,
+):
+    if provider and provider not in ALLOWED_PROVIDERS:
+        raise HTTPException(400, f"Unknown provider: {provider}")
+    rows = spend_ledger.recent_records(limit=limit, provider=provider)
+    return {"logs": rows, "count": len(rows)}
 
 
 @router.put("")

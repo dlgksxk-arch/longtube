@@ -47,9 +47,12 @@ DEFAULT_CONFIG = {
     # v1.1.55: 인트로 강제 AI 컷 수. 양수면 컷 1..N 은 video_target_selection
     # 과 무관하게 무조건 primary video_model 로 생성한다. 0 이면 비활성.
     "ai_video_first_n": 5,
-    # Subtitles are burned once during final render so the current studio
-    # subtitle settings are reflected and shorts do not inherit duplicate text.
-    "cut_level_subtitles": False,
+    # 0 이면 기존처럼 컷마다 이미지 생성. 60 이면 60초마다 1장만 생성하고
+    # 같은 구간의 나머지 컷은 그 이미지를 재사용한다.
+    "image_reuse_group_seconds": 0,
+    # Burn subtitles directly into each generated cut. Final render only joins
+    # already-subtitled cut videos, so sync stays tied to each fixed 5s clip.
+    "cut_level_subtitles": True,
     "tts_model": "openai-tts",
     "tts_voice_id": "alloy",
     # 음성 속도: 1.0=기본, <1.0=느리게, >1.0=빠르게.
@@ -57,8 +60,8 @@ DEFAULT_CONFIG = {
     "tts_speed": 1.0,
     "language": "ko",
     "subtitle_delivery": "burn",
-    "youtube_captions_enabled": False,
-    "caption_languages": ["en", "ko", "hi"],
+    "youtube_captions_enabled": True,
+    "caption_languages": ["ko"],
     "auto_pause_after_step": True,
     # v1.1.55: YouTube 공개 범위 — 프리셋 설정에서 관리
     "youtube_privacy": "private",
@@ -66,9 +69,23 @@ DEFAULT_CONFIG = {
     "bgm_enabled": True,
     "bgm_path": "",
     "bgm_style_prompt": "subtle cinematic documentary background music, instrumental only, no vocals, no lyrics, soft percussion, low tension, supports narration",
-    "bgm_volume": 0.24,
+    "bgm_volume": 0.42,
+    "bgm_ducking_strength": "low",
+    "bgm_start_offset_sec": 60.0,
     "subtitle_style": dict(DEFAULT_SUBTITLE_STYLE),
 }
+
+
+def normalize_default_config(config: dict) -> dict:
+    cfg = dict(config or {})
+    if not cfg.get("image_reuse_group_seconds"):
+        try:
+            target_duration = int(float(cfg.get("target_duration") or 0))
+        except (TypeError, ValueError):
+            target_duration = 0
+        if target_duration > 0 and target_duration <= 60:
+            cfg["image_reuse_group_seconds"] = 60
+    return cfg
 
 
 @router.get("")
@@ -90,7 +107,7 @@ def list_projects(db: Session = Depends(get_db)):
 @router.post("")
 def create_project(body: ProjectCreate, db: Session = Depends(get_db)):
     project_id = str(uuid.uuid4())[:8]
-    config = {**DEFAULT_CONFIG, **(body.config or {})}
+    config = normalize_default_config({**DEFAULT_CONFIG, **(body.config or {})})
 
     project = Project(
         id=project_id,
@@ -148,7 +165,7 @@ def update_project(project_id: str, body: ProjectUpdate, db: Session = Depends(g
     if body.config is not None:
         # v1.1.29: SQLAlchemy JSON 컬럼의 in-place mutation 감지 실패 이슈 대응 —
         # 새 dict 를 할당하는 것만으론 dirty 마킹이 불안정하므로 flag_modified 로 강제.
-        project.config = {**(project.config or {}), **body.config}
+        project.config = normalize_default_config({**(project.config or {}), **body.config})
         flag_modified(project, "config")
 
     db.commit()

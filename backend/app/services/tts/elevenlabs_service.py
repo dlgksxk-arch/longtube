@@ -62,6 +62,22 @@ class ElevenLabsService(BaseTTSService):
 
                     with open(output_path, "wb") as f:
                         f.write(resp.content)
+                    try:
+                        from app.services import spend_ledger
+                        note = "voice_preview" if os.path.basename(output_path) == "voice_preview.mp3" else os.path.basename(output_path)
+                        parts = output_path.replace("\\", "/").split("/")
+                        project_id = None
+                        if "audio" in parts:
+                            audio_idx = parts.index("audio")
+                            if audio_idx > 0:
+                                project_id = parts[audio_idx - 1]
+                        spend_ledger.record_elevenlabs_request(
+                            chars=len(text or ""),
+                            project_id=project_id,
+                            note=note,
+                        )
+                    except Exception:
+                        pass
                 break
             except (httpx.ConnectError, httpx.ReadTimeout, httpx.ConnectTimeout) as e:
                 if attempt < MAX_RETRIES:
@@ -109,6 +125,8 @@ class ElevenLabsService(BaseTTSService):
 
         out: list[dict] = []
         for v in all_voices:
+            if v.get("category") == "premade":
+                continue
             labels = v.get("labels") or {}
             out.append({
                 "id": v["voice_id"],

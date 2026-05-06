@@ -31,6 +31,7 @@ from app.services.interlude_service import (
     DEFAULT_INTERMISSION_EVERY,
     save_uploaded_video,
     delete_uploaded_video,
+    existing_kind_path,
 )
 
 
@@ -68,8 +69,15 @@ def _read_interlude_from_config(preset: ChannelPreset) -> dict:
     """
     cfg = dict(preset.config or {})
     inter = dict(cfg.get("interlude") or {})
-    if "intermission_every_sec" not in inter:
-        inter["intermission_every_sec"] = DEFAULT_INTERMISSION_EVERY
+    if "intermission_every_cuts" not in inter:
+        legacy_sec = inter.get("intermission_every_sec")
+        if legacy_sec:
+            try:
+                inter["intermission_every_cuts"] = max(1, int(round(float(legacy_sec) / 5.0)))
+            except (TypeError, ValueError):
+                inter["intermission_every_cuts"] = DEFAULT_INTERMISSION_EVERY
+        else:
+            inter["intermission_every_cuts"] = DEFAULT_INTERMISSION_EVERY
     return inter
 
 
@@ -250,14 +258,13 @@ class InterludeStateOut(BaseModel):
     opening: InterludeEntryOut = Field(default_factory=InterludeEntryOut)
     intermission: InterludeEntryOut = Field(default_factory=InterludeEntryOut)
     ending: InterludeEntryOut = Field(default_factory=InterludeEntryOut)
-    intermission_every_sec: int = DEFAULT_INTERMISSION_EVERY
+    intermission_every_cuts: int = DEFAULT_INTERMISSION_EVERY
+    intermission_every_sec: Optional[int] = None
 
 
 class InterludeConfigUpdate(BaseModel):
-    intermission_every_sec: Optional[int] = Field(
-        default=None, ge=30, le=1800,
-        description="본편 중간에 인터미션을 끼워넣을 간격(초). 기본 180(3분).",
-    )
+    intermission_every_cuts: Optional[int] = Field(default=None, ge=1, le=1000)
+    intermission_every_sec: Optional[int] = Field(default=None, ge=1, le=18000)
 
 
 def _entry_for_kind(
@@ -268,9 +275,27 @@ def _entry_for_kind(
     vp = entry.get("video_path")
     if vp:
         abs_p = DATA_DIR / vp  # vp 는 DATA_DIR 기준 상대 경로
-        if not abs_p.exists():
-            # DB 에는 남았는데 파일이 사라진 경우 — null 처리해서 UI가 재업로드 유도.
-            entry["video_path"] = None
+        if abs_p.exists() and abs_p.is_file():
+            return InterludeEntryOut(
+                video_path=entry.get("video_path"),
+                filename=entry.get("filename"),
+                size_bytes=entry.get("size_bytes"),
+                duration=entry.get("duration"),
+                source=entry.get("source"),
+            )
+
+    found = existing_kind_path(_preset_interlude_dir(preset_id), kind)
+    if found:
+        return InterludeEntryOut(
+            video_path=_to_rel(preset_id, str(found)),
+            filename=entry.get("filename") or found.name,
+            size_bytes=found.stat().st_size,
+            duration=entry.get("duration"),
+            source=entry.get("source") or "disk",
+        )
+
+    if entry:
+        entry["video_path"] = None
     return InterludeEntryOut(
         video_path=entry.get("video_path"),
         filename=entry.get("filename"),
@@ -293,9 +318,10 @@ def get_preset_interludes(preset_id: int, db: Session = Depends(get_db)):
         opening=_entry_for_kind(preset_id, inter, "opening"),
         intermission=_entry_for_kind(preset_id, inter, "intermission"),
         ending=_entry_for_kind(preset_id, inter, "ending"),
-        intermission_every_sec=int(
-            inter.get("intermission_every_sec") or DEFAULT_INTERMISSION_EVERY
+        intermission_every_cuts=int(
+            inter.get("intermission_every_cuts") or DEFAULT_INTERMISSION_EVERY
         ),
+        intermission_every_sec=inter.get("intermission_every_sec"),
     )
 
 
@@ -311,8 +337,10 @@ def update_preset_interlude_config(
         raise HTTPException(404, "preset not found")
 
     inter = _read_interlude_from_config(row)
-    if body.intermission_every_sec is not None:
-        inter["intermission_every_sec"] = body.intermission_every_sec
+    if body.intermission_every_cuts is not None:
+        inter["intermission_every_cuts"] = body.intermission_every_cuts
+    elif body.intermission_every_sec is not None:
+        inter["intermission_every_cuts"] = max(1, int(round(float(body.intermission_every_sec) / 5.0)))
     _save_interlude_to_config(row, inter, db)
 
     return InterludeStateOut(
@@ -320,9 +348,10 @@ def update_preset_interlude_config(
         opening=_entry_for_kind(preset_id, inter, "opening"),
         intermission=_entry_for_kind(preset_id, inter, "intermission"),
         ending=_entry_for_kind(preset_id, inter, "ending"),
-        intermission_every_sec=int(
-            inter.get("intermission_every_sec") or DEFAULT_INTERMISSION_EVERY
+        intermission_every_cuts=int(
+            inter.get("intermission_every_cuts") or DEFAULT_INTERMISSION_EVERY
         ),
+        intermission_every_sec=inter.get("intermission_every_sec"),
     )
 
 

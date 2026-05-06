@@ -215,16 +215,26 @@ DATA_DIR = _DataDirProxy(_RAW_DATA_DIR)
 # 값을 바꾸면 영상/자막/병합 전 파이프라인이 일괄로 따라간다.
 CUT_VIDEO_DURATION = 5.0
 
-# TTS 음성 목표 길이. 대본 생성 프롬프트가 이 범위를 목표로 쓰게 한다.
-# 대본 생성 단계에서는 이 범위를 벗어나도 검증 재생성으로 막지 않는다.
-TTS_MIN_DURATION = 4.0
+# TTS 음성 목표 길이. 대본 생성은 4.5초 중심으로 쓰고,
+# 음성 단계는 4.3~4.8초 범위를 정상으로 본다.
+TTS_TARGET_DURATION = 4.5
+TTS_MIN_DURATION = 4.3
 TTS_MAX_DURATION = 4.8
 
-# Absolute safety ceiling: target is 4.0~4.8s, and audio longer than this
+# Anthropic safety brake.  The automation can start multiple 600s scripts in a
+# row, so block new Claude calls after the rolling 24h spend crosses this cap.
+# Set ANTHROPIC_DAILY_LIMIT_USD=0 to disable deliberately.
+ANTHROPIC_DAILY_LIMIT_USD = float(os.getenv("ANTHROPIC_DAILY_LIMIT_USD", "1.00"))
+
+# Absolute safety ceiling: target is 4.3~4.8s, and audio longer than this
 # must not be accepted into the pipeline.
 TTS_HARD_MAX_DURATION = 4.8
 FIRST_CUT_FADE_IN_SECONDS = 0.5
 
 # Final render narration gain. This is applied at render/mix time so script text,
 # subtitles, and existing TTS files remain unchanged.
-NARRATION_VOLUME_GAIN = 2.6
+#
+# 2026-05-06: 2.6 drove already-normal cut audio into the final limiter and
+# produced audible hard limiting in long renders. Keep the gain conservative;
+# final loudness is handled by the render filters.
+NARRATION_VOLUME_GAIN = float(os.getenv("NARRATION_VOLUME_GAIN", "1.0"))

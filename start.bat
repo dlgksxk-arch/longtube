@@ -148,7 +148,7 @@ echo.
 :: v2.1.1: 파일 감시를 polling 으로 강제 — Codex/외부 툴 편집 시에도
 ::         Windows 에서 reload 이벤트를 놓치지 않게 한다.
 echo [2/3] Starting Backend server...
-start "LongTube-Backend" cmd /k "cd /d %~dp0backend && set WATCHFILES_FORCE_POLLING=true && set WATCHFILES_POLL_DELAY_MS=300 && (python -m pip install -r requirements.txt -q || (echo [ERROR] pip install failed ^& pause ^& exit /b 1)) && (python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir app --reload-dir workflows --reload-dir scripts || (echo [ERROR] uvicorn terminated ^& pause))"
+start "LongTube-Backend" cmd /k "cd /d %~dp0backend && (python -m pip install -r requirements.txt -q || (echo [ERROR] pip install failed ^& pause ^& exit /b 1)) && (python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 || (echo [ERROR] uvicorn terminated ^& pause))"
 echo        Backend starting on port 8000
 echo.
 

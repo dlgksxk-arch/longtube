@@ -1,4 +1,4 @@
-# LongTube v2.0.74
+# LongTube v1.2.29
 
 유튜브 롱폼 영상을 주제 입력 하나로 자동 생성하는 파이프라인 도구. 1인 사용자 로컬 운용 기준.
 
@@ -35,7 +35,7 @@ start.bat
 
 ---
 
-## LAN 에서 다른 PC 로 접속하기 (v2.0.74~)
+## LAN 에서 다른 PC 로 접속하기
 
 같은 사무실 네트워크의 다른 PC 에서 호스트 PC 의 LongTube 에 접속할 수 있다.
 **인증 레이어는 아직 없으므로 신뢰된 내부망에서만 사용한다.**
@@ -80,8 +80,9 @@ NEXT_PUBLIC_ASSET_BASE=http://192.168.0.10:8000
 
 ## 프로젝트 정보
 
-- **코드 / DB**: `C:\Users\Jevis\Desktop\longtube` (로컬)
-- **에셋 (영상/이미지/음성)**: `C:\Users\Jevis\Desktop\longtube_net\projects\` (NAS)
+- **코드 / DB**: `C:\Users\Ai_M9\Desktop\longtube` (로컬)
+- **새 에셋 기본값**: `C:\Users\Ai_M9\Desktop\longtube\data\outputs\`
+- **완료 아카이브 기본값**: `D:\long_result`
 - **Git**: https://github.com/dlgksxk-arch/longtube.git
 
 ---
@@ -209,10 +210,10 @@ longtube/
 | 이미지 기본 = OpenAI gpt-image-1 | 레퍼런스 이미지 참조 지원 (`/edits`) |
 | 영상 기본 = FFmpeg Ken Burns | 무료, 빠름, API 비용 0 |
 | 컷 길이 = 5.0초 고정 (`CUT_VIDEO_DURATION`) | 시간 계산 단순화, fal.ai 5초 클립과 1:1 매칭 |
-| 음성 3.0~4.5초 강제 (`TTS_MIN/MAX_DURATION`) | 컷 안에 여유 확보 |
+| 음성 4.3~4.8초 목표 (`TTS_MIN/MAX_DURATION`) | 5초 컷 안에 여유 확보 |
 | asyncio + 인메모리 TaskManager | Celery/Redis 없이 간단한 비동기 처리 |
 | SQLite 로컬 | 1인 사용, 별도 DB 서버 불필요 |
-| 에셋은 NAS, DB 는 로컬 | 대용량 분리, DB 는 빠른 IO |
+| 에셋은 `data/outputs`, DB 는 로컬 | 대용량 출력과 DB 분리 |
 | 레퍼런스 ≠ 캐릭터 | 레퍼런스=스타일(항상), 캐릭터=등장(조건부) |
 | API 키 `config` 모듈 속성 참조 (v1.1.63~) | UI 에서 바꾼 키가 서버 재시작 없이 즉시 반영 |
 
@@ -223,7 +224,7 @@ longtube/
 - **Midjourney**: 공식 API 없음. 프록시 서비스 연동 미구현 상태(`NotImplementedError`).
 - **Nano Banana**: fal.ai 엔드포인트 최종 실패 시 Flux Dev 로 투명 폴백.
 - **Claude JSON**: JSON 모드가 없어서 regex 파서 + 미완결 JSON 복구 로직으로 추출.
-- **NAS 의존**: `longtube_net` 이 마운트되어 있어야 에셋 저장/읽기 가능.
+- **경로 설정**: `.env` 의 `DATA_DIR`, `LEGACY_DATA_DIR`, `RESULT_ARCHIVE_DIR` 로 출력/레거시/아카이브 경로를 조정한다.
 - **경로 규약**: DB 에 저장되는 에셋 경로는 상대경로 (`images/cut_1.png`).
 - **민감 파일 git 제외**: `.env`, `client_secret*.json`, `token.json`, `*.db`, `data/`, `backend/logs/`, `*.tsbuildinfo`.
 
@@ -251,4 +252,4 @@ longtube/
 
 ---
 
-> 새 세션 시작 시: "CONTEXT.md 읽고 이어서 개발하자"
+> 새 세션 시작 시: `docs/SESSION_PROTOCOL.md` → `SESSION_HANDOFF.md` → `CONTEXT.md` 순서로 확인한다.

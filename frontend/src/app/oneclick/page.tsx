@@ -546,6 +546,7 @@ export default function QueuePage() {
   // v1.2.9: 주제 편집 팝업(중첩). 어떤 queue index 를 편집하는지. null 이면 닫힘.
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
   // v1.2.28: 채널 편집 모달 — 실패 멀티셀렉트 + 고아 프로젝트 섹션
+  const [selectedQueueItems, setSelectedQueueItems] = useState<Set<string>>(new Set());
   const [selectedFailed, setSelectedFailed] = useState<Set<string>>(new Set());
   const [selectedOrphans, setSelectedOrphans] = useState<Set<string>>(new Set());
   const [orphans, setOrphans] = useState<OrphanProject[]>([]);
@@ -723,6 +724,14 @@ export default function QueuePage() {
     });
   }, [failedTasksAll]);
 
+  useEffect(() => {
+    const visibleQueue = new Set(queue.map((item, index) => item.id || String(index)));
+    setSelectedQueueItems((prev) => {
+      const next = new Set(Array.from(prev).filter((id) => visibleQueue.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [queue]);
+
   // 큐 편집
   const updateItem = (idx: number, patch: Partial<OneClickQueueItem>) => {
     setQueue((prev) => { const n = [...prev]; n[idx] = { ...n[idx], ...patch }; return n; });
@@ -770,6 +779,40 @@ export default function QueuePage() {
       saveGuardRef.current = true;
       setTimeout(() => { saveGuardRef.current = false; }, 6000);
     } catch (e) { setErr((e as Error).message || "삭제 저장 실패"); }
+  }, [queue, tasks, channelTimes, channelPresets, buildChannelPresetPayload]);
+
+  const removeSelectedQueueItems = useCallback(async (ids: string[], label = "선택 대기") => {
+    const targetIds = Array.from(new Set(ids.filter(Boolean)));
+    if (targetIds.length === 0) return;
+    if (!window.confirm(`${label} ${targetIds.length}건을 대기열에서 삭제할까요?`)) return;
+    const targetSet = new Set(targetIds);
+    const next = queue.filter((item, index) => !targetSet.has(item.id || String(index)));
+    setQueue(next);
+    try {
+      const clean = next.map((it) => ({ ...it, topic: (it.topic || "").trim() })).filter((it) => it.topic.length > 0);
+      const ct: Record<string, string | null> = {};
+      for (const ch of collectChannelKeys({ queue: next, tasks, channelTimes, channelPresets })) {
+        ct[ch] = channelTimes[ch] || null;
+      }
+      const res = await oneclickApi.setQueue({
+        channel_times: ct,
+        channel_presets: buildChannelPresetPayload(),
+        items: clean,
+      });
+      setQueue(normalizeQueueItems(res.items || []));
+      setChannelPresets(normalizeChannelMap(res.channel_presets, ""));
+      setSelectedQueueItems((prev) => {
+        const out = new Set(prev);
+        targetIds.forEach((id) => out.delete(id));
+        return out;
+      });
+      setSaved(true);
+      dirtyRef.current = false;
+      saveGuardRef.current = true;
+      setTimeout(() => { saveGuardRef.current = false; }, 6000);
+    } catch (e) {
+      setErr((e as Error).message || "선택 삭제 저장 실패");
+    }
   }, [queue, tasks, channelTimes, channelPresets, buildChannelPresetPayload]);
   // v1.2.6: 채널별 섹션에서 호출 — ch 파라미터로 어느 채널에 넣을지 명시.
   // v1.2.9: 새 항목은 에피소드 상세 필드까지 기본값을 채워 생성 후 즉시
@@ -1402,6 +1445,10 @@ export default function QueuePage() {
         );
         const orphanPage = paginateItems(sortedOrphans, listPages.orphans);
         const allFailedIds = chFailed.map((t) => t.task_id);
+        const allQueueIds = chQueue.map(({ q, i }) => q.id || String(i));
+        const selectedQueueCount = allQueueIds.filter((id) => selectedQueueItems.has(id)).length;
+        const allQueueSelected =
+          allQueueIds.length > 0 && allQueueIds.every((id) => selectedQueueItems.has(id));
         const selectedFailedCount = allFailedIds.filter((id) => selectedFailed.has(id)).length;
         const allFailedSelected =
           allFailedIds.length > 0 && allFailedIds.every((id) => selectedFailed.has(id));
@@ -1526,8 +1573,42 @@ export default function QueuePage() {
                   <div className="space-y-4">
                     {/* 대기 */}
                     <section>
-                      <div className="text-sm font-semibold text-blue-400 mb-2">
-                        대기 {chQueue.length}건
+                      <div className="mb-2 flex flex-wrap items-center gap-2">
+                        <div className="mr-auto text-sm font-semibold text-blue-400">
+                          대기 {chQueue.length}건
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedQueueItems((prev) => {
+                              const next = new Set(prev);
+                              if (allQueueSelected) {
+                                allQueueIds.forEach((id) => next.delete(id));
+                              } else {
+                                allQueueIds.forEach((id) => next.add(id));
+                              }
+                              return next;
+                            });
+                          }}
+                          disabled={allQueueIds.length === 0}
+                          className="rounded border border-border bg-bg-primary px-2 py-1 text-[11px] font-semibold text-gray-300 hover:bg-bg-tertiary disabled:opacity-40"
+                        >
+                          {allQueueSelected ? "전체 해제" : "전체 선택"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            removeSelectedQueueItems(
+                              allQueueIds.filter((id) => selectedQueueItems.has(id)),
+                              `CH${n} 선택 대기`,
+                            )
+                          }
+                          disabled={selectedQueueCount === 0}
+                          className="inline-flex items-center gap-1 rounded border border-accent-danger/35 bg-accent-danger/10 px-2 py-1 text-[11px] font-semibold text-accent-danger hover:bg-accent-danger/20 disabled:opacity-40"
+                        >
+                          <Trash2 size={11} />
+                          선택 삭제 {selectedQueueCount}
+                        </button>
                       </div>
                       {chQueue.length === 0 ? (
                         <div className="text-xs text-gray-600 italic">대기 항목 없음</div>
@@ -1539,11 +1620,30 @@ export default function QueuePage() {
                               const channelOrderIndex = chQueue.findIndex((entry) => entry.i === i);
                               const canMoveUp = channelOrderIndex > 0;
                               const canMoveDown = channelOrderIndex >= 0 && channelOrderIndex < chQueue.length - 1;
+                              const checked = selectedQueueItems.has(itemKey);
                               return (
                                 <li
                                   key={itemKey}
-                                  className="flex items-start gap-2 bg-bg-primary/40 border border-border rounded-lg px-2.5 py-1.5"
+                                  className={`flex items-start gap-2 border rounded-lg px-2.5 py-1.5 ${
+                                    checked
+                                      ? "border-accent-primary/45 bg-accent-primary/10"
+                                      : "border-border bg-bg-primary/40"
+                                  }`}
                                 >
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={(event) => {
+                                      setSelectedQueueItems((prev) => {
+                                        const next = new Set(prev);
+                                        if (event.target.checked) next.add(itemKey);
+                                        else next.delete(itemKey);
+                                        return next;
+                                      });
+                                    }}
+                                    className="mt-1 h-4 w-4 shrink-0 accent-accent-primary"
+                                    aria-label="대기 항목 선택"
+                                  />
                                   <div className="flex-1 min-w-0">
                                     <span
                                       className="block text-sm text-gray-200 truncate"

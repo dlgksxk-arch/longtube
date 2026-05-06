@@ -21,6 +21,16 @@ interface Props {
   onUpdate: () => void;
 }
 
+function formatVoiceDuration(cut: Cut): string | null {
+  const finalDuration = cut.audio_duration;
+  if (!finalDuration || finalDuration <= 0) return null;
+  const originalDuration =
+    cut.audio_original_duration && cut.audio_original_duration > 0
+      ? cut.audio_original_duration
+      : finalDuration;
+  return `${originalDuration.toFixed(1)}s -> ${finalDuration.toFixed(1)}s`;
+}
+
 export default function StepVoice({ project, cuts, onUpdate }: Props) {
   const [generating, setGenerating] = useState(false);
   const [regeneratingCut, setRegeneratingCut] = useState<number | null>(null);
@@ -290,6 +300,7 @@ export default function StepVoice({ project, cuts, onUpdate }: Props) {
           {cuts.map((cut, idx) => {
             const isCurrentlyGenerating = generating && !cut.audio_path && cut.narration && idx === generatingIndex;
             const isWaiting = generating && !cut.audio_path && cut.narration && idx > generatingIndex;
+            const durationLabel = formatVoiceDuration(cut);
             return (
               <div key={cut.cut_number} className={`bg-bg-secondary border rounded-lg px-4 py-3 flex items-center gap-4 ${isCurrentlyGenerating ? "border-accent-primary/60 ring-1 ring-accent-primary/30" : "border-border"}`}>
                 <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ${isCurrentlyGenerating ? "bg-accent-primary text-white" : "bg-accent-primary/20 text-accent-primary"}`}>
@@ -297,8 +308,13 @@ export default function StepVoice({ project, cuts, onUpdate }: Props) {
                 </div>
                 <p className="flex-1 text-sm text-gray-300 truncate">{cut.narration}</p>
                 <div className="flex items-center gap-2 flex-shrink-0">
-                  {cut.audio_duration && (
-                    <span className="text-xs text-gray-500">{cut.audio_duration.toFixed(1)}s</span>
+                  {durationLabel && (
+                    <span
+                      className="text-xs text-gray-500 tabular-nums whitespace-nowrap"
+                      title="original generated duration -> final adjusted duration"
+                    >
+                      {durationLabel}
+                    </span>
                   )}
                   {cut.audio_path ? (
                     <>

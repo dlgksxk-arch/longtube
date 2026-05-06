@@ -62,6 +62,11 @@ def _append(record: dict):
         LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
         with LOG_FILE.open("a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        try:
+            from app.services import oneclick_service
+            oneclick_service.register_spend_record(record)
+        except Exception as e:
+            print(f"[spend_ledger] safety hook skipped: {e}")
     except Exception as e:
         print(f"[spend_ledger] append failed: {e}")
 
@@ -108,6 +113,19 @@ def spend_since(provider: str, since_iso: Optional[str]) -> float:
     return total
 
 
+def recent_records(*, limit: int = 100, provider: Optional[str] = None) -> list[dict]:
+    """Return newest ledger records first for the settings/API log view."""
+    try:
+        rows = _read_all()
+        if provider:
+            rows = [r for r in rows if r.get("provider") == provider]
+        limit = max(1, min(int(limit or 100), 1000))
+        return list(reversed(rows[-limit:]))
+    except Exception as e:
+        print(f"[spend_ledger] recent_records error: {e}")
+        return []
+
+
 def record(
     provider_token: str,
     amount_usd: float,
@@ -136,6 +154,31 @@ def record(
     })
 
 
+def record_event(
+    provider_token: str,
+    *,
+    kind: str,
+    model: str = "",
+    project_id: Optional[str] = None,
+    units: Optional[float] = None,
+    note: str = "",
+    amount_usd: float = 0.0,
+):
+    prov = _canonical_provider(provider_token)
+    if not prov:
+        return
+    _append({
+        "ts": _now_iso(),
+        "provider": prov,
+        "amount_usd": round(float(amount_usd or 0.0), 6),
+        "kind": kind,
+        "model": model or "",
+        "project_id": project_id or "",
+        "units": units,
+        "note": note or "",
+    })
+
+
 # --------------------------------------------------------------------------- #
 # 모델별 비용 계산 + 기록 헬퍼. estimation_service 와 동일한 가격표 사용.
 # --------------------------------------------------------------------------- #
@@ -153,6 +196,61 @@ def record_llm(model_id: str, input_tokens: int, output_tokens: int, *, project_
                project_id=project_id, units=input_tokens + output_tokens, note=note)
     except Exception as e:
         print(f"[spend_ledger] record_llm error: {e}")
+
+
+def record_llm_usage(model_id: str, usage, *, project_id: Optional[str] = None, note: str = ""):
+    """Record actual provider usage objects when available."""
+    try:
+        input_tokens = int(
+            getattr(usage, "input_tokens", 0)
+            or getattr(usage, "prompt_tokens", 0)
+            or 0
+        )
+        output_tokens = int(
+            getattr(usage, "output_tokens", 0)
+            or getattr(usage, "completion_tokens", 0)
+            or 0
+        )
+        if input_tokens <= 0 and output_tokens <= 0:
+            return
+        record_llm(
+            model_id,
+            input_tokens=max(0, input_tokens),
+            output_tokens=max(0, output_tokens),
+            project_id=project_id,
+            note=note,
+        )
+    except Exception as e:
+        print(f"[spend_ledger] record_llm_usage error: {e}")
+
+
+def record_elevenlabs_request(*, chars: int, project_id: Optional[str] = None, note: str = "", model: str = "elevenlabs"):
+    try:
+        record_event(
+            "elevenlabs",
+            kind="tts_call",
+            model=model,
+            project_id=project_id,
+            units=max(0, int(chars or 0)),
+            note=note,
+        )
+    except Exception as e:
+        print(f"[spend_ledger] record_elevenlabs_request error: {e}")
+
+
+def record_elevenlabs_music(*, length_ms: int, project_id: Optional[str] = None, note: str = ""):
+    """Track ElevenLabs Music calls. Price is represented as units only."""
+    try:
+        record_event(
+            "elevenlabs",
+            kind="music",
+            model="elevenlabs-music",
+            project_id=project_id,
+            units=max(0, int(length_ms or 0)),
+            note=note,
+        )
+    except Exception as e:
+        print(f"[spend_ledger] record_elevenlabs_music error: {e}")
 
 
 def record_image(model_id: str, n_images: int, *, project_id: Optional[str] = None, note: str = ""):

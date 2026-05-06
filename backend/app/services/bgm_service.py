@@ -46,9 +46,9 @@ async def generate_bgm(
     target = Path(output_path)
     target.parent.mkdir(parents=True, exist_ok=True)
 
-    # Keep generated loops short. The renderer loops this under the full video,
-    # so generating multi-minute music per upload only burns quota.
-    length_ms = max(10_000, min(int(length_ms or 60_000), 60_000))
+    # Channel-level cache uses a single 3-minute bed and loops it under each
+    # render, avoiding one new music generation per project.
+    length_ms = max(10_000, min(int(length_ms or 180_000), 180_000))
 
     async with httpx.AsyncClient(timeout=300) as client:
         resp = await client.post(
@@ -67,6 +67,14 @@ async def generate_bgm(
             detail = resp.text[:1000]
             raise RuntimeError(f"ElevenLabs Music failed HTTP {resp.status_code}: {detail}")
         target.write_bytes(resp.content)
+        try:
+            from app.services import spend_ledger
+            spend_ledger.record_elevenlabs_music(
+                length_ms=length_ms,
+                note=f"music_compose {target.name}",
+            )
+        except Exception:
+            pass
 
     if not target.exists() or target.stat().st_size <= 0:
         raise RuntimeError("ElevenLabs Music returned an empty audio file")

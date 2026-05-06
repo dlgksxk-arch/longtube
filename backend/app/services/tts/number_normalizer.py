@@ -68,7 +68,7 @@ _EPISODE_MARKER_RE = re.compile(
 _TTS_SPACE_RE = re.compile(r"\s+")
 
 
-def strip_episode_markers_for_tts(text: str) -> str:
+def _strip_episode_markers_raw(text: str) -> str:
     """Remove visual episode labels so TTS does not spell out EP.07."""
     if not text:
         return text
@@ -142,7 +142,8 @@ def normalize_episode_markers_for_tts(text: str, language: str = "ko") -> str:
 
 
 def strip_episode_markers_for_tts(text: str, language: str = "ko") -> str:
-    return normalize_episode_markers_for_tts(text, language)
+    """Remove visual episode labels so narration does not read EP markers."""
+    return _strip_episode_markers_raw(text)
 
 
 def _under_10000_to_sino(num: int, digits: list[str], small_units: list[str]) -> str:

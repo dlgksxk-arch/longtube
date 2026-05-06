@@ -1,5 +1,6 @@
 """Claude (Anthropic) LLM service"""
 import asyncio
+from datetime import datetime, timedelta, timezone
 import json
 import re
 import anthropic
@@ -28,6 +29,36 @@ class ClaudeService(BaseLLMService):
         """Create a client in the active event loop."""
         return self._client_factory(api_key=config.ANTHROPIC_API_KEY)
 
+    def _record_usage(self, response, note: str, project_id: str | None = None):
+        try:
+            from app.services import spend_ledger
+            spend_ledger.record_llm_usage(
+                self.model_id,
+                getattr(response, "usage", None),
+                project_id=project_id,
+                note=note,
+            )
+        except Exception:
+            pass
+
+    def _enforce_daily_budget(self):
+        limit = float(getattr(config, "ANTHROPIC_DAILY_LIMIT_USD", 0.0) or 0.0)
+        if limit <= 0:
+            return
+        try:
+            from app.services import spend_ledger
+            since = (datetime.now(timezone.utc) - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            spent = spend_ledger.spend_since("Anthropic", since)
+        except Exception:
+            return
+        if spent >= limit:
+            raise RuntimeError(
+                "Anthropic daily budget exceeded: "
+                f"${spent:.2f} used in the last 24h, limit ${limit:.2f}. "
+                "Claude API call was blocked before sending. "
+                "Set ANTHROPIC_DAILY_LIMIT_USD=0 only if you intentionally want to disable this guard."
+            )
+
     async def generate_script(self, topic: str, config: dict) -> dict:
         model = self._model_map.get(self.model_id, self.model_id)
 
@@ -53,6 +84,7 @@ class ClaudeService(BaseLLMService):
         request_timeout = max(30.0, min(300.0, request_timeout))
 
         raise_if_cancelled("claude generate_script")
+        self._enforce_daily_budget()
         async with self._client() as client:
             try:
                 response = await asyncio.wait_for(
@@ -73,6 +105,7 @@ class ClaudeService(BaseLLMService):
                 ) from exc
 
         raise_if_cancelled("claude generate_script")
+        self._record_usage(response, "script", config.get("__project_id"))
         raw = response.content[0].text
         parsed = self._parse_json(raw)
         cuts = parsed.get("cuts") or []
@@ -80,7 +113,9 @@ class ClaudeService(BaseLLMService):
             raise ValueError(
                 f"script generation returned {len(cuts)} cuts, expected {estimated_cuts}"
             )
-        return self.strengthen_visual_context(parsed)
+        parsed = self.strengthen_visual_context(parsed, config)
+        self.assert_script_timing(parsed, config)
+        return parsed
 
     async def _generate_script_chunked(
         self,
@@ -95,12 +130,18 @@ class ClaudeService(BaseLLMService):
         saved script. Chunking gives visible progress and avoids one huge paid
         request becoming an all-or-nothing loss.
         """
-        chunk_size = self._safe_int(config.get("__script_chunk_size"), 20)
+        chunk_size = self._safe_int(config.get("__script_chunk_size"), 40)
         chunk_size = max(10, min(50, chunk_size))
         chunks: list[dict] = []
         all_cuts: list[dict] = []
         project_id = config.get("__project_id")
         chunk_total = max(1, (estimated_cuts + chunk_size - 1) // chunk_size)
+        default_timeout = 300.0
+        try:
+            request_timeout = float(config.get("script_generation_timeout_sec", default_timeout) or default_timeout)
+        except (TypeError, ValueError):
+            request_timeout = default_timeout
+        request_timeout = max(30.0, min(300.0, request_timeout))
 
         base_prompt = self._build_user_prompt(topic, config)
         system_prompt = self._get_system_prompt(config)
@@ -109,6 +150,7 @@ class ClaudeService(BaseLLMService):
         async with self._client() as client:
             for chunk_index, start in enumerate(range(1, estimated_cuts + 1, chunk_size), 1):
                 raise_if_cancelled("claude generate_script chunk")
+                self._enforce_daily_budget()
                 end = min(estimated_cuts, start + chunk_size - 1)
                 chunk_count = end - start + 1
                 prompt = (
@@ -125,6 +167,20 @@ class ClaudeService(BaseLLMService):
                 )
                 max_tokens = max(8192, chunk_count * 260 + 2048)
                 max_tokens = min(max_tokens, 24000)
+                if project_id:
+                    try:
+                        from app.services.oneclick_service import append_task_log, update_task_sub_status
+                        update_task_sub_status(
+                            str(project_id),
+                            f"대본 청크 {chunk_index}/{chunk_total} 생성 중 ({start}-{end})",
+                        )
+                        append_task_log(
+                            str(project_id),
+                            f"대본 청크 {chunk_index}/{chunk_total} 요청 ({start}-{end})",
+                            "info",
+                        )
+                    except Exception:
+                        pass
                 try:
                     response = await asyncio.wait_for(
                         client.messages.create(
@@ -133,15 +189,20 @@ class ClaudeService(BaseLLMService):
                             system=system_prompt,
                             messages=[{"role": "user", "content": prompt}],
                         ),
-                        timeout=120.0,
+                        timeout=request_timeout,
                     )
                 except asyncio.TimeoutError as exc:
                     raise TimeoutError(
                         f"script chunk {chunk_index}/{chunk_total} timed out "
-                        f"for cuts {start}-{end}"
+                        f"after {request_timeout:.0f}s for cuts {start}-{end}"
                     ) from exc
 
                 raise_if_cancelled("claude generate_script chunk")
+                self._record_usage(
+                    response,
+                    f"script_chunk {chunk_index}/{chunk_total} cuts {start}-{end}",
+                    str(project_id) if project_id else None,
+                )
                 parsed = self._parse_json(response.content[0].text if response.content else "")
                 cuts = parsed.get("cuts") or []
                 if len(cuts) != chunk_count:
@@ -164,19 +225,44 @@ class ClaudeService(BaseLLMService):
                 )
                 if project_id:
                     try:
+                        from app.services.oneclick_service import append_task_log, update_task_sub_status
+                        update_task_sub_status(
+                            str(project_id),
+                            f"대본 청크 {chunk_index}/{chunk_total} 완료 ({start}-{end})",
+                        )
+                        append_task_log(
+                            str(project_id),
+                            f"대본 청크 {chunk_index}/{chunk_total} 완료 ({start}-{end})",
+                            "info",
+                        )
                         from app.services.task_manager import update_task
                         update_task(str(project_id), "script", chunk_index)
                     except Exception:
                         pass
 
         first = chunks[0] if chunks else {}
-        return self.strengthen_visual_context({
+        combined = self.strengthen_visual_context({
             "title": first.get("title") or str(topic),
             "description": first.get("description") or "",
             "tags": first.get("tags") or [],
             "thumbnail_prompt": first.get("thumbnail_prompt") or "",
+            "thumbnail_hook": first.get("thumbnail_hook") or "",
             "cuts": all_cuts,
-        })
+        }, config)
+        if project_id:
+            try:
+                from app.services.oneclick_service import update_task_sub_status
+                update_task_sub_status(str(project_id), "대본 검증 중")
+            except Exception:
+                pass
+        self.assert_script_timing(combined, config)
+        if project_id:
+            try:
+                from app.services.oneclick_service import update_task_sub_status
+                update_task_sub_status(str(project_id), None)
+            except Exception:
+                pass
+        return combined
 
     @staticmethod
     def _safe_int(value, default: int) -> int:
@@ -211,6 +297,7 @@ class ClaudeService(BaseLLMService):
                 messages=[{"role": "user", "content": prompt}],
             )
         raise_if_cancelled("claude generate_tags")
+        self._record_usage(response, "tags")
         raw = response.content[0].text if response.content else ""
         return self._parse_tag_response(raw)
 
@@ -242,6 +329,7 @@ class ClaudeService(BaseLLMService):
                 messages=[{"role": "user", "content": prompt}],
             )
         raise_if_cancelled("claude generate_metadata")
+        self._record_usage(response, "metadata")
         raw = response.content[0].text if response.content else ""
         return self._parse_metadata_response(raw)
 
@@ -272,6 +360,7 @@ class ClaudeService(BaseLLMService):
                     messages=[{"role": "user", "content": prompt}],
                 )
             raise_if_cancelled("claude thumbnail_prompt")
+            self._record_usage(response, "thumbnail_prompt")
         except OperationCancelled:
             raise
         except Exception:
@@ -327,6 +416,7 @@ class ClaudeService(BaseLLMService):
                 messages=[{"role": "user", "content": prompt}],
             )
         raise_if_cancelled("claude timing_rewrite")
+        self._record_usage(response, "timing_rewrite")
         raw = response.content[0].text if response.content else ""
         return self._parse_narration_rewrite_response(raw)
 

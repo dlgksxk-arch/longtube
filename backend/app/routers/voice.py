@@ -11,7 +11,10 @@ from app.models.project import Project
 from app.models.cut import Cut
 from app.config import DATA_DIR
 from app.services.tts.factory import get_tts_service
-from app.services.tts.narration_fit import generate_tts_with_auto_narration_fit
+from app.services.tts.narration_fit import (
+    ensure_audio_duration_window,
+    generate_tts_with_auto_narration_fit,
+)
 from app.services.tts.pronunciation_normalizer import prepare_spoken_narration_for_tts
 from app.services.tts.voice_profile import (
     ensure_voice_profile_from_config,
@@ -48,6 +51,91 @@ def _audio_file_exists(project_id: str, audio_path: str | None) -> bool:
         return path.exists() and path.stat().st_size > 100
     except OSError:
         return False
+
+
+def _resolve_audio_path(project_id: str, audio_path: str | None) -> Path | None:
+    if not audio_path:
+        return None
+    path = Path(audio_path)
+    if not path.is_absolute():
+        path = DATA_DIR / project_id / audio_path
+    return path
+
+
+def _relative_audio_path(project_id: str, path: Path) -> str:
+    try:
+        return path.relative_to(DATA_DIR / project_id).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
+def _fit_existing_audio_without_api(
+    *,
+    project_id: str,
+    cut: Cut,
+    tts_service,
+    config: dict,
+    fallback_path: str | Path,
+    expected_narration: str | None = None,
+    log_prefix: str = "[Voice]",
+) -> dict | None:
+    """Return existing audio metadata after local FFmpeg fit, without TTS API calls."""
+    expected = (expected_narration or "").strip()
+    current = (cut.narration or "").strip()
+    if expected and current != expected:
+        cut.narration = expected
+        cut.audio_path = None
+        cut.audio_duration = None
+        cut.audio_original_duration = None
+        cut.status = "pending"
+        return None
+
+    candidates: list[Path] = []
+    stored = _resolve_audio_path(project_id, cut.audio_path)
+    if stored is not None:
+        candidates.append(stored)
+    # Fallback filename may be a stale file left from a previous script. Only
+    # trust it when the DB still links this cut to an audio file for the same
+    # narration.
+    if cut.audio_path:
+        candidates.append(Path(fallback_path))
+
+    audio_path = None
+    for candidate in candidates:
+        try:
+            if candidate.exists() and candidate.stat().st_size > 100:
+                audio_path = candidate
+                break
+        except OSError:
+            continue
+    if audio_path is None:
+        return None
+
+    original_duration = float(tts_service._get_duration(str(audio_path)) or 0.0)
+    fitted_duration = ensure_audio_duration_window(
+        str(audio_path),
+        original_duration,
+        config=config,
+        log=lambda msg: print(f"{log_prefix} {msg}"),
+    )
+    if fitted_duration != original_duration:
+        print(
+            f"{log_prefix} Cut {cut.cut_number} 기존 음성 FFmpeg 보정 "
+            f"{original_duration:.2f}s -> {fitted_duration:.2f}s, API 재호출 없음"
+        )
+    else:
+        print(f"{log_prefix} Cut {cut.cut_number} 기존 음성 사용({original_duration:.2f}s), API 재호출 없음")
+
+    rel_path = _relative_audio_path(project_id, audio_path)
+    cut.audio_path = rel_path
+    cut.audio_duration = fitted_duration
+    cut.audio_original_duration = original_duration or fitted_duration
+    cut.status = "completed"
+    return {
+        "path": rel_path,
+        "duration": fitted_duration,
+        "original_duration": original_duration or fitted_duration,
+    }
 
 
 def _mark_voice_completed_if_ready(project_id: str, project: Project, db: Session) -> bool:
@@ -146,6 +234,26 @@ async def generate_all_voices(project_id: str, db: Session = Depends(get_db)):
             audio_dir = DATA_DIR / project_id / "audio"
             audio_dir.mkdir(parents=True, exist_ok=True)
             audio_path = str(audio_dir / f"cut_{cut_number}.wav")
+            result = _fit_existing_audio_without_api(
+                project_id=project_id,
+                cut=cut,
+                tts_service=tts_service,
+                config=project.config,
+                fallback_path=audio_path,
+                expected_narration=narration,
+            )
+            if result is not None:
+                db.commit()
+                results.append({
+                    "cut_number": cut_number,
+                    "status": "completed",
+                    "original_duration": cut.audio_original_duration,
+                    "duration": cut.audio_duration,
+                    "path": cut.audio_path,
+                    "source": "existing_ffmpeg_fit",
+                })
+                continue
+
             spoken_narration = prepare_spoken_narration_for_tts(
                 narration,
                 project.config.get("language", "ko"),
@@ -169,8 +277,18 @@ async def generate_all_voices(project_id: str, db: Session = Depends(get_db)):
                 log=lambda msg: print(f"[Voice] {msg}"),
             )
 
+            original_duration = result.get("original_duration") or result.get("duration", 0.0)
+            result["duration"] = ensure_audio_duration_window(
+                audio_path,
+                float(result.get("duration") or 0.0),
+                config=project.config,
+                log=lambda msg: print(f"[Voice] {msg}"),
+            )
+            result["original_duration"] = original_duration
+            cut.narration = narration
             cut.audio_path = result["path"]
             cut.audio_duration = result.get("duration", 0.0)
+            cut.audio_original_duration = result.get("original_duration") or cut.audio_duration
             cut.status = "completed"
             db.commit()
             if script_dirty:
@@ -179,6 +297,7 @@ async def generate_all_voices(project_id: str, db: Session = Depends(get_db)):
             results.append({
                 "cut_number": cut_number,
                 "status": "completed",
+                "original_duration": cut.audio_original_duration,
                 "duration": cut.audio_duration,
                 "path": cut.audio_path
             })
@@ -299,6 +418,21 @@ async def generate_all_voices_async(project_id: str, db: Session = Depends(get_d
                     audio_dir = DATA_DIR / project_id / "audio"
                     audio_dir.mkdir(parents=True, exist_ok=True)
                     audio_path = str(audio_dir / f"cut_{cut_number}.mp3")
+                    result = _fit_existing_audio_without_api(
+                        project_id=project_id,
+                        cut=cut,
+                        tts_service=tts_service,
+                        config=proj.config,
+                        fallback_path=audio_path,
+                        expected_narration=narration,
+                    )
+                    if result is not None:
+                        local_db.commit()
+                        if script_dirty:
+                            _save_script(project_id, script)
+                        update_task(project_id, "voice", i + 1)
+                        continue
+
                     spoken_narration = prepare_spoken_narration_for_tts(
                         narration,
                         proj.config.get("language", "ko"),
@@ -321,8 +455,18 @@ async def generate_all_voices_async(project_id: str, db: Session = Depends(get_d
                         script=script,
                         log=lambda msg: print(f"[Voice] {msg}"),
                     )
+                    original_duration = result.get("original_duration") or result.get("duration", 0.0)
+                    result["duration"] = ensure_audio_duration_window(
+                        audio_path,
+                        float(result.get("duration") or 0.0),
+                        config=proj.config,
+                        log=lambda msg: print(f"[Voice] {msg}"),
+                    )
+                    result["original_duration"] = original_duration
+                    cut.narration = narration
                     cut.audio_path = result["path"]
                     cut.audio_duration = result.get("duration", 0.0)
+                    cut.audio_original_duration = result.get("original_duration") or cut.audio_duration
                     cut.status = "completed"
                     # v1.1.55-fix: 스튜디오 TTS 비용 기록
                     try:
@@ -500,6 +644,22 @@ async def resume_voices_async(project_id: str, db: Session = Depends(get_db)):
                     audio_dir = DATA_DIR / project_id / "audio"
                     audio_dir.mkdir(parents=True, exist_ok=True)
                     audio_path = str(audio_dir / f"cut_{cut_number}.mp3")
+                    result = _fit_existing_audio_without_api(
+                        project_id=project_id,
+                        cut=cut,
+                        tts_service=tts_service,
+                        config=proj.config,
+                        fallback_path=audio_path,
+                        expected_narration=narration,
+                        log_prefix="[VoiceResume]",
+                    )
+                    if result is not None:
+                        local_db.commit()
+                        if script_dirty:
+                            _save_script(project_id, script)
+                        update_task(project_id, "voice", i + 1)
+                        continue
+
                     spoken_narration = prepare_spoken_narration_for_tts(
                         narration,
                         proj.config.get("language", "ko"),
@@ -522,8 +682,18 @@ async def resume_voices_async(project_id: str, db: Session = Depends(get_db)):
                         script=script,
                         log=lambda msg: print(f"[Voice] {msg}"),
                     )
+                    original_duration = result.get("original_duration") or result.get("duration", 0.0)
+                    result["duration"] = ensure_audio_duration_window(
+                        audio_path,
+                        float(result.get("duration") or 0.0),
+                        config=proj.config,
+                        log=lambda msg: print(f"[Voice] {msg}"),
+                    )
+                    result["original_duration"] = original_duration
+                    cut.narration = narration
                     cut.audio_path = result["path"]
                     cut.audio_duration = result.get("duration", 0.0)
+                    cut.audio_original_duration = result.get("original_duration") or cut.audio_duration
                     cut.status = "completed"
                     local_db.commit()
                     if script_dirty:
@@ -662,8 +832,17 @@ async def generate_one_voice(
             log=lambda msg: print(f"[Voice] {msg}"),
         )
 
+        original_duration = result.get("original_duration") or result.get("duration", 0.0)
+        result["duration"] = ensure_audio_duration_window(
+            audio_path,
+            float(result.get("duration") or 0.0),
+            config=project.config,
+            log=lambda msg: print(f"[Voice] {msg}"),
+        )
+        result["original_duration"] = original_duration
         cut.audio_path = result["path"]
         cut.audio_duration = result.get("duration", 0.0)
+        cut.audio_original_duration = result.get("original_duration") or cut.audio_duration
         cut.status = "completed"
         # v1.1.55-fix: 단건 TTS 비용 기록
         try:
@@ -680,6 +859,7 @@ async def generate_one_voice(
         return {
             "cut_number": cut_number,
             "status": "completed",
+            "original_duration": cut.audio_original_duration,
             "duration": cut.audio_duration,
             "path": cut.audio_path
         }

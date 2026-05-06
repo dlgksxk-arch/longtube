@@ -2,7 +2,7 @@
 
 /**
  * v1.1.49 — 딸깍 대시보드 레이아웃
- * 좌측 사이드바(네비게이션 + 자동 실행 상태) + 우측 콘텐츠 영역
+ * 좌측 사이드바(네비게이션) + 우측 콘텐츠 영역
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
@@ -13,9 +13,7 @@ import {
   Activity,
   CalendarDays,
   Film,
-  Home,
   Upload,
-  Power,
   LayoutDashboard,
   Youtube as YoutubeIcon,
   Key,
@@ -53,6 +51,59 @@ function taskDisplayTitle(task: OneClickTask) {
   return `${prefix} ${text}`;
 }
 
+function activeStepLabel(step?: number | null) {
+  if (step === 2) return "스크립트";
+  if (step === 3) return "음성";
+  if (step === 4) return "이미지";
+  if (step === 5) return "영상";
+  if (step === 6) return "렌더";
+  if (step === 7) return "업로드";
+  return "작업";
+}
+
+function activeModelNameForStep(task: OneClickTask, step: number) {
+  const model = task.models || {};
+  if (step === 2) {
+    const script = String(model.script || "").trim();
+    return script.replace(/^Claude\s+/i, "").replace(/^Anthropic\s*\|\s*/i, "") || "Sonnet 4.6";
+  }
+  if (step === 3) return model.tts_voice || "Harry Kim - Conversational";
+  if (step === 4) {
+    const image = String(model.image || "").trim();
+    const names: Record<string, string> = {
+      "comfyui-dreamshaper-xl": "SDXL Lightning",
+      "comfyui-dreamshaper-xl-longtube": "SDXL 로컬모델 v1",
+      "openai-image-1": "GPT Image 1",
+      "nano-banana-3": "Nano Banana 3",
+      "nano-banana-2": "Nano Banana 2",
+      "nano-banana-pro": "Nano Banana Pro",
+    };
+    return names[image] || image.replace(/^DreamShaper XL/i, "SDXL") || "SDXL 로컬모델 v1";
+  }
+  if (step === 5) {
+    const video = String(model.video || "").trim();
+    const names: Record<string, string> = {
+      "ffmpeg-static": "FFmpeg Static",
+      "ffmpeg-safe-motion": "숏츠",
+      "seedance-lite": "Seedance 1.0 Lite",
+    };
+    return names[video] || video || "FFmpeg Static";
+  }
+  return task.current_step_name || "처리 중";
+}
+
+function activeModelEntries(task: OneClickTask) {
+  const states = task.step_states || {};
+  const steps = [2, 3, 4, 5, 6, 7].filter((step) => states[String(step)] === "running");
+  const activeSteps = steps.length ? steps : [Number(task.current_step || 0)].filter(Boolean);
+  return activeSteps.map((step) => ({
+    task,
+    step,
+    label: activeStepLabel(step),
+    model: activeModelNameForStep(task, step),
+  }));
+}
+
 const ONECLICK_SUBNAV = [
   { href: "/oneclick", label: "제작 큐", icon: ListTodo },
   { href: "/oneclick/upload-pending", label: "업로드 대기", icon: Upload },
@@ -69,20 +120,34 @@ export default function OneClickLayout({
   const pathname = usePathname();
   const [queue, setQueue] = useState<OneClickQueueState | null>(null);
   const [task, setTask] = useState<OneClickTask | null>(null);
-  const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [activeTasks, setActiveTasks] = useState<OneClickTask[]>([]);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // 큐 + 활성 태스크 로드
   const load = useCallback(async () => {
     try {
-      const [q, { tasks }] = await Promise.all([
+      const [q, runningResult, listResult] = await Promise.all([
         oneclickApi.getQueue(),
+        oneclickApi.getRunning(),
         oneclickApi.list(),
       ]);
       setQueue(q);
-      const active = (tasks || []).find((t) =>
-        ["prepared", "queued", "running"].includes(t.status),
+      const listedActive = (listResult?.tasks || []).filter(
+        (item) => item.status === "running" && (item.current_step != null || item.sub_status),
       );
+      const running = runningResult?.running;
+      if (!running?.task_id) {
+        setTask(null);
+        setActiveTasks(listedActive);
+        return;
+      }
+      const active = await oneclickApi.get(running.task_id);
       setTask(active || null);
+      setActiveTasks(
+        active?.status === "running" && (active.current_step != null || active.sub_status)
+          ? [active, ...listedActive.filter((item) => item.task_id !== active.task_id)]
+          : listedActive,
+      );
     } catch {
       /* silent */
     }
@@ -92,33 +157,22 @@ export default function OneClickLayout({
     void load();
   }, [load]);
 
-  // 활성 태스크 폴링
+  // 사이드바 상태/호출 모델 실시간 폴링
   useEffect(() => {
-    if (!task) return;
-    const done = ["completed", "failed", "cancelled"].includes(task.status);
-    if (done) return;
-    pollRef.current = setTimeout(async () => {
-      try {
-        const fresh = await oneclickApi.get(task.task_id);
-        setTask(fresh);
-        if (["completed", "failed", "cancelled"].includes(fresh.status)) {
-          void load(); // 큐 갱신
-        }
-      } catch {}
-    }, 2000);
+    pollRef.current = setInterval(() => {
+      void load();
+    }, 3000);
     return () => {
-      if (pollRef.current) clearTimeout(pollRef.current);
+      if (pollRef.current) clearInterval(pollRef.current);
     };
-  }, [task, load]);
+  }, [load]);
 
   const isRunning =
     task &&
     ["prepared", "queued", "running"].includes(task.status);
   const pct = Math.max(0, Math.min(100, task?.progress_pct || 0));
 
-  // v1.1.57: 활성 채널 수 계산
-  const activeChannels = Object.entries(queue?.channel_times || {}).filter(([, v]) => !!v);
-  const hasAnySchedule = activeChannels.length > 0;
+  const activeCallItems = activeTasks.flatMap(activeModelEntries).slice(0, 4);
   const flatSidebarNav = [
     TOP_NAV[0],
     ...ONECLICK_SUBNAV,
@@ -171,87 +225,53 @@ export default function OneClickLayout({
           })}
         </nav>
 
-        <div className="flex-1" />
-
-        {/* 자동 실행 상태 위젯 */}
-        <div className="hidden xl:block mx-3 mb-3 p-3 lg:p-3.5 bg-bg-primary/60 border border-border rounded-xl">
-          <div className="flex items-center gap-2 mb-2.5">
-            {hasAnySchedule ? (
-              <>
-                <span className="relative flex h-2 w-2">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent-success opacity-75" />
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-accent-success" />
+        <div className="px-2.5 lg:px-3 xl:px-4">
+          <div className="rounded-lg border border-border bg-bg-primary/65 p-2.5 shadow-sm shadow-black/20">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <div className="flex min-w-0 items-center gap-2">
+                <span className={`h-2 w-2 rounded-full ${activeCallItems.length ? "bg-accent-success" : "bg-gray-600"}`} />
+                <span className="truncate text-xs font-bold text-gray-100">호출 중 모델</span>
+              </div>
+              {activeCallItems.length > 0 && (
+                <span className="rounded border border-emerald-400/25 bg-emerald-400/10 px-1.5 py-0.5 text-[10px] font-bold text-emerald-200">
+                  {activeCallItems.length}
                 </span>
-                <span className="text-xs lg:text-sm font-semibold text-accent-success">
-                  자동 실행 활성
-                </span>
-              </>
+              )}
+            </div>
+            {activeCallItems.length ? (
+              <div className="space-y-1.5">
+                {activeCallItems.map(({ task: item, step, label, model }) => (
+                  <div
+                    key={`${item.task_id}-${step}`}
+                    className="rounded-md border border-border/80 bg-bg-secondary/80 px-2 py-1.5"
+                    title={`${taskDisplayTitle(item)} · ${model}`}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span className="shrink-0 rounded border border-accent-primary/30 bg-accent-primary/10 px-1.5 py-0.5 text-[10px] font-black text-accent-primary">
+                        {label}
+                      </span>
+                      <span className="min-w-0 truncate text-xs font-bold text-white">{model}</span>
+                    </div>
+                    <div className="mt-1 truncate text-[10px] text-gray-500">
+                      CH{item.channel || "-"} {episodePrefix(item.episode_number) || ""} · {Math.round(item.progress_pct || 0)}%
+                    </div>
+                  </div>
+                ))}
+              </div>
             ) : (
-              <>
-                <Power size={10} className="text-gray-500" />
-                <span className="text-xs lg:text-sm font-semibold text-gray-500">
-                  자동 실행 꺼짐
-                </span>
-              </>
+              <div className="rounded-md border border-dashed border-border bg-bg-secondary/45 px-2 py-2 text-xs text-gray-500">
+                호출 중 없음
+              </div>
             )}
           </div>
-          {hasAnySchedule && (
-            <div className="space-y-0.5">
-              {activeChannels.map(([ch, time]) => (
-                <div key={ch} className="text-xs lg:text-sm text-gray-400">
-                  <span className={`font-bold ${
-                    ch === "1" ? "text-blue-400" : ch === "2" ? "text-green-400" :
-                    ch === "3" ? "text-amber-400" : "text-purple-400"
-                  }`}>CH{ch}</span>{" "}
-                  매일 {time}
-                </div>
-              ))}
-            </div>
-          )}
-          <div className="text-xs lg:text-sm text-gray-500 mt-1.5">
-            대기 중 {queue?.items?.length ?? 0}개 주제
-          </div>
         </div>
 
-        {/* 대시보드 복귀 */}
-        <div className="hidden xl:block px-3 pb-3">
-          <Link
-            href="/"
-            className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs lg:text-sm text-gray-500 hover:text-gray-300 hover:bg-white/[0.03] transition-colors"
-          >
-            <Home size={14} />
-            대시보드로 돌아가기
-          </Link>
-        </div>
+        <div className="flex-1" />
       </aside>
 
       {/* ── 메인 콘텐츠 ── */}
-      <main className="flex-1 flex flex-col overflow-hidden">
-        {/* 진행 배너 */}
-        {isRunning && task && (
-          <div className="flex-shrink-0 bg-accent-primary/10 border-b border-accent-primary/30 px-3 sm:px-6 py-2.5 flex min-w-0 items-center gap-2 sm:gap-4">
-            <div className="relative flex h-2 w-2 flex-shrink-0">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent-primary opacity-75" />
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-accent-primary" />
-            </div>
-            <div className="flex-1 min-w-0 truncate">
-              <span className="text-sm text-gray-300 whitespace-nowrap">
-                제작 중:{" "}
-                <span className="text-white font-medium">{taskDisplayTitle(task)}</span>
-              </span>
-            </div>
-            <div className="hidden h-1.5 w-20 flex-shrink-0 overflow-hidden rounded-full bg-bg-tertiary sm:block xl:w-32">
-              <div
-                className="h-full bg-accent-primary transition-all duration-500"
-                style={{ width: `${pct}%` }}
-              />
-            </div>
-            <span className="text-sm text-accent-primary font-mono flex-shrink-0">
-              {Math.round(pct)}%
-            </span>
-          </div>
-        )}
-        <div className="flex-1 overflow-y-auto">{children}</div>
+      <main className="min-w-0 flex-1 flex flex-col overflow-hidden">
+        <div className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden">{children}</div>
       </main>
     </div>
   );

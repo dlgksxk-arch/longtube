@@ -18,6 +18,18 @@ class GPTService(BaseLLMService):
         """Create a client in the active event loop."""
         return self._client_factory(api_key=config.OPENAI_API_KEY)
 
+    def _record_usage(self, response, note: str, project_id: str | None = None):
+        try:
+            from app.services import spend_ledger
+            spend_ledger.record_llm_usage(
+                self.model_id,
+                getattr(response, "usage", None),
+                project_id=project_id,
+                note=note,
+            )
+        except Exception:
+            pass
+
     async def generate_script(self, topic: str, config: dict) -> dict:
         # v1.1.32: target_duration 기반 동적 max_tokens (600초=120컷 truncation 방지)
         try:
@@ -60,13 +72,16 @@ class GPTService(BaseLLMService):
                     f"script generation timed out after {request_timeout:.0f}s"
                 ) from exc
         raise_if_cancelled("gpt generate_script")
+        self._record_usage(response, "script", config.get("__project_id"))
         parsed = json.loads(response.choices[0].message.content)
         cuts = parsed.get("cuts") or []
         if len(cuts) != estimated_cuts:
             raise ValueError(
                 f"script generation returned {len(cuts)} cuts, expected {estimated_cuts}"
             )
-        return self.strengthen_visual_context(parsed)
+        parsed = self.strengthen_visual_context(parsed, config)
+        self.assert_script_timing(parsed, config)
+        return parsed
 
     async def generate_tags(
         self,
@@ -97,6 +112,7 @@ class GPTService(BaseLLMService):
                 temperature=0.5,
             )
         raise_if_cancelled("gpt generate_tags")
+        self._record_usage(response, "tags")
         raw = response.choices[0].message.content or ""
         return self._parse_tag_response(raw)
 
@@ -133,6 +149,7 @@ class GPTService(BaseLLMService):
                 temperature=0.7,
             )
         raise_if_cancelled("gpt generate_metadata")
+        self._record_usage(response, "metadata")
         raw = response.choices[0].message.content or ""
         return self._parse_metadata_response(raw)
 
@@ -168,6 +185,7 @@ class GPTService(BaseLLMService):
                     temperature=0.8,
                 )
             raise_if_cancelled("gpt thumbnail_prompt")
+            self._record_usage(response, "thumbnail_prompt")
         except OperationCancelled:
             raise
         except Exception:
@@ -229,5 +247,6 @@ class GPTService(BaseLLMService):
                 max_tokens=300,
             )
         raise_if_cancelled("gpt timing_rewrite")
+        self._record_usage(response, "timing_rewrite")
         raw = response.choices[0].message.content or ""
         return self._parse_narration_rewrite_response(raw)

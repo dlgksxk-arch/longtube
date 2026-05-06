@@ -38,6 +38,11 @@ THUMB_H = 720
 # 폰트 탐색 후보 (OS 별)
 FONT_CANDIDATES = [
     # Windows
+    r"C:\Windows\Fonts\meiryob.ttc",        # Meiryo Bold (Japanese)
+    r"C:\Windows\Fonts\meiryo.ttc",         # Meiryo (Japanese)
+    r"C:\Windows\Fonts\YuGothB.ttc",        # Yu Gothic Bold (Japanese)
+    r"C:\Windows\Fonts\YuGothM.ttc",        # Yu Gothic Medium (Japanese)
+    r"C:\Windows\Fonts\msgothic.ttc",       # MS Gothic (Japanese)
     r"C:\Windows\Fonts\malgunbd.ttf",       # Malgun Gothic Bold (한글)
     r"C:\Windows\Fonts\malgun.ttf",         # Malgun Gothic Regular
     r"C:\Windows\Fonts\arialbd.ttf",        # Arial Bold
@@ -75,9 +80,47 @@ KOREAN_FONT_CANDIDATES = [
     "/System/Library/Fonts/AppleSDGothicNeo.ttc",
 ]
 
+THUMBNAIL_CLICK_FOCUS_PROMPT = (
+    " YouTube thumbnail background, not a calm illustration. "
+    "One large unmistakable foreground subject must occupy 45-65 percent of the frame: "
+    "a close-up human face, ruler, queen, warrior, artifact, ritual object, map fragment, "
+    "gold mirror, crown, seal, weapon, or burning evidence directly tied to the story. "
+    "Use a low-angle or close-up composition with strong silhouette, sharp readable shape, "
+    "hard rim light, saturated red/gold/cyan accents, dramatic contrast, visible emotion "
+    "or conflict, and a simple darker background reserved for text overlay. "
+    "No distant establishing shot. No empty scenery. No foggy castle background. "
+    "No gray washed-out palette. No tiny subject. No decorative landscape."
+)
+
+THUMBNAIL_WEAK_IMAGE_NEGATIVE = (
+    "distant castle, distant building, tiny subject, empty landscape, scenic background, "
+    "wide establishing shot, foggy scenery, mist, haze, gray washed out image, low contrast, "
+    "flat lighting, calm postcard, generic ruins, decorative background, tiny silhouettes, "
+    "unreadable subject, blurry background-only image, text, letters, words, numbers, watermark"
+)
+
+_THUMBNAIL_WEAK_POSITIVE_RE = re.compile(
+    r"\b("
+    r"foggy|misty|hazy|distant|wide|establishing|landscape|scenery|"
+    r"washed[- ]out|gray|grey|calm|peaceful|empty|tiny|small|generic|decorative"
+    r")\b",
+    re.IGNORECASE,
+)
+
 
 class ThumbnailError(RuntimeError):
     pass
+
+
+def _thumbnail_click_focus_prompt(prompt: str) -> str:
+    base = (prompt or "").strip()
+    base = _THUMBNAIL_WEAK_POSITIVE_RE.sub("", base)
+    base = re.sub(r"\s+", " ", base).strip(" ,.;")
+    if not base:
+        return THUMBNAIL_CLICK_FOCUS_PROMPT.strip()
+    if "One large unmistakable foreground subject" in base:
+        return base
+    return f"{base.rstrip()} {THUMBNAIL_CLICK_FOCUS_PROMPT}"
 
 
 def build_standard_thumbnail_prompt(script: Optional[dict] = None, title: Optional[str] = None) -> str:
@@ -85,19 +128,100 @@ def build_standard_thumbnail_prompt(script: Optional[dict] = None, title: Option
     script = script or {}
     thumb_prompt = (script.get("thumbnail_prompt") or "").strip()
     if thumb_prompt:
-        return thumb_prompt
+        return _thumbnail_click_focus_prompt(thumb_prompt)
     clean_title = (title or script.get("title") or "Untitled").strip()
     topic_hint = (script.get("topic") or clean_title).strip()
-    return (
-        f"A captivating, eye-catching YouTube thumbnail about this topic: {topic_hint}. "
-        f"A dramatic close-up scene with vivid emotion (wide-eyed surprise, "
-        f"intense curiosity, genuine awe). Cinematic lighting, high contrast, "
-        f"rich saturated colors, shallow depth of field. "
-        f"Designed to maximize viewer curiosity and clicks. "
-        f"16:9 landscape composition, 4K ultra-detailed photo quality. "
+    return _thumbnail_click_focus_prompt(
+        f"A high-tension YouTube thumbnail about this topic: {topic_hint}. "
+        f"Create an extreme close-up of the most important person, incident, object, "
+        f"artifact, evidence, or decisive moment from the story. Show the single most "
+        f"dramatic conflict, secret, betrayal, danger, or impossible-looking evidence. "
+        f"One dominant close-up subject only: "
+        f"a shocked face, a threatening ruler, a forbidden object, a burning map, "
+        f"a broken crown, or a dangerous historical scene. The subject must feel "
+        f"urgent and clickable, not calm, wide, distant, generic, or decorative. "
+        f"Cinematic lighting, hard "
+        f"rim light, deep black shadows, high contrast, saturated red/yellow accent "
+        f"colors, strong foreground silhouette, simple background, clean empty space "
+        f"for large text overlay. 16:9 landscape composition, 4K ultra-detailed. "
         f"Do not draw the video title. Do not draw any writing. "
         f"ABSOLUTELY NO text, letters, words, numbers, watermarks, or UI elements."
     )
+
+
+def build_clickbait_thumbnail_overlay(
+    script: Optional[dict] = None,
+    title: Optional[str] = None,
+    config: Optional[dict] = None,
+) -> str:
+    """Return short, high-impact overlay text instead of copying the full title."""
+    script = script or {}
+    config = config or {}
+    for key in ("thumbnail_hook", "thumbnail_text", "thumbnail_overlay", "thumbnail_title"):
+        value = sanitize_thumbnail_title(script.get(key))
+        if value:
+            return _wrap_overlay_lines(value)
+
+    base = sanitize_thumbnail_title(title or script.get("title") or script.get("topic") or "")
+    if not base:
+        return ""
+
+    language = str(config.get("language") or script.get("language") or "").lower()
+    has_hangul = _has_hangul(base)
+    if language in {"ko", "kr", "kor", "korean", ""} and has_hangul:
+        compact = re.sub(r"\s+", " ", base).strip()
+        compact = re.sub(r"^EP\.?\s*\d+\s*[-:·]?\s*", "", compact, flags=re.IGNORECASE).strip()
+        compact = re.sub(r"^(왜|어째서|어떻게)\s+", "", compact)
+        if any(word in compact for word in ("누구", "정체")):
+            subject = re.sub(r"(누구일까|누구인가|누구였나|누구였을까|정체는|정체가|정체)", "", compact).strip(" ?!-·")
+            return _wrap_overlay_lines(f"정체가 뭐냐\n{_short_korean_subject(subject)}")
+        if "이유" in compact:
+            subject = compact.replace("이유", "").strip(" -·")
+            return _wrap_overlay_lines(f"진짜 이유\n{_short_korean_subject(subject)}")
+        if "비밀" in compact:
+            subject = compact.replace("비밀", "").strip(" -·")
+            return _wrap_overlay_lines(f"숨겨진 비밀\n{_short_korean_subject(subject)}")
+        if "최초" in compact:
+            return _wrap_overlay_lines(f"최초의 진실\n{_short_korean_subject(compact)}")
+        if any(word in compact for word in ("잃은", "죽", "멸망", "무너", "사라")):
+            return _wrap_overlay_lines(f"결말이 바뀐\n{_short_korean_subject(compact)}")
+        if any(word in compact for word in ("왕", "여왕", "황제", "전쟁", "군대")):
+            return _wrap_overlay_lines(f"왕보다 무서운\n{_short_korean_subject(compact)}")
+        if any(word in compact for word in ("한반도", "한국", "조선", "고려", "신라", "백제", "고구려")):
+            return _wrap_overlay_lines(f"교과서가 뺀\n{_short_korean_subject(compact)}")
+        return _wrap_overlay_lines(f"아무도 몰랐던\n{_short_korean_subject(compact)}")
+
+    return _wrap_overlay_lines(base)
+
+
+def _short_korean_subject(text: str) -> str:
+    text = re.sub(r"\s+", " ", text or "").strip(" -·")
+    if "바다" in text and any(word in text for word in ("여인", "여자", "사람")):
+        return "바다 건넌 여인"
+    if "왕" in text and any(word in text for word in ("죽", "잃", "무너", "멸망")):
+        return "무너진 왕의 비밀"
+    words = text.split()
+    if len(words) <= 3:
+        return text
+    return " ".join(words[:3])
+
+
+def _wrap_overlay_lines(text: str) -> str:
+    text = re.sub(r"\s+", " ", (text or "").replace("\n", " ")).strip()
+    if not text:
+        return ""
+    if _has_hangul(text):
+        words = text.split()
+        if len(words) <= 2:
+            return text
+        first = " ".join(words[:2])
+        second = " ".join(words[2:5])
+        return f"{first}\n{second}".strip()
+    words = text.split()
+    if len(words) <= 4:
+        return text
+    mid = min(4, max(2, len(words) // 2))
+    return f"{' '.join(words[:mid])}\n{' '.join(words[mid:mid + 4])}".strip()
 
 
 async def ensure_standard_thumbnail(
@@ -135,7 +259,9 @@ async def ensure_standard_thumbnail(
     thumb_prompt = build_standard_thumbnail_prompt(script, prompt_title)
     image_model = resolve_image_model(config.get("thumbnail_model") or DEFAULT_THUMBNAIL_MODEL)
 
-    overlay_title, extracted_episode_label = extract_thumbnail_text_parts(prompt_title, None)
+    overlay_seed = build_clickbait_thumbnail_overlay(script, prompt_title, config)
+    overlay_title, extracted_episode_label = extract_thumbnail_text_parts(overlay_seed or prompt_title, None)
+    overlay_title = suppress_foreign_hangul_thumbnail_overlay(overlay_title, config)
     ep_raw = episode_number if episode_number is not None else config.get("episode_number")
     overlay_episode_label = normalize_episode_label(str(ep_raw)) if ep_raw else extracted_episode_label
 
@@ -274,7 +400,19 @@ def _render_devanagari_thumbnail_with_browser(
 
     bg_data = base64.b64encode(Path(base_image_path).read_bytes()).decode("ascii")
     ep = html.escape(normalize_episode_label(episode_label) or (episode_label or "").strip())
-    title_html = html.escape(title.strip())
+    title_words = title.strip().split()
+    if len(title_words) >= 3:
+        title_main = " ".join(title_words[:-2])
+        title_impact = " ".join(title_words[-2:])
+    else:
+        title_main = ""
+        title_impact = title.strip()
+    title_html = (
+        f'<span class="title-main">{html.escape(title_main)}</span> '
+        f'<span class="title-impact">{html.escape(title_impact)}</span>'
+        if title_main
+        else f'<span class="title-impact">{html.escape(title_impact)}</span>'
+    )
     subtitle_html = html.escape((subtitle or "").strip())
     badge_block = f'<div class="top">{ep}</div>' if ep else ""
     subtitle_block = f'<div class="subtitle">{subtitle_html}</div>' if subtitle_html else ""
@@ -282,12 +420,14 @@ def _render_devanagari_thumbnail_with_browser(
 <html><head><meta charset="utf-8"><style>
 *{{box-sizing:border-box}}
 body{{margin:0;width:{THUMB_W}px;height:{THUMB_H}px;overflow:hidden;background:#111}}
-.canvas{{position:relative;width:{THUMB_W}px;height:{THUMB_H}px;font-family:"Nirmala UI","Mangal","Arial Unicode MS",sans-serif;background-image:linear-gradient(90deg,rgba(0,0,0,.52),rgba(0,0,0,.10) 45%,rgba(0,0,0,.45)),url(data:image/png;base64,{bg_data});background-size:cover;background-position:center}}
+.canvas{{position:relative;width:{THUMB_W}px;height:{THUMB_H}px;font-family:"Nirmala UI","Mangal","Arial Unicode MS",sans-serif;background-image:linear-gradient(180deg,rgba(0,0,0,.04) 0%,rgba(0,0,0,.12) 42%,rgba(0,0,0,.64) 100%),linear-gradient(90deg,rgba(0,0,0,.46),rgba(0,0,0,.04) 58%,rgba(0,0,0,.18)),url(data:image/png;base64,{bg_data});background-size:cover;background-position:center}}
 .top{{position:absolute;left:60px;top:40px;padding:8px 16px 9px;border-radius:14px;background:#ffd32a;color:#111;font-weight:900;font-size:38px;line-height:1;box-shadow:0 5px 15px rgba(0,0,0,.35)}}
-.panel{{position:absolute;left:56px;right:56px;bottom:46px;padding:24px 32px 28px;border-radius:18px;background:rgba(0,0,0,.80);border:3px solid rgba(255,211,42,.92);box-shadow:0 14px 38px rgba(0,0,0,.55)}}
-.title{{color:#fff;font-weight:900;font-size:74px;line-height:1.08;letter-spacing:0;text-shadow:0 4px 0 rgba(0,0,0,.70),0 0 18px rgba(0,0,0,.65);white-space:normal;text-wrap:balance}}
-.subtitle{{margin-top:12px;color:#ffe736;font-weight:900;font-size:78px;line-height:1.08;letter-spacing:0;text-shadow:0 4px 0 rgba(0,0,0,.75),0 0 18px rgba(0,0,0,.65);white-space:normal;text-wrap:balance}}
-</style></head><body><div class="canvas">{badge_block}<div class="panel"><div class="title">{title_html}</div>{subtitle_block}</div></div></body></html>"""
+.copy{{position:absolute;left:64px;right:76px;bottom:104px}}
+.title{{font-weight:900;font-size:82px;line-height:1.06;letter-spacing:0;text-wrap:balance;-webkit-text-stroke:4px #050505;text-shadow:0 7px 0 rgba(0,0,0,.86),0 0 22px rgba(0,0,0,.90),5px 0 0 #050505,-5px 0 0 #050505,0 5px 0 #050505,0 -5px 0 #050505,4px 4px 0 #050505,-4px 4px 0 #050505,4px -4px 0 #050505,-4px -4px 0 #050505}}
+.title-main{{display:block;color:#fff}}
+.title-impact{{display:block;color:#ffe736}}
+.subtitle{{margin-top:10px;color:#ffe736;font-weight:900;font-size:64px;line-height:1.04;letter-spacing:0;-webkit-text-stroke:4px #050505;text-shadow:0 6px 0 rgba(0,0,0,.86),0 0 20px rgba(0,0,0,.86),5px 0 0 #050505,-5px 0 0 #050505,0 5px 0 #050505,0 -5px 0 #050505;text-wrap:balance}}
+</style></head><body><div class="canvas">{badge_block}<div class="copy"><div class="title">{title_html}</div>{subtitle_block}</div></div></body></html>"""
 
     try:
         with tempfile.TemporaryDirectory() as tmp:
@@ -322,6 +462,17 @@ body{{margin:0;width:{THUMB_W}px;height:{THUMB_H}px;overflow:hidden;background:#
 
 def _has_hangul(text: Optional[str]) -> bool:
     return any(0xAC00 <= ord(ch) <= 0xD7A3 for ch in (text or ""))
+
+
+def suppress_foreign_hangul_thumbnail_overlay(
+    overlay_title: Optional[str],
+    config: Optional[dict] = None,
+) -> Optional[str]:
+    """Do not render Korean overlay text on non-Korean channel thumbnails."""
+    language = str((config or {}).get("language") or "").strip().lower()
+    if language and language not in {"ko", "kr", "kor", "korean"} and _has_hangul(overlay_title):
+        return None
+    return overlay_title
 
 
 def _find_font(size: int, text: Optional[str] = None) -> ImageFont.ImageFont:
@@ -820,9 +971,11 @@ async def generate_ai_thumbnail(
         apply_reference_style_prefix,
         historical_negative_prompt,
         map_negative_prompt,
+        symbol_negative_prompt,
         text_negative_prompt,
     )
 
+    image_prompt = _thumbnail_click_focus_prompt(image_prompt)
     image_prompt = apply_reference_style_prefix(
         image_prompt,
         has_reference=bool(reference_images),
@@ -830,12 +983,16 @@ async def generate_ai_thumbnail(
     )
     try:
         current_neg = (getattr(image_service, "negative_prompt", "") or "").strip()
-        for required_negative in (text_negative_prompt(), map_negative_prompt()):
+        for required_negative in (text_negative_prompt(), map_negative_prompt(), symbol_negative_prompt()):
             if required_negative and required_negative not in current_neg:
                 current_neg = f"{required_negative}, {current_neg}".strip(" ,")
         guard_negative = historical_negative_prompt(image_prompt, enable_historical_guard)
         if guard_negative and guard_negative not in current_neg:
             current_neg = f"{guard_negative}, {current_neg}".strip(" ,")
+        for weak_negative in THUMBNAIL_WEAK_IMAGE_NEGATIVE.split(","):
+            weak_negative = weak_negative.strip()
+            if weak_negative and weak_negative not in current_neg:
+                current_neg = f"{weak_negative}, {current_neg}".strip(" ,")
         image_service.negative_prompt = append_prompt_specific_negative_prompt(current_neg, image_prompt)
     except Exception:
         pass

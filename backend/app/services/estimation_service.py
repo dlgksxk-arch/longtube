@@ -13,7 +13,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.services.llm.factory import LLM_REGISTRY
-from app.services.image.factory import IMAGE_REGISTRY, resolve_image_model
+from app.services.image.factory import DEFAULT_THUMBNAIL_MODEL, IMAGE_REGISTRY, resolve_image_model
 from app.services.tts.factory import TTS_REGISTRY
 from app.services.video.factory import DEFAULT_VIDEO_MODEL, VIDEO_REGISTRY, resolve_video_model
 
@@ -29,12 +29,17 @@ SECONDS_PER_CUT = 5
 # LLM 스크립트 생성 입력 토큰 추정 (시스템 프롬프트 + 토픽 + 예시)
 LLM_INPUT_TOKENS = 2500
 
-# 컷당 LLM 출력 토큰 (claude_service.py dynamic_max 산식과 동일)
+# 컷당 LLM 출력 토큰. 40컷 이상은 claude_service.py 가 청크로 나눠 호출하므로
+# 입력 프롬프트와 JSON 오버헤드가 청크마다 반복된다.
 LLM_TOKENS_PER_CUT = 180
 LLM_OUTPUT_OVERHEAD = 2048
+LLM_CHUNK_SIZE = 40
+LLM_CHUNK_INPUT_TOKENS = 6000
+LLM_CHUNK_OUTPUT_TOKENS_PER_CUT = 225
+LLM_CHUNK_OUTPUT_OVERHEAD = 700
 
-# 컷당 TTS 문자수 (한국어 기준 20~28자, 평균 24자)
-TTS_CHARS_PER_CUT = 24
+# 컷당 TTS 문자수. 2026-05-04 CH1 120컷 실제 ElevenLabs 원장 기준 평균 약 31자.
+TTS_CHARS_PER_CUT = 32
 
 # 모델별 실측 평균 처리 시간 (초). 순차 호출 기준, 네트워크 지연 포함.
 # "없으면 기본값" 원칙 — dict 에 없으면 IMAGE_DEFAULT_SEC 사용.
@@ -173,8 +178,13 @@ def _estimate_llm_cost_usd(model_id: str, cuts: int) -> float:
     meta = LLM_REGISTRY.get(model_id)
     if not meta:
         return 0.0
-    input_tokens = LLM_INPUT_TOKENS
-    output_tokens = cuts * LLM_TOKENS_PER_CUT + LLM_OUTPUT_OVERHEAD
+    if cuts >= LLM_CHUNK_SIZE:
+        chunks = max(1, (cuts + LLM_CHUNK_SIZE - 1) // LLM_CHUNK_SIZE)
+        input_tokens = chunks * LLM_CHUNK_INPUT_TOKENS
+        output_tokens = cuts * LLM_CHUNK_OUTPUT_TOKENS_PER_CUT + chunks * LLM_CHUNK_OUTPUT_OVERHEAD
+    else:
+        input_tokens = LLM_INPUT_TOKENS
+        output_tokens = cuts * LLM_TOKENS_PER_CUT + LLM_OUTPUT_OVERHEAD
     cost_input = float(meta.get("cost_input") or 0.0)   # USD per 1M tokens
     cost_output = float(meta.get("cost_output") or 0.0)
     return (input_tokens * cost_input + output_tokens * cost_output) / 1_000_000.0
@@ -251,6 +261,7 @@ def estimate_project(config: dict | None) -> dict:
 
     script_model = cfg.get("script_model") or "claude-sonnet-4-6"
     image_model = resolve_image_model(cfg.get("image_model"))
+    thumbnail_model = resolve_image_model(cfg.get("thumbnail_model") or DEFAULT_THUMBNAIL_MODEL)
     tts_model = cfg.get("tts_model") or "openai-tts"
     video_model = resolve_video_model(cfg.get("video_model") or DEFAULT_VIDEO_MODEL)
     # v1.1.36: 영상 제작 대상 선택 — 미선택 컷은 ffmpeg-kenburns 폴백 (비용 0).
@@ -262,6 +273,7 @@ def estimate_project(config: dict | None) -> dict:
     # ---- 비용 ----
     llm_cost = _estimate_llm_cost_usd(script_model, cuts)
     image_cost = _estimate_image_cost_usd(image_model, cuts)
+    thumbnail_cost = _estimate_image_cost_usd(thumbnail_model, 1)
     tts_cost = _estimate_tts_cost_usd(tts_model, cuts)
     # v1.1.36: 선택된 컷만 선택 모델, 나머지는 폴백 (cost_value=0)
     # v1.1.40: 폴백 모델이 ffmpeg-kenburns → ffmpeg-static 으로 변경 (효과 없음)
@@ -269,7 +281,10 @@ def estimate_project(config: dict | None) -> dict:
         _estimate_video_cost_usd(video_model, ai_video_cuts)
         + _estimate_video_cost_usd("ffmpeg-static", fallback_video_cuts)
     )
-    total_cost = llm_cost + image_cost + tts_cost + video_cost
+    # ElevenLabs는 구독/보유 크레딧으로 운영하므로 "편당 추가 결제 예상비" 합계에서는 제외한다.
+    # breakdown에는 남겨 사용량 규모는 볼 수 있게 한다.
+    tts_billable_cost = 0.0 if tts_model == "elevenlabs" else tts_cost
+    total_cost = llm_cost + image_cost + thumbnail_cost + tts_billable_cost + video_cost
 
     # ---- 시간 ----
     llm_sec = LLM_BASE_SEC
@@ -310,7 +325,9 @@ def estimate_project(config: dict | None) -> dict:
         "cost_breakdown": {
             "llm_script": round(llm_cost, 4),
             "image_generation": round(image_cost, 4),
+            "thumbnail": round(thumbnail_cost, 4),
             "tts": round(tts_cost, 4),
+            "tts_billable": round(tts_billable_cost, 4),
             "video": round(video_cost, 4),
         },
         "time_breakdown": {
@@ -323,6 +340,7 @@ def estimate_project(config: dict | None) -> dict:
         "models_used": {
             "script": script_model,
             "image": image_model,
+            "thumbnail": thumbnail_model,
             "tts": tts_model,
             "video": video_model,
         },

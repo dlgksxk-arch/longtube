@@ -4,6 +4,7 @@ import os
 import re
 import hashlib
 import shutil
+from pathlib import Path
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
@@ -12,12 +13,20 @@ from app.models.project import Project
 from app.models.cut import Cut
 from app.config import (
     CUT_VIDEO_DURATION,
+    CHANNELS_ROOT,
     DATA_DIR,
     FIRST_CUT_FADE_IN_SECONDS,
     NARRATION_VOLUME_GAIN,
+    SYSTEM_DIR,
+    infer_project_channel,
     resolve_project_dir,
 )
-from app.services.subtitle_service import DEFAULT_SUBTITLE_STYLE, generate_ass, generate_srt
+from app.services.subtitle_service import (
+    DEFAULT_SUBTITLE_STYLE,
+    burn_cut_subtitle_file,
+    generate_ass,
+    generate_srt,
+)
 from app.services.shorts_service import (
     load_script as load_shorts_script,
     render_shorts_from_final,
@@ -25,8 +34,124 @@ from app.services.shorts_service import (
 )
 from app.services.video.ffmpeg_service import FFmpegService
 from app.services.video.subprocess_helper import find_ffmpeg, run_subprocess
+from app.services.interlude_service import (
+    DEFAULT_INTERMISSION_EVERY,
+    INTERMISSION_CLIP_SECONDS,
+    existing_kind_path,
+)
 
 router = APIRouter()
+
+BGM_CHANNEL_LENGTH_MS = 180_000
+FIRST_INTERMISSION_AFTER_CUTS = 3
+DEFAULT_RENDER_BGM_VOLUME = 0.42
+DEFAULT_RENDER_BGM_DUCKING = "low"
+DEFAULT_RENDER_BGM_START_OFFSET_SEC = 60.0
+
+
+def _channel_bgm_cache_path(project_id: str, cfg: dict | None, prompt: str) -> tuple[Path, str, str]:
+    channel = infer_project_channel(project_id, cfg)
+    if channel is not None:
+        cache_dir = CHANNELS_ROOT / f"CH{channel}" / "bgm" / "cache"
+        scope = f"CH{channel}"
+    else:
+        cache_dir = SYSTEM_DIR / "bgm" / "cache"
+        scope = "system"
+    cache_key = hashlib.sha1(
+        f"channel-bgm-v1|{scope}|{prompt}|{BGM_CHANNEL_LENGTH_MS}".encode("utf-8")
+    ).hexdigest()[:16]
+    return cache_dir / f"{cache_key}_180s.mp3", scope, cache_key
+
+
+def _is_channel_bgm_cache(path: str | Path) -> bool:
+    p = Path(path)
+    parts = {part.lower() for part in p.parts}
+    return "bgm" in parts and "cache" in parts and (
+        "channels" in parts or "_system" in parts
+    )
+
+
+def _intermission_every_cuts(project: Project) -> int:
+    inter = (project.config or {}).get("interlude") or {}
+    try:
+        if inter.get("intermission_every_cuts"):
+            every = int(inter.get("intermission_every_cuts"))
+        elif inter.get("intermission_every_sec"):
+            every = int(round(float(inter.get("intermission_every_sec")) / float(CUT_VIDEO_DURATION)))
+        else:
+            every = DEFAULT_INTERMISSION_EVERY
+    except (TypeError, ValueError):
+        every = DEFAULT_INTERMISSION_EVERY
+    return max(1, every)
+
+
+def _insert_intermissions_after_cuts(
+    cut_paths: list[str],
+    intermission_path: str | None,
+    every_cuts: int,
+) -> tuple[list[str], int]:
+    sequence: list[str] = []
+    intermission_count = 0
+    every = max(1, int(every_cuts or DEFAULT_INTERMISSION_EVERY))
+
+    for idx, path in enumerate(cut_paths):
+        sequence.append(path)
+        if not intermission_path or idx == len(cut_paths) - 1:
+            continue
+
+        cut_count = idx + 1
+        should_insert = cut_count == FIRST_INTERMISSION_AFTER_CUTS
+        if cut_count != FIRST_INTERMISSION_AFTER_CUTS and cut_count % every == 0:
+            should_insert = True
+
+        if should_insert:
+            sequence.append(intermission_path)
+            intermission_count += 1
+
+    return sequence, intermission_count
+
+
+async def _prepare_intermission_clip(input_path: str, output_path: str, resolution: str) -> str:
+    return await _prepare_interlude_timeline_clip(
+        input_path,
+        output_path,
+        resolution,
+        duration=INTERMISSION_CLIP_SECONDS,
+    )
+
+
+async def _prepare_interlude_timeline_clip(
+    input_path: str,
+    output_path: str,
+    resolution: str,
+    *,
+    duration: float | None = None,
+) -> str:
+    pad_wh = resolution.replace("x", ":")
+    vf = (
+        f"scale={resolution}:force_original_aspect_ratio=decrease,"
+        f"pad={pad_wh}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30,format=yuv420p"
+    )
+    af = "volume=0.0000,aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=mono"
+    if duration is not None:
+        af = f"apad,{af}"
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", input_path,
+        "-vf", vf,
+        "-map", "0:v:0",
+        "-map", "0:a?",
+        "-af", af,
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "20",
+        "-video_track_timescale", "15360",
+        "-c:a", "aac", "-b:a", "160k", "-ar", "44100",
+        "-pix_fmt", "yuv420p",
+        output_path,
+    ]
+    if duration is not None:
+        cmd[4:4] = ["-t", f"{float(duration):.3f}"]
+    await FFmpegService._run_ffmpeg(cmd, timeout=180.0)
+    return output_path
 
 
 def _load_script(project_id: str) -> dict:
@@ -56,10 +181,11 @@ def _build_and_write_ass(project_id: str, project: Project, db: Session) -> tupl
     cuts_data = []
     for cut in cuts:
         cut_script = next((c for c in script.get("cuts", []) if c["cut_number"] == cut.cut_number), {})
+        spoken_duration = getattr(cut, "audio_original_duration", None) or cut.audio_duration
         cuts_data.append({
             "cut_number": cut.cut_number,
             "narration": cut.narration or cut_script.get("narration", ""),
-            "actual_duration": cut.audio_duration,
+            "actual_duration": spoken_duration,
             "duration_estimate": cut_script.get("duration_estimate", 5.0)
         })
 
@@ -158,11 +284,18 @@ async def upload_render_bgm(
 
         cfg["bgm_enabled"] = True
         cfg["bgm_path"] = f"bgm/{bgm_path.name}"
-        cfg["bgm_volume"] = float(cfg.get("bgm_volume", 0.24) or 0.24)
+        cfg["bgm_volume"] = float(cfg.get("bgm_volume", DEFAULT_RENDER_BGM_VOLUME) or DEFAULT_RENDER_BGM_VOLUME)
+        cfg["bgm_ducking_strength"] = str(cfg.get("bgm_ducking_strength") or DEFAULT_RENDER_BGM_DUCKING)
+        cfg["bgm_start_offset_sec"] = float(
+            cfg.get("bgm_start_offset_sec", DEFAULT_RENDER_BGM_START_OFFSET_SEC)
+            or DEFAULT_RENDER_BGM_START_OFFSET_SEC
+        )
         if isinstance(cfg.get("audio"), dict):
             cfg["audio"]["bgm_enabled"] = True
             cfg["audio"]["bgm_path"] = cfg["bgm_path"]
             cfg["audio"]["bgm_volume"] = cfg["bgm_volume"]
+            cfg["audio"]["bgm_ducking_strength"] = cfg["bgm_ducking_strength"]
+            cfg["audio"]["bgm_start_offset_sec"] = cfg["bgm_start_offset_sec"]
         project.config = cfg
         from sqlalchemy.orm.attributes import flag_modified
         flag_modified(project, "config")
@@ -189,16 +322,15 @@ async def generate_render_bgm(project_id: str, db: Session = Depends(get_db)):
     from app.services.bgm_service import build_bgm_prompt, generate_bgm
 
     prompt = build_bgm_prompt(
-        topic=project.topic or "",
-        title=project.title or "",
+        topic="",
+        title="",
         style_prompt=str(cfg.get("bgm_style_prompt") or ""),
         language=str(cfg.get("language") or "ko"),
     )
-    target_duration = int(cfg.get("target_duration") or 600)
-    length_ms = min(max(target_duration * 1000, 30_000), 60_000)
-    cache_key = hashlib.sha1(f"{prompt}|{length_ms}".encode("utf-8")).hexdigest()[:16]
-    bgm_rel = f"bgm/cache/{cache_key}.mp3"
-    bgm_abs = resolve_project_dir(project_id, cfg, create=True) / bgm_rel
+    length_ms = BGM_CHANNEL_LENGTH_MS
+    bgm_abs, bgm_scope, cache_key = _channel_bgm_cache_path(project_id, cfg, prompt)
+    bgm_abs.parent.mkdir(parents=True, exist_ok=True)
+    bgm_path_value = str(bgm_abs)
 
     try:
         if bgm_abs.exists() and bgm_abs.is_file() and bgm_abs.stat().st_size > 0:
@@ -212,14 +344,25 @@ async def generate_render_bgm(project_id: str, db: Session = Depends(get_db)):
         else:
             result = await generate_bgm(prompt=prompt, output_path=bgm_abs, length_ms=length_ms)
         cfg["bgm_enabled"] = True
-        cfg["bgm_path"] = bgm_rel
+        cfg["bgm_path"] = bgm_path_value
         cfg["bgm_prompt_used"] = prompt
-        cfg["bgm_volume"] = float(cfg.get("bgm_volume", 0.24) or 0.24)
+        cfg["bgm_scope"] = bgm_scope
+        cfg["bgm_cache_key"] = cache_key
+        cfg["bgm_volume"] = float(cfg.get("bgm_volume", DEFAULT_RENDER_BGM_VOLUME) or DEFAULT_RENDER_BGM_VOLUME)
+        cfg["bgm_ducking_strength"] = str(cfg.get("bgm_ducking_strength") or DEFAULT_RENDER_BGM_DUCKING)
+        cfg["bgm_start_offset_sec"] = float(
+            cfg.get("bgm_start_offset_sec", DEFAULT_RENDER_BGM_START_OFFSET_SEC)
+            or DEFAULT_RENDER_BGM_START_OFFSET_SEC
+        )
         if isinstance(cfg.get("audio"), dict):
             cfg["audio"]["bgm_enabled"] = True
-            cfg["audio"]["bgm_path"] = bgm_rel
+            cfg["audio"]["bgm_path"] = bgm_path_value
             cfg["audio"]["bgm_prompt_used"] = prompt
+            cfg["audio"]["bgm_scope"] = bgm_scope
+            cfg["audio"]["bgm_cache_key"] = cache_key
             cfg["audio"]["bgm_volume"] = cfg["bgm_volume"]
+            cfg["audio"]["bgm_ducking_strength"] = cfg["bgm_ducking_strength"]
+            cfg["audio"]["bgm_start_offset_sec"] = cfg["bgm_start_offset_sec"]
         project.config = cfg
         from sqlalchemy.orm.attributes import flag_modified
         flag_modified(project, "config")
@@ -227,6 +370,7 @@ async def generate_render_bgm(project_id: str, db: Session = Depends(get_db)):
         return {
             "status": "generated",
             "path": cfg["bgm_path"],
+            "scope": bgm_scope,
             "size": result["size"],
             "length_ms": result["length_ms"],
             "prompt": prompt,
@@ -249,10 +393,14 @@ def delete_render_bgm(project_id: str, db: Session = Depends(get_db)):
     deleted = False
     if rel_path:
         try:
-            path = resolve_project_dir(project_id, cfg, create=False) / rel_path
+            raw_path = Path(rel_path)
+            path = raw_path if raw_path.is_absolute() else resolve_project_dir(project_id, cfg, create=False) / rel_path
             if path.exists() and path.is_file():
-                path.unlink()
-                deleted = True
+                if _is_channel_bgm_cache(path):
+                    deleted = False
+                else:
+                    path.unlink()
+                    deleted = True
         except Exception:
             deleted = False
     cfg["bgm_enabled"] = False
@@ -406,17 +554,23 @@ def _resolution_for_aspect(aspect_ratio: str, target_resolution: str = "1080p") 
 
 
 def _resolve_interlude_path(project_id: str, project: Project, kind: str) -> str | None:
-    """project.config['interlude'][kind].video_path → 절대 경로 (파일 존재 시)."""
+    """project.config['interlude'][kind].video_path 또는 실제 업로드 파일 경로."""
     inter = (project.config or {}).get("interlude") or {}
     entry = inter.get(kind) or {}
     vp = entry.get("video_path")
-    if not vp:
-        return None
-    from pathlib import Path as _P
-    p = _P(vp)
-    if not p.is_absolute():
-        p = DATA_DIR / project_id / vp
-    return str(p) if p.exists() else None
+    if vp:
+        from pathlib import Path as _P
+        p = _P(vp)
+        if not p.is_absolute():
+            p = resolve_project_dir(project_id, project.config or {}, create=False) / vp
+        if p.exists() and p.is_file():
+            return str(p)
+
+    fallback = existing_kind_path(
+        resolve_project_dir(project_id, project.config or {}, create=False) / "interlude",
+        kind,
+    )
+    return str(fallback) if fallback else None
 
 
 def _resolve_bgm_path(project_id: str, project: Project) -> str | None:
@@ -449,7 +603,13 @@ def _read_bgm_config(cfg: dict | None) -> dict:
     enabled_raw = data.get("bgm_enabled", audio.get("bgm_enabled", False))
     path = data.get("bgm_path", audio.get("bgm_path", ""))
     style_prompt = data.get("bgm_style_prompt", audio.get("bgm_style_prompt", ""))
-    ducking = str(data.get("ducking_strength", audio.get("ducking_strength", "normal")) or "normal").strip().lower()
+    ducking = str(
+        data.get(
+            "bgm_ducking_strength",
+            data.get("ducking_strength", audio.get("ducking_strength", "normal")),
+        )
+        or "normal"
+    ).strip().lower()
     if ducking not in {"low", "normal", "strong", "off", "none", "disabled"}:
         ducking = "normal"
 
@@ -483,9 +643,16 @@ def _read_bgm_config(cfg: dict | None) -> dict:
             volume = None
 
     try:
-        volume_f = float(volume if volume is not None else 0.24)
+        volume_f = float(volume if volume is not None else DEFAULT_RENDER_BGM_VOLUME)
     except Exception:
-        volume_f = 0.24
+        volume_f = DEFAULT_RENDER_BGM_VOLUME
+
+    if (
+        data.get("bgm_ducking_strength") is None
+        and data.get("ducking_strength") is None
+        and audio.get("ducking_strength") is None
+    ):
+        ducking = DEFAULT_RENDER_BGM_DUCKING
 
     return {
         "enabled": _to_bool(enabled_raw),
@@ -493,6 +660,7 @@ def _read_bgm_config(cfg: dict | None) -> dict:
         "style_prompt": str(style_prompt or ""),
         "volume": max(0.0, min(1.0, volume_f)),
         "ducking_strength": ducking,
+        "start_offset_sec": max(0.0, min(170.0, _to_float(data.get("bgm_start_offset_sec", audio.get("bgm_start_offset_sec", None)), DEFAULT_RENDER_BGM_START_OFFSET_SEC))),
         "fade_in_sec": max(0.0, min(30.0, _to_float(data.get("fade_in_sec", audio.get("fade_in_sec", None)), 0.0))),
         "fade_out_sec": max(0.0, min(30.0, _to_float(data.get("fade_out_sec", audio.get("fade_out_sec", None)), 0.0))),
     }
@@ -509,52 +677,53 @@ def _subtitle_delivery_mode(cfg: dict | None) -> str:
 
 
 async def _ensure_bgm_for_render(project_id: str, project: Project, db: Session) -> str | None:
-    existing = _resolve_bgm_path(project_id, project)
-    if existing:
-        return existing
-
     cfg = dict(project.config or {})
     bgm_cfg = _read_bgm_config(cfg)
     if not bgm_cfg["enabled"]:
         return None
 
+    existing = _resolve_bgm_path(project_id, project)
+    if existing and not _is_channel_bgm_cache(existing):
+        return existing
+
     from app.services.bgm_service import build_bgm_prompt, generate_bgm
 
     prompt = build_bgm_prompt(
-        topic=project.topic or "",
-        title=project.title or "",
+        topic="",
+        title="",
         style_prompt=str(bgm_cfg["style_prompt"] or ""),
         language=str(cfg.get("language") or "ko"),
     )
-    target_duration = int(cfg.get("target_duration") or 600)
-    length_ms = min(max(target_duration * 1000, 30_000), 60_000)
-    cache_key = hashlib.sha1(f"{prompt}|{length_ms}".encode("utf-8")).hexdigest()[:16]
-    bgm_rel = f"bgm/cache/{cache_key}.mp3"
-    project_dir = resolve_project_dir(project_id, cfg, create=True)
-    bgm_abs = project_dir / bgm_rel
+    length_ms = BGM_CHANNEL_LENGTH_MS
+    bgm_abs, bgm_scope, cache_key = _channel_bgm_cache_path(project_id, cfg, prompt)
     bgm_abs.parent.mkdir(parents=True, exist_ok=True)
-
-    template_project_id = str(cfg.get("template_project_id") or "").strip()
-    if template_project_id and not bgm_abs.exists():
-        template_bgm_abs = resolve_project_dir(template_project_id, create=False) / bgm_rel
-        if template_bgm_abs.exists() and template_bgm_abs.is_file():
-            shutil.copy2(template_bgm_abs, bgm_abs)
-            print(f"[subtitle/render] BGM cache copied from template: {bgm_rel}")
+    bgm_path_value = str(bgm_abs)
 
     if bgm_abs.exists() and bgm_abs.is_file() and bgm_abs.stat().st_size > 0:
-        cfg["bgm_path"] = bgm_rel
+        cfg["bgm_path"] = bgm_path_value
         cfg["bgm_prompt_used"] = prompt
+        cfg["bgm_scope"] = bgm_scope
+        cfg["bgm_cache_key"] = cache_key
         cfg["bgm_volume"] = float(cfg.get("bgm_volume", bgm_cfg["volume"]) or bgm_cfg["volume"])
+        cfg["bgm_ducking_strength"] = str(cfg.get("bgm_ducking_strength") or bgm_cfg["ducking_strength"])
+        cfg["bgm_start_offset_sec"] = float(
+            cfg.get("bgm_start_offset_sec", bgm_cfg["start_offset_sec"])
+            or bgm_cfg["start_offset_sec"]
+        )
         if isinstance(cfg.get("audio"), dict):
             cfg["audio"]["bgm_enabled"] = True
-            cfg["audio"]["bgm_path"] = bgm_rel
+            cfg["audio"]["bgm_path"] = bgm_path_value
             cfg["audio"]["bgm_prompt_used"] = prompt
+            cfg["audio"]["bgm_scope"] = bgm_scope
+            cfg["audio"]["bgm_cache_key"] = cache_key
             cfg["audio"]["bgm_volume"] = cfg["bgm_volume"]
+            cfg["audio"]["bgm_ducking_strength"] = cfg["bgm_ducking_strength"]
+            cfg["audio"]["bgm_start_offset_sec"] = cfg["bgm_start_offset_sec"]
         project.config = cfg
         from sqlalchemy.orm.attributes import flag_modified
         flag_modified(project, "config")
         db.commit()
-        print(f"[subtitle/render] BGM cache reused: {bgm_rel}")
+        print(f"[subtitle/render] channel BGM cache reused ({bgm_scope}): {bgm_abs}")
         return str(bgm_abs)
 
     print(f"[subtitle/render] generating BGM via ElevenLabs Music ({length_ms}ms): {prompt!r}")
@@ -563,20 +732,31 @@ async def _ensure_bgm_for_render(project_id: str, project: Project, db: Session)
         output_path=bgm_abs,
         length_ms=length_ms,
     )
-    cfg["bgm_path"] = bgm_rel
+    cfg["bgm_path"] = bgm_path_value
     cfg["bgm_prompt_used"] = prompt
+    cfg["bgm_scope"] = bgm_scope
+    cfg["bgm_cache_key"] = cache_key
     cfg["bgm_volume"] = float(cfg.get("bgm_volume", bgm_cfg["volume"]) or bgm_cfg["volume"])
+    cfg["bgm_ducking_strength"] = str(cfg.get("bgm_ducking_strength") or bgm_cfg["ducking_strength"])
+    cfg["bgm_start_offset_sec"] = float(
+        cfg.get("bgm_start_offset_sec", bgm_cfg["start_offset_sec"])
+        or bgm_cfg["start_offset_sec"]
+    )
     if isinstance(cfg.get("audio"), dict):
         cfg["audio"]["bgm_enabled"] = True
-        cfg["audio"]["bgm_path"] = bgm_rel
+        cfg["audio"]["bgm_path"] = bgm_path_value
         cfg["audio"]["bgm_prompt_used"] = prompt
+        cfg["audio"]["bgm_scope"] = bgm_scope
+        cfg["audio"]["bgm_cache_key"] = cache_key
         cfg["audio"]["bgm_volume"] = cfg["bgm_volume"]
+        cfg["audio"]["bgm_ducking_strength"] = cfg["bgm_ducking_strength"]
+        cfg["audio"]["bgm_start_offset_sec"] = cfg["bgm_start_offset_sec"]
     project.config = cfg
     from sqlalchemy.orm.attributes import flag_modified
     flag_modified(project, "config")
     db.commit()
     print(
-        f"[subtitle/render] BGM generated: {bgm_rel} "
+        f"[subtitle/render] channel BGM generated ({bgm_scope}): {bgm_abs} "
         f"size={result.get('size')} length_ms={result.get('length_ms')}"
     )
     return str(bgm_abs)
@@ -589,6 +769,7 @@ async def _mix_bgm_into_video(
     volume: float,
     *,
     ducking_strength: str = "normal",
+    start_offset_sec: float = 0.0,
     fade_in_sec: float = 0.0,
     fade_out_sec: float = 0.0,
 ) -> str:
@@ -597,6 +778,7 @@ async def _mix_bgm_into_video(
     narration_gain = max(0.5, min(4.0, float(NARRATION_VOLUME_GAIN)))
     has_audio = await _video_has_audio(ffmpeg_bin, input_path)
     duration = await FFmpegService.probe_duration(input_path)
+    bgm_offset = max(0.0, min(170.0, float(start_offset_sec or 0.0)))
     fade_in = max(0.0, min(float(fade_in_sec or 0.0), max(0.0, duration / 2) if duration > 0 else 30.0))
     fade_out = max(0.0, min(float(fade_out_sec or 0.0), max(0.0, duration / 2) if duration > 0 else 30.0))
     bgm_filters = [
@@ -618,21 +800,21 @@ async def _mix_bgm_into_video(
         )
         if duck in {"low", "normal", "strong"}:
             duck_params = {
-                "low": ("0.080", "3"),
-                "normal": ("0.050", "6"),
-                "strong": ("0.030", "10"),
+                "low": ("0.150", "1.5"),
+                "normal": ("0.100", "2.5"),
+                "strong": ("0.050", "5"),
             }[duck]
             threshold, ratio = duck_params
             filter_complex += (
                 f"[bgm][main]sidechaincompress=threshold={threshold}:ratio={ratio}:"
                 f"attack=80:release=650[ducked];"
                 f"[main][ducked]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,"
-                f"alimiter=limit=0.95[aout]"
+                f"alimiter=limit=0.55:level=false[aout]"
             )
         else:
             filter_complex += (
                 f"[main][bgm]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,"
-                f"alimiter=limit=0.95[aout]"
+                f"alimiter=limit=0.55:level=false[aout]"
             )
     else:
         filter_complex = (
@@ -641,7 +823,9 @@ async def _mix_bgm_into_video(
     cmd = [
         ffmpeg_bin, "-y",
         "-i", input_path,
-        "-stream_loop", "-1", "-i", bgm_path,
+        "-stream_loop", "-1",
+        "-ss", f"{bgm_offset:.3f}",
+        "-i", bgm_path,
         "-filter_complex", filter_complex,
         "-map", "0:v:0",
         "-map", "[aout]",
@@ -678,7 +862,7 @@ async def _apply_narration_gain_to_video(
         "-map", "0:v:0",
         "-map", "0:a:0",
         "-c:v", "copy",
-        "-af", f"volume={narration_gain:.4f},alimiter=limit=0.95",
+        "-af", f"volume={narration_gain:.4f},alimiter=limit=0.55:level=false",
         "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
         "-shortest",
         output_path,
@@ -734,8 +918,9 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
     # v1.1.55: 컷 단계에서 이미 자막을 번인했으면 본편 단계의 ASS 생성/번인은
     # 건너뛴다. 머지 후 자막 입히면 ensure_min_duration 등으로 컷 길이가
     # 변형돼 싱크가 깨지는 사고 차단. 기본 True — 옛 프로젝트는 config 에서
-    # `cut_level_subtitles=False` 로 토글 가능.
-    cut_level_subs = bool((project.config or {}).get("cut_level_subtitles", True))
+    # Global policy: subtitles are burned into each cut video during video
+    # generation. Final render must not burn a second subtitle layer.
+    cut_level_subs = True
     subtitle_delivery = _subtitle_delivery_mode(project.config or {})
     burn_main_subtitles = subtitle_delivery == "burn"
 
@@ -766,6 +951,21 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
         import traceback
         print(f"[subtitle/render] audio heal EXCEPTION (non-fatal): {e}\n{traceback.format_exc()}")
 
+    if not cut_level_subs or subtitle_delivery == "youtube_caption":
+        # Audio heal/mux can update DB timing fields. Regenerate subtitles after
+        # that step so burn-in and caption files use the final spoken timings.
+        try:
+            print(f"[subtitle/render] regenerating subtitle ASS after audio heal → {subtitle_file}")
+            t_sub = _t.time()
+            _build_and_write_ass(project_id, project, db)
+            print(f"[subtitle/render] ASS regenerated in {_t.time()-t_sub:.1f}s")
+        except HTTPException:
+            raise
+        except Exception as e:
+            import traceback
+            print(f"[subtitle/render] ASS REGEN FAILED: {e}\n{traceback.format_exc()}")
+            raise HTTPException(500, f"Subtitle regeneration failed: {type(e).__name__}: {e}")
+
     # ── Step 3: 각 컷 최소 5초 보정 ──
     cuts = (
         db.query(Cut)
@@ -773,6 +973,12 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
         .order_by(Cut.cut_number)
         .all()
     )
+    script_cut_map = {
+        int(item.get("cut_number")): item
+        for item in (_load_script(project_id).get("cuts", []) or [])
+        if item.get("cut_number") is not None
+    }
+    subtitle_style_cfg = (project.config or {}).get("subtitle_style") or {}
     clip_paths: list[str] = []
     video_dir_path = DATA_DIR / project_id / "videos"
     for c in cuts:
@@ -790,6 +996,22 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
             else:
                 print(f"[subtitle/render] Cut {c.cut_number}: 영상 파일 없음 — 건너뜀")
                 continue
+        if cut_level_subs:
+            narration = (
+                (c.narration or "").strip()
+                or (script_cut_map.get(int(c.cut_number), {}) or {}).get("narration", "").strip()
+            )
+            if narration:
+                try:
+                    await burn_cut_subtitle_file(
+                        ap,
+                        narration,
+                        aspect_ratio=aspect_ratio,
+                        style_config=subtitle_style_cfg,
+                        duration=float(CUT_VIDEO_DURATION),
+                    )
+                except Exception as e:
+                    print(f"[subtitle/render] Cut {c.cut_number}: cut subtitle burn failed: {e}")
         clip_paths.append(ap)
 
     db.commit()  # DB 보정 반영
@@ -804,47 +1026,98 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
 
     MIN_CUT_DURATION = float(CUT_VIDEO_DURATION)
     normalized_cuts: list[str] = []
-    try:
-        t_norm = _t.time()
-        for idx, cp in enumerate(clip_paths, start=1):
-            norm_out = str(tmp_dir / f"norm_{idx:03d}.mp4")
-            await FFmpegService.ensure_min_duration(
-                cp, norm_out, min_seconds=MIN_CUT_DURATION, resolution=resolution
-            )
-            if idx == 1 and FIRST_CUT_FADE_IN_SECONDS > 0:
-                fade_out = str(tmp_dir / "norm_001_fadein.mp4")
-                await FFmpegService.add_fade_in(
-                    norm_out,
-                    fade_out,
-                    fade_seconds=min(float(FIRST_CUT_FADE_IN_SECONDS), MIN_CUT_DURATION),
-                    resolution=resolution,
-                )
-                normalized_cuts.append(fade_out)
-            else:
-                normalized_cuts.append(norm_out)
+    preserve_cut_audio = bool(cut_level_subs)
+    if preserve_cut_audio:
+        normalized_cuts = list(clip_paths)
         print(
-            f"[subtitle/render] normalized {len(normalized_cuts)} cuts "
-            f"(min={MIN_CUT_DURATION}s) in {_t.time()-t_norm:.1f}s"
+            f"[subtitle/render] preserving original cut audio "
+            f"({len(normalized_cuts)} cuts; normalization skipped)"
+        )
+    else:
+        try:
+            t_norm = _t.time()
+            for idx, cp in enumerate(clip_paths, start=1):
+                norm_out = str(tmp_dir / f"norm_{idx:03d}.mp4")
+                await FFmpegService.ensure_min_duration(
+                    cp, norm_out, min_seconds=MIN_CUT_DURATION, resolution=resolution
+                )
+                if idx == 1 and FIRST_CUT_FADE_IN_SECONDS > 0:
+                    fade_out = str(tmp_dir / "norm_001_fadein.mp4")
+                    await FFmpegService.add_fade_in(
+                        norm_out,
+                        fade_out,
+                        fade_seconds=min(float(FIRST_CUT_FADE_IN_SECONDS), MIN_CUT_DURATION),
+                        resolution=resolution,
+                    )
+                    normalized_cuts.append(fade_out)
+                else:
+                    normalized_cuts.append(norm_out)
+            print(
+                f"[subtitle/render] normalized {len(normalized_cuts)} cuts "
+                f"(min={MIN_CUT_DURATION}s) in {_t.time()-t_norm:.1f}s"
+            )
+        except Exception as e:
+            import traceback
+            print(f"[subtitle/render] NORMALIZE FAILED: {e}\n{traceback.format_exc()}")
+            raise HTTPException(500, f"Cut normalization failed: {type(e).__name__}: {e}")
+
+    # ── Step 4: 본편 concat (재인코딩) ──
+    shorts_body_path = str(tmp_dir / "shorts_body_no_interludes.mp4")
+    try:
+        t_shorts_body = _t.time()
+        if preserve_cut_audio:
+            await FFmpegService.merge_videos(normalized_cuts, shorts_body_path)
+        else:
+            await FFmpegService.merge_videos_reencode(
+                normalized_cuts, shorts_body_path, resolution=resolution
+            )
+        print(
+            f"[subtitle/render] shorts source merged without opening/intermission/ending "
+            f"in {_t.time()-t_shorts_body:.1f}s"
         )
     except Exception as e:
         import traceback
-        print(f"[subtitle/render] NORMALIZE FAILED: {e}\n{traceback.format_exc()}")
-        raise HTTPException(500, f"Cut normalization failed: {type(e).__name__}: {e}")
+        shorts_body_path = ""
+        print(f"[subtitle/render] SHORTS SOURCE MERGE FAILED: {e}\n{traceback.format_exc()}")
 
-    # ── Step 4: 본편 concat (재인코딩) ──
+    intermission_raw = _resolve_interlude_path(project_id, project, "intermission")
+    body_sequence = normalized_cuts
+    intermission_count = 0
+    if intermission_raw:
+        every = _intermission_every_cuts(project)
+        intermission_clip = await _prepare_intermission_clip(
+            intermission_raw,
+            str(tmp_dir / "intermission_3s.mp4"),
+            resolution,
+        )
+        body_sequence, intermission_count = _insert_intermissions_after_cuts(
+            normalized_cuts,
+            intermission_clip,
+            every,
+        )
+        print(
+            f"[subtitle/render] intermission inserted count={intermission_count} "
+            f"first_after={FIRST_INTERMISSION_AFTER_CUTS} cuts every={every} cuts "
+            f"duration={INTERMISSION_CLIP_SECONDS:.1f}s"
+        )
+
     body_path = str(tmp_dir / "body.mp4")
     try:
         t_body = _t.time()
-        await FFmpegService.merge_videos_reencode(
-            normalized_cuts, body_path, resolution=resolution
-        )
+        if preserve_cut_audio:
+            await FFmpegService.merge_videos(body_sequence, body_path)
+        else:
+            await FFmpegService.merge_videos_reencode(
+                body_sequence, body_path, resolution=resolution
+            )
         print(f"[subtitle/render] body merged in {_t.time()-t_body:.1f}s")
     except Exception as e:
         import traceback
         print(f"[subtitle/render] BODY MERGE FAILED: {e}\n{traceback.format_exc()}")
         raise HTTPException(500, f"Body merge failed: {type(e).__name__}: {e}")
 
-    # 과거 호환: videos/merged.mp4 도 덮어써 둬서 다른 곳에서 참조하는 코드가 있어도 OK.
+    # 과거 호환: videos/merged.mp4 는 본편 컷 병합본으로 유지한다.
+    # output/merged.mp4 는 아래에서 오프닝/인터미션/엔딩까지 들어간 무BGM 기준본으로 저장한다.
     try:
         video_dir.mkdir(parents=True, exist_ok=True)
         from shutil import copyfile
@@ -852,17 +1125,11 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
     except Exception as e:
         print(f"[subtitle/render] WARN: could not copy body to videos/merged.mp4: {e}")
 
-    # ── Step 5: 자막 번인 (본편만) ──
-    # v1.1.55: cut_level_subtitles=True 면 컷 단계에서 이미 번인 — 건너뜀.
-    body_sub_path = str(tmp_dir / "body_sub.mp4")
-    if cut_level_subs or not burn_main_subtitles:
-        from shutil import copyfile as _cp
-        _cp(body_path, body_sub_path)
-        if not burn_main_subtitles:
-            print(f"[subtitle/render] subtitle_delivery={subtitle_delivery} — main burn skipped")
-        else:
-            print("[subtitle/render] cut_level_subtitles=True — 본편 burn 건너뜀")
-    else:
+    # ── Step 5: 본편 자막 처리 ──
+    # 컷 단계에서 이미 자막/음성이 들어간 프로젝트는 본편을 더 건드리지 않는다.
+    body_sub_path = body_path
+    if not cut_level_subs and burn_main_subtitles:
+        body_sub_path = str(tmp_dir / "body_sub.mp4")
         try:
             t_burn = _t.time()
             await FFmpegService.burn_subtitles(body_path, str(subtitle_file), body_sub_path)
@@ -873,6 +1140,10 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
             raise HTTPException(
                 500, f"Subtitle burn failed: {type(e).__name__}: {e}"
             )
+    elif not burn_main_subtitles:
+        print(f"[subtitle/render] subtitle_delivery={subtitle_delivery} — main burn skipped")
+    else:
+        print("[subtitle/render] cut_level_subtitles=True — 본편 추가 처리 없음")
 
     # ── Step 6: 오프닝/엔딩 resolve ──
     opening_raw = _resolve_interlude_path(project_id, project, "opening")
@@ -899,77 +1170,39 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
     if ending_raw:
         print(f"[subtitle/render] ending: {ending_raw}")
 
-    # ── Step 7: 최종 시퀀스 합성 (pre_final) ──
-    # v1.1.55: 오프닝↔본편 사이 0.5초 크로스페이드, 엔딩은 단순 concat
-    # v1.1.71: Step 7 은 tmp 파일에 쓰고, Step 8 에서 전단 pre-roll 을 얹어 최종 출력을 생성.
-    CROSSFADE_SEC = 0.5
-    pre_final_path = str(tmp_dir / "pre_final.mp4")
+    # ── Step 7: output/merged.mp4 생성 ──
+    # 컷 mp4 에 자막/음성이 이미 들어간다. 여기서는 오프닝/인터미션/엔딩을
+    # 순서대로 붙인 무BGM 기준본만 만든다. BGM 은 다음 단계에서만 입힌다.
+    merged_output_path = output_dir / "merged.mp4"
+    final_sequence: list[str] = []
+    if opening_raw:
+        opening_timeline = str(tmp_dir / "opening_timeline.mp4")
+        await _prepare_interlude_timeline_clip(opening_raw, opening_timeline, resolution)
+        final_sequence.append(opening_timeline)
+    final_sequence.append(body_sub_path)
+    if ending_raw:
+        ending_timeline = str(tmp_dir / "ending_timeline.mp4")
+        await _prepare_interlude_timeline_clip(ending_raw, ending_timeline, resolution)
+        final_sequence.append(ending_timeline)
+
     try:
         t_final = _t.time()
-        if not opening_raw and not ending_raw:
-            # 오프닝/엔딩 없음 → body_sub 를 그대로 pre_final 로.
+        if len(final_sequence) == 1:
             from shutil import copyfile
-            copyfile(body_sub_path, pre_final_path)
-        elif opening_raw and not ending_raw:
-            # 오프닝 + 본편 (크로스페이드)
-            await FFmpegService.merge_with_crossfade(
-                opening_raw, body_sub_path, pre_final_path,
-                fade_seconds=CROSSFADE_SEC, resolution=resolution,
-            )
-        elif opening_raw and ending_raw:
-            # 오프닝 + 본편 (크로스페이드) → + 엔딩 (단순 concat)
-            crossfaded_path = str(tmp_dir / "opening_body_crossfade.mp4")
-            await FFmpegService.merge_with_crossfade(
-                opening_raw, body_sub_path, crossfaded_path,
-                fade_seconds=CROSSFADE_SEC, resolution=resolution,
-            )
-            await FFmpegService.merge_videos_reencode(
-                [crossfaded_path, ending_raw], pre_final_path, resolution=resolution,
-            )
+            copyfile(final_sequence[0], str(merged_output_path))
+        elif preserve_cut_audio:
+            await FFmpegService.merge_videos(final_sequence, str(merged_output_path))
         else:
-            # 엔딩만 있는 경우 (드묾) → 단순 concat
             await FFmpegService.merge_videos_reencode(
-                [body_sub_path, ending_raw], pre_final_path, resolution=resolution,
+                final_sequence, str(merged_output_path), resolution=resolution
             )
-        print(f"[subtitle/render] final concat done in {_t.time()-t_final:.1f}s")
+        print(f"[subtitle/render] merged baseline saved in {_t.time()-t_final:.1f}s → {merged_output_path}")
     except Exception as e:
         import traceback
-        print(f"[subtitle/render] FINAL CONCAT FAILED: {e}\n{traceback.format_exc()}")
-        raise HTTPException(500, f"Final concat failed: {type(e).__name__}: {e}")
+        print(f"[subtitle/render] MERGED CONCAT FAILED: {e}\n{traceback.format_exc()}")
+        raise HTTPException(500, f"Merged concat failed: {type(e).__name__}: {e}")
 
-    # ── Step 8: 전단 0.5초 무음 + 150ms 페이드 인 ──
-    # v1.1.71: 시작이 급작스럽다는 피드백 대응. 재생 직후 0.5초 무음/정지 프레임
-    # 을 삽입하고, 첫 150ms 동안 검정→첫 프레임 페이드 인. 자막은 본편에 이미
-    # 번인돼 있어 타임라인이 같이 밀리므로 별도 조정 불필요.
-    # config 에서 `pre_roll_sec=0` 을 주면 스킵(옛 프로젝트 하위호환).
-    pre_roll_sec = float((project.config or {}).get("pre_roll_sec", 0.0) or 0)
-    pre_roll_fade_sec = float((project.config or {}).get("pre_roll_fade_sec", 0.15) or 0)
-    final_nomusic_path = str(tmp_dir / "final_nomusic.mp4")
-    if pre_roll_sec > 0:
-        try:
-            t_pre = _t.time()
-            await FFmpegService.prepend_silent_fade_in(
-                pre_final_path, str(output_path),
-                silent_seconds=pre_roll_sec,
-                fade_seconds=min(pre_roll_fade_sec, pre_roll_sec),
-                resolution=resolution,
-            )
-            print(
-                f"[subtitle/render] pre-roll {pre_roll_sec:.2f}s "
-                f"(fade {pre_roll_fade_sec:.3f}s) applied in {_t.time()-t_pre:.1f}s"
-            )
-        except Exception as e:
-            import traceback
-            print(f"[subtitle/render] PRE-ROLL FAILED (non-fatal, falling back to no pre-roll): "
-                  f"{e}\n{traceback.format_exc()}")
-            from shutil import copyfile
-            copyfile(pre_final_path, final_nomusic_path)
-        else:
-            from shutil import copyfile
-            copyfile(str(output_path), final_nomusic_path)
-    else:
-        from shutil import copyfile
-        copyfile(pre_final_path, final_nomusic_path)
+    final_nomusic_path = str(merged_output_path)
 
     bgm_cfg = _read_bgm_config(project.config or {})
     bgm_enabled = bool(bgm_cfg["enabled"])
@@ -995,6 +1228,7 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
                 str(output_path),
                 volume,
                 ducking_strength=str(bgm_cfg.get("ducking_strength") or "normal"),
+                start_offset_sec=float(bgm_cfg.get("start_offset_sec") or 0.0),
                 fade_in_sec=float(bgm_cfg.get("fade_in_sec") or 0.0),
                 fade_out_sec=float(bgm_cfg.get("fade_out_sec") or 0.0),
             )
@@ -1002,6 +1236,7 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
                 f"[subtitle/render] BGM mixed volume={volume:.3f} "
                 f"narration_gain={NARRATION_VOLUME_GAIN:.2f} "
                 f"ducking={bgm_cfg.get('ducking_strength')} "
+                f"offset={bgm_cfg.get('start_offset_sec')} "
                 f"fade=({bgm_cfg.get('fade_in_sec')},{bgm_cfg.get('fade_out_sec')}) "
                 f"file={bgm_path} in {_t.time()-t_bgm:.1f}s"
             )
@@ -1064,13 +1299,13 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
             cached_channel_avatars = {
                 1: "https://yt3.ggpht.com/lZRG--gQU8wZ5Gzeethzm6NBlG6FD9Jx4QxR4djz4kOgIj-LS9Dm1fO0ruuMEhrZE1AjEFeXQ3Q=s88-c-k-c0x00ffffff-no-rj",
                 2: "https://yt3.ggpht.com/NY92X-Yu-tgLBOvUtCPJBhqmuM47ZILmU33lPBSKiPEeC06imNtxH6Kdd1EVldLmBtPG590miA=s88-c-k-c0x00ffffff-no-rj",
-                3: "https://yt3.ggpht.com/Kx-R4TCTg6YOnm5lXCQRpf4rh5bG41GHdFC-INtbN4Dx-OhsSm9-pds4ciqxsFnZ9o4PQKOygw=s88-c-k-c0x00ffffff-no-rj",
+                3: "https://yt3.ggpht.com/lRHg7iB8VCuQYJPyiu6P4mKHK6jslowo8ZURRESjmTbiVYqvXCOn0draMc_XV_dGMS6tbjj8DJs=s88-c-k-c0x00ffffff-no-rj",
                 4: "https://yt3.ggpht.com/GmMBiNYytpUfw14ZP9SeX5kllM6j-uJcPhW0re1qcAz6n_FHUP1nTXKp_T2BmeFrxup9HYTm6Q=s88-c-k-c0x00ffffff-no-rj",
             }
             cached_channel_names = {
                 1: "10\ubd84\uc5ed\uacf5",
                 2: "Jerry's Archaeo",
-                3: "Whisper Hour",
+                3: "\u95c7\u89e3\u304d\u65e5\u672c\u53f2",
                 4: "10 \u092e\u093f\u0928\u091f \u092a\u0932\u091f\u0935\u093e\u0930",
             }
             if not shorts_channel_name:
@@ -1106,9 +1341,9 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
                         )
                 except Exception as e:
                     print(f"[subtitle/render] shorts channel avatar lookup skipped: {e}")
-            shorts_source_path = video_dir / "merged.mp4"
+            shorts_source_path = Path(shorts_body_path) if shorts_body_path else video_dir / "merged.mp4"
             if not shorts_source_path.exists():
-                shorts_source_path = output_path
+                shorts_source_path = video_dir / "merged.mp4"
             shorts_results = await render_shorts_from_final(
                 shorts_source_path,
                 output_dir,
@@ -1118,7 +1353,7 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
                 channel_avatar_url=shorts_channel_avatar_url,
                 source_title=script_for_shorts.get("title") or project.title,
                 bgm_path=bgm_path,
-                bgm_volume=float((_read_bgm_config(project.config or {})).get("volume") or 0.24),
+                bgm_volume=float((_read_bgm_config(project.config or {})).get("volume") or DEFAULT_RENDER_BGM_VOLUME),
                 bgm_ducking_strength=str((_read_bgm_config(project.config or {})).get("ducking_strength") or "normal"),
             )
             shorts_meta_path = output_dir / "shorts" / "shorts.json"
@@ -1177,6 +1412,8 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
         "size": file_size,
         "elapsed_seconds": round(elapsed, 1),
         "opening_used": bool(opening_raw),
+        "intermission_used": bool(intermission_count),
+        "intermission_count": intermission_count,
         "ending_used": bool(ending_raw),
         "cuts": len(normalized_cuts),
         "shorts": shorts_results,

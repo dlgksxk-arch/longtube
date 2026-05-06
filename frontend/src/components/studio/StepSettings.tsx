@@ -25,7 +25,7 @@ import {
 
 interface Props {
   project: Project;
-  onUpdate: () => void;
+  onUpdate: () => void | Promise<void>;
   onNextStep?: () => void;
   /** v1.1.55: 부모에게 dirty 상태를 알려줌 — 스텝 전환 시 미저장 경고용 */
   onDirtyChange?: (dirty: boolean) => void;
@@ -38,6 +38,100 @@ const INTERLUDE_KINDS: { kind: InterludeKind; label: string; desc: string; icon:
   { kind: "intermission", label: "인터미션",  desc: "본편 중간에 지정된 간격으로 삽입", icon: <Film size={14} className="text-accent-secondary" /> },
   { kind: "ending",       label: "엔딩",      desc: "본편 맨 끝에 삽입되는 영상", icon: <StopCircle size={14} className="text-accent-secondary" /> },
 ];
+
+const SUBTITLE_STYLE_PRESETS = [
+  {
+    id: "current",
+    label: "현재",
+    desc: "기존 흰 글자 + 검은 외곽선",
+    style: {
+      font: "Pretendard Bold",
+      size: 58,
+      color: "#FFFFFF",
+      outline_color: "#000000",
+      position: "bottom",
+      outline_width: 6,
+      shadow: 0,
+      margin_v: 70,
+      bold: true,
+      bg_enabled: false,
+    },
+  },
+  {
+    id: "clean_box",
+    label: "깔끔 박스",
+    desc: "작업형 다큐에 맞는 반투명 박스",
+    style: {
+      font: "Pretendard Bold",
+      size: 53,
+      color: "#FFFFFF",
+      outline_color: "#000000",
+      position: "bottom",
+      outline_width: 3,
+      shadow: 0,
+      margin_v: 76,
+      bold: true,
+      bg_enabled: true,
+      bg_color: "#000000",
+      bg_opacity: 0.62,
+    },
+  },
+  {
+    id: "impact",
+    label: "임팩트",
+    desc: "노란 대형 자막, 강한 외곽선",
+    style: {
+      font: "Pretendard Bold",
+      size: 71,
+      color: "#FFE600",
+      outline_color: "#000000",
+      position: "bottom",
+      outline_width: 10,
+      shadow: 3,
+      margin_v: 82,
+      bold: true,
+      bg_enabled: false,
+    },
+  },
+  {
+    id: "shorts_pop",
+    label: "쇼츠 팝",
+    desc: "큰 글자 + 보라 배경 강조",
+    style: {
+      font: "Pretendard Bold",
+      size: 77,
+      color: "#FFFFFF",
+      outline_color: "#111111",
+      position: "bottom",
+      outline_width: 9,
+      shadow: 4,
+      margin_v: 110,
+      bold: true,
+      bg_enabled: true,
+      bg_color: "#8A2BE2",
+      bg_opacity: 0.38,
+    },
+  },
+  {
+    id: "news",
+    label: "뉴스",
+    desc: "차분한 하단 바 스타일",
+    style: {
+      font: "Pretendard Bold",
+      size: 49,
+      color: "#FFFFFF",
+      outline_color: "#000000",
+      position: "bottom",
+      outline_width: 2,
+      shadow: 0,
+      margin_v: 58,
+      bold: true,
+      bg_enabled: true,
+      bg_color: "#102A43",
+      bg_opacity: 0.78,
+    },
+  },
+] as const;
 
 function _fmtBytes(n?: number): string {
   if (!n || n <= 0) return "-";
@@ -69,6 +163,8 @@ export default function StepSettings({ project, onUpdate, onNextStep, onDirtyCha
   const [ttsModels, setTtsModels] = useState<ModelInfo[]>([]);
   const [config, setConfig] = useState<ProjectConfig>(project.config);
   const [saving, setSaving] = useState(false);
+  // v1.1.55: 변경 추적 — 저장 전 이탈 시 경고 + 필수값 검증
+  const [isDirty, setIsDirty] = useState(false);
   const [title, setTitle] = useState(project.title);
   const [topic, setTopic] = useState(project.topic || "");
   const [assets, setAssets] = useState<ProjectAssets | null>(null);
@@ -85,7 +181,7 @@ export default function StepSettings({ project, onUpdate, onNextStep, onDirtyCha
   // 간지영상(오프닝/인터미션/엔딩) 상태 — project.config["interlude"] 에 저장됨
   const [interlude, setInterlude] = useState<InterludeState | null>(null);
   const [uploadingInterlude, setUploadingInterlude] = useState<InterludeKind | null>(null);
-  const [intermissionEvery, setIntermissionEvery] = useState<number>(180);
+  const [intermissionEvery, setIntermissionEvery] = useState<number>(250);
   const openingInputRef = useRef<HTMLInputElement>(null);
   const intermissionInputRef = useRef<HTMLInputElement>(null);
   const endingInputRef = useRef<HTMLInputElement>(null);
@@ -110,10 +206,11 @@ export default function StepSettings({ project, onUpdate, onNextStep, onDirtyCha
   }, []);
 
   useEffect(() => {
+    if (isDirty) return;
     setConfig(project.config);
     setTitle(project.title);
     setTopic(project.topic || "");
-  }, [project]);
+  }, [project, isDirty]);
 
   const loadAssets = async () => {
     try {
@@ -139,14 +236,14 @@ export default function StepSettings({ project, onUpdate, onNextStep, onDirtyCha
     try {
       const data = await interludeApi.get(project.id);
       setInterlude(data);
-      setIntermissionEvery(data.intermission_every_sec || 180);
+      setIntermissionEvery(data.intermission_every_cuts || 250);
     } catch {
       setInterlude({
         project_id: project.id,
         opening: null,
         intermission: null,
         ending: null,
-        intermission_every_sec: 180,
+        intermission_every_cuts: 250,
       });
     }
   };
@@ -183,14 +280,19 @@ export default function StepSettings({ project, onUpdate, onNextStep, onDirtyCha
     }
   };
 
-
-  // v1.1.55: 변경 추적 — 저장 전 이탈 시 경고 + 필수값 검증
-  const [isDirty, setIsDirty] = useState(false);
   const markDirty = () => { if (!isDirty) { setIsDirty(true); onDirtyChange?.(true); } };
 
   const updateConfig = (key: keyof ProjectConfig, value: any) => {
     setConfig((prev) => ({ ...prev, [key]: value }));
     markDirty();
+  };
+
+  const applySubtitlePreset = (presetId: string) => {
+    const preset = SUBTITLE_STYLE_PRESETS.find((item) => item.id === presetId) || SUBTITLE_STYLE_PRESETS[0];
+    updateConfig("subtitle_style", {
+      ...preset.style,
+      preset: preset.id,
+    });
   };
 
   // v1.1.46: VoiceSelector 가 돌려주는 patch 를 local config 에 병합.
@@ -266,14 +368,14 @@ export default function StepSettings({ project, onUpdate, onNextStep, onDirtyCha
       // 인터미션 주기도 같이 저장 (config 와 별도 엔드포인트)
       try {
         await interludeApi.updateConfig(project.id, {
-          intermission_every_sec: intermissionEvery,
+          intermission_every_cuts: intermissionEvery,
         });
       } catch (e) {
-        console.warn("[settings] intermission_every_sec save failed", e);
+        console.warn("[settings] intermission_every_cuts save failed", e);
       }
       setIsDirty(false);
       onDirtyChange?.(false);
-      onUpdate();
+      await onUpdate();
     } finally {
       setSaving(false);
     }
@@ -330,20 +432,6 @@ export default function StepSettings({ project, onUpdate, onNextStep, onDirtyCha
       alert(`삭제 실패 (${kind}): ${(e as Error).message || e}`);
     }
   };
-
-  // Subtitle preview helpers
-  const subFont = config.subtitle_style?.font || "Pretendard Bold";
-  const subSize = config.subtitle_style?.size || 64;
-  const subColor = config.subtitle_style?.color || "#FFFFFF";
-  const subOutline = config.subtitle_style?.outline_color || "#000000";
-  const subPosition = config.subtitle_style?.position || "bottom";
-  const subBgEnabled = Boolean(config.subtitle_style?.bg_enabled);
-  const subBgColor = config.subtitle_style?.bg_color || "#000000";
-  const subBgOpacity =
-    typeof config.subtitle_style?.bg_opacity === "number"
-      ? config.subtitle_style!.bg_opacity!
-      : 0.6;
-
   return (<div className="flex flex-col flex-1 min-h-0">
       <div className="flex-shrink-0 flex items-center gap-2 text-accent-secondary pb-4">
         <Settings size={20} />
@@ -646,6 +734,49 @@ export default function StepSettings({ project, onUpdate, onNextStep, onDirtyCha
           </div>
         </div>}
 
+        <div className="pt-3 border-t border-border/60">
+          <div className="flex items-center justify-between mb-2">
+            <label className="text-xs text-gray-400">
+              이미지 재사용{" "}
+              <span className="text-gray-500">(같은 구간은 이미지 1장으로 제작)</span>
+            </label>
+            <div className="text-[10px] text-gray-500">
+              {(() => {
+                const seconds = config.image_reuse_group_seconds || 0;
+                if (!seconds) return "컷마다 생성";
+                const cuts = Math.max(1, Math.round(seconds / 5));
+                const imageCount = Math.max(1, Math.ceil(expectedCuts / cuts));
+                return `${seconds}초마다 1장 · 총 ${imageCount}장`;
+              })()}
+            </div>
+          </div>
+          <div className="grid grid-cols-4 gap-2">
+            {[
+              { value: 0, label: "컷마다", hint: "기존 방식. 모든 컷 이미지 생성" },
+              { value: 15, label: "15초", hint: "15초마다 이미지 1장" },
+              { value: 30, label: "30초", hint: "30초마다 이미지 1장" },
+              { value: 60, label: "60초", hint: "1분 영상은 이미지 1장" },
+            ].map((opt) => {
+              const selected = (config.image_reuse_group_seconds || 0) === opt.value;
+              return (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => updateConfig("image_reuse_group_seconds", opt.value)}
+                  title={opt.hint}
+                  className={`px-2 py-2 rounded-md border text-xs transition-colors ${
+                    selected
+                      ? "bg-accent-secondary/20 border-accent-secondary text-accent-secondary"
+                      : "bg-bg-primary border-border text-gray-400 hover:border-accent-secondary/50"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
         {/* 음성 속도 — OpenAI: 0.25~4.0, ElevenLabs: 0.7~1.2 에서 clamp 됨.
             기본 0.9 로 살짝 느리게. 슬라이더 범위는 공통으로 0.7~1.2. */}
         <div className="pt-2 border-t border-border/60">
@@ -673,186 +804,45 @@ export default function StepSettings({ project, onUpdate, onNextStep, onDirtyCha
         </div>
       </div>
 
+
       {/* 자막 스타일 */}
-      <div className="bg-bg-secondary border border-border rounded-lg p-5 space-y-4">
-        <h3 className="text-sm font-medium text-gray-300">자막 스타일</h3>
-        <div className="grid grid-cols-3 gap-4">
-          <div>
-            <label className="block text-xs text-gray-400 mb-1">폰트</label>
-            <input
-              value={config.subtitle_style?.font || "Pretendard Bold"}
-              onChange={(e) => setConfig((prev) => ({
-                ...prev,
-                subtitle_style: { ...prev.subtitle_style, font: e.target.value },
-              }))}
-              className="w-full bg-bg-primary border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-accent-primary"
-            />
-          </div>
-          <div>
-            <label className="block text-xs text-gray-400 mb-1">크기</label>
-            <input
-              type="number"
-              value={config.subtitle_style?.size || 64}
-              onChange={(e) => setConfig((prev) => ({
-                ...prev,
-                subtitle_style: { ...prev.subtitle_style, size: Number(e.target.value) },
-              }))}
-              className="w-full bg-bg-primary border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-accent-primary"
-            />
-          </div>
-          <div>
-            <label className="block text-xs text-gray-400 mb-1">위치</label>
-            <select
-              value={config.subtitle_style?.position || "bottom"}
-              onChange={(e) => setConfig((prev) => ({
-                ...prev,
-                subtitle_style: { ...prev.subtitle_style, position: e.target.value },
-              }))}
-              className="w-full bg-bg-primary border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-accent-primary"
-            >
-              <option value="bottom">하단</option>
-              <option value="center">중앙</option>
-              <option value="top">상단</option>
-            </select>
-          </div>
+      <div className="bg-bg-secondary border border-border rounded-lg p-5 space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="text-sm font-medium text-gray-300">자막 스타일</h3>
+          <span className="text-[11px] text-gray-500">
+            기본값: 현재
+          </span>
         </div>
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="block text-xs text-gray-400 mb-1">글자 색상</label>
-            <div className="flex items-center gap-2">
-              <input
-                type="color"
-                value={subColor}
-                onChange={(e) => setConfig((prev) => ({
-                  ...prev,
-                  subtitle_style: { ...prev.subtitle_style, color: e.target.value },
-                }))}
-                className="w-8 h-8 rounded border border-border cursor-pointer"
-              />
-              <span className="text-sm text-gray-400">{subColor}</span>
-            </div>
-          </div>
-          <div>
-            <label className="block text-xs text-gray-400 mb-1">외곽선 색상</label>
-            <div className="flex items-center gap-2">
-              <input
-                type="color"
-                value={subOutline}
-                onChange={(e) => setConfig((prev) => ({
-                  ...prev,
-                  subtitle_style: { ...prev.subtitle_style, outline_color: e.target.value },
-                }))}
-                className="w-8 h-8 rounded border border-border cursor-pointer"
-              />
-              <span className="text-sm text-gray-400">{subOutline}</span>
-            </div>
-          </div>
-        </div>
-
-        {/* 자막 배경 박스 */}
-        <div className="pt-2 border-t border-border/60">
-          <label className="flex items-center gap-2 text-xs text-gray-300 mb-3 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={subBgEnabled}
-              onChange={(e) => setConfig((prev) => ({
-                ...prev,
-                subtitle_style: { ...prev.subtitle_style, bg_enabled: e.target.checked },
-              }))}
-              className="w-4 h-4 accent-accent-primary"
-            />
-            <span>자막 배경 박스 사용</span>
-            <span className="text-[10px] text-gray-500">
-              (켜면 외곽선 대신 반투명 박스로 렌더됨)
-            </span>
-          </label>
-          <div className={`grid grid-cols-2 gap-4 ${subBgEnabled ? "" : "opacity-40 pointer-events-none"}`}>
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">배경 색상</label>
-              <div className="flex items-center gap-2">
-                <input
-                  type="color"
-                  value={subBgColor}
-                  onChange={(e) => setConfig((prev) => ({
-                    ...prev,
-                    subtitle_style: { ...prev.subtitle_style, bg_color: e.target.value },
-                  }))}
-                  className="w-8 h-8 rounded border border-border cursor-pointer"
-                />
-                <span className="text-sm text-gray-400">{subBgColor}</span>
-              </div>
-            </div>
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">
-                불투명 농도 <span className="text-gray-500">({Math.round(subBgOpacity * 100)}%)</span>
-              </label>
-              <input
-                type="range"
-                min={0}
-                max={100}
-                step={1}
-                value={Math.round(subBgOpacity * 100)}
-                onChange={(e) => setConfig((prev) => ({
-                  ...prev,
-                  subtitle_style: {
-                    ...prev.subtitle_style,
-                    bg_opacity: Number(e.target.value) / 100,
-                  },
-                }))}
-                className="w-full accent-accent-primary"
-              />
-            </div>
-          </div>
-        </div>
-
-        {/* 자막 미리보기 (축소된 컴팩트 버전) */}
-        <div>
-          <label className="block text-xs text-gray-400 mb-2">미리보기</label>
-          <div className="flex justify-center">
-          <div className="relative rounded-lg overflow-hidden border border-border"
-               style={{
-                 width: config.aspect_ratio === "9:16" ? 80 : config.aspect_ratio === "1:1" ? 140 : 260,
-                 height: 140,
-               }}>
-            {/* Dark background simulating video */}
-            <div className="absolute inset-0 bg-gradient-to-b from-gray-800 to-gray-900" />
-            {/* Subtitle text */}
-            <div className={`absolute left-0 right-0 flex justify-center px-4 ${
-              subPosition === "top" ? "top-4" : subPosition === "center" ? "top-1/2 -translate-y-1/2" : "bottom-4"
-            }`}>
-              <span
-                style={{
-                  fontFamily: subFont,
-                  fontSize: Math.min(subSize * 0.3, 18),
-                  color: subColor,
-                  padding: subBgEnabled ? "2px 6px" : undefined,
-                  backgroundColor: subBgEnabled
-                    ? `${subBgColor}${Math.round(subBgOpacity * 255).toString(16).padStart(2, "0")}`
-                    : undefined,
-                  borderRadius: subBgEnabled ? 2 : undefined,
-                  textShadow: subBgEnabled
-                    ? undefined
-                    : `
-                        -2px -2px 0 ${subOutline},
-                         2px -2px 0 ${subOutline},
-                        -2px  2px 0 ${subOutline},
-                         2px  2px 0 ${subOutline},
-                         0   -2px 0 ${subOutline},
-                         0    2px 0 ${subOutline},
-                        -2px  0   0 ${subOutline},
-                         2px  0   0 ${subOutline}
-                      `,
-                  lineHeight: 1.4,
-                  textAlign: "center" as const,
-                }}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2">
+          {SUBTITLE_STYLE_PRESETS.map((preset) => {
+            const selected = (config.subtitle_style?.preset || "current") === preset.id;
+            return (
+              <button
+                key={preset.id}
+                type="button"
+                onClick={() => applySubtitlePreset(preset.id)}
+                className={`min-h-[76px] rounded-lg border px-3 py-2 text-left transition-colors ${
+                  selected
+                    ? "border-accent-primary bg-accent-primary/10 text-white"
+                    : "border-border bg-bg-primary text-gray-400 hover:border-gray-500"
+                }`}
               >
-                {topic || project.topic || "자막 미리보기 텍스트입니다"}
-              </span>
-            </div>
-          </div>
-          </div>
+                <div
+                  className="mb-1 truncate text-sm font-black"
+                  style={{
+                    color: preset.style.color,
+                    textShadow: `0 0 0 ${preset.style.outline_color}, 1px 1px 0 ${preset.style.outline_color}`,
+                  }}
+                >
+                  {preset.label}
+                </div>
+                <div className="text-[11px] leading-snug text-gray-500">{preset.desc}</div>
+              </button>
+            );
+          })}
         </div>
       </div>
+
 
       {/* v1.1.60: 프리셋 → YouTube 채널 바인딩
             이 프리셋으로 만든 영상이 어떤 채널 계정에 업로드될지 결정한다.
@@ -1154,15 +1144,15 @@ export default function StepSettings({ project, onUpdate, onNextStep, onDirtyCha
         <div>
           <label className="block text-xs text-gray-400 mb-1 flex items-center gap-1.5">
             <Clock size={12} />
-            인터미션 간격 (초)
-            <span className="text-gray-600">· 본편 길이가 이 값보다 길어지면 한 번씩 인터미션 영상을 끼워넣습니다.</span>
+            인터미션 간격 (컷)
+            <span className="text-gray-600">· 첫 3컷 뒤 1번 넣고, 이후 이 컷 수마다 3초 인터미션을 끼워넣습니다.</span>
           </label>
           <input
             type="number"
-            min={30}
-            max={1800}
+            min={1}
+            max={1000}
             value={intermissionEvery}
-            onChange={(e) => setIntermissionEvery(Math.max(30, Math.min(1800, Number(e.target.value) || 180)))}
+            onChange={(e) => setIntermissionEvery(Math.max(1, Math.min(1000, Number(e.target.value) || 250)))}
             className="w-full bg-bg-primary border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-accent-primary"
           />
         </div>

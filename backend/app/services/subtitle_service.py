@@ -1,30 +1,133 @@
 """Subtitle generation service (ASS format)"""
+import hashlib
+import json
 import re
+import shutil
+from pathlib import Path
 
 from app.config import CUT_VIDEO_DURATION
+
+
+CUT_SUBTITLE_START_SEC = 0.2
+CUT_SUBTITLE_END_SEC = 4.8
+CUT_SUBTITLE_MARKER_VERSION = 3
+LEGACY_SUBTITLE_SIZE_MAP = {
+    49: 59,
+    53: 63,
+    58: 68,
+    71: 81,
+    77: 87,
+}
 
 
 # Global burned-in subtitle look requested for long-form videos:
 # large white heavy text, thick black outline, bottom-center placement.
 DEFAULT_SUBTITLE_STYLE = {
+    "preset": "current",
     "font": "Pretendard Bold",
-    "size": 64,
+    "size": 68,
     "color": "#FFFFFF",
     "outline_color": "#000000",
     "position": "bottom",
     "outline_width": 6,
     "shadow": 0,
-    "margin_v": 105,
+    "margin_v": 70,
     "bold": True,
     "bg_enabled": False,
 }
 
+SUBTITLE_STYLE_PRESETS = {
+    "current": {
+        "label": "현재",
+        "style": dict(DEFAULT_SUBTITLE_STYLE),
+    },
+    "clean_box": {
+        "label": "깔끔 박스",
+        "style": {
+            **DEFAULT_SUBTITLE_STYLE,
+            "size": 63,
+            "outline_width": 3,
+            "shadow": 0,
+            "bg_enabled": True,
+            "bg_color": "#000000",
+            "bg_opacity": 0.62,
+            "margin_v": 76,
+        },
+    },
+    "impact": {
+        "label": "임팩트",
+        "style": {
+            **DEFAULT_SUBTITLE_STYLE,
+            "size": 81,
+            "color": "#FFE600",
+            "outline_color": "#000000",
+            "outline_width": 10,
+            "shadow": 3,
+            "margin_v": 82,
+            "bg_enabled": False,
+        },
+    },
+    "shorts_pop": {
+        "label": "쇼츠 팝",
+        "style": {
+            **DEFAULT_SUBTITLE_STYLE,
+            "size": 87,
+            "color": "#FFFFFF",
+            "outline_color": "#111111",
+            "outline_width": 9,
+            "shadow": 4,
+            "margin_v": 110,
+            "bg_enabled": True,
+            "bg_color": "#8A2BE2",
+            "bg_opacity": 0.38,
+        },
+    },
+    "news": {
+        "label": "뉴스",
+        "style": {
+            **DEFAULT_SUBTITLE_STYLE,
+            "size": 59,
+            "color": "#FFFFFF",
+            "outline_width": 2,
+            "shadow": 0,
+            "bg_enabled": True,
+            "bg_color": "#102A43",
+            "bg_opacity": 0.78,
+            "margin_v": 58,
+        },
+    },
+}
+
 
 def normalize_subtitle_style(style_config: dict | None) -> dict:
-    style = dict(DEFAULT_SUBTITLE_STYLE)
-    if isinstance(style_config, dict):
-        style.update(style_config)
-    return style
+    raw = dict(style_config or {})
+    raw_had_size = "size" in raw and raw.get("size") is not None
+    preset_key = str(raw.get("preset") or raw.get("style_preset") or "current").strip()
+    base = dict((SUBTITLE_STYLE_PRESETS.get(preset_key) or SUBTITLE_STYLE_PRESETS["current"])["style"])
+    for key in (
+        "font",
+        "size",
+        "color",
+        "outline_color",
+        "position",
+        "outline_width",
+        "shadow",
+        "margin_v",
+        "bold",
+        "bg_enabled",
+        "bg_color",
+        "bg_opacity",
+    ):
+        if key in raw and raw[key] is not None:
+            base[key] = raw[key]
+    if raw_had_size:
+        try:
+            size = max(1, int(base["size"]))
+            base["size"] = LEGACY_SUBTITLE_SIZE_MAP.get(size, size)
+        except (TypeError, ValueError):
+            base["size"] = DEFAULT_SUBTITLE_STYLE["size"]
+    base["preset"] = preset_key if preset_key in SUBTITLE_STYLE_PRESETS else "current"
+    return base
 
 
 def format_ass_time(seconds: float) -> str:
@@ -63,7 +166,7 @@ def _wrap_two_lines(text: str, aspect_ratio: str = "16:9") -> str:
     text = re.sub(r"\s+", " ", _ass_escape(text))
     if not text:
         return ""
-    max_chars = 24 if aspect_ratio == "9:16" else 42
+    max_chars = 18 if aspect_ratio == "9:16" else 34
     if len(text) <= max_chars:
         return text
 
@@ -355,13 +458,101 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     if not sentences:
         return header
 
-    sentence_dur = dur / len(sentences)
+    start_sec = min(max(0.0, CUT_SUBTITLE_START_SEC), dur)
+    end_sec = min(max(start_sec, CUT_SUBTITLE_END_SEC), dur)
+    if end_sec <= start_sec:
+        return header
+
+    sentence_dur = (end_sec - start_sec) / len(sentences)
     events: list[str] = []
     for i, sentence in enumerate(sentences):
         text = _wrap_two_lines(sentence, aspect_ratio)
-        s_start = format_ass_time(i * sentence_dur)
-        s_end = format_ass_time((i + 1) * sentence_dur)
+        s_start = format_ass_time(start_sec + i * sentence_dur)
+        s_end = format_ass_time(start_sec + (i + 1) * sentence_dur)
         events.append(
             f"Dialogue: 0,{s_start},{s_end},Default,,0,0,0,,{text}"
         )
     return header + "\n".join(events) + "\n"
+
+
+def _cut_subtitle_marker_payload(
+    narration: str,
+    aspect_ratio: str,
+    style_config: dict | None,
+    duration: float,
+) -> dict:
+    return {
+        "version": CUT_SUBTITLE_MARKER_VERSION,
+        "narration": re.sub(r"\s+", " ", (narration or "")).strip(),
+        "aspect_ratio": aspect_ratio or "16:9",
+        "style": normalize_subtitle_style(style_config or {}),
+        "duration": round(float(duration or CUT_VIDEO_DURATION), 3),
+        "start": CUT_SUBTITLE_START_SEC,
+        "end": CUT_SUBTITLE_END_SEC,
+    }
+
+
+def _cut_subtitle_digest(payload: dict) -> str:
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    return hashlib.sha1(raw).hexdigest()
+
+
+async def burn_cut_subtitle_file(
+    cut_video_path: str,
+    narration: str,
+    aspect_ratio: str = "16:9",
+    style_config: dict | None = None,
+    duration: float = CUT_VIDEO_DURATION,
+) -> bool:
+    """Burn fixed 0.2s~4.8s cut subtitles directly into one mp4."""
+    narration = (narration or "").strip()
+    if not narration:
+        return False
+
+    cut_p = Path(cut_video_path)
+    if not cut_p.exists() or cut_p.stat().st_size <= 0:
+        return False
+
+    dur = float(duration or CUT_VIDEO_DURATION)
+    if dur <= 0:
+        dur = float(CUT_VIDEO_DURATION)
+
+    payload = _cut_subtitle_marker_payload(narration, aspect_ratio, style_config, dur)
+    digest = _cut_subtitle_digest(payload)
+    marker_p = cut_p.with_suffix(".subtitle.json")
+    try:
+        existing = json.loads(marker_p.read_text(encoding="utf-8"))
+        if existing.get("digest") == digest:
+            return True
+        # Existing cut videos are already burned-in subtitle outputs. Re-burning a
+        # different style over them creates duplicated captions; clean source cuts
+        # must be regenerated by the video step before a style change can apply.
+        if existing.get("digest"):
+            return True
+    except Exception:
+        pass
+
+    from app.services.video.ffmpeg_service import FFmpegService
+
+    ass_text = generate_single_cut_ass(narration, dur, style_config or {}, aspect_ratio)
+    ass_p = cut_p.with_suffix(".cut.ass")
+    tmp_out = cut_p.with_suffix(".sub.mp4")
+    ass_p.write_text(ass_text, encoding="utf-8")
+    try:
+        await FFmpegService.burn_subtitles(str(cut_p), str(ass_p), str(tmp_out))
+        shutil.move(str(tmp_out), str(cut_p))
+        marker_p.write_text(
+            json.dumps({"digest": digest, **payload}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        return True
+    finally:
+        try:
+            ass_p.unlink()
+        except Exception:
+            pass
+        try:
+            if tmp_out.exists():
+                tmp_out.unlink()
+        except Exception:
+            pass

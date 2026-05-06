@@ -316,6 +316,8 @@ async def regenerate_thumbnail(task_id: str, body: ThumbnailRegenRequest = Thumb
     from app.services.thumbnail_service import (
         generate_ai_thumbnail,
         extract_thumbnail_text_parts,
+        build_clickbait_thumbnail_overlay,
+        suppress_foreign_hangul_thumbnail_overlay,
         normalize_episode_label,
     )
     from app.config import resolve_project_dir
@@ -342,7 +344,9 @@ async def regenerate_thumbnail(task_id: str, body: ThumbnailRegenRequest = Thumb
     _redis_set(f"thumbnail:status:{project_id}", "generating")
 
     title = (script.get("title") or "").strip()
-    overlay_title, extracted_episode_label = extract_thumbnail_text_parts(title, None)
+    overlay_seed = build_clickbait_thumbnail_overlay(script, title, config)
+    overlay_title, extracted_episode_label = extract_thumbnail_text_parts(overlay_seed or title, None)
+    overlay_title = suppress_foreign_hangul_thumbnail_overlay(overlay_title, config)
     episode_no = config.get("episode_number")
     overlay_episode_label = normalize_episode_label(str(episode_no)) if episode_no else extracted_episode_label
 
@@ -538,6 +542,10 @@ class QueueStateModel(BaseModel):
     items: List[QueueItemModel] = []
 
 
+class AutoProductionRequest(BaseModel):
+    enabled: bool
+
+
 @router.get("/queue")
 def get_queue():
     """v1.1.43 — 주제 큐 상태 조회."""
@@ -554,6 +562,21 @@ def put_queue(state: QueueStateModel):
             status_code=500,
             detail=f"queue save failed: {type(e).__name__}: {e}",
         )
+
+
+@router.get("/queue/auto-production")
+def get_auto_production():
+    return oneclick_service.get_auto_production_state()
+
+
+@router.get("/safety")
+def get_safety():
+    return oneclick_service.get_safety_state()
+
+
+@router.post("/queue/auto-production")
+def set_auto_production(body: AutoProductionRequest):
+    return oneclick_service.set_auto_production_enabled(body.enabled)
 
 
 @router.post("/queue/wake-timers/sync")
@@ -587,7 +610,7 @@ async def run_queue_next(channel: Optional[int] = None):
     """
     ch = int(channel) if channel is not None else None
     try:
-        task = oneclick_service.run_queue_top_now(ch)
+        task = await oneclick_service.run_queue_top_now(ch)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:

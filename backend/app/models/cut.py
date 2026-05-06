@@ -15,6 +15,7 @@ class Cut(Base):
     scene_type = Column(Text)  # title, narration, transition, ending
     audio_path = Column(Text)
     audio_duration = Column(Float)
+    audio_original_duration = Column(Float)
     image_path = Column(Text)
     image_model = Column(Text)
     video_path = Column(Text)

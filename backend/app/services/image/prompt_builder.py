@@ -46,18 +46,23 @@ NO_TEXT_DIRECTIVE = (
     " || ★ HARD CONSTRAINT — ABSOLUTELY NO TEXT, NO LETTERS, NO WORDS, NO NUMBERS, "
     "NO WRITING, NO TYPOGRAPHY, NO CAPTIONS, NO LABELS, NO SIGNS WITH READABLE "
     "CHARACTERS, NO BOOK PAGES WITH WRITING, NO NEWSPAPERS, NO BILLBOARDS WITH COPY, NO "
-    "SCREEN TEXT, NO SUBTITLES, NO WATERMARKS anywhere in the image. All "
+    "SCREEN TEXT, NO SUBTITLES, NO WATERMARKS, NO FAKE GLYPHS, NO PSEUDO CALLIGRAPHY, "
+    "NO FAKE KANJI, NO CRESTS, NO EMBLEMS, NO LOGOS, NO DECORATIVE SYMBOL MARKS "
+    "anywhere in the image. All "
     "surfaces that might normally carry writing (signs, screens, posters, book "
-    "covers, clothing, packaging) must be BLANK or show only abstract non-"
-    "linguistic shapes. This is a hard requirement — any readable glyph is a "
-    "failure."
+    "covers, clothing, packaging, wall hangings, banners, flags, armor plates, "
+    "ship sails, boxes, labels) must be completely BLANK and unmarked. This is a "
+    "hard requirement — any glyph, fake character, crest, emblem, logo, or symbol "
+    "mark is a failure."
 )
 
 NO_TEXT_NEGATIVE_PROMPT = (
     "text, letters, words, numbers, writing, typography, captions, subtitles, labels, "
     "sign, signage, readable sign, readable text, readable letters, readable words, "
     "glyphs, characters, writing on book pages, fake book text, newspaper, poster text, billboard text, screen text, "
-    "watermark, logo, signature, title text, credits"
+    "fake glyphs, pseudo calligraphy, fake kanji, fake characters, decorative symbols, "
+    "symbol marks, crests, emblems, heraldic marks, mon crest, family crest, armor emblem, "
+    "banner symbol, flag symbol, sail symbol, watermark, logo, signature, title text, credits"
 )
 
 NO_MAP_DIRECTIVE = (
@@ -97,12 +102,55 @@ BOOK_RENDER_NEGATIVE_PROMPT = (
     "pseudo text, scribbles on book, glyphs on book, symbols on pages"
 )
 
+NO_MODERN_FLAG_MOTIF_NEGATIVE_PROMPT = (
+    "modern national flag, state flag, country flag, national emblem, flagpole, "
+    "banner resembling a national flag, tricolor flag, horizontal tricolor, vertical "
+    "tricolor, canton stars, flag stripes, national color blocks, "
+    "Japanese flag, hinomaru, rising sun flag, rising sun rays, red sun disc, "
+    "red circle on white background, centered red circle, centered red disc, "
+    "white field with red circle, red radial rays, sunburst flag, imperial Japanese flag"
+)
+
+_FLAG_MOTIF_POSITIVE_PATTERNS: tuple[str, ...] = (
+    r"\bmodern\s+national\s+flags?\b",
+    r"\bnational\s+flags?\b",
+    r"\bcountry\s+flags?\b",
+    r"\bstate\s+flags?\b",
+    r"\bflagpoles?\b",
+    r"\bflags?\b",
+    r"\bnational\s+emblems?\b",
+    r"\bnational\s+symbols?\b",
+    r"\btricolor\b",
+    r"\bstars\s+and\s+stripes\b",
+    r"\bcanton\s+stars\b",
+    r"\bflag\s+stripes\b",
+    r"\bnational\s+color\s+blocks\b",
+    r"\bJapanese\s+flags?\b",
+    r"\bhinomaru\b",
+    r"\brising\s+sun\s+flags?\b",
+    r"\brising\s+sun\s+rays\b",
+    r"\bred\s+sun\s+disc\b",
+    r"\bred\s+circle\s+on\s+white\s+background\b",
+    r"\bcentered\s+red\s+(?:circle|disc)\b",
+    r"\bwhite\s+field\s+with\s+red\s+circle\b",
+    r"\bred\s+radial\s+rays\b",
+    r"\bsunburst\s+flags?\b",
+    r"\bimperial\s+Japanese\s+flags?\b",
+)
+
 KOREAN_HISTORY_ACCURACY_DIRECTIVE = (
     " || HISTORICAL ACCURACY LOCK - this scene is Korean history. Match the exact "
-    "era, kingdom, region, clothing, architecture, weapons, armor, hairstyles, "
-    "ritual objects, and landscape implied by the subject. If the subject is "
+    "This fixed lock has higher priority than any user-entered image prompt or style prompt. "
+    "era, kingdom, region, material culture, clothing, hairstyle, headwear, "
+    "jewelry and accessories, architecture, weapons, armor, tools, everyday "
+    "objects, ritual objects, vehicles, vessels, landscape, and materials implied "
+    "by the subject. If the subject is "
     "Goguryeo, Baekje, Silla, Gaya, Balhae, Gojoseon, Buyeo, Three Kingdoms, "
     "Goryeo, or Joseon, use period-correct Korean visual culture only. "
+    "The specified time period, region, and place in the prompt are non-negotiable "
+    "and must be considered before choosing any costume, prop, architecture, or vehicle. "
+    "Visible costume, hair, armor, tools, and props must prove the exact period; "
+    "do not use generic fantasy, cosplay, stage costume, or famous wrong-era looks. "
     "Do not mix in modern national symbols or anachronistic props. "
     "Forbidden unless the prompt explicitly says the scene is in Japan: Japanese "
     "flag, rising sun flag, red sun disc flag, torii gate, Shinto shrine, samurai, "
@@ -120,6 +168,9 @@ KOREAN_HISTORY_NEGATIVE_PROMPT = (
 
 GENERAL_HISTORY_NEGATIVE_PROMPT = (
     "anachronism, wrong era, mixed era, mixed culture, out of period object, "
+    "wrong-era clothing, wrong-era hairstyle, wrong-era headwear, wrong-era armor, "
+    "wrong-era weapon, wrong-era tool, wrong-era jewelry, fantasy costume, cosplay, "
+    "theatrical costume, generic historical costume, modern jewelry, modern accessory, "
     "modern clothing, modern uniform, modern building, skyscraper, concrete city, "
     "car, truck, bus, motorcycle, bicycle, train, railroad, railway, airplane, "
     "helicopter, steamship, steamboat, steam engine, locomotive, factory, factory "
@@ -128,6 +179,69 @@ GENERAL_HISTORY_NEGATIVE_PROMPT = (
     "computer, phone, camera, printed newspaper, modern book, modern national flag, "
     "logo, watermark, readable text"
 )
+
+_MODERN_SETTING_RE = re.compile(
+    r"\b(modern|office|workplace|desk|laptop|computer|screen|phone|water\s+cooler|"
+    r"coffee\s+cup|city|skyscraper|car|truck|bus|motorcycle|bicycle|neon|"
+    r"electric|power\s+line|utility\s+pole)\b",
+    re.IGNORECASE,
+)
+
+_GLOBAL_STYLE_PUBLIC_PATTERNS: tuple[str, ...] = (
+    r"\bColoringBookAF\b",
+    r"\bColoring Book\b",
+    r"\bsubject[- ]faithful\b",
+    r"\b2D webtoon cartoon frame\b",
+    r"\bstrict 2D webtoon cartoon only\b",
+    r"\bflat vector[- ]like colors\b",
+    r"\bthick clean black outlines\b",
+    r"\bsimple cel shading\b",
+    r"\bdrawn illustration only\b",
+    r"\bnon[- ]photographic\b",
+    r"\billustration not photo\b",
+)
+
+_GLOBAL_STYLE_NON_STYLE_PATTERNS: tuple[str, ...] = (
+    r"\badult office fable mood\b",
+    r"\boffice fable mood\b",
+    r"\bmodern office mood\b",
+    r"\bmodern office\b",
+    r"\bworkplace mood\b",
+)
+
+
+def _clean_prompt_commas(text: str) -> str:
+    out = re.sub(r"\s+", " ", text or "").strip()
+    out = re.sub(r"\s+,", ",", out)
+    out = re.sub(r",\s*,+", ", ", out)
+    return out.strip(" ,.;")
+
+
+def _sanitize_flag_motif_positive_prompt(text: str) -> str:
+    """Keep forbidden flag words out of the positive prompt."""
+    out = text or ""
+    for pattern in _FLAG_MOTIF_POSITIVE_PATTERNS:
+        out = re.sub(pattern, "plain unmarked cloth", out, flags=re.IGNORECASE)
+    out = re.sub(r"\bplain unmarked cloth(?:\s*,\s*plain unmarked cloth)+\b", "plain unmarked cloth", out, flags=re.IGNORECASE)
+    return _clean_prompt_commas(out)
+
+
+def sanitize_global_style_for_prompt(global_style: str, image_prompt: str = "") -> str:
+    """Keep channel style as style only; do not let it inject scene settings."""
+    style = global_style or ""
+    if not re.search(r"\b(korea|korean|joseon|goryeo|hanbok|seoul)\b", image_prompt or "", re.IGNORECASE):
+        style = re.sub(r"\bKorean\s+YouTube\b", "YouTube", style, flags=re.IGNORECASE)
+        style = re.sub(r"\bKorean\s+", "", style, flags=re.IGNORECASE)
+    for pattern in _GLOBAL_STYLE_PUBLIC_PATTERNS:
+        style = re.sub(pattern, "", style, flags=re.IGNORECASE)
+
+    # Global style is shared by every cut. Setting words in it must not turn
+    # source-story meadow/winter cuts into office/city scenes.
+    if not _MODERN_SETTING_RE.search(image_prompt or ""):
+        for pattern in _GLOBAL_STYLE_NON_STYLE_PATTERNS:
+            style = re.sub(pattern, "", style, flags=re.IGNORECASE)
+
+    return _sanitize_flag_motif_positive_prompt(style)
 
 INDIAN_HISTORY_ACCURACY_DIRECTIVE = (
     " For Indian history scenes, use period-correct South Asian visual culture only: "
@@ -152,16 +266,25 @@ INDIAN_HISTORY_NEGATIVE_PROMPT = (
 )
 
 GENERAL_HISTORY_ACCURACY_DIRECTIVE = (
-    " || HISTORICAL ACCURACY LOCK - match the exact era, region, clothing, "
-    "architecture, tools, weapons, vehicles, landscape, materials, and social "
-    "setting stated in the prompt. The image must depict concrete evidence or "
-    "action from the narration, not a generic metaphor. Avoid anachronisms: "
-    "modern clothing, modern buildings, cars, guns, screens, neon, printed books, "
-    "modern national flags, logos, or readable writing unless the prompt explicitly "
-    "places the scene in a modern period. Hard reject wrong-era objects such as "
-    "steamships, steamboats, trains, factories, electric poles, modern vehicles, "
-    "modern flags, foreign religious gates/shrines, and culturally unrelated "
-    "architecture unless the narration explicitly names them."
+    " || HARD HISTORICAL MATERIAL CULTURE LOCK - match the exact time period, "
+    "This fixed lock has higher priority than any user-entered image prompt or style prompt. "
+    "season, time of day, region, place type, interior/exterior setting, and social "
+    "setting stated in the prompt. The specified time period, region, and place are "
+    "non-negotiable and must be considered before choosing any costume, prop, "
+    "architecture, or vehicle. All visible material culture must be period-correct: "
+    "clothing, hairstyle, headwear, armor, jewelry and accessories, tools, weapons, "
+    "vehicles, vessels, furniture, architecture, ritual objects, everyday objects, "
+    "landscape, and materials. The image must depict the concrete setting and action "
+    "from the narration, not a generic metaphor. If the prompt is modern, keep it "
+    "modern. If it is a fable or historical source scene, keep that source world "
+    "consistent. Visible costume, hair, armor, tools, and props must prove the "
+    "era; do not use generic historical costume, fantasy costume, cosplay, or "
+    "famous wrong-era items. If the exact detail is uncertain, choose conservative "
+    "plain period-plausible elements and avoid recognizable later inventions. "
+    "Avoid anachronisms and mixed settings: no wrong-era clothing, hairstyles, "
+    "headwear, armor, weapons, tools, buildings, vehicles, screens, electric poles, "
+    "flags, logos, or culturally unrelated architecture unless the prompt explicitly "
+    "names them."
 )
 
 _KOREAN_HISTORY_RE = re.compile(
@@ -419,7 +542,7 @@ def _build_anatomy_suffix(base: str, anatomy_flags: dict[str, bool], had_hand_ri
 
 def _append_no_text(prompt: str) -> str:
     """프롬프트 끝에 NO_TEXT_DIRECTIVE 를 중복 없이 부착."""
-    p = (prompt or "").strip()
+    p = _sanitize_flag_motif_positive_prompt(prompt or "")
     if not p:
         return p
     if "NO TEXT, NO LETTERS" in p or "readable glyph-free image" in p:
@@ -450,7 +573,8 @@ def _append_book_render_guard(prompt: str) -> str:
 
 
 def _apply_common_image_constraints(prompt: str, enable_historical_guard: bool = False) -> str:
-    p = apply_historical_accuracy_guard(prompt, enable_historical_guard)
+    p = _sanitize_flag_motif_positive_prompt(prompt)
+    p = apply_historical_accuracy_guard(p, enable_historical_guard)
     p = _append_book_render_guard(p)
     p = _append_no_text(p)
     p = _append_no_maps(p)
@@ -478,7 +602,11 @@ def apply_historical_accuracy_guard(prompt: str, enabled: bool = False) -> str:
         guard = guard.replace(
             "Forbidden unless the prompt explicitly says the scene is in Japan: ",
             "Because the subject includes Japan/Yamato, include only the historically correct "
-            "period contact elements; still avoid modern Japanese symbols: ",
+            "Japan/Yamato material culture for the exact era: period-correct clothing, "
+            "hairstyle, headwear, armor, tools, weapons, vessels, architecture, ritual "
+            "objects, everyday objects, and materials. Do not mix samurai, kimono, torii, "
+            "katana, ninja, or castle imagery unless that exact era and narration justify "
+            "them. Still avoid modern Japanese symbols: ",
         )
     return p + guard
 
@@ -487,7 +615,9 @@ def historical_negative_prompt(prompt: str, enabled: bool = False) -> str:
     if not enabled:
         return ""
     p = prompt or ""
-    parts = [GENERAL_HISTORY_NEGATIVE_PROMPT, NO_TEXT_NEGATIVE_PROMPT, NO_MAP_NEGATIVE_PROMPT]
+    parts = [NO_TEXT_NEGATIVE_PROMPT, NO_MAP_NEGATIVE_PROMPT]
+    if not _MODERN_SETTING_RE.search(p):
+        parts.insert(0, GENERAL_HISTORY_NEGATIVE_PROMPT)
     if needs_book_render_guard(p):
         parts.append(BOOK_RENDER_NEGATIVE_PROMPT)
     if needs_korean_history_guard(p):
@@ -522,10 +652,16 @@ def book_negative_prompt(prompt: str) -> str:
 
 def append_prompt_specific_negative_prompt(base_negative: str, prompt: str) -> str:
     current = (base_negative or "").strip()
-    extra = book_negative_prompt(prompt)
-    if extra and extra not in current:
-        current = f"{extra}, {current}".strip(" ,")
+    extras = [NO_MODERN_FLAG_MOTIF_NEGATIVE_PROMPT, book_negative_prompt(prompt)]
+    for extra in extras:
+        if extra and extra not in current:
+            current = f"{extra}, {current}".strip(" ,")
     return current
+
+
+def symbol_negative_prompt() -> str:
+    """Negative prompt tokens that block modern national flag-like motifs."""
+    return NO_MODERN_FLAG_MOTIF_NEGATIVE_PROMPT
 
 
 def should_enable_historical_guard_for_context(
@@ -647,7 +783,8 @@ def build_image_prompt(
     프롬프트에는 피사체/구도/동작만 남기고, global_style 등 스타일 텍스트는 주입하지 않는다.
     레퍼런스가 없을 때만 global_style 을 폴백으로 사용.
     """
-    base = (image_prompt or "").strip()
+    base = _sanitize_flag_motif_positive_prompt(image_prompt or "")
+    style_hint = sanitize_global_style_for_prompt(global_style, base)
 
     if has_reference:
         # ── 레퍼런스 있음 ──
@@ -658,9 +795,10 @@ def build_image_prompt(
         # 결과가 기본값(실사)로 돌아가는 원인. global_style 을 항상 끼워넣어 안전.
         parts: list[str] = [REFERENCE_STYLE_PREFIX]
 
-        style_hint = (global_style or "").strip()
         if style_hint:
-            parts.append(f"Style keywords: {style_hint}.")
+            parts.append(
+                f"Style/tone only, do not change the subject, action, setting, period, or props: {style_hint}."
+            )
 
         if has_character_slot:
             char_desc = character_description.strip()
@@ -686,10 +824,12 @@ def build_image_prompt(
     else:
         # ── 레퍼런스 없음: global_style 폴백 ──
         parts = []
-        if global_style:
-            parts.append(global_style.strip())
         if base:
             parts.append(base)
+        if style_hint:
+            parts.append(
+                f"Style/tone only, do not change the subject, action, setting, period, or props: {style_hint}."
+            )
 
         if has_character_slot:
             char_desc = character_description.strip()

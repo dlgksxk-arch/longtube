@@ -13,35 +13,68 @@ from openai import AsyncOpenAI
 from app import config as app_config
 
 
-DEFAULT_CAPTION_LANGUAGES = ("en", "ko", "hi")
+DEFAULT_CAPTION_LANGUAGES = ("ko",)
 LANGUAGE_NAMES = {
     "en": "English",
     "ko": "Korean",
     "hi": "Hindi",
+    "ja": "Japanese",
+    "zh-CN": "Chinese (China)",
+    "es": "Spanish",
+    "fr": "French",
+}
+_LANGUAGE_ALIASES = {
+    "cn": "zh-CN",
+    "zh": "zh-CN",
+    "zh-cn": "zh-CN",
+    "zh-hans": "zh-CN",
+    "zh_cn": "zh-CN",
+    "zh_hans": "zh-CN",
 }
 
 
-def caption_languages_for_config(config: dict[str, Any] | None) -> list[str]:
-    cfg = config or {}
-    raw = cfg.get("caption_languages") or cfg.get("youtube_caption_languages")
-    if isinstance(raw, str):
-        parts = [p.strip().lower() for p in re.split(r"[,;\s]+", raw) if p.strip()]
-    elif isinstance(raw, list):
-        parts = [str(p or "").strip().lower() for p in raw if str(p or "").strip()]
-    else:
-        parts = list(DEFAULT_CAPTION_LANGUAGES)
+def _truthy(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    text = str(value).strip().lower()
+    return text in {"1", "true", "yes", "y", "on", "enabled"}
 
-    out: list[str] = []
-    for lang in parts:
-        lang = lang.split("-")[0]
-        if lang in LANGUAGE_NAMES and lang not in out:
-            out.append(lang)
-    return out or list(DEFAULT_CAPTION_LANGUAGES)
+
+def _normalize_caption_language(value: Any) -> str | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    key = raw.replace("_", "-").lower()
+    if key in _LANGUAGE_ALIASES:
+        return _LANGUAGE_ALIASES[key]
+    if key in LANGUAGE_NAMES:
+        return key
+    base = key.split("-", 1)[0]
+    if base in LANGUAGE_NAMES:
+        return base
+    return None
+
+
+def should_upload_youtube_captions(config: dict[str, Any] | None) -> bool:
+    cfg = config or {}
+    for key in ("youtube_captions_enabled", "upload_youtube_captions", "upload_captions"):
+        if key in cfg:
+            return _truthy(cfg.get(key))
+
+    mode = str(cfg.get("subtitle_delivery") or cfg.get("subtitle_mode") or "").strip().lower()
+    if mode in {"none", "off", "disabled"}:
+        return False
+    return True
+
+
+def caption_languages_for_config(config: dict[str, Any] | None) -> list[str]:
+    return ["ko"]
 
 
 def _source_language(config: dict[str, Any] | None) -> str:
-    lang = str((config or {}).get("language") or "ko").strip().lower().split("-")[0]
-    return lang if lang in LANGUAGE_NAMES else "ko"
+    return _normalize_caption_language((config or {}).get("language")) or "ko"
 
 
 def _parse_srt(srt_text: str) -> list[dict[str, str]]:
@@ -113,6 +146,15 @@ async def _translate_batch_openai(texts: list[str], target_lang: str, model: str
             temperature=0.2,
         )
     data = _extract_json_object(response.choices[0].message.content or "")
+    try:
+        from app.services import spend_ledger
+        spend_ledger.record_llm_usage(
+            model,
+            getattr(response, "usage", None),
+            note=f"caption_translation {target_lang} {len(texts)} lines",
+        )
+    except Exception:
+        pass
     translated = data.get("translations") or data.get("texts") or []
     if len(translated) != len(texts):
         raise ValueError(f"translation count mismatch: got {len(translated)}, expected {len(texts)}")
@@ -147,6 +189,15 @@ async def _translate_batch_claude(texts: list[str], target_lang: str, model: str
             ],
         )
     data = _extract_json_object(response.content[0].text if response.content else "")
+    try:
+        from app.services import spend_ledger
+        spend_ledger.record_llm_usage(
+            model,
+            getattr(response, "usage", None),
+            note=f"caption_translation {target_lang} {len(texts)} lines",
+        )
+    except Exception:
+        pass
     translated = data.get("translations") or []
     if len(translated) != len(texts):
         raise ValueError(f"translation count mismatch: got {len(translated)}, expected {len(texts)}")

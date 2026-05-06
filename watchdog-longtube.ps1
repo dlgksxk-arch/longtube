@@ -4,10 +4,44 @@ $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $LogDir = Join-Path $Root "data\logs"
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 $LogFile = Join-Path $LogDir "longtube-watchdog.log"
+$StateFile = Join-Path $LogDir "longtube-watchdog-state.json"
+
+$BackendFailThreshold = 3
+$FrontendFailThreshold = 3
+$ComfyFailThreshold = 5
 
 function Write-WatchLog([string]$Message) {
   $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
   Add-Content -Path $LogFile -Encoding UTF8 -Value "[$ts] $Message"
+}
+
+function Load-State {
+  $state = [ordered]@{
+    backend_failures = 0
+    frontend_failures = 0
+    comfy_failures = 0
+  }
+  if (Test-Path $StateFile) {
+    try {
+      $raw = Get-Content -Raw -Encoding UTF8 -Path $StateFile | ConvertFrom-Json
+      foreach ($name in @("backend_failures", "frontend_failures", "comfy_failures")) {
+        if ($null -ne $raw.$name) {
+          $state[$name] = [int]$raw.$name
+        }
+      }
+    } catch {
+      Write-WatchLog "state load failed; resetting: $($_.Exception.Message)"
+    }
+  }
+  return $state
+}
+
+function Save-State($State) {
+  try {
+    $State | ConvertTo-Json | Set-Content -Path $StateFile -Encoding UTF8
+  } catch {
+    Write-WatchLog "state save failed: $($_.Exception.Message)"
+  }
 }
 
 function Test-Port([int]$Port) {
@@ -23,13 +57,37 @@ function Test-Port([int]$Port) {
   }
 }
 
+function Test-Http([string]$Url, [int]$TimeoutSec = 5) {
+  try {
+    $response = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec $TimeoutSec
+    return ($response.StatusCode -ge 200 -and $response.StatusCode -lt 500)
+  } catch {
+    return $false
+  }
+}
+
+function Stop-Port([int]$Port, [string]$Label) {
+  try {
+    $pids = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue |
+      Select-Object -ExpandProperty OwningProcess -Unique)
+    foreach ($pidToStop in $pids) {
+      if ($pidToStop -and $pidToStop -ne $PID) {
+        Write-WatchLog "$Label unhealthy; stopping PID $pidToStop on port $Port"
+        Stop-Process -Id $pidToStop -Force -ErrorAction SilentlyContinue
+      }
+    }
+  } catch {
+    Write-WatchLog "$Label port cleanup failed: $($_.Exception.Message)"
+  }
+}
+
 function Start-Backend {
   $backend = Join-Path $Root "backend"
   $out = Join-Path $LogDir "watchdog-backend.out.log"
   $err = Join-Path $LogDir "watchdog-backend.err.log"
   Write-WatchLog "Backend down; starting uvicorn on 8000"
   Start-Process -WindowStyle Hidden -FilePath "python" `
-    -ArgumentList @("-m","uvicorn","app.main:app","--host","0.0.0.0","--port","8000","--reload","--reload-dir","app","--reload-dir","workflows","--reload-dir","scripts") `
+    -ArgumentList @("-m","uvicorn","app.main:app","--host","0.0.0.0","--port","8000") `
     -WorkingDirectory $backend `
     -RedirectStandardOutput $out `
     -RedirectStandardError $err
@@ -69,9 +127,55 @@ function Start-Comfy {
 }
 
 try {
-  if (!(Test-Port 8000)) { Start-Backend }
-  if (!(Test-Port 3000)) { Start-Frontend }
-  if (!(Test-Port 8188)) { Start-Comfy }
+  $state = Load-State
+
+  if (!(Test-Port 8000)) {
+    $state["backend_failures"] = 0
+    Start-Backend
+  } elseif (Test-Http "http://127.0.0.1:8000/api/health" 5) {
+    $state["backend_failures"] = 0
+  } else {
+    $state["backend_failures"] = [int]$state["backend_failures"] + 1
+    Write-WatchLog "Backend health failed ($($state["backend_failures"])/$BackendFailThreshold)"
+    if ([int]$state["backend_failures"] -ge $BackendFailThreshold) {
+      Stop-Port 8000 "Backend"
+      Start-Sleep -Seconds 2
+      Start-Backend
+      $state["backend_failures"] = 0
+    }
+  }
+
+  if (!(Test-Port 3000)) {
+    $state["frontend_failures"] = 0
+    Start-Frontend
+  } elseif (Test-Http "http://127.0.0.1:3000/api/frontend-health" 5) {
+    $state["frontend_failures"] = 0
+  } else {
+    $state["frontend_failures"] = [int]$state["frontend_failures"] + 1
+    Write-WatchLog "Frontend health failed ($($state["frontend_failures"])/$FrontendFailThreshold)"
+    if ([int]$state["frontend_failures"] -ge $FrontendFailThreshold) {
+      Stop-Port 3000 "Frontend"
+      Start-Sleep -Seconds 2
+      Start-Frontend
+      $state["frontend_failures"] = 0
+    }
+  }
+
+  if (!(Test-Port 8188)) {
+    $state["comfy_failures"] = 0
+    Start-Comfy
+  } elseif (Test-Http "http://127.0.0.1:8188/system_stats" 8) {
+    $state["comfy_failures"] = 0
+  } else {
+    $state["comfy_failures"] = [int]$state["comfy_failures"] + 1
+    Write-WatchLog "ComfyUI health failed ($($state["comfy_failures"])/$ComfyFailThreshold)"
+    if ([int]$state["comfy_failures"] -ge $ComfyFailThreshold) {
+      Start-Comfy
+      $state["comfy_failures"] = 0
+    }
+  }
+
+  Save-State $state
 } catch {
   Write-WatchLog "watchdog error: $($_.Exception.Message)"
 }

@@ -34,8 +34,11 @@ InterludeKind = Literal["opening", "intermission", "ending"]
 VALID_KINDS: tuple[str, ...] = ("opening", "intermission", "ending")
 """허용되는 3 가지 종류. 변경 시 프런트 UI 의 드롭다운도 맞춰야 한다."""
 
-DEFAULT_INTERMISSION_EVERY = 180  # seconds
-"""기본 인터미션 주기 — 3 분."""
+DEFAULT_INTERMISSION_EVERY = 250  # cuts
+"""Default intermission interval, measured in body cuts."""
+
+INTERMISSION_CLIP_SECONDS = 3.0
+"""Intermission clips are trimmed/standardized to this duration when inserted."""
 
 ALLOWED_VIDEO_EXTS: frozenset[str] = frozenset({
     ".mp4", ".mov", ".mkv", ".webm", ".m4v", ".avi",

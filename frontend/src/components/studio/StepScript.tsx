@@ -7,7 +7,7 @@ import {
 import LoadingButton from "@/components/common/LoadingButton";
 import ModelSelector from "@/components/common/ModelSelector";
 import CostEstimate from "@/components/common/CostEstimate";
-import { scriptApi, modelsApi, projectsApi, type Project, type Cut, type ModelInfo } from "@/lib/api";
+import { scriptApi, modelsApi, projectsApi, taskApi, type Project, type Cut, type ModelInfo } from "@/lib/api";
 import GenerationTimer from "@/components/common/GenerationTimer";
 
 interface Props {
@@ -52,11 +52,34 @@ export default function StepScript({ project, onUpdate, onCutsChange }: Props) {
       // v1.1.49: 백그라운드 비동기 생성 — 탭 이동해도 작업 계속 진행
       await scriptApi.generateAsync(project.id);
       onUpdate();
+      for (let i = 0; i < 240; i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        const status = await taskApi.status(project.id, "script").catch(() => null);
+        if (status?.status === "failed" || status?.status === "cancelled") {
+          alert("대본 생성 실패: " + (status.error || status.status));
+          setGenerating(false);
+          return;
+        }
+        const data = await scriptApi.listCuts(project.id).catch(() => null);
+        if (data?.cuts?.length) {
+          setCuts(data.cuts);
+          onCutsChange?.(data.cuts);
+          setGenerating(false);
+          onUpdate();
+          return;
+        }
+        if (status?.status === "completed" || status?.status === "idle") {
+          setGenerating(false);
+          onUpdate();
+          return;
+        }
+      }
+      setGenerating(false);
     } catch (err: any) {
       alert("대본 생성 실패: " + err.message);
       setGenerating(false);
     }
-    // generating 상태는 GenerationTimer.onComplete 에서 해제
+    // GenerationTimer also updates this state; the loop above handles lost/idle task states.
   };
 
   const startEdit = (cut: Cut) => {

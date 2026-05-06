@@ -35,6 +35,8 @@ from app.services.thumbnail_service import (
     ensure_standard_thumbnail,
     ThumbnailError,
     extract_thumbnail_text_parts,
+    build_clickbait_thumbnail_overlay,
+    suppress_foreign_hangul_thumbnail_overlay,
     normalize_episode_label,
 )
 from app.services.image.factory import DEFAULT_THUMBNAIL_MODEL, resolve_image_model
@@ -42,7 +44,7 @@ from app.services.llm.factory import get_llm_service
 from app.services.llm.base import BaseLLMService
 from app.services.title_utils import with_episode_prefix
 from app.services.youtube_metadata import DEFAULT_MAX_TAGS, clean_tags, expand_tags, format_description
-from app.services.multilingual_caption_service import upload_multilingual_captions
+from app.services.multilingual_caption_service import should_upload_youtube_captions, upload_multilingual_captions
 
 router = APIRouter()
 
@@ -173,13 +175,7 @@ def _caption_path(project_id: str) -> Path:
 
 
 def _should_upload_caption(config: Optional[dict]) -> bool:
-    cfg = config or {}
-    mode = str(cfg.get("subtitle_delivery") or cfg.get("subtitle_mode") or "").strip().lower()
-    if mode in {"youtube", "youtube_caption", "youtube_captions", "srt", "external"}:
-        return True
-    if mode in {"burn", "burned", "hardcoded", "none", "off", "disabled"}:
-        return False
-    return bool(cfg.get("youtube_captions_enabled", False))
+    return should_upload_youtube_captions(config)
 
 
 def _extract_video_id(url_or_id: Optional[str]) -> Optional[str]:
@@ -513,9 +509,19 @@ async def create_thumbnail(
             "썸네일 메인 후크 텍스트가 비어있습니다. 프론트에서 직접 입력하거나 'AI 전체 추천' 을 먼저 누르세요.",
         )
     subtitle = (body.subtitle or "").strip() or None
-    title, extracted_episode_label = extract_thumbnail_text_parts(title, body.episode_label)
-    episode_label = normalize_episode_label(body.episode_label) or extracted_episode_label
     config = project.config or {}
+    script = {}
+    try:
+        script_path = resolve_project_dir(project_id) / "script.json"
+        if script_path.exists():
+            import json
+            script = json.loads(script_path.read_text(encoding="utf-8"))
+    except Exception:
+        script = {}
+    overlay_seed = build_clickbait_thumbnail_overlay(script, title, config)
+    title, extracted_episode_label = extract_thumbnail_text_parts(overlay_seed or title, body.episode_label)
+    title = suppress_foreign_hangul_thumbnail_overlay(title, config)
+    episode_label = normalize_episode_label(body.episode_label) or extracted_episode_label
     asset_url = f"/assets/{project_id}/output/thumbnail.png"
 
     # ─── 모드 1: cut_overlay (AI 호출 없음) ───

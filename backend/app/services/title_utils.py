@@ -39,6 +39,8 @@ _EP_MARKER_RE = re.compile(
     re.IGNORECASE,
 )
 _WHITESPACE_RE = re.compile(r"\s+")
+_HANGUL_RE = re.compile(r"[\uac00-\ud7a3]")
+_JAPANESE_RE = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]")
 
 
 def _first_title_variant(text: str) -> str:
@@ -81,3 +83,39 @@ def with_episode_prefix(title: Any, episode_number: Any) -> str:
         text = _EP_MARKER_RE.sub(" ", text).strip()
     text = _WHITESPACE_RE.sub(" ", text).strip(" |/-–—:·")
     return f"{prefix} {text}".strip()
+
+
+def without_episode_prefix(title: Any) -> str:
+    """Remove visual episode markers for contexts that must not show EP numbers."""
+    text = str(title or "").strip()
+    text = _EP_PREFIX_RE.sub("", text, count=1).strip()
+    text = _EPISODE_PREFIX_RE.sub("", text, count=1).strip()
+    text = _first_title_variant(text)
+    previous = None
+    while previous != text:
+        previous = text
+        text = _EP_PIPE_TAIL_RE.sub("", text).strip()
+        text = _EP_TAIL_RE.sub("", text).strip()
+        text = _EP_MARKER_RE.sub(" ", text).strip()
+    return _WHITESPACE_RE.sub(" ", text).strip(" |/-–—:·")
+
+
+def script_title_for_language(
+    *,
+    generated_title: Any,
+    project_title: Any,
+    topic: Any,
+    episode_number: Any,
+    language: Any,
+    first_narration: Any = None,
+) -> str:
+    lang = str(language or "ko").strip().lower()
+    if lang in {"ko", "kr", "kor", "korean"}:
+        base = project_title or topic or generated_title or "Untitled"
+    else:
+        base = generated_title or project_title or topic or "Untitled"
+        if lang in {"ja", "jp", "jpn", "japanese"} and _HANGUL_RE.search(str(base or "")):
+            narration = without_episode_prefix(first_narration)
+            if narration and _JAPANESE_RE.search(narration) and not _HANGUL_RE.search(narration):
+                base = narration
+    return with_episode_prefix(base, episode_number)

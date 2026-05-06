@@ -1,9 +1,9 @@
-"""TTS generation wrapper with text-only timing repair.
+"""TTS generation wrapper with local duration fitting.
 
-The audio itself is never sped up, slowed down, stretched, or cut. When the
-measured TTS duration misses the target window, this wrapper asks the selected
-script LLM to rewrite the narration text, then regenerates TTS with that new
-text. The generated audio is always kept so failures remain inspectable.
+The saved cut audio must be exactly the fixed video slot length. The spoken
+line is expected to land in the configured 4.3~4.8s window; if it is too long,
+local FFmpeg fitting compresses it under the hard ceiling and pads the file to
+the fixed cut duration. No extra TTS API calls are made for timing repair.
 """
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ def _compact(text: str) -> str:
 
 
 def _duration_ok(duration: float) -> bool:
-    return app_config.TTS_MIN_DURATION <= duration <= app_config.TTS_MAX_DURATION
+    return app_config.TTS_MIN_DURATION <= duration <= min(app_config.TTS_MAX_DURATION, _hard_max_duration())
 
 
 def _hard_max_duration() -> float:
@@ -34,14 +34,19 @@ def _hard_max_duration() -> float:
         return 4.8
 
 
+def _final_cut_audio_duration() -> float:
+    try:
+        return float(getattr(app_config, "CUT_VIDEO_DURATION", 5.0) or 5.0)
+    except (TypeError, ValueError):
+        return 5.0
+
+
 def _unit_count(text: str, language: str) -> int:
-    if language == "en":
-        return len(re.findall(r"\b[\w']+\b", text or ""))
     return len(text or "")
 
 
 def _unit_label(language: str) -> str:
-    return "words" if language == "en" else "chars"
+    return "chars"
 
 
 def _target_units_for_duration(text: str, duration: float, language: str) -> int:
@@ -171,28 +176,56 @@ def _probe_audio_duration(path: str) -> float:
         )
         return float((result.stdout or "").strip() or 0.0)
     except Exception:
-        return 0.0
+        pass
+    try:
+        ffmpeg, _ = _resolve_bins()
+        result = subprocess.run(
+            [ffmpeg, "-hide_banner", "-i", path, "-f", "null", "-"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=20,
+            check=False,
+        )
+        match = re.search(r"Duration:\s*(\d+):(\d+):(\d+\.\d+)", (result.stderr or "") + (result.stdout or ""))
+        if match:
+            hours, minutes, seconds = match.groups()
+            return int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+    except Exception:
+        pass
+    return 0.0
 
 
 def _fit_audio_duration_in_place(path: str, current_duration: float, log=None) -> float:
-    """Local, no-credit duration guard for generated narration audio."""
+    """Fit audio to the fixed cut slot without spending API credits.
+
+    The spoken narration should naturally land in TTS_MIN_DURATION~TTS_MAX_DURATION.
+    The saved audio file itself must match the fixed video cut duration so muxing
+    and subtitles stay aligned.
+    """
     if current_duration <= 0:
         return current_duration
 
-    target: float | None = None
+    final_target = _final_cut_audio_duration()
+    if abs(current_duration - final_target) <= 0.02:
+        return current_duration
+
+    spoken_target = current_duration
     audio_filter: str | None = None
-    output_args: list[str] = []
+    output_args: list[str] = ["-t", f"{final_target:.3f}"]
 
-    if current_duration > app_config.TTS_MAX_DURATION:
-        target = float(app_config.TTS_MAX_DURATION)
-        audio_filter = _atempo_filter(current_duration / target)
-    elif current_duration < app_config.TTS_MIN_DURATION:
-        target = float(app_config.TTS_MIN_DURATION)
-        pad = max(0.0, target - current_duration)
+    hard_max = _hard_max_duration()
+    max_allowed = min(float(app_config.TTS_MAX_DURATION), hard_max)
+    if current_duration > max_allowed:
+        spoken_target = max_allowed
+        pad = max(0.0, final_target - spoken_target)
+        audio_filter = f"{_atempo_filter(current_duration / spoken_target)},apad=pad_dur={pad:.3f}"
+    else:
+        pad = max(0.0, final_target - current_duration)
         audio_filter = f"apad=pad_dur={pad:.3f}"
-        output_args = ["-t", f"{target:.3f}"]
 
-    if target is None or not audio_filter:
+    if not audio_filter:
         return current_duration
 
     tmp = str(Path(path).with_name(f"{Path(path).stem}.durationfit{Path(path).suffix or '.mp3'}"))
@@ -223,7 +256,7 @@ def _fit_audio_duration_in_place(path: str, current_duration: float, log=None) -
                 log(f"local duration fit failed: {proc.stderr[-300:] if proc.stderr else proc.returncode}")
             return current_duration
         os.replace(tmp, path)
-        measured = _probe_audio_duration(path) or target
+        measured = _probe_audio_duration(path) or final_target
         if log:
             log(f"local duration fit: {current_duration:.2f}s -> {measured:.2f}s")
         return measured
@@ -233,6 +266,22 @@ def _fit_audio_duration_in_place(path: str, current_duration: float, log=None) -
                 os.remove(tmp)
         except OSError:
             pass
+
+
+def ensure_audio_duration_window(path: str, current_duration: float, config: dict | None = None, log=None) -> float:
+    """Final no-credit guard before saving a cut audio file.
+
+    Returns the final file duration, which should be CUT_VIDEO_DURATION (5.0s).
+    """
+    if config and config.get("tts_audio_timing_fit", True) is False:
+        return current_duration
+    final_target = _final_cut_audio_duration()
+    if abs(current_duration - final_target) <= 0.02:
+        return current_duration
+    fitted = _fit_audio_duration_in_place(path, current_duration, log=log)
+    if abs(fitted - final_target) > 0.03:
+        fitted = _fit_audio_duration_in_place(path, fitted, log=log)
+    return fitted
 
 
 def _length_fallback(text: str, direction: str, target_chars: int, language: str) -> str:
@@ -318,6 +367,7 @@ async def generate_tts_with_auto_narration_fit(
     rewrite_count = 0
     result: dict | None = None
     best: dict | None = None
+    original_duration = 0.0
     temp_paths: list[str] = []
     try:
         configured_max_rewrites = int((config or {}).get("tts_timing_max_rewrites", max_rewrites))
@@ -336,6 +386,8 @@ async def generate_tts_with_auto_narration_fit(
             voice_settings=voice_settings,
         )
         duration = float(result.get("duration") or 0.0)
+        if attempt == 0:
+            original_duration = duration
         candidate = {
             "path": candidate_path,
             "duration": duration,
@@ -427,10 +479,11 @@ async def generate_tts_with_auto_narration_fit(
     chosen_path = str(chosen.get("path") or audio_path)
     final_result = dict(chosen.get("result") or {})
     final_narration = str(chosen.get("narration") or current)
-    final_duration = float(chosen.get("duration") or final_result.get("duration") or 0.0)
-    hard_max = _hard_max_duration()
-    if final_duration > hard_max or final_duration < app_config.TTS_MIN_DURATION:
-        final_duration = _fit_audio_duration_in_place(chosen_path, final_duration, log=log)
+    spoken_duration = float(chosen.get("duration") or final_result.get("duration") or 0.0)
+    final_duration = ensure_audio_duration_window(chosen_path, spoken_duration, config=config, log=log)
+    fitted_spoken_duration = spoken_duration
+    if spoken_duration > min(float(app_config.TTS_MAX_DURATION), _hard_max_duration()):
+        fitted_spoken_duration = min(float(app_config.TTS_MAX_DURATION), _hard_max_duration())
     if chosen_path != audio_path:
         shutil.copyfile(chosen_path, audio_path)
     for path in temp_paths:
@@ -439,15 +492,18 @@ async def generate_tts_with_auto_narration_fit(
         except OSError:
             pass
     final_result["path"] = _relative_output_path(audio_path)
+    final_result["original_duration"] = original_duration or final_duration
+    final_result["spoken_duration"] = fitted_spoken_duration
     final_result["duration"] = final_duration
+    final_result["adjusted_duration"] = final_duration
     final_result["narration"] = final_narration
     final_result["narration_changed"] = final_narration != original
     final_result["rewrite_count"] = rewrite_count
-    final_result["timing_ok"] = _duration_ok(final_duration)
-    final_result["timing_distance"] = round(_duration_distance(final_duration), 3)
-    if log and not _duration_ok(final_duration):
+    final_result["timing_ok"] = _duration_ok(fitted_spoken_duration)
+    final_result["timing_distance"] = round(_duration_distance(fitted_spoken_duration), 3)
+    if log and not _duration_ok(fitted_spoken_duration):
         log(
-            f"timing best-effort cut {cut_number}: {final_duration:.2f}s "
+            f"timing best-effort cut {cut_number}: spoken {fitted_spoken_duration:.2f}s, file {final_duration:.2f}s "
             f"(target {app_config.TTS_MIN_DURATION:.1f}~{app_config.TTS_MAX_DURATION:.1f}s), "
             f"{len(final_narration)} chars"
         )

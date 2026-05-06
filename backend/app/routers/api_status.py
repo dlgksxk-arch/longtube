@@ -3,8 +3,10 @@ import asyncio
 import os
 import subprocess
 import time
-from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 import httpx
 from fastapi import APIRouter
 from sqlalchemy import func
@@ -17,6 +19,7 @@ router = APIRouter()
 
 ENV_PATH = Path(__file__).resolve().parent.parent.parent / ".env"
 _SYSTEM_STATUS_CACHE: dict = {"ts": 0.0, "data": None}
+_SYSTEM_STATUS_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="api-status-system")
 
 YOUTUBE_DEFAULT_DAILY_QUOTA = 10_000
 YOUTUBE_DEFAULT_UPLOAD_UNITS = 1_600
@@ -509,6 +512,18 @@ def _get_local_system_status() -> dict:
     return status
 
 
+async def _safe_local_system_status() -> dict:
+    try:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(_SYSTEM_STATUS_EXECUTOR, _get_local_system_status)
+    except Exception as e:
+        return {
+            "provider": "Local PC",
+            "status": "error",
+            "detail": f"{type(e).__name__}: {str(e)[:120]}",
+        }
+
+
 async def _check_kling() -> dict:
     """Check Kling keys — presence + basic JWT signing test."""
     ak = _key("KLING_ACCESS_KEY")
@@ -741,7 +756,7 @@ async def check_local_services():
     comfy, queue, system = await asyncio.gather(
         _safe_comfy_status(),
         _check_comfyui_queue(base),
-        asyncio.to_thread(_get_local_system_status),
+        _safe_local_system_status(),
     )
     if not isinstance(comfy, dict):
         comfy = {
@@ -773,8 +788,13 @@ def youtube_quota_status():
     """
     daily_limit = int(os.getenv("YOUTUBE_DAILY_QUOTA_UNITS", str(YOUTUBE_DEFAULT_DAILY_QUOTA)) or YOUTUBE_DEFAULT_DAILY_QUOTA)
     upload_units = int(os.getenv("YOUTUBE_UPLOAD_QUOTA_UNITS", str(YOUTUBE_DEFAULT_UPLOAD_UNITS)) or YOUTUBE_DEFAULT_UPLOAD_UNITS)
-    now = datetime.now()
-    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    # YouTube Data API daily quotas reset at midnight Pacific Time (PT).
+    pacific = ZoneInfo("America/Los_Angeles")
+    now_utc = datetime.now(timezone.utc)
+    now_pt = now_utc.astimezone(pacific)
+    day_start_pt = now_pt.replace(hour=0, minute=0, second=0, microsecond=0)
+    next_reset_pt = day_start_pt + timedelta(days=1)
+    day_start_utc = day_start_pt.astimezone(timezone.utc).replace(tzinfo=None)
 
     db = SessionLocal()
     try:
@@ -782,14 +802,14 @@ def youtube_quota_status():
             db.query(func.count(Project.id))
             .filter(Project.youtube_url.isnot(None))
             .filter(Project.youtube_url != "")
-            .filter(Project.updated_at >= day_start)
+            .filter(Project.updated_at >= day_start_utc)
             .scalar()
             or 0
         )
         logged_units = (
             db.query(func.coalesce(func.sum(ApiLog.tokens_used), 0))
             .filter(ApiLog.service == "youtube")
-            .filter(ApiLog.created_at >= day_start)
+            .filter(ApiLog.created_at >= day_start_utc)
             .scalar()
             or 0
         )
@@ -808,8 +828,12 @@ def youtube_quota_status():
         "upload_units": upload_units,
         "uploads_today": int(upload_count),
         "estimated_uploads_left": remaining_units // upload_units if upload_units > 0 else 0,
-        "reset_basis": "local_day",
-        "date": day_start.date().isoformat(),
+        "reset_basis": "pacific_time",
+        "date": day_start_pt.date().isoformat(),
+        "quota_window_start_pt": day_start_pt.isoformat(),
+        "quota_window_start_utc": day_start_utc.isoformat() + "Z",
+        "next_reset_pt": next_reset_pt.isoformat(),
+        "next_reset_utc": next_reset_pt.astimezone(timezone.utc).isoformat(),
     }
 
 

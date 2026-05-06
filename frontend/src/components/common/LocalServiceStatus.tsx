@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { RefreshCw } from "lucide-react";
+import { Power, RefreshCw, RotateCcw } from "lucide-react";
 import {
   localServicesApi,
   type LocalServiceInfo,
@@ -57,6 +57,13 @@ const TONE_BAR: Record<ServiceTone, string> = {
   warn: "bg-amber-400",
   fail: "bg-red-400",
   idle: "bg-gray-600",
+};
+
+const TONE_BOX: Record<ServiceTone, string> = {
+  ok: "border-emerald-400/45 bg-emerald-400/15 text-emerald-100",
+  warn: "border-amber-400/45 bg-amber-400/15 text-amber-100",
+  fail: "border-red-400/45 bg-red-400/15 text-red-100",
+  idle: "border-gray-500/40 bg-gray-500/10 text-gray-300",
 };
 
 function toneFromStatus(status?: string): ServiceTone {
@@ -204,21 +211,20 @@ function overallTone(rows: ServiceRow[]): ServiceTone {
 
 function ResourceStrip({ rows, compact = false }: { rows: ResourceRow[]; compact?: boolean }) {
   return (
-    <div className={compact ? "grid grid-cols-3 gap-1.5 px-2 pb-2" : "mt-2 space-y-1.5 border-t border-border/70 pt-2"}>
+    <div className={compact ? "grid grid-cols-3 gap-1.5 px-2 pb-2" : "mt-2 grid grid-cols-2 gap-1.5 border-t border-border/70 pt-2"}>
       {rows.map((row) => {
         const pct = row.percent ?? 0;
         return (
           <div
             key={row.name}
-            className={compact ? "min-w-0 rounded-lg border border-border/60 bg-bg-primary/60 px-2 py-1.5" : "min-w-0"}
+            className={compact ? "min-w-0 rounded-lg border border-border/60 bg-bg-primary/60 px-2 py-1.5" : "min-w-0 rounded-lg border border-border/60 bg-bg-primary/60 px-2 py-1.5"}
             title={`${row.name}: ${row.value} - ${row.detail}`}
           >
-            <div className="mb-1 flex items-center gap-2 text-[10px] leading-none">
-              <span className="w-7 flex-shrink-0 font-bold text-gray-300">{row.name}</span>
-              <span className={`w-9 flex-shrink-0 font-mono font-black ${TONE_TEXT[row.tone]}`}>
+            <div className="mb-1 flex items-center justify-between gap-2 text-xs leading-none">
+              <span className="flex-shrink-0 font-bold text-gray-300">{row.name}</span>
+              <span className={`flex-shrink-0 font-mono font-black ${TONE_TEXT[row.tone]}`}>
                 {row.value}
               </span>
-              {!compact && <span className="min-w-0 truncate text-gray-500">{row.detail}</span>}
             </div>
             <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
               <div
@@ -226,7 +232,6 @@ function ResourceStrip({ rows, compact = false }: { rows: ResourceRow[]; compact
                 style={{ width: `${pct}%` }}
               />
             </div>
-            {compact && <div className="mt-1 truncate text-[9px] text-gray-500">{row.detail}</div>}
           </div>
         );
       })}
@@ -237,6 +242,19 @@ function ResourceStrip({ rows, compact = false }: { rows: ResourceRow[]; compact
 function formatUnits(value?: number | null): string {
   if (typeof value !== "number" || Number.isNaN(value)) return "--";
   return value.toLocaleString("ko-KR");
+}
+
+function formatResetTime(value?: string | null): string {
+  if (!value) return "--";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "--";
+  return date.toLocaleString("ko-KR", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
 }
 
 function quotaTone(quota: YoutubeQuotaStatus | null, failed: boolean): ServiceTone {
@@ -260,25 +278,19 @@ function YoutubeQuotaStrip({
   const used = quota ? formatUnits(quota.used_units) : "--";
   const limit = quota ? formatUnits(quota.daily_limit) : "--";
   const left = quota ? formatUnits(quota.remaining_units) : "--";
-  const uploadsLeft = quota ? quota.estimated_uploads_left : 0;
-  const detail = failed
-    ? "백엔드 연결 필요"
-    : quota
-      ? `잔량 ${left} · 업로드 약 ${uploadsLeft}개`
-      : "추정 대기";
+  const resetTime = quota ? formatResetTime(quota.next_reset_utc || quota.next_reset_pt) : "--";
 
   return (
-    <div className={compact ? "px-2 pb-2" : "mt-2 border-t border-border/70 pt-2"}>
+    <div className={compact ? "px-2 pb-2" : ""}>
       <div
-        className={compact ? "rounded-lg border border-border/60 bg-bg-primary/60 px-2 py-1.5" : "min-w-0"}
-        title={`YouTube quota: ${used} / ${limit} units - ${detail}`}
+        className={compact ? "rounded-lg border border-border/60 bg-bg-primary/60 px-2 py-1.5" : "min-w-0 rounded-lg border border-border/60 bg-bg-primary/60 px-2 py-1.5"}
+        title={`YouTube quota: used ${used} / ${limit} units, remaining ${left}. Reset: ${resetTime}`}
       >
-        <div className="mb-1 flex items-center gap-2 text-[10px] leading-none">
-          <span className="w-7 flex-shrink-0 font-bold text-red-300">YT</span>
-          <span className={`w-12 flex-shrink-0 font-mono font-black ${TONE_TEXT[tone]}`}>
+        <div className="mb-1 flex items-center justify-between gap-2 text-xs leading-none">
+          <span className="flex-shrink-0 font-bold text-red-300">YT</span>
+          <span className={`flex-shrink-0 font-mono font-black ${TONE_TEXT[tone]}`}>
             {quota ? `${Math.round(quota.usage_pct)}%` : "--"}
           </span>
-          {!compact && <span className="min-w-0 truncate text-gray-500">{used} / {limit}</span>}
         </div>
         <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
           <div
@@ -286,7 +298,6 @@ function YoutubeQuotaStrip({
             style={{ width: `${pct}%` }}
           />
         </div>
-        <div className="mt-1 truncate text-[9px] text-gray-500">{detail}</div>
       </div>
     </div>
   );
@@ -300,6 +311,7 @@ export default function LocalServiceStatus({ variant = "sidebar", className = ""
   const [youtubeQuota, setYoutubeQuota] = useState<YoutubeQuotaStatus | null>(null);
   const [youtubeQuotaFailed, setYoutubeQuotaFailed] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [controlBusy, setControlBusy] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -335,6 +347,28 @@ export default function LocalServiceStatus({ variant = "sidebar", className = ""
     setLoading(false);
   }, []);
 
+  const controlService = useCallback(
+    async (service: "all", action: "start" | "restart") => {
+      if (action === "restart") {
+        const ok = window.confirm(
+          "백엔드와 ComfyUI 서버를 재시작합니다.\n진행 중인 작업이나 외부 호출이 끊길 수 있습니다.",
+        );
+        if (!ok) return;
+      }
+      const key = `${service}:${action}`;
+      setControlBusy(key);
+      try {
+        await localServicesApi.control(service, action);
+        window.setTimeout(() => void load(), 2500);
+      } catch (error) {
+        window.alert(error instanceof Error ? error.message : String(error));
+      } finally {
+        setControlBusy(null);
+      }
+    },
+    [load],
+  );
+
   useEffect(() => {
     void load();
     const timer = window.setInterval(() => void load(), 10_000);
@@ -343,6 +377,34 @@ export default function LocalServiceStatus({ variant = "sidebar", className = ""
 
   const rows = buildRows(frontend, frontendFailed, data, backendFailed);
   const resourceRows = buildResourceRows(data?.system, backendFailed);
+  const renderServiceControls = () => {
+    const startKey = "all:start";
+    const restartKey = "all:restart";
+    return (
+      <div className="flex items-center gap-1">
+        <button
+          type="button"
+          onClick={() => void controlService("all", "start")}
+          disabled={controlBusy !== null}
+          className="inline-flex h-7 flex-1 items-center justify-center gap-1 whitespace-nowrap rounded border border-emerald-400/25 bg-emerald-400/10 px-1.5 text-xs font-bold text-emerald-200 transition-colors hover:bg-emerald-400/20 disabled:cursor-wait disabled:opacity-50"
+          title="백엔드와 ComfyUI 서버 켜기"
+        >
+          <Power size={12} className={controlBusy === startKey ? "animate-pulse" : ""} />
+          켜기
+        </button>
+        <button
+          type="button"
+          onClick={() => void controlService("all", "restart")}
+          disabled={controlBusy !== null}
+          className="inline-flex h-7 flex-1 items-center justify-center gap-1 whitespace-nowrap rounded border border-amber-400/25 bg-amber-400/10 px-1.5 text-xs font-bold text-amber-200 transition-colors hover:bg-amber-400/20 disabled:cursor-wait disabled:opacity-50"
+          title="백엔드와 ComfyUI 서버 전체 재시작"
+        >
+          <RotateCcw size={12} className={controlBusy === restartKey ? "animate-spin" : ""} />
+          재시작
+        </button>
+      </div>
+    );
+  };
 
   if (variant === "floating") {
     const tone = overallTone(rows);
@@ -378,7 +440,6 @@ export default function LocalServiceStatus({ variant = "sidebar", className = ""
                 <span className="truncate text-[10px] font-semibold text-gray-400">{row.name}</span>
               </div>
               <div className={`text-xs font-black ${TONE_TEXT[row.tone]}`}>{compactLabel(row)}</div>
-              <div className="mt-0.5 truncate text-[10px] text-gray-500">{row.detail}</div>
             </div>
           ))}
         </div>
@@ -392,7 +453,7 @@ export default function LocalServiceStatus({ variant = "sidebar", className = ""
     <div className="px-3 lg:px-4 xl:px-5 py-2.5 border-b border-border">
       <div className="rounded-xl border border-border bg-bg-primary/55 p-2.5">
         <div className="mb-2 flex items-center justify-between gap-2">
-          <span className="text-[11px] font-bold tracking-wide text-gray-300">
+          <span className="text-sm font-bold tracking-wide text-gray-300">
             서버 상태
           </span>
           <button
@@ -401,25 +462,67 @@ export default function LocalServiceStatus({ variant = "sidebar", className = ""
             className="rounded p-1 text-gray-500 transition-colors hover:bg-white/5 hover:text-gray-200 disabled:opacity-60"
             title="서버 상태 새로고침"
           >
-            <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
+            <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
           </button>
         </div>
-        <div className="space-y-1.5">
+        <div className="mb-2">{renderServiceControls()}</div>
+        <div className="grid grid-cols-3 gap-1.5">
           {rows.map((row) => (
-            <div key={row.name} className="flex items-center gap-2 text-[11px] leading-none">
-              <span className={`h-2 w-2 flex-shrink-0 rounded-full ${TONE_DOT[row.tone]}`} />
-              <span className="w-11 flex-shrink-0 font-semibold text-gray-300">{row.name}</span>
-              <span className={`w-12 flex-shrink-0 font-mono font-bold ${TONE_TEXT[row.tone]}`}>
-                {row.label}
-              </span>
-              <span className="min-w-0 truncate text-gray-500" title={row.detail}>
-                {row.detail}
-              </span>
+            <div
+              key={row.name}
+              className={`min-w-0 rounded-lg border px-1.5 py-1.5 text-center text-xs font-black ${TONE_BOX[row.tone]}`}
+              title={`${row.name}: ${row.label}`}
+            >
+              <span className="block truncate">{row.name}</span>
             </div>
           ))}
         </div>
-        <ResourceStrip rows={resourceRows} />
-        <YoutubeQuotaStrip quota={youtubeQuota} failed={youtubeQuotaFailed || backendFailed} />
+        <div className="mt-2 grid grid-cols-2 gap-1.5 border-t border-border/70 pt-2">
+          {resourceRows.map((row) => {
+            const pct = row.percent ?? 0;
+            return (
+              <div
+                key={row.name}
+                className="min-w-0 rounded-lg border border-border/60 bg-bg-primary/60 px-2 py-1.5"
+                title={`${row.name}: ${row.value}`}
+              >
+                <div className="mb-1 flex items-center justify-between gap-2 text-xs leading-none">
+                  <span className="font-bold text-gray-300">{row.name}</span>
+                  <span className={`font-mono font-black ${TONE_TEXT[row.tone]}`}>{row.value}</span>
+                </div>
+                <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
+                  <div
+                    className={`h-full rounded-full transition-[width] duration-300 ${TONE_BAR[row.tone]}`}
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+              </div>
+            );
+          })}
+          {(() => {
+            const tone = quotaTone(youtubeQuota, youtubeQuotaFailed || backendFailed);
+            const pct = youtubeQuota ? clampPercent(youtubeQuota.usage_pct) ?? 0 : 0;
+            return (
+              <div
+                className="min-w-0 rounded-lg border border-border/60 bg-bg-primary/60 px-2 py-1.5"
+                title={`YT: ${youtubeQuota ? `${Math.round(youtubeQuota.usage_pct)}%` : "--"}`}
+              >
+                <div className="mb-1 flex items-center justify-between gap-2 text-xs leading-none">
+                  <span className="font-bold text-red-300">YT</span>
+                  <span className={`font-mono font-black ${TONE_TEXT[tone]}`}>
+                    {youtubeQuota ? `${Math.round(youtubeQuota.usage_pct)}%` : "--"}
+                  </span>
+                </div>
+                <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
+                  <div
+                    className={`h-full rounded-full transition-[width] duration-300 ${TONE_BAR[tone]}`}
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+              </div>
+            );
+          })()}
+        </div>
       </div>
     </div>
   );

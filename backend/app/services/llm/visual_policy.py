@@ -127,6 +127,132 @@ def _clean_spaces(text: str) -> str:
     return text.strip(" ,")
 
 
+_SOFT_IDENTITY_REWRITES: tuple[tuple[str, str], ...] = (
+    (r"\bant[-\s]*like\s+(?:office\s+)?(?:worker|person|character|figure)\b", "anthropomorphic ant character"),
+    (r"\b(?:office\s+)?(?:worker|person|character|figure)\s+that\s+looks\s+like\s+an\s+ant\b", "anthropomorphic ant character"),
+    (r"\b(?:office\s+)?(?:worker|person|character|figure)\s+like\s+an\s+ant\b", "anthropomorphic ant character"),
+    (r"\bgrasshopper[-\s]*like\s+(?:office\s+)?(?:worker|person|character|figure)\b", "anthropomorphic grasshopper character"),
+    (r"\b(?:office\s+)?(?:worker|person|character|figure)\s+that\s+looks\s+like\s+a\s+grasshopper\b", "anthropomorphic grasshopper character"),
+    (r"\b(?:office\s+)?(?:worker|person|character|figure)\s+like\s+a\s+grasshopper\b", "anthropomorphic grasshopper character"),
+    (r"\b(?:bug|insect)[-\s]*like\s+(?:office\s+)?(?:worker|person|character|figure)\b", "simple cartoon character"),
+    (r"\b(?:inspired\s+by|similar\s+to)\s+an\s+ant\b", "anthropomorphic ant character"),
+    (r"\b(?:inspired\s+by|similar\s+to)\s+a\s+grasshopper\b", "anthropomorphic grasshopper character"),
+    (r"개미\s*같은\s*(?:사무실\s*)?(?:노동자|인물|캐릭터|사람)", "의인화된 개미 캐릭터"),
+    (r"(?:사무실\s*)?(?:노동자|인물|캐릭터|사람)\s*같은\s*개미", "의인화된 개미 캐릭터"),
+    (r"메뚜기\s*같은\s*(?:사무실\s*)?(?:노동자|인물|캐릭터|사람)", "의인화된 메뚜기 캐릭터"),
+    (r"(?:사무실\s*)?(?:노동자|인물|캐릭터|사람)\s*같은\s*메뚜기", "의인화된 메뚜기 캐릭터"),
+    (r"(?:곤충|벌레)\s*같은\s*(?:사무실\s*)?(?:노동자|인물|캐릭터|사람)", "간단한 2D 카툰 캐릭터"),
+)
+
+
+def sanitize_softened_identity_phrases(text: str) -> str:
+    out = text or ""
+    for pattern, replacement in _SOFT_IDENTITY_REWRITES:
+        out = re.sub(pattern, replacement, out, flags=re.IGNORECASE)
+    out = re.sub(r"\bant[-\s]*like\b", "anthropomorphic ant", out, flags=re.IGNORECASE)
+    out = re.sub(r"\bgrasshopper[-\s]*like\b", "anthropomorphic grasshopper", out, flags=re.IGNORECASE)
+    out = re.sub(r"\bbug[-\s]*like\b|\binsect[-\s]*like\b", "simple cartoon", out, flags=re.IGNORECASE)
+    out = re.sub(r"개미\s*같은|개미같은", "의인화된 개미", out)
+    out = re.sub(r"메뚜기\s*같은|메뚜기같은", "의인화된 메뚜기", out)
+    out = re.sub(r"곤충\s*같은|곤충같은|벌레\s*같은|벌레같은", "간단한 2D 카툰", out)
+    return _clean_spaces(out)
+
+
+_REPETITIVE_STYLE_PHRASES: tuple[str, ...] = (
+    r"\b(?:simple\s+)?2D\s+cartoon\s+scene\b",
+    r"\bflat\s+2D\s+cartoon\s+style\b",
+    r"\bflat\s+cartoon\s+style\b",
+    r"\bflat\s+colors?\b",
+    r"\bthick\s+outlines?\b",
+    r"\bclean\s+minimal\s+scene\b",
+    r"\bminimal\s+scene\b",
+    r"\bminimal\s+flat\s+background\b",
+    r"\bpale\s+(?:blue|gray|grey)\s+background\b",
+    r"\blight\s+(?:gray|grey)\s+background\b",
+    r"\bsoft\s+neutral\s+lighting\b",
+    r"\bneutral\s+cool\s+daylight\b",
+    r"\billustration\s+not\s+photo\b",
+)
+
+
+def strip_repetitive_style_fillers(text: str) -> str:
+    out = text or ""
+    for pattern in _REPETITIVE_STYLE_PHRASES:
+        out = re.sub(pattern, "", out, flags=re.IGNORECASE)
+    return _clean_spaces(out)
+
+
+_ANT_GRASSHOPPER_CONTEXT_RE = re.compile(
+    r"\b(ant|grasshopper|anthill)\b",
+    re.IGNORECASE,
+)
+
+_ANT_WORK_NARRATION_RE = re.compile(
+    r"\b(quietly|effort|work(?:er|ing|ed)?|prepar(?:e|es|ed|ing|ation)|"
+    r"noticed|unseen|steady|satisfaction|stores?|saving|saved|grain|seed)\b",
+    re.IGNORECASE,
+)
+
+_GRASSHOPPER_NARRATION_RE = re.compile(
+    r"\b(grasshopper|sing(?:s|ing)?|rest(?:s|ed|ing)?|relax(?:es|ed|ing)?|"
+    r"idle|carefree|hungry|regret(?:s|ting)?|shiver(?:s|ing)?|winter)\b",
+    re.IGNORECASE,
+)
+
+_IDLE_WORK_MISMATCH_REWRITES: tuple[tuple[str, str], ...] = (
+    (r"\bsitting idly at (?:a )?desk\b", "working quietly at a desk with organized folders"),
+    (r"\bsitting idly\b", "working quietly"),
+    (r"\blounging\b", "working quietly"),
+    (r"\bresting\b", "working quietly"),
+    (r"\brelaxing\b", "working quietly"),
+)
+
+
+def repair_ant_grasshopper_alignment(prompt: str, narration: str = "", script_context: str = "") -> str:
+    """Prevent obvious ant/grasshopper role swaps in fable scripts."""
+    out = prompt or ""
+    combined = " ".join([narration or "", prompt or "", script_context or ""])
+    if not _ANT_GRASSHOPPER_CONTEXT_RE.search(combined):
+        return out
+
+    prompt_l = out.lower()
+    narration_l = (narration or "").lower()
+    has_ant = bool(re.search(r"\bant\b|\banthill\b", prompt_l))
+    has_grasshopper = bool(re.search(r"\bgrasshopper\b", prompt_l))
+    effort_cut = bool(_ANT_WORK_NARRATION_RE.search(narration_l)) and not bool(
+        re.search(r"\b(grasshopper|sing|rest|relax|idle|carefree|hungry|regret|shiver|winter)\b", narration_l)
+    )
+    if effort_cut and has_grasshopper and not has_ant:
+        out = re.sub(
+            r"\banthropomorphic grasshopper character\b",
+            "anthropomorphic ant character",
+            out,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+        out = re.sub(r"\bgrasshopper character\b", "ant character", out, count=1, flags=re.IGNORECASE)
+        for pattern, replacement in _IDLE_WORK_MISMATCH_REWRITES:
+            out = re.sub(pattern, replacement, out, flags=re.IGNORECASE)
+        if re.search(r"\bdesk\b", out, flags=re.IGNORECASE) and not re.search(r"\bfolders?\b|\bnotebooks?\b", out, flags=re.IGNORECASE):
+            out = _clean_spaces(out + ", organized folders and notebook visible")
+
+    grasshopper_cut = bool(_GRASSHOPPER_NARRATION_RE.search(narration_l))
+    prompt_l = out.lower()
+    has_ant = bool(re.search(r"\bant\b|\banthill\b", prompt_l))
+    has_grasshopper = bool(re.search(r"\bgrasshopper\b", prompt_l))
+    if grasshopper_cut and has_ant and not has_grasshopper:
+        out = re.sub(
+            r"\banthropomorphic ant character\b",
+            "anthropomorphic grasshopper character",
+            out,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+        out = re.sub(r"\bant character\b", "grasshopper character", out, count=1, flags=re.IGNORECASE)
+
+    return _clean_spaces(out)
+
+
 def _strip_legacy_policy_text(text: str) -> str:
     out = text or ""
     lower = out.lower()
@@ -143,8 +269,57 @@ def _strip_legacy_policy_text(text: str) -> str:
 
 
 def normalize_image_prompt(prompt: str) -> str:
-    """Default mode: leave script image prompts unchanged."""
-    return _clean_spaces(prompt)
+    """Keep scene content, remove identity softeners and repeated style filler."""
+    return strip_repetitive_style_fillers(sanitize_softened_identity_phrases(prompt))
+
+
+def normalize_cut_image_prompt(prompt: str, narration: str = "", script_context: str = "") -> str:
+    """Normalize one cut with narration-aware role alignment."""
+    normalized = normalize_image_prompt(prompt)
+    return repair_ant_grasshopper_alignment(normalized, narration, script_context)
+
+
+def _strip_visual_context_prefix(prompt: str) -> str:
+    out = prompt or ""
+    out = re.sub(
+        r"^\s*Year/period:\s*[^;]+(?:;\s*[^;]+)?;\s*"
+        r"(?:Historically accurate period details:\s*[^;]+;\s*)?"
+        r"(?:Exact place:\s*[^;]+;\s*)?"
+        r"(?:Scene evidence:\s*[^;]+;\s*)?"
+        r"Scene:\s*",
+        "",
+        out,
+        flags=re.IGNORECASE,
+    )
+    return _clean_spaces(out)
+
+
+def inject_cut_visual_context(cut: dict[str, Any]) -> None:
+    """Force year/period/place metadata into the stored image prompt."""
+    if not isinstance(cut, dict):
+        return
+    prompt = str(cut.get("image_prompt") or "").strip()
+    year = str(cut.get("visual_year") or "").strip()
+    period = str(cut.get("visual_period") or "").strip()
+    location = str(cut.get("visual_location") or "").strip()
+    evidence = str(cut.get("visual_evidence") or "").strip()
+    if not (year or period or location):
+        return
+
+    parts: list[str] = []
+    year_period = "; ".join(part for part in (year, period) if part)
+    if year_period:
+        parts.append(f"Year/period: {year_period}")
+    if period:
+        parts.append(f"Historically accurate period details: {period}")
+    if location:
+        parts.append(f"Exact place: {location}")
+    if evidence:
+        parts.append(f"Scene evidence: {evidence}")
+
+    scene = _strip_visual_context_prefix(prompt)
+    prefix = "; ".join(parts)
+    cut["image_prompt"] = f"{prefix}; Scene: {scene}" if scene else prefix
 
 
 def normalize_motion_prompt(prompt: str, image_prompt: str = "") -> str:
@@ -153,5 +328,22 @@ def normalize_motion_prompt(prompt: str, image_prompt: str = "") -> str:
 
 
 def apply_script_visual_policy(script: dict[str, Any]) -> dict[str, Any]:
-    """Default mode: do not rewrite generated visual prompts."""
+    """Keep generated prompts, but block known broken identity softeners."""
+    if not isinstance(script, dict):
+        return script
+    if isinstance(script.get("thumbnail_prompt"), str):
+        script["thumbnail_prompt"] = normalize_image_prompt(script["thumbnail_prompt"])
+    cuts = script.get("cuts")
+    if isinstance(cuts, list):
+        script_context = " ".join(
+            str(script.get(key) or "") for key in ("title", "topic", "description")
+        )
+        for cut in cuts:
+            if isinstance(cut, dict) and isinstance(cut.get("image_prompt"), str):
+                cut["image_prompt"] = normalize_cut_image_prompt(
+                    cut["image_prompt"],
+                    str(cut.get("narration") or ""),
+                    script_context,
+                )
+                inject_cut_visual_context(cut)
     return script

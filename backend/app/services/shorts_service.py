@@ -36,6 +36,10 @@ def _cut_score(cut: dict[str, Any], index: int, total: int) -> int:
         for k in ("narration", "scene_type", "image_prompt", "shorts_reason")
     )
     score = 0
+    try:
+        score += max(0, min(10, int(cut.get("shorts_score") or 0))) * 2
+    except (TypeError, ValueError):
+        pass
     if HOOK_RE.search(text):
         score += 5
     if cut.get("shorts_candidate") is True:
@@ -54,6 +58,24 @@ SHORTS_HEIGHT = 1920
 SHORTS_CLIP_HEIGHT = 840
 SHORTS_VIDEO_CRF = "16"
 SHORTS_VIDEO_PRESET = "medium"
+SHORTS_TEXT_SIZE = 104
+SHORTS_TEXT_BORDER = 9
+SHORTS_TITLE_ACCENT_COLOR = "0xffd24a"
+SHORTS_CHANNEL_TEXT_SIZE = 92
+SHORTS_CHANNEL_TEXT_BORDER = 5
+SHORTS_CHANNEL_Y = 1450
+SHORTS_CHANNEL_AVATAR_Y = 1438
+SHORTS_CHANNEL_AVATAR_X = 318
+SHORTS_CHANNEL_TEXT_X = 426
+SHORTS_CHANNEL_AVATAR_SIZE = 112
+SHORTS_CHANNEL_GAP = 30
+SHORTS_CAPTION_Y = 940
+SHORTS_CAPTION_BOX_Y = 1068
+SHORTS_CAPTION_BOX_HEIGHT = 190
+SHORTS_CAPTION_TEXT_SIZE = 76
+SHORTS_CAPTION_TEXT_BORDER = 7
+SHORTS_CAPTION_WRAP_WIDTH = 18
+SHORTS_PLAYBACK_SPEED = 1.1
 
 
 def _cut_duration(cut: dict[str, Any]) -> float:
@@ -99,7 +121,7 @@ def _expand_segment(
 
 
 def select_shorts_segments(script: dict[str, Any], *, count: int = 1) -> list[dict[str, Any]]:
-    """Return up to count shorts segments using script metadata first, heuristics second."""
+    """Return shorts segments using marked high-curiosity cuts first."""
     cuts = [c for c in script.get("cuts", []) or [] if isinstance(c, dict)]
     if not cuts:
         return []
@@ -108,6 +130,7 @@ def select_shorts_segments(script: dict[str, Any], *, count: int = 1) -> list[di
         return []
     eligible_first, eligible_last = bounds
 
+    marked: list[tuple[int, int, dict[str, Any]]] = []
     by_group: dict[int, list[dict[str, Any]]] = {}
     for cut in cuts:
         try:
@@ -120,9 +143,36 @@ def select_shorts_segments(script: dict[str, Any], *, count: int = 1) -> list[di
             cut_num = 0
         if cut.get("shorts_candidate") is True and group > 0 and eligible_first <= cut_num <= eligible_last:
             by_group.setdefault(group, []).append(cut)
+            marked.append((cut_num, _cut_score(cut, cut_num, len(cuts)), cut))
 
     segments: list[dict[str, Any]] = []
     used: set[int] = set()
+    if marked:
+        best_num, _best_score, best_cut = max(marked, key=lambda item: item[1])
+        start = max(eligible_first, best_num - SHORTS_CUT_COUNT // 2)
+        end = min(eligible_last, start + SHORTS_CUT_COUNT - 1)
+        start = max(eligible_first, end - SHORTS_CUT_COUNT + 1)
+        start, end = _expand_segment(
+            start,
+            end,
+            len(cuts),
+            min_start=eligible_first,
+            max_end=eligible_last,
+        )
+        selected_nums = list(range(start, end + 1))
+        if selected_nums:
+            used.update(selected_nums)
+            segments.append({
+                "group": 1,
+                "start_cut": start,
+                "end_cut": end,
+                "cut_numbers": selected_nums,
+                "reason": best_cut.get("shorts_reason") or "marked high-curiosity cuts",
+                "title": best_cut.get("shorts_title") or best_cut.get("headline") or "",
+            })
+            if len(segments) >= count:
+                return segments
+
     for group in sorted(by_group):
         nums = sorted(int(c["cut_number"]) for c in by_group[group] if c.get("cut_number"))
         if not nums:
@@ -212,13 +262,32 @@ def annotate_script_shorts(script: dict[str, Any], *, count: int = 1) -> dict[st
         except (TypeError, ValueError):
             cut["shorts_group"] = 0
         cut["shorts_reason"] = str(cut.get("shorts_reason") or "")
+        try:
+            cut["shorts_score"] = max(0, min(10, int(cut.get("shorts_score") or 0)))
+        except (TypeError, ValueError):
+            cut["shorts_score"] = 0
 
-    existing_groups = {
-        int(c.get("shorts_group") or 0)
-        for c in cuts
+    existing_marked = [
+        c for c in cuts
         if c.get("shorts_candidate") is True and int(c.get("shorts_group") or 0) > 0
-    }
-    if len(existing_groups) >= count:
+    ]
+    if len(existing_marked) >= SHORTS_CUT_COUNT:
+        ranked = sorted(
+            existing_marked,
+            key=lambda cut: (
+                -_cut_score(cut, int(cut.get("cut_number") or 0), len(cuts)),
+                int(cut.get("cut_number") or 0),
+            ),
+        )
+        keep = {id(cut) for cut in ranked[:SHORTS_CUT_COUNT]}
+        for cut in cuts:
+            if id(cut) in keep:
+                cut["shorts_candidate"] = True
+                cut["shorts_group"] = 1
+                cut["shorts_score"] = max(int(cut.get("shorts_score") or 0), 7)
+            else:
+                cut["shorts_candidate"] = False
+                cut["shorts_group"] = 0
         return script
 
     segments = select_shorts_segments(script, count=count)
@@ -231,13 +300,19 @@ def annotate_script_shorts(script: dict[str, Any], *, count: int = 1) -> dict[st
 
     for idx, seg in enumerate(segments[:count], start=1):
         reason = str(seg.get("reason") or "auto-selected shorts segment")
-        for num in range(int(seg["start_cut"]), int(seg["end_cut"]) + 1):
+        cut_numbers = seg.get("cut_numbers")
+        if isinstance(cut_numbers, list) and cut_numbers:
+            nums = [int(n) for n in cut_numbers if str(n).strip().isdigit()]
+        else:
+            nums = list(range(int(seg["start_cut"]), int(seg["end_cut"]) + 1))
+        for num in nums[:SHORTS_CUT_COUNT]:
             cut = by_number.get(num)
             if not cut:
                 continue
             cut["shorts_candidate"] = True
             cut["shorts_group"] = idx
             cut["shorts_reason"] = reason
+            cut["shorts_score"] = max(int(cut.get("shorts_score") or 0), 7)
     return script
 
 
@@ -249,11 +324,21 @@ def _font_path(language: str | None = None) -> str:
             r"C:\Windows\Fonts\Nirmala.ttf",
             r"C:\Windows\Fonts\NirmalaS.ttf",
         )
+    elif lang in {"ja", "jp", "japanese"}:
+        candidates = (
+            r"C:\Windows\Fonts\meiryob.ttc",
+            r"C:\Windows\Fonts\YuGothB.ttc",
+            r"C:\Windows\Fonts\msgothic.ttc",
+            r"C:\Windows\Fonts\malgunbd.ttf",
+            r"C:\Windows\Fonts\malgun.ttf",
+        )
     else:
         candidates = (
             r"C:\Windows\Fonts\malgunbd.ttf",
             r"C:\Windows\Fonts\NotoSansKR-VF.ttf",
             r"C:\Windows\Fonts\malgun.ttf",
+            r"C:\Windows\Fonts\meiryob.ttc",
+            r"C:\Windows\Fonts\YuGothB.ttc",
             r"C:\Windows\Fonts\NirmalaB.ttf",
             r"C:\Windows\Fonts\Nirmala.ttf",
         )
@@ -272,6 +357,25 @@ def _compact_text(value: object) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()
 
 
+def _has_language_chars(text: str, language: str) -> bool:
+    if language == "ja":
+        return bool(re.search(r"[\u3040-\u30FF\u4E00-\u9FFF]", text))
+    if language == "hi":
+        return bool(re.search(r"[\u0900-\u097F]", text))
+    if language == "ko":
+        return bool(re.search(r"[\uAC00-\uD7A3]", text))
+    return bool(_compact_text(text))
+
+
+def _is_foreign_shorts_text(text: str, language: str) -> bool:
+    if language == "en":
+        return False
+    text = _compact_text(text)
+    if not text:
+        return False
+    return bool(re.search(r"[A-Za-z]", text)) and not _has_language_chars(text, language)
+
+
 def _detect_language(script: dict[str, Any]) -> str:
     explicit = str(
         script.get("language")
@@ -285,6 +389,8 @@ def _detect_language(script: dict[str, Any]) -> str:
         return "en"
     if explicit.startswith(("ko", "kr", "korean")):
         return "ko"
+    if explicit.startswith(("ja", "jp", "japanese", "日本")):
+        return "ja"
 
     text = " ".join(
         [_compact_text(script.get("title"))]
@@ -297,8 +403,12 @@ def _detect_language(script: dict[str, Any]) -> str:
     devanagari = len(re.findall(r"[\u0900-\u097F]", text))
     if devanagari > 0:
         return "hi"
-    latin = len(re.findall(r"[A-Za-z]", text))
+    kana = len(re.findall(r"[\u3040-\u30FF]", text))
+    cjk = len(re.findall(r"[\u4E00-\u9FFF]", text))
     hangul = len(re.findall(r"[\uAC00-\uD7A3]", text))
+    if kana > 0 or (cjk > 0 and hangul == 0):
+        return "ja"
+    latin = len(re.findall(r"[A-Za-z]", text))
     return "en" if latin > hangul * 2 else "ko"
 
 
@@ -317,12 +427,38 @@ def _shorts_labels(language: str) -> dict[str, str]:
             "default_title_2": "Watch what happens",
             "fallback_channel": "CH4",
         }
+    if language == "ja":
+        return {
+            "badge": "注目",
+            "default_title_1": "この瞬間",
+            "default_title_2": "続きを見てください",
+            "fallback_channel": "闇解き日本史",
+        }
     return {
         "badge": "지금 봐야 할 장면",
         "default_title_1": "이 장면",
         "default_title_2": "끝까지 보면 달라집니다",
         "fallback_channel": "CH1",
     }
+
+
+def _default_channel_avatar_url(channel_name: str, language: str) -> str | None:
+    name = _compact_text(channel_name)
+    by_name = {
+        "10분역공": "https://yt3.ggpht.com/lZRG--gQU8wZ5Gzeethzm6NBlG6FD9Jx4QxR4djz4kOgIj-LS9Dm1fO0ruuMEhrZE1AjEFeXQ3Q=s88-c-k-c0x00ffffff-no-rj",
+        "Jerry's Archaeo": "https://yt3.ggpht.com/NY92X-Yu-tgLBOvUtCPJBhqmuM47ZILmU33lPBSKiPEeC06imNtxH6Kdd1EVldLmBtPG590miA=s88-c-k-c0x00ffffff-no-rj",
+        "闇解き日本史": "https://yt3.ggpht.com/lRHg7iB8VCuQYJPyiu6P4mKHK6jslowo8ZURRESjmTbiVYqvXCOn0draMc_XV_dGMS6tbjj8DJs=s88-c-k-c0x00ffffff-no-rj",
+        "10 मिनट पलटवार": "https://yt3.ggpht.com/GmMBiNYytpUfw14ZP9SeX5kllM6j-uJcPhW0re1qcAz6n_FHUP1nTXKp_T2BmeFrxup9HYTm6Q=s88-c-k-c0x00ffffff-no-rj",
+    }
+    if name in by_name:
+        return by_name[name]
+    by_language = {
+        "ko": by_name["10분역공"],
+        "en": by_name["Jerry's Archaeo"],
+        "ja": by_name["闇解き日本史"],
+        "hi": by_name["10 मिनट पलटवार"],
+    }
+    return by_language.get(language)
 
 
 def _visual_width(text: str) -> int:
@@ -378,14 +514,20 @@ def _wrap_text(text: str, *, width: int, max_lines: int = 2) -> str:
     return "\n".join(normalized[:max_lines])
 
 
-def _split_headline(text: str, *, width: int = 18) -> tuple[str, str]:
+def _split_headline(
+    text: str,
+    *,
+    width: int = 18,
+    fallback_1: str = "Must-see moment",
+    fallback_2: str = "Watch what happens",
+) -> tuple[str, str]:
     text = _compact_text(text)
     if ":" in text:
         before, after = text.split(":", 1)
         text = after.strip() if len(after.strip()) >= 8 else before.strip()
     words = text.split()
     if not words:
-        return "Must-see moment", "Watch what happens"
+        return fallback_1, fallback_2
 
     lines: list[str] = []
     current = ""
@@ -401,8 +543,12 @@ def _split_headline(text: str, *, width: int = 18) -> tuple[str, str]:
                 break
     if current and len(lines) < 2:
         lines.append(current)
+    if len(lines) == 1 and _visual_width(lines[0]) > width:
+        head, rest = _visual_slice(lines[0], width)
+        if rest:
+            lines = [head, _visual_slice(rest, width)[0]]
     while len(lines) < 2:
-        lines.append("Watch what happens")
+        lines.append(fallback_2)
     return _visual_slice(lines[0], width)[0], _visual_slice(lines[1], width)[0]
 
 
@@ -505,11 +651,19 @@ def _hook_title_lines(script: dict[str, Any], seg: dict[str, Any]) -> tuple[str,
     )
     full_text = " ".join([_compact_text(script.get("title")), segment_text])
     language = _detect_language(script)
+    labels = _shorts_labels(language)
     segment_title = _clean_sentence(segment_text)
     base_title = _strip_title_noise(script.get("title"))
+    if _is_foreign_shorts_text(segment_title, language):
+        segment_title = ""
 
-    if language in {"en", "hi"} and segment_title:
-        return _split_headline(segment_title, width=20)
+    if language in {"en", "hi", "ja"} and segment_title:
+        return _split_headline(
+            segment_title,
+            width=20,
+            fallback_1=labels["default_title_1"],
+            fallback_2=labels["default_title_2"] if language == "en" else "",
+        )
 
     number_matches = re.findall(r"\d[\d,\.]*\s*(?:만|천|백|명|년|개|척|%)?", full_text)
     strong_number = ""
@@ -541,15 +695,28 @@ def _hook_title_lines(script: dict[str, Any], seg: dict[str, Any]) -> tuple[str,
 
     title = _clean_sentence(base_title) or _clean_sentence(segment_text)
     lower_text = full_text.lower()
-    if ("post-it" in lower_text or "glue" in lower_text) and not segment_title:
+    if language == "en" and ("post-it" in lower_text or "glue" in lower_text) and not segment_title:
         return "The Glue That Failed", "Changed Offices"
     if len(title) > 16:
-        return _split_headline(title, width=20)
-    return title or "이 장면", "끝까지 보면 달라집니다"
+        return _split_headline(
+            title,
+            width=20,
+            fallback_1=labels["default_title_1"],
+            fallback_2=labels["default_title_2"] if language == "en" else "",
+        )
+    return title or labels["default_title_1"], labels["default_title_2"] if language == "en" else ""
 
 
 def _segment_cuts(script: dict[str, Any], seg: dict[str, Any]) -> list[dict[str, Any]]:
     cuts = [c for c in script.get("cuts", []) or [] if isinstance(c, dict)]
+    cut_numbers_raw = seg.get("cut_numbers")
+    cut_numbers: set[int] = set()
+    if isinstance(cut_numbers_raw, list):
+        for value in cut_numbers_raw:
+            try:
+                cut_numbers.add(int(value))
+            except (TypeError, ValueError):
+                continue
     start = max(1, int(seg.get("start_cut") or 1))
     end = max(start, int(seg.get("end_cut") or start))
     selected: list[dict[str, Any]] = []
@@ -558,7 +725,7 @@ def _segment_cuts(script: dict[str, Any], seg: dict[str, Any]) -> list[dict[str,
             num = int(cut.get("cut_number") or 0)
         except (TypeError, ValueError):
             continue
-        if start <= num <= end:
+        if (cut_numbers and num in cut_numbers) or (not cut_numbers and start <= num <= end):
             selected.append(cut)
     return selected
 
@@ -572,16 +739,28 @@ def _cut_timeline(script: dict[str, Any]) -> dict[int, tuple[float, float]]:
             num = int(cut.get("cut_number") or idx)
         except (TypeError, ValueError):
             num = idx
-        dur = float(CUT_VIDEO_DURATION)
+        dur = _cut_duration(cut)
         timeline[num] = (elapsed, dur)
         elapsed += dur
     return timeline
 
 
+def _cut_video_path(output_dir: Path, cut_num: int) -> Path | None:
+    videos_dir = output_dir.parent / "videos"
+    for name in (f"cut_{cut_num:03d}.mp4", f"cut_{cut_num}.mp4"):
+        candidate = videos_dir / name
+        if candidate.exists() and candidate.stat().st_size > 0:
+            return candidate
+    return None
+
+
 def _short_title(script: dict[str, Any], seg: dict[str, Any], labels: dict[str, str]) -> str:
+    language = _detect_language(script)
     for key in ("title", "shorts_title", "headline"):
         value = _compact_text(seg.get(key))
         if value:
+            if _is_foreign_shorts_text(value, language):
+                continue
             return _wrap_text(value, width=15, max_lines=2)
     return "\n".join(_hook_title_lines(script, seg))
 
@@ -591,17 +770,17 @@ def _short_caption(script: dict[str, Any], seg: dict[str, Any]) -> str:
     for key in ("caption", "shorts_caption", "subtitle"):
         value = _compact_text(seg.get(key))
         if value:
-            return _wrap_text(_clean_sentence(value), width=19, max_lines=1)
+            return _wrap_text(_clean_sentence(value), width=18, max_lines=3)
 
     for cut in _segment_cuts(script, seg):
         narration = _clean_sentence(cut.get("narration"))
         if narration:
-            return _wrap_text(narration, width=19, max_lines=1)
+            return _wrap_text(narration, width=18, max_lines=3)
     return ""
 
 
 def _source_title(script: dict[str, Any], source_title: str | None = None) -> str:
-    title = _compact_text(source_title) or _compact_text(script.get("title"))
+    title = _strip_title_noise(_compact_text(source_title) or _compact_text(script.get("title")))
     if not title:
         return ""
     return _wrap_text(title, width=18, max_lines=2)
@@ -618,6 +797,8 @@ def _channel_name(value: str | None, labels: dict[str, str]) -> str:
         text = text.split("-", 1)[1].strip()
     if ":" in text:
         text = text.split(":", 1)[0].strip()
+    if labels.get("fallback_channel") == "闇解き日本史" and _is_foreign_shorts_text(text, "ja"):
+        text = ""
     if len(text) > 18:
         text = ""
     return text or labels["fallback_channel"]
@@ -655,6 +836,12 @@ def _prepare_channel_avatar(url: str | None, shorts_dir: Path) -> Path | None:
         return None
 
 
+def _channel_brand_layout(channel: str, *, has_avatar: bool) -> tuple[int, int]:
+    if not has_avatar:
+        return 0, 0
+    return SHORTS_CHANNEL_AVATAR_X, SHORTS_CHANNEL_TEXT_X
+
+
 async def render_shorts_from_final(
     final_video: Path,
     output_dir: Path,
@@ -665,8 +852,8 @@ async def render_shorts_from_final(
     channel_avatar_url: str | None = None,
     source_title: str | None = None,
     bgm_path: str | Path | None = None,
-    bgm_volume: float = 0.24,
-    bgm_ducking_strength: str = "normal",
+    bgm_volume: float = 0.42,
+    bgm_ducking_strength: str = "low",
 ) -> list[dict[str, Any]]:
     """Render composed 9:16 shorts from the final rendered video."""
     if not final_video.exists():
@@ -687,6 +874,7 @@ async def render_shorts_from_final(
     source = _source_title(script, source_title)
     channel = _channel_name(channel_name, labels)
     timeline = _cut_timeline(script)
+    channel_avatar_url = channel_avatar_url or _default_channel_avatar_url(channel, language)
     avatar_path = _prepare_channel_avatar(channel_avatar_url, shorts_dir)
     bgm_file = Path(bgm_path) if bgm_path else None
     if bgm_file and not bgm_file.exists():
@@ -696,15 +884,39 @@ async def render_shorts_from_final(
     for idx, seg in enumerate(segments[:1], start=1):
         start_cut = max(1, int(seg["start_cut"]))
         end_cut = max(start_cut, int(seg["end_cut"]))
+        cut_numbers_raw = seg.get("cut_numbers")
+        cut_numbers: list[int] = []
+        if isinstance(cut_numbers_raw, list):
+            for value in cut_numbers_raw:
+                try:
+                    num = int(value)
+                except (TypeError, ValueError):
+                    continue
+                if num > 0 and num not in cut_numbers:
+                    cut_numbers.append(num)
+        cut_numbers = sorted(cut_numbers)[:SHORTS_CUT_COUNT]
         if timeline:
-            start_sec = timeline.get(start_cut, ((start_cut - 1) * float(CUT_VIDEO_DURATION), 0.0))[0]
-            end_cut = min(end_cut, start_cut + SHORTS_CUT_COUNT - 1)
-            duration = (end_cut - start_cut + 1) * float(CUT_VIDEO_DURATION)
+            if cut_numbers:
+                start_sec = 0.0
+                duration = sum(timeline.get(num, (0.0, float(CUT_VIDEO_DURATION)))[1] for num in cut_numbers)
+                start_cut = cut_numbers[0]
+                end_cut = cut_numbers[-1]
+            else:
+                start_sec = timeline.get(start_cut, ((start_cut - 1) * float(CUT_VIDEO_DURATION), 0.0))[0]
+                end_cut = min(end_cut, start_cut + SHORTS_CUT_COUNT - 1)
+                duration = (end_cut - start_cut + 1) * float(CUT_VIDEO_DURATION)
         else:
-            start_sec = (start_cut - 1) * float(CUT_VIDEO_DURATION)
-            end_cut = min(end_cut, start_cut + SHORTS_CUT_COUNT - 1)
-            duration = (end_cut - start_cut + 1) * float(CUT_VIDEO_DURATION)
+            if cut_numbers:
+                start_sec = 0.0
+                start_cut = cut_numbers[0]
+                end_cut = cut_numbers[-1]
+                duration = len(cut_numbers) * float(CUT_VIDEO_DURATION)
+            else:
+                start_sec = (start_cut - 1) * float(CUT_VIDEO_DURATION)
+                end_cut = min(end_cut, start_cut + SHORTS_CUT_COUNT - 1)
+                duration = (end_cut - start_cut + 1) * float(CUT_VIDEO_DURATION)
         out_path = shorts_dir / f"short_{idx}.mp4"
+        render_duration = duration / SHORTS_PLAYBACK_SPEED
 
         title_path = text_dir / f"short_{idx}_title.txt"
         channel_path = text_dir / f"short_{idx}_channel.txt"
@@ -712,73 +924,166 @@ async def render_shorts_from_final(
         title1_path = text_dir / f"short_{idx}_title_1.txt"
         title2_path = text_dir / f"short_{idx}_title_2.txt"
         title3_path = text_dir / f"short_{idx}_title_3.txt"
+        caption_path = text_dir / f"short_{idx}_caption.txt"
+        caption1_path = text_dir / f"short_{idx}_caption_1.txt"
+        caption2_path = text_dir / f"short_{idx}_caption_2.txt"
         title_text = _short_title(script, seg, labels)
         title_lines = title_text.splitlines() or [title_text]
         title1 = title_lines[0] if title_lines else labels["default_title_1"]
-        title2 = title_lines[1] if len(title_lines) > 1 else labels["default_title_2"]
+        title2 = title_lines[1] if len(title_lines) > 1 else (labels["default_title_2"] if language == "en" else "")
         title3 = title_lines[2] if len(title_lines) > 2 else ""
-        title1 = _wrap_text(title1, width=18, max_lines=1) or labels["default_title_1"]
-        title2_lines = _wrap_text(title2, width=18, max_lines=2).splitlines()
+        title1 = _wrap_text(title1, width=16, max_lines=1) or labels["default_title_1"]
+        title2_lines = _wrap_text(title2, width=16, max_lines=2).splitlines()
         if title2_lines:
             title2 = title2_lines[0]
             if not title3 and len(title2_lines) > 1:
                 title3 = title2_lines[1]
         else:
-            title2 = labels["default_title_2"]
-        title3 = _wrap_text(title3, width=18, max_lines=1)
+            title2 = ""
+        title3 = _wrap_text(title3, width=16, max_lines=1)
+        caption_text = _wrap_text(_short_caption(script, seg), width=SHORTS_CAPTION_WRAP_WIDTH, max_lines=2)
+        caption_lines = caption_text.splitlines()[:2]
+        while len(caption_lines) < 2:
+            caption_lines.append("")
         title_path.write_text(title_text, encoding="utf-8")
         title1_path.write_text(title1, encoding="utf-8")
         title2_path.write_text(title2, encoding="utf-8")
         title3_path.write_text(title3, encoding="utf-8")
+        caption_path.write_text(caption_text, encoding="utf-8")
+        caption1_path.write_text(caption_lines[0], encoding="utf-8")
+        caption2_path.write_text(caption_lines[1], encoding="utf-8")
         channel_path.write_text(channel, encoding="utf-8")
         source_path.write_text(source, encoding="utf-8")
 
         title1_file = _ffmpeg_filter_path(title1_path)
         title2_file = _ffmpeg_filter_path(title2_path)
         title3_file = _ffmpeg_filter_path(title3_path)
+        caption1_file = _ffmpeg_filter_path(caption1_path)
+        caption2_file = _ffmpeg_filter_path(caption2_path)
         channel_file = _ffmpeg_filter_path(channel_path)
+        source_prefix = ""
+        video_source = "[0:v]"
+        audio_source = "[0:a]"
+        input_video_paths: list[Path] = [final_video]
+        use_cut_files = False
+        if cut_numbers:
+            cut_video_paths = [_cut_video_path(output_dir, num) for num in cut_numbers]
+            if all(path is not None for path in cut_video_paths):
+                use_cut_files = True
+                start_sec = 0.0
+                concat_source = shorts_dir / f"_cut_concat_short_{idx}.mp4"
+                concat_list = shorts_dir / f"_cut_concat_short_{idx}.txt"
+                concat_list.write_text(
+                    "\n".join(
+                        f"file '{str(path).replace(chr(39), chr(39) + '\\\\' + chr(39) + chr(39))}'"
+                        for path in cut_video_paths
+                        if path is not None
+                    ),
+                    encoding="utf-8",
+                )
+                concat_cmd = [
+                    ffmpeg, "-y",
+                    "-f", "concat",
+                    "-safe", "0",
+                    "-i", str(concat_list),
+                    "-c", "copy",
+                    str(concat_source),
+                ]
+                rc, _, stderr = await run_subprocess(
+                    concat_cmd,
+                    timeout=180.0,
+                    capture_stdout=False,
+                    capture_stderr=True,
+                )
+                if rc != 0:
+                    err = (stderr or b"").decode(errors="replace")[-500:]
+                    raise RuntimeError(f"shorts cut concat failed for short_{idx}: {err}")
+                input_video_paths = [concat_source]
+                source_prefix = (
+                    f"[0:v]setpts=PTS/{SHORTS_PLAYBACK_SPEED:.3f}[fastv];"
+                    f"[0:a]atempo={SHORTS_PLAYBACK_SPEED:.3f}[fasta];"
+                )
+            else:
+                trim_parts: list[str] = []
+                v_labels: list[str] = []
+                a_labels: list[str] = []
+                for clip_idx, cut_num in enumerate(cut_numbers):
+                    cut_start, cut_dur = timeline.get(
+                        cut_num,
+                        ((cut_num - 1) * float(CUT_VIDEO_DURATION), float(CUT_VIDEO_DURATION)),
+                    )
+                    v_label = f"hv{clip_idx}"
+                    a_label = f"ha{clip_idx}"
+                    trim_parts.append(
+                        f"[0:v]trim=start={cut_start:.3f}:duration={cut_dur:.3f},setpts=PTS-STARTPTS[{v_label}];"
+                        f"[0:a]atrim=start={cut_start:.3f}:duration={cut_dur:.3f},asetpts=PTS-STARTPTS[{a_label}];"
+                    )
+                    v_labels.append(f"[{v_label}]")
+                    a_labels.append(f"[{a_label}]")
+                concat_inputs = "".join(v + a for v, a in zip(v_labels, a_labels))
+                source_prefix = (
+                    "".join(trim_parts) +
+                    f"{concat_inputs}concat=n={len(cut_numbers)}:v=1:a=1[srcv][srca];"
+                    f"[srcv]setpts=PTS/{SHORTS_PLAYBACK_SPEED:.3f}[fastv];"
+                    f"[srca]atempo={SHORTS_PLAYBACK_SPEED:.3f}[fasta];"
+                )
+            video_source = "[fastv]"
+            audio_source = "[fasta]"
+        else:
+            source_prefix = (
+                f"[0:v]setpts=PTS/{SHORTS_PLAYBACK_SPEED:.3f}[fastv];"
+                f"[0:a]atempo={SHORTS_PLAYBACK_SPEED:.3f}[fasta];"
+            )
+            video_source = "[fastv]"
+            audio_source = "[fasta]"
+
         filter_base = (
-            f"color=c=black:s={SHORTS_WIDTH}x{SHORTS_HEIGHT}:d={duration:.3f}[base];"
-            f"[0:v]scale={SHORTS_WIDTH}:{SHORTS_CLIP_HEIGHT}:force_original_aspect_ratio=increase,"
+            source_prefix +
+            f"color=c=black:s={SHORTS_WIDTH}x{SHORTS_HEIGHT}:d={render_duration:.3f}[base];"
+            f"{video_source}scale={SHORTS_WIDTH}:{SHORTS_CLIP_HEIGHT}:force_original_aspect_ratio=increase,"
             f"crop={SHORTS_WIDTH}:{SHORTS_CLIP_HEIGHT},setsar=1,fps=30,format=yuv420p[clip];"
             f"[base]drawbox=x=0:y=0:w={SHORTS_WIDTH}:h={SHORTS_HEIGHT}:color=0x050505@1:t=fill[v0];"
             f"[v0]drawtext=fontfile='{font}':textfile='{title1_file}':"
-            "fontcolor=white:fontsize=72:borderw=6:bordercolor=black@0.9:"
-            "x=(w-text_w)/2:y=78[v1];"
+            f"fontcolor=white:fontsize={SHORTS_TEXT_SIZE}:borderw={SHORTS_TEXT_BORDER}:bordercolor=black@0.95:"
+            "x=(w-text_w)/2:y=64[v1];"
             f"[v1]drawtext=fontfile='{font}':textfile='{title2_file}':"
-            "fontcolor=0xf2ff1f:fontsize=72:borderw=6:bordercolor=black@0.9:"
-            "x=(w-text_w)/2:y=178[v2];"
+            f"fontcolor={SHORTS_TITLE_ACCENT_COLOR}:fontsize={SHORTS_TEXT_SIZE}:borderw={SHORTS_TEXT_BORDER}:bordercolor=black@0.95:"
+            "x=(w-text_w)/2:y=184[v2];"
             f"[v2]drawtext=fontfile='{font}':textfile='{title3_file}':"
-            "fontcolor=0xf2ff1f:fontsize=72:borderw=6:bordercolor=black@0.9:"
-            "x=(w-text_w)/2:y=278[v3];"
+            f"fontcolor=white:fontsize={SHORTS_TEXT_SIZE}:borderw={SHORTS_TEXT_BORDER}:bordercolor=black@0.95:"
+            "x=(w-text_w)/2:y=304[v3];"
             f"[v3]drawbox=x=0:y=423:w={SHORTS_WIDTH}:h={SHORTS_CLIP_HEIGHT}:color=0x050505@1:t=fill[v3b];"
-            f"[v3b][clip]overlay=(W-w)/2:423+({SHORTS_CLIP_HEIGHT}-h)/2:shortest=1[v4];"
+            f"[v3b][clip]overlay=(W-w)/2:423+({SHORTS_CLIP_HEIGHT}-h)/2:shortest=1[v4c];"
         )
         if avatar_path:
+            avatar_x, channel_text_x = _channel_brand_layout(channel, has_avatar=True)
+            avatar_input_index = len(input_video_paths)
             filter_complex = (
                 filter_base +
-                "[1:v]scale=86:86,format=rgba[avatar];"
-                "[v4][avatar]overlay=x=318:y=1672:format=auto[v5];"
+                f"[{avatar_input_index}:v]scale={SHORTS_CHANNEL_AVATAR_SIZE}:{SHORTS_CHANNEL_AVATAR_SIZE},format=rgba[avatar];"
+                f"[v4c][avatar]overlay=x={avatar_x}:y={SHORTS_CHANNEL_AVATAR_Y}:format=auto[v5];"
                 f"[v5]drawtext=fontfile='{font}':textfile='{channel_file}':"
-                "fontcolor=white:fontsize=75:borderw=4:bordercolor=black@0.85:"
-                "x=426:y=1680[v6];"
+                f"fontcolor=white:fontsize={SHORTS_CHANNEL_TEXT_SIZE}:borderw={SHORTS_CHANNEL_TEXT_BORDER}:bordercolor=black@0.95:"
+                f"x={channel_text_x}:y={SHORTS_CHANNEL_Y}[v6];"
                 "[v6]fps=30,format=yuv420p[vout]"
             )
-            next_input_index = 2
+            next_input_index = avatar_input_index + 1
         else:
             filter_complex = (
                 filter_base +
-                f"[v4]drawtext=fontfile='{font}':textfile='{channel_file}':"
-                "fontcolor=white:fontsize=75:borderw=4:bordercolor=black@0.85:"
-                "x=(w-text_w)/2:y=1680[v5];"
+                f"[v4c]drawtext=fontfile='{font}':textfile='{channel_file}':"
+                f"fontcolor=white:fontsize={SHORTS_CHANNEL_TEXT_SIZE}:borderw={SHORTS_CHANNEL_TEXT_BORDER}:bordercolor=black@0.95:"
+                f"x=(w-text_w)/2:y={SHORTS_CHANNEL_Y}[v5];"
                 "[v5]fps=30,format=yuv420p[vout]"
             )
-            next_input_index = 1
+            next_input_index = len(input_video_paths)
         cmd = [
             ffmpeg, "-y",
-            "-ss", f"{start_sec:.3f}",
-            "-i", str(final_video),
         ]
+        if use_cut_files:
+            cmd.extend(["-i", str(input_video_paths[0])])
+        else:
+            cmd.extend(["-ss", f"{start_sec:.3f}", "-i", str(final_video)])
         if avatar_path:
             cmd.extend(["-loop", "1", "-i", str(avatar_path)])
         if bgm_file:
@@ -789,7 +1094,7 @@ async def render_shorts_from_final(
             bgm_filter = (
                 f"[{bgm_index}:a]volume={vol:.4f},"
                 "aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[bgm];"
-                f"[0:a]volume={narration_gain:.4f},"
+                f"{audio_source}volume={narration_gain:.4f},"
                 "aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[main];"
             )
             if duck in {"low", "normal", "strong"}:
@@ -802,25 +1107,32 @@ async def render_shorts_from_final(
                     f"[bgm][main]sidechaincompress=threshold={threshold}:ratio={ratio}:"
                     "attack=80:release=650[ducked];"
                     "[main][ducked]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,"
-                    "alimiter=limit=0.95[aout]"
+                    "alimiter=limit=0.55:level=false[aout]"
                 )
             else:
                 bgm_filter += (
                     "[main][bgm]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,"
-                    "alimiter=limit=0.95[aout]"
+                    "alimiter=limit=0.55:level=false[aout]"
                 )
             filter_complex = f"{filter_complex};{bgm_filter}"
             cmd.extend(["-stream_loop", "-1", "-i", str(bgm_file)])
         audio_filter_args = []
+        audio_map = "[aout]" if bgm_file else "0:a?"
         if not bgm_file:
             narration_gain = max(0.5, min(4.0, float(NARRATION_VOLUME_GAIN)))
-            audio_filter_args = ["-af", f"volume={narration_gain:.4f},alimiter=limit=0.95"]
+            filter_complex = (
+                f"{filter_complex};"
+                f"{audio_source}volume={narration_gain:.4f},"
+                "aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,"
+                "alimiter=limit=0.55:level=false[aout]"
+            )
+            audio_map = "[aout]"
         cmd.extend([
-            "-t", f"{duration:.3f}",
+            "-t", f"{render_duration:.3f}",
             "-filter_complex", filter_complex,
             *audio_filter_args,
             "-map", "[vout]",
-            "-map", "[aout]" if bgm_file else "0:a?",
+            "-map", audio_map,
             "-c:v", "libx264", "-preset", SHORTS_VIDEO_PRESET, "-crf", SHORTS_VIDEO_CRF,
             "-pix_fmt", "yuv420p", "-profile:v", "high", "-level", "4.2",
             "-r", "30",
@@ -844,8 +1156,10 @@ async def render_shorts_from_final(
             "start_cut": start_cut,
             "end_cut": end_cut,
             "duration_seconds": duration,
+            "playback_speed": SHORTS_PLAYBACK_SPEED,
             "reason": seg.get("reason") or "",
-            "layout": "title-video-channel-source",
+            "cut_numbers": cut_numbers or None,
+            "layout": "ten-minute-history-channel-under-video",
             "title": title_text,
             "channel_name": channel,
             "source_title": source,

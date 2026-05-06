@@ -15,7 +15,6 @@ import {
   PlayCircle,
   Circle,
   Square,
-  Clock,
   DollarSign,
   Timer,
   AlertTriangle,
@@ -24,460 +23,52 @@ import {
   ListChecks,
   X,
   Trash2,
+  Film,
+  Power,
 } from "lucide-react";
-import { oneclickApi, modelsApi, voiceApi, assetUrl, type OneClickTask, type OneClickQueueItem, type ModelInfo, type OrphanProject } from "@/lib/api";
-import { formatDurationKo, formatKrw } from "@/lib/format";
-
-const STEPS = [
-  { key: "2", label: "스크립트", modelKey: "script" as const },
-  { key: "3", label: "음성", modelKey: "tts" as const },
-  { key: "4", label: "이미지", modelKey: "image" as const },
-  { key: "5", label: "영상", modelKey: "video" as const },
-  { key: "6", label: "렌더", modelKey: null },
-  { key: "7", label: "업로드", modelKey: null },
-] as const;
-
-function getStepState(
-  task: OneClickTask | null,
-  stepKey: string,
-): "done" | "active" | "pending" | "failed" {
-  if (!task) return "pending";
-
-  const stepStates = task.step_states || {};
-  const val = stepStates[stepKey];
-  if (val === "completed" || val === "done") return "done";
-  if (val === "running" || val === "in_progress") return "active";
-  if (val === "failed" || val === "cancelled") return "failed";
-
-  const stepOrder = ["2", "3", "4", "5", "6", "7"];
-  const highestCompletedIndex = stepOrder.reduce((acc, key, index) => {
-    const state = stepStates[key];
-    return state === "completed" || state === "done" ? index : acc;
-  }, -1);
-
-  if (
-    highestCompletedIndex >= 0 &&
-    stepOrder.indexOf(stepKey) <= highestCompletedIndex
-  ) {
-    return "done";
-  }
-
-  return "pending";
-}
-
-const STEP_ORDER = ["2", "3", "4", "5", "6", "7"] as const;
-
-function inferLiveStepKey(task: OneClickTask | null): string | null {
-  if (!task || task.status !== "running") return null;
-
-  const cuts = task.completed_cuts_by_step || {};
-  const text = [
-    task.current_step_name || "",
-    task.current_step_label || "",
-    task.current_step_progress_text || "",
-    task.sub_status || "",
-    ...(task.logs || []).slice(-6).map((log) => log?.msg || ""),
-  ].join(" ");
-
-  if (/youtube|upload/i.test(text)) return "7";
-  if (/final_with_subtitles|post[-_\s]?process|mux|render/i.test(text)) return "6";
-  if (/ffmpeg|\.mp4|video/i.test(text)) return "5";
-  if (/comfyui|ksampler|saveimage|dreamshaper|\.png|cut_\d+/i.test(text)) return "4";
-  if (/elevenlabs|tts|audio|\.mp3/i.test(text)) return "3";
-
-  const current = task.current_step ? String(task.current_step) : null;
-  if ((current === "2" || !current) && Number(cuts["5"] || 0) > 0) return "5";
-  if ((current === "2" || !current) && Number(cuts["4"] || 0) > 0) return "4";
-  if ((current === "2" || !current) && Number(cuts["3"] || 0) > 0) return "3";
-  return current;
-}
-
-function getEffectiveStepStates(task: OneClickTask | null): Record<string, string> {
-  const states = { ...(task?.step_states || {}) };
-  const activeKey = inferLiveStepKey(task);
-  if (!task || !activeKey) return states;
-
-  for (const key of STEP_ORDER) {
-    if (key === activeKey) break;
-    if (states[key] !== "failed" && states[key] !== "cancelled") {
-      states[key] = "completed";
-    }
-  }
-
-  if (states[activeKey] !== "completed") {
-    states[activeKey] = "running";
-  }
-
-  for (const key of STEP_ORDER.slice(STEP_ORDER.indexOf(activeKey as any) + 1)) {
-    if (states[key] === "running") states[key] = "pending";
-  }
-
-  return states;
-}
-
-function getEffectiveTask(task: OneClickTask | null): OneClickTask | null {
-  if (!task) return null;
-  const activeKey = inferLiveStepKey(task);
-  if (!activeKey) return task;
-  const text = `${task.current_step_progress_text || ""} ${task.sub_status || ""}`;
-  const cutMatch = text.match(/(?:cut|컷|ì»·)?\s*(\d+)\s*\/\s*(\d+)/i);
-  const stepLabel = STEPS.find((step) => step.key === activeKey)?.label || task.current_step_name;
-  const hasCutProgress = ["3", "4", "5"].includes(activeKey);
-  const completed = Number(task.completed_cuts_by_step?.[activeKey] || 0);
-  const parsedCut = cutMatch ? Number(cutMatch[1]) : 0;
-  const parsedTotal = cutMatch ? Number(cutMatch[2]) : 0;
-  return {
-    ...task,
-    current_step: Number(activeKey),
-    current_step_name: stepLabel || task.current_step_name,
-    current_step_label: stepLabel || task.current_step_label,
-    current_step_completed: hasCutProgress
-      ? Math.max(completed, parsedCut || 0)
-      : task.current_step_completed,
-    current_step_total: hasCutProgress
-      ? parsedTotal || task.total_cuts || task.current_step_total
-      : task.current_step_total,
-    step_states: getEffectiveStepStates(task),
-  };
-}
-
-interface LogEntry {
-  time: string;
-  msg: string;
-  level: "info" | "success" | "warn" | "error" | "muted";
-}
-
-type ServerLogEntry = NonNullable<OneClickTask["logs"]>[number];
-
-const timeValue = (value?: string | null) => {
-  if (!value) return 0;
-  const parsed = new Date(value).getTime();
-  return Number.isFinite(parsed) ? parsed : 0;
-};
-
-const isUploadRecoverableTask = (task: OneClickTask) => {
-  const states = task.step_states || {};
-  return states["6"] === "completed" && states["7"] !== "completed";
-};
-
-const DEFAULT_QUEUE_CHANNELS = [1, 2, 3, 4] as const;
-const DEFAULT_QUEUE_CHANNEL_TIMES: Record<string, string | null> = Object.fromEntries(
-  DEFAULT_QUEUE_CHANNELS.map((ch) => [String(ch), null]),
-);
-
-function normalizeQueueChannelTimes(times?: Record<string, string | null | undefined> | null) {
-  const out: Record<string, string | null> = { ...DEFAULT_QUEUE_CHANNEL_TIMES };
-  for (const [key, value] of Object.entries(times || {})) {
-    const ch = Number(key);
-    if (Number.isFinite(ch) && ch > 0) out[String(ch)] = value || null;
-  }
-  return out;
-}
-
-function queueChannelTimeLabel(value: string | null | undefined) {
-  return value || "수동";
-}
-
-function collectQueueChannels(
-  channelTimes: Record<string, string | null | undefined>,
-  queueItems: OneClickQueueItem[],
-  tasks: OneClickTask[],
-) {
-  const channels = new Set<number>();
-  for (const ch of DEFAULT_QUEUE_CHANNELS) channels.add(ch);
-  for (const key of Object.keys(channelTimes || {})) {
-    const ch = Number(key);
-    if (Number.isFinite(ch) && ch > 0) channels.add(ch);
-  }
-  for (const item of queueItems || []) {
-    const ch = Number(item.channel || 0);
-    if (Number.isFinite(ch) && ch > 0) channels.add(ch);
-  }
-  for (const task of tasks || []) {
-    const ch = Number(task.channel || 0);
-    if (Number.isFinite(ch) && ch > 0) channels.add(ch);
-  }
-  return Array.from(channels).sort((a, b) => a - b);
-}
-
-function serverLogToEntry(log: ServerLogEntry): LogEntry {
-  return {
-    time: log.ts || "",
-    msg: log.msg,
-    level:
-      log.level === "error"
-        ? "error"
-        : log.level === "warn"
-          ? "warn"
-          : "info",
-  };
-}
-
-function taskLogsToEntries(task: OneClickTask | null): LogEntry[] {
-  return (task?.logs || []).map(serverLogToEntry);
-}
-
-function formatQueueWaitingMeta(
-  item: OneClickQueueItem,
-  channelTimes: Record<string, string | null | undefined>,
-) {
-  const source = String(item.queued_source || "manual").toLowerCase();
-  const sourceLabel =
-    source === "import"
-      ? "엑셀 등록"
-      : source === "requeue"
-        ? "실패 재시도"
-        : source === "orphan"
-          ? "미완성 복구"
-          : source === "schedule" || source === "system"
-            ? "자동 등록"
-            : "수동 등록";
-  const sourceClass =
-    source === "requeue" || source === "orphan"
-      ? "border-amber-400/30 bg-amber-400/10 text-amber-200"
-      : source === "import"
-        ? "border-sky-400/30 bg-sky-400/10 text-sky-200"
-        : "border-gray-500/30 bg-gray-500/10 text-gray-300";
-  const ch = String(item.channel || 1);
-  const scheduledTime = channelTimes[ch] || null;
-  const scheduleLabel = scheduledTime
-    ? `자동 실행 · 매일 ${scheduledTime}`
-    : "수동 실행 대기";
-  const queuedAt = item.queued_at
-    ? new Date(item.queued_at).toLocaleString("ko-KR", {
-        month: "2-digit",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-      })
-    : "등록 시각 미상";
-  return {
-    sourceLabel,
-    sourceClass,
-    scheduleLabel,
-    queuedAt,
-    note: item.queued_note || "",
-  };
-}
-
-function formatEpisodeBadge(item: OneClickQueueItem) {
-  const ep = item.episode_number;
-  return typeof ep === "number" && ep > 0 ? `EP.${String(ep).padStart(2, "0")}` : "EP.--";
-}
-
-function episodePrefix(ep?: number | null) {
-  return typeof ep === "number" && ep > 0 ? `EP.${String(ep).padStart(2, "0")}` : "";
-}
-
-function withEpisodeTitle(title: string | null | undefined, ep?: number | null) {
-  const text = String(title || "").trim();
-  const prefix = episodePrefix(ep);
-  if (!prefix) return text;
-  if (/^EP\.\s*\d+/i.test(text)) return text;
-  return `${prefix} ${text}`;
-}
-
-function queueTitle(item: OneClickQueueItem) {
-  return withEpisodeTitle(item.topic, item.episode_number);
-}
-
-function queueEpisodeSortValue(item: OneClickQueueItem) {
-  const ep = Number(item.episode_number);
-  return Number.isFinite(ep) && ep > 0 ? ep : Number.POSITIVE_INFINITY;
-}
-
-function compareQueueByEpisodeWithinChannel(
-  a: { item: OneClickQueueItem; index: number },
-  b: { item: OneClickQueueItem; index: number },
-) {
-  const episodeDiff = queueEpisodeSortValue(a.item) - queueEpisodeSortValue(b.item);
-  if (episodeDiff !== 0) return episodeDiff;
-  return a.index - b.index;
-}
-
-function scheduledDelayMinutes(value: string | null | undefined, nowMinutes: number) {
-  if (!value) return Number.POSITIVE_INFINITY;
-  const [hh, mm] = value.split(":").map((part) => Number(part));
-  if (!Number.isFinite(hh) || !Number.isFinite(mm)) return Number.POSITIVE_INFINITY;
-  const scheduled = hh * 60 + mm;
-  return (scheduled - nowMinutes + 1440) % 1440;
-}
-
-function channelBadgeClass(channel?: number | null, active = true) {
-  if (!active) return "border-border/60 bg-bg-primary/40 text-gray-600";
-  switch (Number(channel || 1)) {
-    case 1:
-      return "border-emerald-300/60 bg-emerald-400/20 text-emerald-100 shadow-[0_0_0_1px_rgba(52,211,153,0.18)]";
-    case 2:
-      return "border-sky-300/60 bg-sky-400/20 text-sky-100 shadow-[0_0_0_1px_rgba(56,189,248,0.18)]";
-    case 3:
-      return "border-amber-300/70 bg-amber-400/20 text-amber-100 shadow-[0_0_0_1px_rgba(251,191,36,0.18)]";
-    case 4:
-      return "border-fuchsia-300/60 bg-fuchsia-400/20 text-fuchsia-100 shadow-[0_0_0_1px_rgba(217,70,239,0.18)]";
-    default:
-      return "border-blue-300/60 bg-blue-400/20 text-blue-100";
-  }
-}
-
-function isLiveNextQueueItem(item: OneClickQueueItem) {
-  const note = String(item.queued_note || "");
-  return (
-    String(item.queued_source || "").toLowerCase() === "manual" &&
-    (note.includes("\uc2e4\uc2dc\uac04 \ud604\ud669") || note.includes("\uc218\ub3d9 \uc2e4\ud589"))
-  );
-}
-
-function taskTitle(item: OneClickTask) {
-  return withEpisodeTitle(item.topic || item.title, item.episode_number);
-}
-
-function taskProgressHeartbeat(task: OneClickTask | null | undefined) {
-  if (!task) return "";
-  return [
-    task.status || "",
-    task.current_step ?? "",
-    task.current_step_name || "",
-    task.current_step_completed ?? "",
-    task.current_step_total ?? "",
-    task.current_step_cut_progress_pct ?? "",
-    task.progress_pct ?? "",
-    task.sub_status || "",
-    task.logs?.length || 0,
-  ].join("|");
-}
-
-function queueItemKey(item: OneClickQueueItem, index: number) {
-  return item.id || `${index}:${item.channel || 1}:${item.topic}`;
-}
-
-/** v1.1.53: 썸네일 패널 — 실시간 3단계 표시
- *  waiting     → "대본 생성 완료 후 자동 생성됩니다"
- *  generating  → 스피너 + "썸네일 생성 중..."
- *  done        → 이미지 즉시 표시
- *  failed      → 실패 메시지 + 재생성 버튼
- */
-function ThumbnailPanel({ task }: { task: OneClickTask }) {
-  const pid = task.project_id;
-  const [imageModels, setImageModels] = useState<ModelInfo[]>([]);
-  const [selectedModel, setSelectedModel] = useState("");
-  const [regenerating, setRegenerating] = useState(false);
-  const [thumbKey, setThumbKey] = useState(0); // 캐시 무효화용
-
-  const thumbStatus = task.thumbnail_status || "waiting";
-  const thumbUrl = pid ? `${assetUrl(pid, "output/thumbnail.png")}?v=${thumbKey}` : "";
-
-  // done 상태가 되면 자동으로 thumbKey 증가 → 이미지 리로드
-  const prevStatusRef = useRef(thumbStatus);
-  useEffect(() => {
-    if (prevStatusRef.current !== "done" && thumbStatus === "done") {
-      setThumbKey((k) => k + 1);
-    }
-    prevStatusRef.current = thumbStatus;
-  }, [thumbStatus]);
-
-  useEffect(() => {
-    modelsApi.listImage().then((r) => setImageModels(r.models || []));
-  }, []);
-
-  // v1.1.55: 썸네일 모델 우선, 없으면 이미지 모델 폴백
-  useEffect(() => {
-    setSelectedModel(task.models?.thumbnail || task.models?.image || "");
-  }, [task.models?.thumbnail, task.models?.image]);
-
-  const [regenError, setRegenError] = useState<string | null>(null);
-
-  const handleRegenerate = async () => {
-    setRegenerating(true);
-    setRegenError(null);
-    try {
-      await oneclickApi.regenerateThumbnail(task.task_id, selectedModel || undefined);
-      setThumbKey((k) => k + 1);
-    } catch (e: any) {
-      const detail = e?.message || String(e) || "알 수 없는 오류";
-      console.error("썸네일 재생성 실패:", detail);
-      setRegenError(detail);
-    } finally {
-      setRegenerating(false);
-    }
-  };
-
-  return (
-    <div className="bg-bg-secondary border border-border rounded-xl p-5 flex-shrink-0">
-      <h3 className="text-base font-bold text-gray-100 mb-4">썸네일</h3>
-
-      {/* 썸네일 영역: 상태에 따라 표시 — regenerating 이면 무조건 스피너 */}
-      <div className="relative w-full aspect-video bg-black/30 rounded-lg overflow-hidden mb-4">
-        {regenerating ? (
-          <div className="flex flex-col items-center justify-center h-full gap-3">
-            <Loader2 size={28} className="animate-spin text-accent-primary" />
-            <span className="text-sm text-gray-400">썸네일 재생성 중...</span>
-          </div>
-        ) : regenError ? (
-          <div className="flex flex-col items-center justify-center h-full gap-2 px-4">
-            <span className="text-sm text-red-400 font-semibold">썸네일 재생성 실패</span>
-            <span className="text-sm text-red-300/70 text-center leading-relaxed max-h-20 overflow-y-auto">
-              {regenError}
-            </span>
-          </div>
-        ) : thumbStatus === "done" || prevStatusRef.current === "done" ? (
-          <img
-            key={thumbKey}
-            src={thumbUrl}
-            alt="thumbnail"
-            className="w-full h-full object-cover"
-            onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
-          />
-        ) : thumbStatus === "generating" ? (
-          <div className="flex flex-col items-center justify-center h-full gap-3">
-            <Loader2 size={28} className="animate-spin text-accent-primary" />
-            <span className="text-sm text-gray-400">썸네일 생성 중...</span>
-          </div>
-        ) : thumbStatus === "failed" ? (
-          <div className="flex flex-col items-center justify-center h-full gap-2 px-4">
-            <span className="text-sm text-red-400 font-semibold">썸네일 생성 실패</span>
-            {task.thumbnail_error && (
-              <span className="text-sm text-red-300/70 text-center leading-relaxed max-h-20 overflow-y-auto">
-                {task.thumbnail_error}
-              </span>
-            )}
-            <button
-              onClick={handleRegenerate}
-              className="text-sm text-accent-primary hover:underline mt-1"
-            >
-              다시 시도
-            </button>
-          </div>
-        ) : (
-          <div className="flex flex-col items-center justify-center h-full gap-3">
-            <Clock size={20} className="text-gray-600" />
-            <span className="text-sm text-gray-600">대본 생성 완료 후 자동 생성</span>
-          </div>
-        )}
-      </div>
-
-      {/* 모델 선택 + 재생성 버튼 */}
-      <div className="flex items-center gap-2">
-        <select
-          value={selectedModel}
-          onChange={(e) => setSelectedModel(e.target.value)}
-          className="flex-1 text-sm bg-bg-primary text-gray-300 border border-border rounded-lg px-3 py-2 outline-none"
-        >
-          {imageModels.map((m) => (
-            <option key={m.id} value={m.id}>{m.name || m.id}</option>
-          ))}
-        </select>
-        <button
-          onClick={handleRegenerate}
-          disabled={regenerating || !pid || thumbStatus === "generating"}
-          className="flex items-center gap-1.5 px-4 py-2 text-sm font-semibold rounded-lg bg-accent-primary/15 text-accent-primary border border-accent-primary/30 hover:bg-accent-primary/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-        >
-          <RefreshCw size={13} className={regenerating ? "animate-spin" : ""} />
-          {regenerating ? "생성 중..." : "재생성"}
-        </button>
-      </div>
-    </div>
-  );
-}
+import { oneclickApi, modelsApi, voiceApi, assetUrl, type OneClickTask, type OneClickQueueItem, type OrphanProject } from "@/lib/api";
+import { formatKrw } from "@/lib/format";
+import { APP_VERSION } from "@/lib/version";
+import {
+  compactSeconds,
+  isConsoleProgressLog,
+  isUploadRecoverableTask,
+  type LogEntry,
+  serverLogToEntry,
+  stepApiName,
+  stepModelName,
+  stepTargetText,
+  taskLogsToEntries,
+  taskProgressHeartbeat,
+  taskTitle,
+  timeValue,
+} from "./displayHelpers";
+import {
+  channelBadgeClass,
+  collectQueueChannels,
+  compareQueueByEpisodeWithinChannel,
+  DEFAULT_QUEUE_CHANNEL_TIMES,
+  episodePrefix,
+  formatEpisodeBadge,
+  formatQueueWaitingMeta,
+  isLiveNextQueueItem,
+  normalizeQueueChannelTimes,
+  queueChannelTimeLabel,
+  queueItemKey,
+  queueTitle,
+  scheduledDelayMinutes,
+  withEpisodeTitle,
+} from "./queueHelpers";
+import {
+  getEffectiveStepStates,
+  getEffectiveTask,
+  getStepState,
+  getTaskFailureStepName,
+  inferLiveStepKey,
+  STEP_ORDER,
+  STEPS,
+} from "./taskHelpers";
+import { ThumbnailPanel } from "./ThumbnailPanel";
 
 
 /** 단계별 작업 활동 패널 — 각 단계가 살아있는지 / 얼마나 진행됐는지 / 멈춤인지 시각화 */
@@ -688,9 +279,9 @@ function ActivityPanel({
             if (hasCutProgress && cuts > 0 && est > 0) {
               const perCut = est / totalCuts;
               const remainSec = Math.max(0, Math.round(perCut * (totalCuts - cuts)));
-              etaText = `남은 ~${formatDurationKo(remainSec)}`;
+              etaText = `남은 ~${compactSeconds(remainSec)}`;
             } else if (est > 0) {
-              etaText = `예상 ~${formatDurationKo(est)}`;
+              etaText = `예상 ~${compactSeconds(est)}`;
             }
           }
 
@@ -878,9 +469,15 @@ export default function LivePage() {
   const [recoveryBulkQueuing, setRecoveryBulkQueuing] = useState(false);
   const [movingQueueId, setMovingQueueId] = useState<string | null>(null);
   const [queuePanelOpen, setQueuePanelOpen] = useState(false);
+  const [queueEditChannel, setQueueEditChannel] = useState<number | null>(null);
   const [queueChannelFilter, setQueueChannelFilter] = useState<number | null>(null);
   const [selectedQueueIds, setSelectedQueueIds] = useState<Set<string>>(new Set());
   const [queueBatchRunning, setQueueBatchRunning] = useState(false);
+  const [autoProductionEnabled, setAutoProductionEnabled] = useState(true);
+  const [autoProductionRemaining, setAutoProductionRemaining] = useState(0);
+  const [autoProductionSaving, setAutoProductionSaving] = useState(false);
+  const [safetyStatus, setSafetyStatus] = useState<"ok" | "alert" | string>("ok");
+  const [safetyMessage, setSafetyMessage] = useState<string>("감시 정상");
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [pollFails, setPollFails] = useState(0);
@@ -897,6 +494,7 @@ export default function LivePage() {
   // v2.1.2: 서버 측 로그 동기화 카운터
   const serverLogCountRef = useRef<number>(0);
   const selectedTaskIdRef = useRef<string | null>(null);
+  const uploadVerifiedReloadRef = useRef<boolean>(false);
 
   useEffect(() => {
     if (!recoveryOpen) return;
@@ -914,6 +512,65 @@ export default function LivePage() {
       minute: "2-digit",
       second: "2-digit",
     });
+
+  const formatAutoProductionCountdown = (seconds: number) => {
+    return compactSeconds(Math.max(0, Math.floor(seconds || 0)));
+  };
+
+  const syncAutoProductionState = useCallback(async () => {
+    const state = await oneclickApi.getAutoProduction();
+    setAutoProductionEnabled(Boolean(state.enabled));
+    setAutoProductionRemaining(Math.max(0, Number(state.remaining_seconds || 0)));
+  }, []);
+
+  const syncSafetyState = useCallback(async () => {
+    const state = await oneclickApi.getSafety();
+    setSafetyStatus(state.status || "ok");
+    const last = state.last_event;
+    if (last?.message) {
+      setSafetyMessage(last.message);
+    } else {
+      const running = state.running?.[0];
+      const stale = Number((running?.safety as any)?.stale_seconds || 0);
+      setSafetyMessage(stale > 0 ? `감시 중 · 정체 ${compactSeconds(stale)}` : "감시 정상");
+    }
+  }, []);
+
+  useEffect(() => {
+    void syncAutoProductionState().catch(() => {});
+    void syncSafetyState().catch(() => {});
+  }, [syncAutoProductionState, syncSafetyState]);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      setAutoProductionRemaining((prev) => {
+        const next = Math.max(0, prev - 1);
+        if (next === 0) setAutoProductionEnabled(true);
+        return next;
+      });
+    }, 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const handleToggleAutoProduction = async () => {
+    if (autoProductionSaving) return;
+    setAutoProductionSaving(true);
+    try {
+      const state = await oneclickApi.setAutoProduction(!autoProductionEnabled);
+      setAutoProductionEnabled(Boolean(state.enabled));
+      setAutoProductionRemaining(Math.max(0, Number(state.remaining_seconds || 0)));
+      addLog(
+        state.enabled
+          ? "[시스템] 자동제작 켜기"
+          : "[시스템] 자동제작 끄기 — 30분 후 자동으로 켜집니다",
+        state.enabled ? "success" : "warn",
+      );
+    } catch (e: any) {
+      addLog(`[오류] 자동제작 설정 실패: ${e?.message || e}`, "error");
+    } finally {
+      setAutoProductionSaving(false);
+    }
+  };
 
   const addLog = useCallback(
     (msg: string, level: LogEntry["level"] = "info") => {
@@ -953,6 +610,7 @@ export default function LivePage() {
 
       const newEntries = serverLogs
         .slice(serverLogCountRef.current)
+        .filter((log) => !isConsoleProgressLog(log))
         .map(serverLogToEntry);
       serverLogCountRef.current = serverLogs.length;
       setLogs((prev) => [...prev, ...newEntries].slice(-200));
@@ -963,6 +621,42 @@ export default function LivePage() {
   const markServerSync = useCallback(() => {
     setLastServerSyncAt(Date.now());
   }, []);
+
+  const maybeReloadAfterVerifiedUpload = useCallback((nextTask: OneClickTask | null) => {
+    if (!nextTask || uploadVerifiedReloadRef.current) return;
+    if (nextTask.status !== "completed") return;
+    const step7Done = (nextTask.step_states || {})["7"] === "completed";
+
+    const youtubeUrl = String((nextTask as any).youtube_url || "").trim();
+    const uploadVerified = Boolean(youtubeUrl) || (nextTask.logs || []).some((log) =>
+      /유튜브 업로드 완료|유튜브 수동 업로드 완료|YouTube Studio verified|YouTube Shorts uploaded|YouTube Shorts uploaded count|업로드 확인 완료/i.test(
+        String(log?.msg || ""),
+      ),
+    );
+    if (!step7Done && !uploadVerified) return;
+
+    const reloadKey = `oneclick-upload-verified-reload:${nextTask.task_id}:${nextTask.finished_at || nextTask.project_id}`;
+    if (typeof window !== "undefined" && window.sessionStorage.getItem(reloadKey)) return;
+    uploadVerifiedReloadRef.current = true;
+    if (typeof window !== "undefined") {
+      window.sessionStorage.setItem(reloadKey, "1");
+      window.setTimeout(() => window.location.reload(), 1200);
+    }
+  }, []);
+
+  const maybeReloadOnAutoTaskSwitch = useCallback(
+    (runningTaskId: string | undefined | null) => {
+      const currentTaskId = task?.task_id;
+      if (!currentTaskId || !runningTaskId || runningTaskId === currentTaskId) return;
+      if (typeof window === "undefined") return;
+
+      const reloadKey = `oneclick-auto-task-switch:${currentTaskId}->${runningTaskId}`;
+      if (window.sessionStorage.getItem(reloadKey)) return;
+      window.sessionStorage.setItem(reloadKey, "1");
+      window.setTimeout(() => window.location.reload(), 250);
+    },
+    [task?.task_id],
+  );
 
   useEffect(() => {
     setSelectedQueueIds((prev) => {
@@ -1010,82 +704,24 @@ export default function LivePage() {
     [addLog, markServerSync, syncLogsFromTask, task?.task_id],
   );
 
-  // ─── 초기 로드: 페이지 열 때 (또는 다시 돌아올 때) 활성 태스크 자동 복구 ───
-  useEffect(() => {
-    let cancelled = false;
-    oneclickApi
-      .getQueue()
-      .then((queueState) => {
-        if (!cancelled) {
-          setPendingQueueItems(queueState.items || []);
-          setQueueChannelTimes(normalizeQueueChannelTimes(queueState.channel_times));
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setPendingQueueItems([]);
-      });
-    oneclickApi
-      .list()
-      .then(({ tasks }) => {
-        if (cancelled) return;
-        markServerSync();
-        // v1.1.65: running 을 맨 앞으로 정렬 — "진행 중" 을 우선 선택/표시
-        const activeList = (tasks || [])
-          .filter((t) => ["prepared", "queued", "running"].includes(t.status))
-          .sort((a, b) => {
-            const order: Record<string, number> = { running: 0, queued: 1, prepared: 2 };
-            return (order[a.status] ?? 9) - (order[b.status] ?? 9);
-          });
-        setActiveTasks(activeList);
-        const active = activeList[0];
-        if (active) {
-          setTask(active);
-          addLog(`[시스템] 활성 태스크 감지: ${active.topic}`, "info");
-          if (activeList.length > 1) {
-            addLog(
-              `[시스템] 동시 진행/대기 중 ${activeList.length}건 — 상단 스트립에서 전환 가능`,
-              "warn",
-            );
-          }
-          if (active.current_step_name) {
-            addLog(
-              `[${active.current_step_name}] 진행 중 (${Math.round(active.progress_pct)}%)`,
-              "warn",
-            );
-          }
-          // estimate 정보 로그
-          if (active.estimate) {
-            const est = active.estimate;
-            if (est.estimated_cost_krw) {
-              addLog(
-                `[정보] 예상 비용: ${formatKrw(est.estimated_cost_krw)} (${est.cost_tier || ""})`,
-                "info",
-              );
-            }
-            if (est.estimated_seconds) {
-              addLog(
-                `[정보] 예상 소요: ${formatDurationKo(est.estimated_seconds)}`,
-                "info",
-              );
-            }
-          }
-          replaceLogsFromTask(active, [
-            {
-              time: timeStr(),
-              msg: `[시스템] 활성 태스크 감지: ${active.topic}`,
-              level: "info",
-            },
-          ]);
-          lastPctValueRef.current = taskProgressHeartbeat(active);
-          lastPctChangeRef.current = Date.now();
-        } else {
-          // 실시간 현황은 "현재 진행 중" 화면이다. 진행 중 태스크가 없을 때
-          // 마지막 실패/고아 태스크를 자동으로 띄우면 페이지 진입만으로 복구된
-          // 것처럼 보이고 실패 alert 까지 뜬다. 과거 실패/고아는 제작 큐의
-          // 실패 표시를 눌러 명시적으로 확인한다.
-          setTask(null);
-          selectedTaskIdRef.current = null;
-          serverLogCountRef.current = 0;
+  const refreshLiveSnapshot = useCallback(
+    async (mode: "initial" | "manual" | "silent" = "silent"): Promise<OneClickTask | null> => {
+      const [queueState, runningState] = await Promise.all([
+        oneclickApi.getQueue(),
+        oneclickApi.getRunning(),
+      ]);
+      void syncSafetyState().catch(() => {});
+      markServerSync();
+      setPendingQueueItems(queueState.items || []);
+      setQueueChannelTimes(normalizeQueueChannelTimes(queueState.channel_times));
+
+      const running = runningState.running;
+      if (!running?.task_id) {
+        setActiveTasks([]);
+        setTask(null);
+        selectedTaskIdRef.current = null;
+        serverLogCountRef.current = 0;
+        if (mode === "initial") {
           setLogs([
             {
               time: timeStr(),
@@ -1093,50 +729,64 @@ export default function LivePage() {
               level: "muted",
             },
           ]);
+        } else if (mode === "manual") {
+          addLog("[시스템] 활성 태스크 없음", "muted");
         }
-      })
-      .catch(() => {
+        return null;
+      }
+
+      const active = await oneclickApi.get(running.task_id);
+      markServerSync();
+      setActiveTasks([active]);
+      setTask(active);
+      replaceLogsFromTask(active, [
+        {
+          time: timeStr(),
+          msg:
+            mode === "manual"
+              ? `[시스템] 태스크 재연결: ${active.topic} (${Math.round(active.progress_pct)}%)`
+              : `[시스템] 활성 태스크 감지: ${active.topic}`,
+          level: "info",
+        },
+      ]);
+      lastPctValueRef.current = taskProgressHeartbeat(active);
+      lastPctChangeRef.current = Date.now();
+      setPollFails(0);
+      setStalled(false);
+      return active;
+    },
+    [addLog, markServerSync, replaceLogsFromTask, syncSafetyState],
+  );
+
+  // ─── 초기 로드: 페이지 열 때 (또는 다시 돌아올 때) 실행 중 태스크 자동 복구 ───
+  useEffect(() => {
+    let cancelled = false;
+    refreshLiveSnapshot("initial")
+      .catch((e: any) => {
+        if (cancelled) return;
         setTask(null);
         selectedTaskIdRef.current = null;
         serverLogCountRef.current = 0;
-        addLog("[오류] 태스크 목록 로드 실패", "error");
+        addLog(`[오류] 실행 상태 로드 실패: ${e?.message || e}`, "error");
       })
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
     return () => {
       cancelled = true;
     };
-  }, [addLog, markServerSync, replaceLogsFromTask]);
+  }, [addLog, refreshLiveSnapshot]);
 
   // ─── 폴링 + 로그 자동 생성 + 멈춤/에러 감지 ─────────────────────
   const prevStepRef = useRef<string | null>(null);
   const prevPctRef = useRef<number>(0);
-  // v1.2.20: 실패 알림창은 task 별 1회만. ref 로 중복 방지.
-  const alertedTaskIdRef = useRef<string | null>(null);
-
   useEffect(() => {
     if (!task) return;
     const done = ["completed", "failed", "cancelled"].includes(task.status);
     if (done) {
       syncLogsFromTask(task);
+      maybeReloadAfterVerifiedUpload(task);
       if ((task.logs?.length || 0) > 0) {
-        if (
-          task.status === "failed" &&
-          task.error &&
-          alertedTaskIdRef.current !== task.task_id
-        ) {
-          alertedTaskIdRef.current = task.task_id;
-          try {
-            if (typeof window !== "undefined") {
-              window.alert(
-                `[제작 실패] ${task.topic || ""}\n\n` +
-                  `단계: ${task.current_step_name || "알 수 없음"}\n` +
-                  `원인: ${task.error}`,
-              );
-            }
-          } catch {
-            // alert 차단 환경에서는 로그 패널만 표시한다.
-          }
-        }
         return;
       }
       if (task.status === "completed") {
@@ -1151,23 +801,6 @@ export default function LivePage() {
         addLog(`[실패] ${task.topic}`, "error");
         if (task.error) {
           addLog(`[오류 원인] ${task.error}`, "error");
-          // v1.2.20: 모델 API 연결 실패 / 폴백 비활성화로 멈춘 경우 즉시 알림창.
-          // 사용자 요구 — "API 이용할 때 설정된 모델의 API 연결 안되있을때 알림창
-          // 띄우고 풀백으로 처리하지마". 같은 task 에 대해 1회만 띄운다 (ref 가드).
-          if (alertedTaskIdRef.current !== task.task_id) {
-            alertedTaskIdRef.current = task.task_id;
-            try {
-              if (typeof window !== "undefined") {
-                window.alert(
-                  `[제작 실패] ${task.topic || ""}\n\n` +
-                    `단계: ${task.current_step_name || "알 수 없음"}\n` +
-                    `원인: ${task.error}`,
-                );
-              }
-            } catch {
-              // alert 차단 환경에서는 배너만 표시 (조용히)
-            }
-          }
         }
       } else {
         addLog(`[취소됨] 사용자에 의해 제작 중단`, "warn");
@@ -1178,6 +811,7 @@ export default function LivePage() {
       try {
         const fresh = await resolveLiveTask(task);
         markServerSync();
+        void syncSafetyState().catch(() => {});
         setPollFails(0); // 성공하면 리셋
 
         syncLogsFromTask(fresh);
@@ -1232,6 +866,7 @@ export default function LivePage() {
           if (serverLogs.length > lastSynced) {
             const newEntries = serverLogs.slice(lastSynced);
             for (const sl of newEntries) {
+              if (isConsoleProgressLog(sl)) continue;
               const lvl: LogEntry["level"] =
                 sl.level === "error" ? "error" :
                 sl.level === "warn" ? "warn" : "info";
@@ -1292,6 +927,7 @@ export default function LivePage() {
         }
 
         setTask(fresh);
+        maybeReloadAfterVerifiedUpload(fresh);
       } catch {
         setPollFails((prev) => {
           const next = prev + 1;
@@ -1308,7 +944,7 @@ export default function LivePage() {
     return () => {
       if (pollRef.current) clearTimeout(pollRef.current);
     };
-  }, [task, addLog, stalled, markServerSync, syncLogsFromTask, resolveLiveTask]);
+  }, [task, addLog, stalled, markServerSync, syncLogsFromTask, resolveLiveTask, maybeReloadAfterVerifiedUpload, syncSafetyState]);
 
   // 로그 자동 스크롤
   useEffect(() => {
@@ -1317,13 +953,27 @@ export default function LivePage() {
 
   const handleCancel = async () => {
     if (!task) return;
+    const target = task;
+    const optimistic: OneClickTask = {
+      ...target,
+      status: "cancelled",
+      error: target.error || "사용자 취소",
+      finished_at: target.finished_at || new Date().toISOString(),
+    };
+    setTask(optimistic);
+    setActiveTasks((prev) => prev.filter((item) => item.task_id !== target.task_id));
+    syncLogsFromTask(optimistic);
+    addLog("[중단] 사용자 중단 요청 전송", "warn");
     try {
-      const liveTask = await resolveLiveTask(task);
+      const liveTask = await resolveLiveTask(target).catch(() => target);
       const t = await oneclickApi.cancel(liveTask.task_id);
       markServerSync();
       setTask(t);
+      setActiveTasks((prev) => prev.filter((item) => item.task_id !== t.task_id));
       syncLogsFromTask(t);
-    } catch {}
+    } catch (e: any) {
+      addLog(`[오류] 중단 요청 실패: ${e?.message || e}`, "error");
+    }
   };
 
   // v1.1.70: 전체 비상 정지 — Python asyncio + Redis cancel + ComfyUI /interrupt + /queue clear
@@ -1353,22 +1003,8 @@ export default function LivePage() {
       if (r.errors?.length) {
         for (const e of r.errors) addLog(`[비상 정지 경고] ${e}`, "error");
       }
-      // 목록 재조회
       try {
-        const [{ tasks }, queueState] = await Promise.all([
-          oneclickApi.list(),
-          oneclickApi.getQueue(),
-        ]);
-        markServerSync();
-        setPendingQueueItems(queueState.items || []);
-        setQueueChannelTimes(normalizeQueueChannelTimes(queueState.channel_times));
-        const activeList = (tasks || [])
-          .filter((t) => ["prepared", "queued", "running"].includes(t.status))
-          .sort((a, b) => {
-            const order: Record<string, number> = { running: 0, queued: 1, prepared: 2 };
-            return (order[a.status] ?? 9) - (order[b.status] ?? 9);
-          });
-        setActiveTasks(activeList);
+        await refreshLiveSnapshot("silent");
       } catch {}
       if (task) {
         try {
@@ -1410,6 +1046,7 @@ export default function LivePage() {
 
   // v1.1.49: 실패/취소된 태스크를 실패 지점부터 이어서 하기
   const [resuming, setResuming] = useState(false);
+  const [startingCurrent, setStartingCurrent] = useState(false);
   const handleResume = async () => {
     if (!task) return;
     setResuming(true);
@@ -1454,44 +1091,9 @@ export default function LivePage() {
   const handleRefresh = async () => {
     setLoading(true);
     try {
-      const [{ tasks }, queueState] = await Promise.all([
-        oneclickApi.list(),
-        oneclickApi.getQueue(),
-      ]);
-      markServerSync();
-      setPendingQueueItems(queueState.items || []);
-      setQueueChannelTimes(normalizeQueueChannelTimes(queueState.channel_times));
-      // v1.1.65: running 우선 정렬로 activeTasks 갱신
-      const activeList = (tasks || [])
-        .filter((t) => ["prepared", "queued", "running"].includes(t.status))
-        .sort((a, b) => {
-          const order: Record<string, number> = { running: 0, queued: 1, prepared: 2 };
-          return (order[a.status] ?? 9) - (order[b.status] ?? 9);
-        });
-      setActiveTasks(activeList);
-      const active = activeList[0];
-      if (active) {
-        setTask(active);
-        addLog(`[시스템] 태스크 재연결: ${active.topic} (${Math.round(active.progress_pct)}%)`, "info");
-        if (activeList.length > 1) {
-          addLog(`[시스템] 동시 진행/대기 중인 작업 ${activeList.length}건 감지`, "warn");
-        }
-        replaceLogsFromTask(active, [
-          {
-            time: timeStr(),
-            msg: `[시스템] 태스크 재연결: ${active.topic} (${Math.round(active.progress_pct)}%)`,
-            level: "info",
-          },
-        ]);
-        lastPctValueRef.current = taskProgressHeartbeat(active);
-        lastPctChangeRef.current = Date.now();
-        setPollFails(0);
-        setStalled(false);
-      } else {
-        addLog("[시스템] 활성 태스크 없음", "muted");
-      }
-    } catch {
-      addLog("[오류] 재연결 실패", "error");
+      await refreshLiveSnapshot("manual");
+    } catch (e: any) {
+      addLog(`[오류] 재연결 실패: ${e?.message || e}`, "error");
     }
     setLoading(false);
   };
@@ -1528,12 +1130,15 @@ export default function LivePage() {
   };
 
   const deleteQueueItem = async (itemId: string | undefined, rowKey: string, title: string) => {
-    if (!itemId || movingQueueId || queueBatchRunning) return;
+    if (movingQueueId || queueBatchRunning) return;
     if (!confirm(`대기열에서 삭제할까요?\n\n${title}`)) return;
-    setMovingQueueId(itemId);
+    setMovingQueueId(itemId || rowKey);
     try {
       const queueState = await oneclickApi.getQueue();
-      const items = (queueState.items || []).filter((item) => item.id !== itemId);
+      const items = (queueState.items || []).filter((item, index) => {
+        if (itemId && item.id === itemId) return false;
+        return queueItemKey(item, index) !== rowKey;
+      });
       const updated = await oneclickApi.setQueue({
         channel_times: queueState.channel_times,
         channel_presets: queueState.channel_presets,
@@ -1552,6 +1157,47 @@ export default function LivePage() {
       addLog(`[오류] 대기열 삭제 실패: ${e?.message || e}`, "error");
     } finally {
       setMovingQueueId(null);
+    }
+  };
+
+  const deleteQueueItems = async (orderedKeys: string[]) => {
+    const keys = Array.from(new Set(orderedKeys.filter(Boolean)));
+    if (keys.length === 0 || movingQueueId || queueBatchRunning) return;
+    if (!confirm(`선택한 대기 작업 ${keys.length}건을 삭제할까요?`)) return;
+    setQueueBatchRunning(true);
+    try {
+      const queueState = await oneclickApi.getQueue();
+      const keySet = new Set(keys);
+      const currentItems = queueState.items || [];
+      const removedTitles: string[] = [];
+      const items = currentItems.filter((item, index) => {
+        const key = queueItemKey(item, index);
+        const remove = keySet.has(key);
+        if (remove) removedTitles.push(queueTitle(item));
+        return !remove;
+      });
+      if (removedTitles.length === 0) {
+        addLog("[오류] 선택한 대기 작업을 서버 큐에서 찾지 못했습니다.", "error");
+        return;
+      }
+      const updated = await oneclickApi.setQueue({
+        channel_times: queueState.channel_times,
+        channel_presets: queueState.channel_presets,
+        items,
+      });
+      setPendingQueueItems(updated.items || []);
+      setQueueChannelTimes(normalizeQueueChannelTimes(updated.channel_times));
+      setSelectedQueueIds((prev) => {
+        const next = new Set(prev);
+        keys.forEach((key) => next.delete(key));
+        return next;
+      });
+      markServerSync();
+      addLog(`[시스템] 대기열 선택 삭제: ${removedTitles.length}건`, "warn");
+    } catch (e: any) {
+      addLog(`[오류] 대기열 선택 삭제 실패: ${e?.message || e}`, "error");
+    } finally {
+      setQueueBatchRunning(false);
     }
   };
 
@@ -1719,8 +1365,6 @@ export default function LivePage() {
       addLog(`[시스템] 제작 큐 상단에 배치: ${taskTitle(failed)} (CH${result.channel})`, "success");
       await loadRecoveryContent(recoveryChannel);
       await handleRefresh();
-      setRecoveryOpen(false);
-      setQueuePanelOpen(true);
     } catch (e: any) {
       addLog(`[오류] 제작 큐 배치 실패: ${taskTitle(failed)} - ${e?.message || e}`, "error");
     } finally {
@@ -1737,8 +1381,6 @@ export default function LivePage() {
       addLog(`[시스템] 고아 프로젝트를 제작 큐 상단에 배치: ${queued?.topic || projectId}`, "success");
       await loadRecoveryContent(recoveryChannel);
       await handleRefresh();
-      setRecoveryOpen(false);
-      setQueuePanelOpen(true);
     } catch (e: any) {
       addLog(`[오류] 고아 프로젝트 큐 배치 실패: ${e?.message || e}`, "error");
     } finally {
@@ -1783,8 +1425,6 @@ export default function LivePage() {
       addLog(`[시스템] 전체 복구 완료: 성공 ${ok}건 / 실패 ${fail}건`, fail ? "warn" : "success");
       await loadRecoveryContent(recoveryChannel);
       await handleRefresh();
-      setRecoveryOpen(false);
-      setQueuePanelOpen(true);
     } finally {
       setRecoveringId(null);
       setRecoveryBulkQueuing(false);
@@ -1846,28 +1486,30 @@ export default function LivePage() {
     }
   };
 
-  // v1.1.65: 리스트 자동 새로고침 — 5초마다 activeTasks 만 갱신(상세 뷰엔 영향 X).
-  // 기존 2초 단일-task 폴링은 그대로 유지되고, 이건 별도 주기로 전체 목록만 점검해
-  // 새로 생긴 queued/prepared 를 스트립에 반영한다.
+  // v1.1.65: 자동 새로고침 — 실행 중 태스크와 대기열만 가볍게 갱신한다.
   useEffect(() => {
     let cancelled = false;
     const tick = async () => {
       try {
-        const [{ tasks }, queueState] = await Promise.all([
-          oneclickApi.list(),
+        const [queueState, runningState] = await Promise.all([
           oneclickApi.getQueue(),
+          oneclickApi.getRunning(),
         ]);
         if (cancelled) return;
         markServerSync();
         setPendingQueueItems(queueState.items || []);
         setQueueChannelTimes(normalizeQueueChannelTimes(queueState.channel_times));
-        const activeList = (tasks || [])
-          .filter((t) => ["prepared", "queued", "running"].includes(t.status))
-          .sort((a, b) => {
-            const order: Record<string, number> = { running: 0, queued: 1, prepared: 2 };
-            return (order[a.status] ?? 9) - (order[b.status] ?? 9);
+        if (runningState.running?.task_id) {
+          maybeReloadOnAutoTaskSwitch(runningState.running.task_id);
+          setActiveTasks((prev) => {
+            const current = task?.task_id === runningState.running?.task_id ? task : null;
+            if (current) return [current];
+            const existing = prev.find((item) => item.task_id === runningState.running?.task_id);
+            return existing ? [existing] : prev;
           });
-        setActiveTasks(activeList);
+        } else {
+          setActiveTasks([]);
+        }
       } catch {
         // 네트워크 실패는 단일-task 폴링 쪽에서 이미 감지/로그. 여기선 조용히 무시.
       }
@@ -1877,23 +1519,7 @@ export default function LivePage() {
       cancelled = true;
       clearInterval(id);
     };
-  }, [markServerSync]);
-
-  useEffect(() => {
-    if (!activeTasks.length) return;
-    const current = task?.task_id
-      ? activeTasks.find((item) => item.task_id === task.task_id)
-      : null;
-    const next = current || activeTasks.find((item) => item.status === "running") || activeTasks[0];
-    if (!next) return;
-
-    if (!task || taskProgressHeartbeat(next) !== taskProgressHeartbeat(task)) {
-      setTask(next);
-      syncLogsFromTask(next);
-      lastPctValueRef.current = taskProgressHeartbeat(next);
-      lastPctChangeRef.current = Date.now();
-    }
-  }, [activeTasks, syncLogsFromTask, task]);
+  }, [markServerSync, maybeReloadOnAutoTaskSwitch, task]);
 
   const isRunning =
     task && ["prepared", "queued", "running"].includes(task.status);
@@ -1951,8 +1577,211 @@ export default function LivePage() {
   const displayTask = getEffectiveTask(task);
   const isCompleted = displayTask?.status === "completed";
   const pct = isCompleted ? 100 : Math.round(displayTask?.progress_pct || 0);
+  const activeStepKey = displayTask?.current_step ? String(displayTask.current_step) : inferLiveStepKey(displayTask);
+  const activeStepLabel =
+    (activeStepKey && STEPS.find((step) => step.key === activeStepKey)?.label) ||
+    displayTask?.current_step_name ||
+    "대기";
+  const activeStartedSec =
+    displayTask?.started_at && displayTask?.status === "running"
+      ? Math.max(0, Math.floor((Date.now() - new Date(displayTask.started_at).getTime()) / 1000))
+      : 0;
+  const activeApiName = activeStepKey ? stepApiName(activeStepKey, displayTask) : "-";
+  const activeModelName = activeStepKey ? stepModelName(activeStepKey, displayTask) : "-";
+  const activeTargetText = activeStepKey ? stepTargetText(activeStepKey, displayTask) : "0 / 0";
+  const failureLogEntry =
+    isFailed && task?.error
+      ? {
+          time: task.finished_at
+            ? new Date(task.finished_at).toLocaleTimeString("ko-KR", {
+                hour12: false,
+                hour: "2-digit",
+                minute: "2-digit",
+                second: "2-digit",
+              })
+            : timeStr(),
+          msg: `[제작 실패] ${getTaskFailureStepName(task)}: ${task.error}`,
+          level: "error" as const,
+        }
+      : null;
+  const compactLogRows = (
+    failureLogEntry && !logs.some((log) => log.msg.includes(String(task?.error || "")))
+      ? [...logs, failureLogEntry]
+      : logs
+  ).filter((log) => !isConsoleProgressLog(log)).slice(-10);
+  const compactStageRows = STEPS.filter((step) => ["2", "3", "4", "5", "6", "7"].includes(step.key)).map((step) => {
+    const state = getStepState(displayTask, step.key);
+    const isActive = activeStepKey === step.key && displayTask?.status === "running";
+    const total = Math.max(1, Number(displayTask?.total_cuts || displayTask?.current_step_total || 120));
+    const done = Number(displayTask?.completed_cuts_by_step?.[step.key] || 0);
+    const progress =
+      state === "done"
+        ? 100
+        : ["3", "4", "5"].includes(step.key)
+          ? Math.min(100, Math.round((done / total) * 100))
+          : isActive
+            ? 34
+            : 0;
+    return {
+      ...step,
+      state,
+      isActive,
+      api: stepApiName(step.key, displayTask),
+      model: stepModelName(step.key, displayTask),
+      target: stepTargetText(step.key, displayTask),
+      seconds: isActive ? compactSeconds(activeStartedSec) : "00:00:00",
+      progress,
+    };
+  });
+  const previewQueueItem = pendingQueueItems[0] || null;
+  const hasCurrentPanelItem = Boolean(displayTask || previewQueueItem);
+  const currentPanelChannel = displayTask?.channel || previewQueueItem?.channel || 1;
+  const currentPanelEpisode = displayTask?.episode_number || previewQueueItem?.episode_number || null;
+  const currentPanelTitleBase = displayTask
+    ? taskTitle(displayTask)
+    : previewQueueItem
+      ? queueTitle(previewQueueItem)
+      : "";
+  const currentPanelTitle = currentPanelTitleBase
+    ? `CH${currentPanelChannel} ${currentPanelTitleBase}`
+    : "";
+  const currentPanelIsRunning = displayTask?.status === "running";
+  const currentPanelCanResume =
+    displayTask != null && ["failed", "cancelled", "paused"].includes(displayTask.status);
+  const currentPanelCanStart =
+    !currentPanelIsRunning &&
+    !currentPanelCanResume &&
+    Boolean(previewQueueItem || (displayTask && ["prepared", "queued"].includes(displayTask.status)));
+  const currentPanelPrimaryLabel = currentPanelIsRunning
+    ? "작업 중"
+    : currentPanelCanResume
+      ? resuming
+        ? "이어서 하는 중..."
+        : "이어서 하기"
+      : startingCurrent
+        ? "시작 중..."
+        : "시작";
+  const currentPanelPrimaryDisabled =
+    currentPanelIsRunning ||
+    resuming ||
+    startingCurrent ||
+    (!currentPanelCanResume && !currentPanelCanStart);
+  const handleCurrentPanelPrimaryAction = async () => {
+    if (currentPanelPrimaryDisabled) return;
+    if (currentPanelCanResume) {
+      await handleResume();
+      return;
+    }
+    setStartingCurrent(true);
+    try {
+      const live = await refreshLiveSnapshot("silent");
+      if (live?.status === "running") {
+        addLog(`[시스템] 이미 진행 중인 작업에 연결: ${live.topic}`, "info");
+        return;
+      }
+
+      let started: OneClickTask | null = null;
+      if (displayTask?.task_id && ["prepared", "queued"].includes(displayTask.status)) {
+        started = await oneclickApi.start(displayTask.task_id);
+      } else if (previewQueueItem) {
+        started = await oneclickApi.runQueueNext();
+      }
+      if (started && ["prepared", "queued", "running"].includes(started.status)) {
+        markServerSync();
+        setTask(started);
+        syncLogsFromTask(started);
+        addLog(`[시스템] 시작: ${started.topic || started.title || previewQueueItem?.topic || ""}`, "success");
+      }
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      await handleRefresh();
+    } catch (e: any) {
+      addLog(`[오류] 시작 실패: ${e?.message || e}`, "error");
+    } finally {
+      setStartingCurrent(false);
+    }
+  };
+  const currentPanelStatus =
+    displayTask?.status === "running"
+      ? "진행 중"
+      : displayTask?.status === "failed"
+        ? "실패"
+        : displayTask?.status === "cancelled"
+          ? "중단"
+          : displayTask?.status === "paused"
+            ? "정지"
+            : previewQueueItem
+              ? "대기"
+              : "대기";
+  const currentThumbnailSrc =
+    displayTask?.thumbnail_status === "done" && displayTask.project_id
+      ? `${assetUrl(displayTask.project_id, "output/thumbnail.png")}?v=${displayTask.finished_at || displayTask.started_at || displayTask.task_id}`
+      : null;
+  const parsedImageCut = (() => {
+    const text = `${displayTask?.current_step_progress_text || ""} ${displayTask?.sub_status || ""}`;
+    const match = text.match(/컷\s+(\d+)\s*\/\s*(\d+)/);
+    if (!match) return 0;
+    return Math.max(0, Number(match[1]) - 1);
+  })();
+  const latestImageCut = Math.max(
+    0,
+    Number(displayTask?.completed_cuts_by_step?.["4"] || 0),
+    activeStepKey === "4" ? Number(displayTask?.current_step_completed || 0) : 0,
+    activeStepKey === "4" ? parsedImageCut : 0,
+  );
+  const latestVideoCut = Math.max(
+    0,
+    Number(displayTask?.completed_cuts_by_step?.["5"] || 0),
+    activeStepKey === "5" ? Number(displayTask?.current_step_completed || 0) : 0,
+  );
+  const latestGeneratedAsset =
+    displayTask?.project_id && latestVideoCut > 0
+      ? {
+          kind: "video" as const,
+          label: `영상 cut ${String(latestVideoCut).padStart(3, "0")}`,
+          src: `${assetUrl(displayTask.project_id, `videos/cut_${String(latestVideoCut).padStart(3, "0")}.mp4`)}?v=${latestVideoCut}-${displayTask.current_step_completed || 0}-${displayTask.progress_pct}`,
+        }
+      : displayTask?.project_id && latestImageCut > 0
+        ? {
+            kind: "image" as const,
+            label: `이미지 cut ${latestImageCut}`,
+            src: `${assetUrl(displayTask.project_id, `images/cut_${latestImageCut}.png`)}?v=${latestImageCut}-${displayTask.current_step_completed || 0}-${displayTask.progress_pct}`,
+          }
+        : null;
+  const comfyProgress = (() => {
+    const text = `${displayTask?.current_step_progress_text || ""} ${displayTask?.sub_status || ""}`;
+    const match = text.match(/KSampler\s+(\d+)\s*\/\s*(\d+)\s*\((\d+(?:\.\d+)?)%\)/i);
+    if (!match) return null;
+    const current = Number(match[1]);
+    const total = Number(match[2]);
+    const pct = Math.max(0, Math.min(100, Number(match[3])));
+    if (!Number.isFinite(current) || !Number.isFinite(total) || total <= 0) return null;
+    const cutMatch = text.match(/컷\s+(\d+)\s*\/\s*(\d+)/);
+    return {
+      current,
+      total,
+      pct,
+      cut: cutMatch ? Number(cutMatch[1]) : null,
+      cutTotal: cutMatch ? Number(cutMatch[2]) : null,
+    };
+  })();
+  const comfyAverage = (() => {
+    const samples = (displayTask?.logs || [])
+      .map((log) => String(log?.msg || "").match(/ComfyUI\s+실행\s+완료:\s*(\d+(?:\.\d+)?)s/i))
+      .filter((match): match is RegExpMatchArray => Boolean(match))
+      .map((match) => Number(match[1]))
+      .filter((value) => Number.isFinite(value) && value > 0)
+      .slice(-20);
+    if (!samples.length) return null;
+    const seconds = samples.reduce((sum, value) => sum + value, 0) / samples.length;
+    return { seconds, count: samples.length };
+  })();
   // 경과 시간 (실시간 카운트)
   const [elapsedStr, setElapsedStr] = useState("--:--");
+  const [headerNow, setHeaderNow] = useState(timeStr());
+  useEffect(() => {
+    const id = setInterval(() => setHeaderNow(timeStr()), 1000);
+    return () => clearInterval(id);
+  }, []);
   useEffect(() => {
     if (!task?.started_at) {
       setElapsedStr("--:--");
@@ -1997,6 +1826,39 @@ export default function LivePage() {
     : "서버 동기화 대기 중";
   const serverSyncStale =
     lastServerSyncAt !== null && Date.now() - lastServerSyncAt > 10000;
+  const costEstimateTask = task?.estimate ? task : activeTasks.find((item) => item.estimate) || null;
+  const costEstimate = costEstimateTask?.estimate || null;
+  const costBreakdown = costEstimate?.cost_breakdown;
+  const costEstimateUsd = costEstimate
+    ? Number(
+        (
+          Number(costBreakdown?.llm_script || 0) +
+          Number(costBreakdown?.image_generation || 0) +
+          Number(costBreakdown?.thumbnail || 0) +
+          (
+            costBreakdown?.tts_billable !== undefined
+              ? Number(costBreakdown.tts_billable || 0)
+              : costEstimateTask?.models?.tts === "elevenlabs"
+                ? 0
+                : Number(costBreakdown?.tts || 0)
+          ) +
+          Number(costBreakdown?.video || 0)
+        ).toFixed(4),
+      )
+    : null;
+  const costEstimateKrw = costEstimateUsd !== null
+    ? Math.round(costEstimateUsd * Number(costEstimate?.usd_to_krw || 1360))
+    : null;
+  const costEstimateTitle = costEstimate
+    ? [
+        `편당 예상: $${Number(costEstimateUsd || 0).toFixed(2)} / ${formatKrw(costEstimateKrw ?? Number(costEstimateUsd || 0) * 1360)}`,
+        `대본 $${Number(costBreakdown?.llm_script || 0).toFixed(2)}`,
+        `이미지 $${Number(costBreakdown?.image_generation || 0).toFixed(2)}`,
+        `썸네일 $${Number(costBreakdown?.thumbnail || 0).toFixed(2)}`,
+        `음성 $${Number(costBreakdown?.tts || 0).toFixed(2)} (구독 제외)`,
+        `영상 $${Number(costBreakdown?.video || 0).toFixed(2)}`,
+      ].join("\n")
+    : "편당 예상비 대기";
 
   const runningTasks = activeTasks.filter((t) => t.status === "running");
   const waitingTasks = activeTasks.filter(
@@ -2033,55 +1895,98 @@ export default function LivePage() {
   }
 
   return (
-    <div className="p-3 sm:p-4 lg:p-5 xl:p-6 h-full flex flex-col gap-3.5 lg:gap-5">
+    <div className="h-full w-full min-w-0 overflow-hidden p-3 sm:p-4 lg:p-5 xl:p-6 flex flex-col gap-3 lg:gap-4">
       {/* 헤더 */}
       <div className="flex flex-col gap-3 xl:gap-4 flex-shrink-0">
-        <div className="flex flex-wrap items-center gap-2 lg:gap-3">
-          <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold leading-none text-white">실시간 현황</h1>
-          <button
-            onClick={handleRefresh}
-            className="p-2 rounded-lg hover:bg-bg-secondary text-gray-500 hover:text-gray-300 transition-colors"
-            title="태스크 새로고침"
-          >
-            <RefreshCw size={16} />
-          </button>
-          {/* v1.1.53: 전체 초기화 — 실행 중이 아닐 때만 표시 */}
-          {task && !isRunning && (
+        <div className="grid grid-cols-1 items-center gap-2 lg:grid-cols-[minmax(300px,1fr)_auto_auto_auto_minmax(220px,260px)] lg:gap-3">
+          <div className="flex flex-wrap items-center gap-2 lg:gap-3">
+            <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold leading-none text-white">실시간 현황</h1>
             <button
-              onClick={() => handleReset(2)}
-              disabled={resetting}
-              className="flex items-center gap-1.5 text-[11px] sm:text-xs lg:text-sm text-red-400 hover:text-red-300 hover:bg-red-500/10 px-2 sm:px-2.5 lg:px-3 py-1.5 sm:py-2 rounded-lg transition-colors disabled:opacity-50"
-              title="전체 초기화 (대본부터)"
+              onClick={handleRefresh}
+              className="p-2 rounded-lg hover:bg-bg-secondary text-gray-500 hover:text-gray-300 transition-colors"
+              title="태스크 새로고침"
             >
-              <RotateCcw size={14} className={resetting ? "animate-spin" : ""} />
-              초기화
+              <RefreshCw size={16} />
             </button>
-          )}
-          {/* v1.1.70: 비상 정지 — 서버 + ComfyUI 전체 중단. 항상 표시. */}
-          <button
-            onClick={handleEmergencyStop}
-            disabled={emergencyStopping}
-            className="flex items-center gap-1.5 text-[11px] sm:text-xs lg:text-sm font-semibold bg-red-600 text-white hover:bg-red-500 border border-red-500/60 px-2 sm:px-2.5 lg:px-3 py-1.5 sm:py-2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            title="서버 + ComfyUI 의 모든 작업을 강제 중단합니다. 생성 파일은 보존."
+            {/* v1.1.53: 전체 초기화 — 실행 중이 아닐 때만 표시 */}
+            {task && !isRunning && (
+              <button
+                onClick={() => handleReset(2)}
+                disabled={resetting}
+                className="flex items-center gap-1.5 text-[11px] sm:text-xs lg:text-sm text-red-400 hover:text-red-300 hover:bg-red-500/10 px-2 sm:px-2.5 lg:px-3 py-1.5 sm:py-2 rounded-lg transition-colors disabled:opacity-50"
+                title="전체 초기화 (대본부터)"
+              >
+                <RotateCcw size={14} className={resetting ? "animate-spin" : ""} />
+                초기화
+              </button>
+            )}
+            {/* v1.1.70: 비상 정지 — 서버 + ComfyUI 전체 중단. 항상 표시. */}
+            <button
+              onClick={handleEmergencyStop}
+              disabled={emergencyStopping}
+              className="inline-flex h-9 min-w-[132px] items-center justify-center gap-1.5 rounded-lg border border-red-500/60 bg-red-600 px-3 text-xs font-black text-white transition-colors hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-50"
+              title="서버 + ComfyUI 의 모든 작업을 강제 중단합니다. 생성 파일은 보존."
+            >
+              <AlertTriangle size={14} className={emergencyStopping ? "animate-pulse" : ""} />
+              {emergencyStopping ? "중단 중..." : "모든 작업 중단"}
+            </button>
+          </div>
+          <div className="inline-flex h-9 min-w-[154px] items-center justify-center gap-2 rounded-lg border border-border bg-bg-secondary/70 px-3 text-xs font-black text-gray-200 shadow-sm">
+            <span className="rounded border border-accent-primary/30 bg-accent-primary/10 px-2 py-0.5 text-accent-primary">
+              v{APP_VERSION}
+            </span>
+            <span className="font-mono text-gray-100">{headerNow}</span>
+          </div>
+          <div
+            className="inline-flex h-9 min-w-[178px] items-center justify-center gap-2 rounded-lg border border-sky-400/30 bg-sky-500/10 px-3 text-xs font-black text-sky-100 shadow-sm"
+            title={costEstimateTitle}
           >
-            <AlertTriangle size={14} className={emergencyStopping ? "animate-pulse" : ""} />
-            {emergencyStopping ? "중단 중..." : "모든 작업 중단"}
-          </button>
+            <span className="text-sky-300">예상비</span>
+            <span className="font-mono text-white">
+              {costEstimate
+                ? formatKrw(costEstimateKrw ?? Number(costEstimateUsd || 0) * 1360)
+              : "-원"}
+            </span>
+          </div>
+          <div
+            className={`inline-flex h-9 min-w-[168px] max-w-[240px] items-center justify-center gap-2 rounded-lg border px-3 text-xs font-black shadow-sm ${
+              safetyStatus === "alert"
+                ? "border-red-400/50 bg-red-500/15 text-red-100"
+                : "border-emerald-400/30 bg-emerald-500/10 text-emerald-100"
+            }`}
+            title={safetyMessage}
+          >
+            <span className={`h-2 w-2 rounded-full ${safetyStatus === "alert" ? "bg-red-400" : "bg-emerald-400"}`} />
+            <span className="truncate">{safetyStatus === "alert" ? "감시 경고" : "감시 정상"}</span>
+          </div>
+          <div className="ml-auto flex max-w-full items-center justify-end">
+            <div
+              className={`inline-flex h-9 w-[260px] max-w-full items-center justify-center gap-2 rounded-lg border px-3 text-xs font-black shadow-sm ${
+                autoProductionEnabled
+                  ? "border-emerald-400/35 bg-emerald-500/10 text-emerald-100"
+                  : "border-amber-400/45 bg-amber-500/10 text-amber-100"
+              }`}
+              title={autoProductionEnabled ? "자동제작 켜짐" : "자동제작 꺼짐"}
+            >
+              <span className={`h-2 w-2 rounded-full ${autoProductionEnabled ? "bg-emerald-400" : "bg-amber-400"}`} />
+              <span>{autoProductionEnabled ? "자동제작 켜짐" : "자동제작 꺼짐"}</span>
+              {!autoProductionEnabled && (
+                <span className="font-mono text-xs text-amber-200">
+                  {formatAutoProductionCountdown(autoProductionRemaining)}
+                </span>
+              )}
+            </div>
+          </div>
         </div>
       </div>
 
       {/* v1.1.67: 상단은 요약만 남기고 전체 큐/순서 변경은 팝업으로 분리한다. */}
       {(() => {
-        const queueEntries = [
-          ...activeDisplayTasks.map((item) => ({ kind: "task" as const, item })),
-          ...pendingQueueItems.map((item, index) => ({ kind: "queue" as const, item, index })),
-        ];
-        const activeCount = activeDisplayTasks.length;
+        const queueEntries = pendingQueueItems.map((item, index) => ({ kind: "queue" as const, item, index }));
         const persistedCount = pendingQueueItems.length;
-        const runningTask = activeDisplayTasks.find((item) => item.status === "running") || activeDisplayTasks[0] || null;
-        const queueChannels = collectQueueChannels(queueChannelTimes, pendingQueueItems, activeDisplayTasks);
+        const queueChannels = collectQueueChannels(queueChannelTimes, pendingQueueItems, []);
         const channelCounts = queueEntries.reduce<Record<number, number>>((acc, entry) => {
-          const ch = entry.kind === "queue" ? entry.item.channel || 1 : entry.item.channel || 1;
+          const ch = entry.item.channel || 1;
           acc[ch] = (acc[ch] || 0) + 1;
           return acc;
         }, {});
@@ -2112,7 +2017,11 @@ export default function LivePage() {
           queueChannelFilter == null
             ? allQueueEntries
             : allQueueEntries.filter(({ item }) => Number(item.channel || 1) === queueChannelFilter);
-        const nextQueueItems = visibleQueueEntries.slice(0, 2).map(({ item }) => item);
+        const nextQueueItems = visibleQueueEntries.slice(0, 5).map(({ item }) => item);
+        const editChannelEntries =
+          queueEditChannel == null
+            ? []
+            : allQueueEntries.filter(({ item }) => Number(item.channel || 1) === queueEditChannel);
         const visibleQueueKeys = visibleQueueEntries.map(({ item, index }) => queueItemKey(item, index));
         const selectedVisibleCount = visibleQueueKeys.filter((key) => selectedQueueIds.has(key)).length;
         const allVisibleSelected = visibleQueueKeys.length > 0 && selectedVisibleCount === visibleQueueKeys.length;
@@ -2245,31 +2154,25 @@ export default function LivePage() {
           );
         };
         return (
-          <div className="flex-shrink-0 rounded-xl border border-border bg-bg-secondary px-3 py-2">
+          <div className="order-1 flex-shrink-0 rounded-lg border border-border bg-bg-secondary px-3 py-2 shadow-sm shadow-black/20">
             <div className="flex flex-wrap items-center gap-2">
               <div className="flex min-w-0 items-center gap-2">
                 <Activity size={14} className="text-accent-secondary" />
                 <span className="text-sm font-bold text-gray-100">작업 대기열</span>
               </div>
-              <span className="rounded border border-amber-400/25 bg-amber-400/10 px-2 py-0.5 text-[11px] font-semibold text-amber-300">
-                진행 {activeCount}
+              <span className="rounded-md border border-border bg-bg-primary px-2.5 py-1 text-[11px] font-bold text-gray-200">
+                {persistedCount}건 대기
               </span>
-              <span className="rounded border border-blue-400/25 bg-blue-400/10 px-2 py-0.5 text-[11px] font-semibold text-blue-200">
-                대기 {persistedCount}
-              </span>
-              {channelSummary.map(({ ch, count }) => (
-                <span
-                  key={`queue-count-${ch}`}
-                  className={`rounded-md border px-3 py-1 text-sm font-black ${channelBadgeClass(ch, count > 0)}`}
-                >
-                  CH{ch} {count}
+              {liveNextCount > 0 && (
+                <span className="rounded border border-amber-300/35 bg-amber-300/10 px-2 py-0.5 text-[11px] font-bold text-amber-200">
+                  다음 실행 {liveNextCount}
                 </span>
-              ))}
+              )}
               <div className="ml-auto flex items-center gap-2">
                 <button
                   type="button"
                   onClick={() => setQueuePanelOpen(true)}
-                  className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-md border border-blue-400/30 bg-blue-400/10 px-3 py-1.5 text-xs font-semibold text-blue-200 hover:bg-blue-400/15"
+                  className="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-md border border-blue-400/40 bg-blue-400/15 px-3 text-xs font-bold text-blue-100 hover:bg-blue-400/25"
                 >
                   <ListChecks size={13} />
                   전체 큐/순서
@@ -2280,95 +2183,138 @@ export default function LivePage() {
                     setRecoveryOpen(next);
                     if (next) void loadRecoveryContent(recoveryChannel);
                   }}
-                  className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs font-semibold text-amber-300 hover:bg-amber-500/15"
+                  className="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/15 px-3 text-xs font-bold text-amber-200 hover:bg-amber-500/25"
                 >
                   <AlertTriangle size={13} />
                   실패/고아 가져오기
                 </button>
               </div>
             </div>
-            <div className="mt-2 grid grid-cols-1 gap-1.5 xl:grid-cols-3">
-              {runningTask ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setTask(runningTask);
-                    replaceLogsFromTask(runningTask, [
-                      {
-                        time: timeStr(),
-                        msg: `[시스템] 선택한 태스크 표시: ${runningTask.topic}`,
-                        level: "info",
-                      },
-                    ]);
-                    lastPctValueRef.current = taskProgressHeartbeat(runningTask);
-                    lastPctChangeRef.current = Date.now();
-                    setStalled(false);
-                  }}
-                  className="flex min-w-0 items-center gap-2 rounded-md border border-amber-400/35 bg-amber-400/10 px-2.5 py-1.5 text-left text-xs"
-                  title={taskTitle(runningTask)}
-                >
-                  <span className="shrink-0 rounded bg-amber-300 px-1.5 py-0.5 text-[10px] font-bold text-black">
-                    진행
-                  </span>
-                  <span className="min-w-0 flex-1 truncate font-semibold text-gray-100">
-                    {taskTitle(runningTask)}
-                  </span>
-                  <span className="shrink-0 tabular-nums text-gray-200">{Math.round(runningTask.progress_pct)}%</span>
-                </button>
-              ) : (
-                <div className="rounded-md border border-dashed border-border bg-bg-primary/35 px-2.5 py-1.5 text-xs text-gray-500">
-                  진행 중인 작업 없음
-                </div>
-              )}
-              {nextQueueItems.map((item, index) => {
+            <div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-2">
+              {nextQueueItems.slice(0, 5).map((item, index) => {
                 const meta = formatQueueWaitingMeta(item, queueChannelTimes);
-                const displayTitle = queueTitle(item);
                 return (
                   <div
                     key={`next-queue-${item.id || index}`}
-                    className="flex min-w-0 items-center gap-2 rounded-md border border-border bg-bg-primary/55 px-2.5 py-1.5 text-xs"
+                    className="flex h-10 min-w-0 items-center gap-1.5 rounded-md border border-border bg-bg-primary/70 px-2 text-xs shadow-sm shadow-black/20"
                     title={`${item.topic} · ${meta.sourceLabel} · ${meta.scheduleLabel}`}
                   >
-                    <span className="shrink-0 rounded bg-blue-400/15 px-1.5 py-0.5 text-[10px] font-bold text-blue-200">
+                    <span className="shrink-0 rounded bg-blue-400/15 px-1.5 py-0.5 text-[10px] font-black text-blue-100">
                       다음 {index + 1}
                     </span>
-                    <span className={`shrink-0 rounded-md border px-2.5 py-1 text-sm font-black ${channelBadgeClass(item.channel)}`}>
+                    <button
+                      type="button"
+                      onClick={() => setQueueEditChannel(Number(item.channel || 1))}
+                      className={`shrink-0 rounded-md border px-2.5 py-1 text-sm font-black transition-transform hover:scale-[1.03] ${channelBadgeClass(item.channel)}`}
+                      title={`CH${item.channel || 1} 대기열 편집`}
+                    >
                       CH{item.channel || 1}
-                    </span>
-                    <span className="shrink-0 rounded border border-violet-400/30 bg-violet-400/10 px-1.5 py-0.5 text-[10px] font-bold text-violet-200">
+                    </button>
+                    <span className="shrink-0 rounded border border-violet-400/40 bg-violet-400/15 px-1.5 py-0.5 text-[10px] font-black text-violet-100">
                       {formatEpisodeBadge(item)}
                     </span>
-                    <span className={`shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-semibold ${meta.sourceClass}`}>
-                      {meta.sourceLabel}
-                    </span>
-                    <span className="hidden shrink-0 text-[11px] text-emerald-300 lg:inline">
-                      {meta.scheduleLabel}
-                    </span>
-                    <span className="min-w-0 flex-1 truncate font-semibold text-blue-100">{displayTitle}</span>
                   </div>
                 );
               })}
-              {nextQueueItems.length === 0 && !runningTask && (
-                <div className="rounded-md border border-dashed border-border bg-bg-primary/35 px-2.5 py-1.5 text-xs text-gray-500 xl:col-span-2">
+              {nextQueueItems.length === 0 && (
+                <div className="flex-1 rounded-md border border-dashed border-border bg-bg-primary/35 px-2.5 py-1.5 text-xs text-gray-500">
                   대기 중인 작업이 없습니다.
                 </div>
               )}
             </div>
-            <div className="mt-2 grid grid-cols-2 gap-1.5 text-[11px] sm:grid-cols-4">
-              {channelSummary.map(({ ch, count, time }) => (
-                <div
-                  key={`queue-channel-summary-${ch}`}
-                  className={`flex min-w-0 items-center justify-between gap-2 rounded-lg border px-3 py-2 ${channelBadgeClass(ch, count > 0)}`}
-                  title={`CH${ch} 대기 ${count}건 · 실행 시간 ${time}`}
-                >
-                  <span className="shrink-0 text-sm font-black">CH{ch}</span>
-                  <span className="min-w-0 truncate text-xs opacity-90">{time}</span>
-                  <span className="shrink-0 rounded bg-black/25 px-2 py-0.5 text-sm font-black tabular-nums">
-                    {count}건
-                  </span>
+
+            {queueEditChannel != null && (
+              <>
+                <button
+                  type="button"
+                  aria-label="채널 편집 닫기"
+                  onClick={() => setQueueEditChannel(null)}
+                  className="fixed inset-0 z-40 cursor-default bg-black/40"
+                />
+                <div className="fixed bottom-8 left-4 right-4 top-28 z-50 flex flex-col overflow-hidden rounded-xl border border-accent-primary/30 bg-[#10101a] shadow-2xl shadow-black/60 lg:left-[18rem] lg:right-10">
+                  <div className="flex flex-wrap items-center gap-3 border-b border-border/70 bg-bg-secondary/80 px-5 py-4">
+                    <span className={`rounded-md border px-3 py-1.5 text-base font-black ${channelBadgeClass(queueEditChannel, true)}`}>
+                      CH{queueEditChannel}
+                    </span>
+                    <div className="mr-auto min-w-0">
+                      <div className="text-lg font-bold text-gray-100">채널 대기열 편집</div>
+                      <div className="text-sm text-gray-400">
+                        {queueChannelTimeLabel(queueChannelTimes[String(queueEditChannel)])} · {editChannelEntries.length}건
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const editKeys = editChannelEntries.map(({ item, index }) => queueItemKey(item, index));
+                        const selectedCount = editKeys.filter((key) => selectedQueueIds.has(key)).length;
+                        setSelectedQueueIds((prev) => {
+                          const next = new Set(prev);
+                          if (editKeys.length > 0 && selectedCount === editKeys.length) {
+                            editKeys.forEach((key) => next.delete(key));
+                          } else {
+                            editKeys.forEach((key) => next.add(key));
+                          }
+                          return next;
+                        });
+                      }}
+                      disabled={editChannelEntries.length === 0 || queueBatchRunning}
+                      className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-border bg-bg-primary px-3 text-sm font-bold text-gray-200 hover:bg-bg-tertiary disabled:opacity-40"
+                    >
+                      {editChannelEntries.length > 0 &&
+                      editChannelEntries.every(({ item, index }) => selectedQueueIds.has(queueItemKey(item, index)))
+                        ? "전체 해제"
+                        : "전체 선택"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void deleteQueueItems(
+                          editChannelEntries
+                            .map(({ item, index }) => queueItemKey(item, index))
+                            .filter((key) => selectedQueueIds.has(key)),
+                        )
+                      }
+                      disabled={
+                        queueBatchRunning ||
+                        editChannelEntries.every(({ item, index }) => !selectedQueueIds.has(queueItemKey(item, index)))
+                      }
+                      className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-red-400/35 bg-red-400/10 px-3 text-sm font-bold text-red-300 hover:bg-red-400/20 disabled:opacity-40"
+                    >
+                      <Trash2 size={14} />
+                      선택 삭제
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setQueueChannelFilter(queueEditChannel);
+                        setQueuePanelOpen(true);
+                        setQueueEditChannel(null);
+                      }}
+                      className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-blue-400/40 bg-blue-400/15 px-3 text-sm font-bold text-blue-100 hover:bg-blue-400/25"
+                    >
+                      <ListChecks size={14} />
+                      전체 편집
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setQueueEditChannel(null)}
+                      className="inline-flex h-9 items-center justify-center rounded-md border border-border bg-bg-primary px-3 text-sm font-bold text-gray-200 hover:bg-bg-tertiary"
+                    >
+                      닫기
+                    </button>
+                  </div>
+                  <div className="min-h-0 flex-1 overflow-y-auto">
+                    {editChannelEntries.length ? (
+                      editChannelEntries.map(({ item, index }) => renderQueueRow(item, index))
+                    ) : (
+                      <div className="flex h-full items-center justify-center text-sm text-gray-500">
+                        CH{queueEditChannel} 대기열이 비어 있습니다.
+                      </div>
+                    )}
+                  </div>
                 </div>
-              ))}
-            </div>
+              </>
+            )}
 
             {queuePanelOpen && (
               <>
@@ -2379,7 +2325,15 @@ export default function LivePage() {
                   className="fixed inset-0 z-40 cursor-default bg-black/35"
                 />
                 <div className="fixed bottom-6 left-4 right-4 top-24 z-50 flex flex-col overflow-hidden rounded-xl border border-blue-400/25 bg-[#10101a] shadow-2xl shadow-black/50 lg:left-[18rem] lg:right-8">
-                  <div className="flex flex-wrap items-center gap-3 border-b border-border/70 px-5 py-4">
+                  <button
+                    type="button"
+                    onClick={() => setQueuePanelOpen(false)}
+                    className="absolute right-4 top-4 z-10 inline-flex h-9 w-9 items-center justify-center rounded-md border border-border bg-bg-primary text-gray-300 shadow-lg shadow-black/30 hover:text-gray-100"
+                    title="닫기"
+                  >
+                    <X size={17} />
+                  </button>
+                  <div className="flex flex-wrap items-center gap-3 border-b border-border/70 px-5 py-4 pr-16">
                     <ListChecks size={20} className="text-blue-200" />
                     <div className="mr-auto">
                       <div className="text-lg font-bold text-gray-100">전체 작업 큐</div>
@@ -2448,19 +2402,21 @@ export default function LivePage() {
                     </button>
                     <button
                       type="button"
+                      onClick={() => void deleteQueueItems(visibleQueueKeys.filter((key) => selectedQueueIds.has(key)))}
+                      disabled={selectedVisibleCount === 0 || queueBatchRunning}
+                      className="inline-flex items-center gap-2 rounded-md border border-red-400/35 bg-red-400/10 px-4 py-2 text-sm font-bold text-red-300 hover:bg-red-400/20 disabled:opacity-40"
+                      title="체크한 대기 작업을 큐에서 삭제"
+                    >
+                      {queueBatchRunning ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />}
+                      선택 {selectedVisibleCount}건 삭제
+                    </button>
+                    <button
+                      type="button"
                       onClick={handleRefresh}
                       className="inline-flex items-center gap-2 rounded-md border border-border bg-bg-primary px-3 py-2 text-sm font-semibold text-gray-300 hover:bg-bg-tertiary"
                     >
                       <RefreshCw size={15} />
                       새로고침
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setQueuePanelOpen(false)}
-                      className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-border bg-bg-primary text-gray-300 hover:text-gray-100"
-                      title="닫기"
-                    >
-                      <X size={17} />
                     </button>
                   </div>
                   <div className="min-h-0 flex-1 overflow-y-auto p-3">
@@ -2507,8 +2463,8 @@ export default function LivePage() {
                 onClick={() => setRecoveryOpen(false)}
                 className="fixed inset-0 z-40 cursor-default bg-black/20"
               />
-              <div className="fixed left-4 right-4 top-36 z-50 max-h-[420px] overflow-y-auto rounded-xl border border-amber-500/25 bg-[#10101a] p-3 shadow-2xl shadow-black/50 lg:left-72 lg:right-8">
-                <div className="mb-3 flex flex-wrap items-center gap-2 border-b border-border/70 pb-3">
+              <div className="fixed left-4 right-4 top-36 z-50 max-h-[420px] overflow-y-auto rounded-xl border border-white/70 bg-[#10101a] p-3 shadow-2xl shadow-black/50 lg:left-72 lg:right-8">
+                <div className="mb-3 flex flex-wrap items-center gap-2 border-b border-white/25 pb-3">
                   <div className="mr-auto flex min-w-[160px] items-center gap-2">
                     <AlertTriangle size={14} className="text-amber-300" />
                     <div>
@@ -2595,7 +2551,7 @@ export default function LivePage() {
                                 )}
                               </div>
                               <div className="text-xs text-gray-500">
-                                {item.channel ? `CH${item.channel} · ` : ""}{item.current_step_name || "단계 미상"} · {Math.round(item.progress_pct || 0)}%
+                                {item.channel ? `CH${item.channel} · ` : ""}{getTaskFailureStepName(item)} · {Math.round(item.progress_pct || 0)}%
                               </div>
                             </div>
                             {isUploadRecoverableTask(item) && (
@@ -2650,408 +2606,276 @@ export default function LivePage() {
         );
       })()}
 
-      {/* 에러/멈춤 경고 배너 */}
-      {isFailed && task?.error && (
-        <div className="bg-accent-danger/10 border border-accent-danger/30 rounded-xl p-5 flex-shrink-0">
-          <div className="flex items-start gap-3">
-            <AlertTriangle
-              size={18}
-              className="text-accent-danger flex-shrink-0 mt-0.5"
-            />
-            <div className="flex-1">
-              <div className="text-base font-bold text-accent-danger mb-1.5">
-                제작 실패
-                {task.topic && (
-                  <span className="ml-2 text-gray-300 font-medium">{taskTitle(task)}</span>
-                )}
-              </div>
-              <div className="text-sm text-gray-300 leading-relaxed">
-                {task.error}
-              </div>
-              <div className="text-sm text-gray-500 mt-2">
-                단계: {task.current_step_name || "알 수 없음"} · 진행률:{" "}
-                {pct}% · 시각:{" "}
-                {task.finished_at
-                  ? new Date(task.finished_at).toLocaleString("ko-KR")
-                  : "-"}
-              </div>
-              <div className="mt-4 flex items-center gap-2.5 flex-wrap">
-                <button
-                  onClick={handleResume}
-                  disabled={resuming}
-                  className="flex items-center gap-2 bg-accent-primary hover:bg-purple-600 text-white text-sm font-semibold px-5 py-2.5 rounded-lg transition-colors disabled:opacity-50"
-                >
-                  {resuming ? (
-                    <Loader2 size={14} className="animate-spin" />
-                  ) : (
-                    <RefreshCw size={14} />
-                  )}
-                  이어서 하기
-                </button>
-                {/* v1.1.53: 전체 초기화 버튼 */}
-                {task && isUploadRecoverableTask(task) && (
-                  <button
-                    onClick={handleReupload}
-                    disabled={uploadingStep}
-                    className="flex items-center gap-2 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 text-sm font-semibold px-5 py-2.5 rounded-lg border border-emerald-400/30 transition-colors disabled:opacity-50"
+      <div className="order-2 flex-1 min-h-0 overflow-y-auto pr-1">
+        <div className="grid grid-cols-1 gap-3 2xl:gap-4">
+          <section className="rounded-lg border border-border bg-bg-secondary p-3">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex min-w-0 items-center gap-2">
+                <Activity size={15} className="text-accent-secondary" />
+                <h2 className="text-base font-bold text-gray-100">현재 작업</h2>
+                {hasCurrentPanelItem && (
+                  <span
+                    className={`rounded border px-2 py-0.5 text-xs font-bold ${
+                      displayTask?.status === "running"
+                        ? "border-emerald-400/35 bg-emerald-400/10 text-emerald-200"
+                        : displayTask?.status === "failed" || displayTask?.status === "cancelled" || displayTask?.status === "paused"
+                          ? "border-red-400/35 bg-red-400/10 text-red-200"
+                          : "border-amber-400/35 bg-amber-400/10 text-amber-200"
+                    }`}
                   >
-                    {uploadingStep ? (
-                      <Loader2 size={14} className="animate-spin" />
-                    ) : (
-                      <RotateCcw size={14} />
-                    )}
-                    업로드만 다시
-                  </button>
-                )}
-                <button
-                  onClick={() => handleReset(2)}
-                  disabled={resetting}
-                  className="flex items-center gap-1.5 bg-red-700/40 hover:bg-red-700/60 text-red-300 text-sm font-semibold px-5 py-2.5 rounded-lg transition-colors disabled:opacity-50"
-                >
-                  {resetting ? (
-                    <Loader2 size={14} className="animate-spin" />
-                  ) : (
-                    <RotateCcw size={14} />
-                  )}
-                  전체 초기화
-                </button>
-                {/* v1.1.52: 단계별 생성물 삭제 버튼 */}
-                {(task.step_states?.["4"] === "completed" ||
-                  task.step_states?.["4"] === "failed" ||
-                  task.step_states?.["4"] === "running") && (
-                  <button
-                    onClick={() => handleClearStep(4, "이미지")}
-                    disabled={clearing !== null}
-                    className="flex items-center gap-1.5 bg-accent-danger/20 hover:bg-accent-danger/30 text-accent-danger text-sm font-semibold px-4 py-2.5 rounded-lg transition-colors disabled:opacity-50"
-                  >
-                    {clearing === 4 ? (
-                      <Loader2 size={13} className="animate-spin" />
-                    ) : (
-                      <X size={13} />
-                    )}
-                    이미지 삭제
-                  </button>
-                )}
-                {(task.step_states?.["5"] === "completed" ||
-                  task.step_states?.["5"] === "failed" ||
-                  task.step_states?.["5"] === "running") && (
-                  <button
-                    onClick={() => handleClearStep(5, "영상")}
-                    disabled={clearing !== null}
-                    className="flex items-center gap-1.5 bg-accent-danger/20 hover:bg-accent-danger/30 text-accent-danger text-sm font-semibold px-4 py-2.5 rounded-lg transition-colors disabled:opacity-50"
-                  >
-                    {clearing === 5 ? (
-                      <Loader2 size={13} className="animate-spin" />
-                    ) : (
-                      <X size={13} />
-                    )}
-                    영상 삭제
-                  </button>
+                    {currentPanelStatus}
+                  </span>
                 )}
               </div>
             </div>
+
+            {hasCurrentPanelItem ? (
+              <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(220px,30%)_minmax(240px,1fr)_minmax(220px,30%)]">
+                <div className="flex min-w-0 flex-col gap-2">
+                  <div className="relative aspect-video overflow-hidden rounded-lg border border-border bg-black/35">
+                    {currentThumbnailSrc ? (
+                      <img
+                        src={currentThumbnailSrc}
+                        alt="thumbnail"
+                        className="h-full w-full object-cover"
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).style.display = "none";
+                        }}
+                      />
+                    ) : (
+                      <div className="flex h-full flex-col items-center justify-center gap-2 bg-gradient-to-br from-slate-900 via-slate-800 to-zinc-950">
+                        <Film size={30} className="text-gray-600" />
+                        <span className="text-sm font-semibold text-gray-500">썸네일 대기</span>
+                      </div>
+                    )}
+                    <div className="absolute left-2 top-2 flex gap-1.5">
+                      <span className={`rounded border px-2 py-1 text-xs font-black ${channelBadgeClass(currentPanelChannel)}`}>
+                        CH{currentPanelChannel}
+                      </span>
+                      <span className="rounded border border-violet-400/35 bg-violet-400/15 px-2 py-1 text-xs font-bold text-violet-100">
+                        {episodePrefix(currentPanelEpisode) || "EP.--"}
+                      </span>
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleCurrentPanelPrimaryAction}
+                    disabled={currentPanelPrimaryDisabled}
+                    className={`inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg border px-4 text-sm font-black shadow-sm transition-colors disabled:cursor-not-allowed disabled:opacity-55 ${
+                      currentPanelIsRunning
+                        ? "border-border bg-bg-primary text-gray-500"
+                        : currentPanelCanResume
+                          ? "border-accent-primary/50 bg-accent-primary text-white shadow-purple-950/30 hover:bg-purple-600"
+                          : "border-emerald-400/45 bg-emerald-500/20 text-emerald-100 shadow-emerald-950/20 hover:bg-emerald-500/30"
+                    }`}
+                  >
+                    {resuming || startingCurrent ? (
+                      <Loader2 size={15} className="animate-spin" />
+                    ) : currentPanelCanResume ? (
+                      <RefreshCw size={15} />
+                    ) : (
+                      <PlayCircle size={15} />
+                    )}
+                    {currentPanelPrimaryLabel}
+                  </button>
+                </div>
+
+                <div className="flex min-w-0 flex-col gap-3">
+                  <div className="min-w-0">
+                    <h3 className="line-clamp-2 text-lg font-black leading-tight text-white lg:text-xl">
+                      {currentPanelTitle}
+                    </h3>
+                  </div>
+
+                  <div>
+                    <div className="mb-1.5 flex items-end justify-between gap-3">
+                      <span className="text-3xl font-black tabular-nums text-white lg:text-4xl">{(displayTask?.progress_pct || 0).toFixed(1)}%</span>
+                      <span className="font-mono text-base font-bold text-amber-200 lg:text-lg">{displayTask ? compactSeconds(activeStartedSec) : "대기"}</span>
+                    </div>
+                    <div className="h-2 overflow-hidden rounded-full bg-bg-primary">
+                      <div
+                        className="h-full rounded-full bg-accent-primary transition-[width] duration-500"
+                        style={{ width: `${Math.max(0, Math.min(100, displayTask?.progress_pct || 0))}%` }}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="mt-auto">
+                    <button
+                      onClick={handleToggleAutoProduction}
+                      disabled={autoProductionSaving}
+                      className={`inline-flex h-10 w-full min-w-0 items-center justify-center gap-2 rounded-lg border px-4 text-sm font-black shadow-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                        autoProductionEnabled
+                          ? "border-emerald-400/45 bg-emerald-500/15 text-emerald-100 hover:bg-emerald-500/25"
+                          : "border-amber-400/45 bg-amber-500/15 text-amber-100 hover:bg-amber-500/25"
+                      }`}
+                    >
+                      {autoProductionSaving ? (
+                        <Loader2 size={15} className="animate-spin" />
+                      ) : (
+                        <Power size={15} />
+                      )}
+                      <span className="truncate">
+                        {autoProductionEnabled ? "자동제작 끄기" : "자동제작 켜기"}
+                      </span>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex min-w-0 flex-col gap-2">
+                  <div className="relative aspect-video overflow-hidden rounded-lg border border-border bg-black/35">
+                    <div className="absolute left-2 top-2 z-10 rounded border border-border/80 bg-black/55 px-2 py-1 text-xs font-bold text-gray-200">
+                      {latestGeneratedAsset?.label || "생성 결과 대기"}
+                    </div>
+                    {comfyProgress && (
+                      <div className="absolute left-2 right-2 top-10 z-10 rounded-lg border border-purple-400/40 bg-black/70 px-2.5 py-2 shadow-lg">
+                        <div className="mb-1.5 flex items-center justify-between gap-2 text-[11px] font-black text-purple-100">
+                          <span className="truncate">
+                            {comfyProgress.cut
+                              ? `ComfyUI cut ${comfyProgress.cut}/${comfyProgress.cutTotal || displayTask?.total_cuts || "-"}`
+                              : "ComfyUI KSampler"}
+                          </span>
+                          <span className="font-mono text-purple-200">
+                            {comfyProgress.current}/{comfyProgress.total} ({Math.round(comfyProgress.pct)}%)
+                          </span>
+                        </div>
+                        <div className="h-2 overflow-hidden rounded-full bg-purple-950/80">
+                          <div
+                            className="h-full rounded-full bg-purple-400 transition-[width] duration-300"
+                            style={{ width: `${comfyProgress.pct}%` }}
+                          />
+                        </div>
+                        {comfyAverage && (
+                          <div className="mt-1.5 flex items-center justify-between gap-2 text-[10px] font-bold text-purple-100/90">
+                            <span>평균 {compactSeconds(comfyAverage.seconds)}/건</span>
+                            <span className="text-purple-200/70">최근 {comfyAverage.count}건</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {latestGeneratedAsset?.kind === "video" ? (
+                      <video
+                        key={latestGeneratedAsset.src}
+                        src={latestGeneratedAsset.src}
+                        className="h-full w-full object-contain"
+                        controls
+                        preload="metadata"
+                      />
+                    ) : latestGeneratedAsset?.kind === "image" ? (
+                      <img
+                        key={latestGeneratedAsset.src}
+                        src={latestGeneratedAsset.src}
+                        alt="generated preview"
+                        className="h-full w-full object-contain"
+                        onError={(event) => {
+                          event.currentTarget.style.display = "none";
+                        }}
+                      />
+                    ) : (
+                      <div className="flex h-full flex-col items-center justify-center gap-2 text-gray-600">
+                        <Film size={30} />
+                        <span className="text-sm font-semibold">이미지/영상 대기</span>
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    onClick={handleCancel}
+                    disabled={!displayTask || displayTask.status !== "running"}
+                    className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-red-400/40 bg-red-500/10 px-4 text-sm font-black text-red-200 shadow-sm transition-colors hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <Square size={15} />
+                    중단
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex min-h-48 items-center justify-center rounded-lg border border-dashed border-border bg-bg-primary/40 text-sm text-gray-600">
+                진행 중인 작업이 없습니다.
+              </div>
+            )}
+          </section>
+
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(360px,50%)_minmax(360px,1fr)] 2xl:grid-cols-[minmax(420px,50%)_minmax(420px,1fr)]">
+            <section className="rounded-lg border border-border bg-bg-secondary p-2.5">
+              <div className="mb-3 flex items-center justify-between gap-2">
+                <h2 className="text-base font-bold text-gray-100">단계별 실제 진행</h2>
+                <span className="text-xs text-gray-500">실시간</span>
+              </div>
+              <div className="space-y-2">
+                {compactStageRows.map((row) => (
+                  <div
+                    key={row.key}
+                    className={`min-w-0 rounded-lg border px-2 py-2 ${
+                      row.isActive
+                        ? "border-accent-primary/50 bg-accent-primary/[0.05]"
+                        : row.state === "done"
+                          ? "border-emerald-400/25 bg-emerald-400/[0.03]"
+                          : row.state === "failed"
+                            ? "border-red-400/35 bg-red-400/[0.04]"
+                            : "border-border/70 bg-bg-primary/35"
+                    }`}
+                  >
+                    <div className="grid grid-cols-[58px_44px_minmax(0,1fr)_72px_48px] items-center gap-2">
+                      <div className="truncate text-sm font-black text-gray-100" title={row.label}>{row.label}</div>
+                      <div className={`truncate text-xs font-bold ${row.isActive ? "text-accent-primary" : "text-gray-500"}`}>
+                          {row.isActive ? "진행" : row.state === "done" ? "완료" : row.state === "failed" ? "실패" : "대기"}
+                      </div>
+                      <div className="truncate text-sm font-semibold text-gray-200" title={row.model || row.api}>
+                        {row.model || row.api}
+                      </div>
+                      <div className="font-mono text-xs font-bold text-amber-200" title={row.seconds}>{row.seconds}</div>
+                      <button
+                        type="button"
+                        onClick={() => handleRerunFromStep(Number(row.key))}
+                        className="justify-self-end rounded border border-accent-primary/25 bg-accent-primary/10 px-1.5 py-1 text-[10px] font-bold text-accent-primary"
+                        title="이 단계부터 재개"
+                      >
+                        재개
+                      </button>
+                    </div>
+                    <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-bg-primary">
+                      <div
+                        className={`h-full rounded-full transition-[width] duration-500 ${row.isActive ? "bg-accent-primary" : row.state === "done" ? "bg-emerald-400" : "bg-gray-700"}`}
+                        style={{ width: `${row.progress}%` }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            <aside className="grid min-h-0 grid-cols-1 gap-3.5">
+              <section className="rounded-lg border border-border bg-[#08080e] p-3">
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <h2 className="text-base font-bold text-gray-100">제작 로그</h2>
+                  <span className="text-xs text-gray-600">{compactLogRows.length}줄</span>
+                </div>
+                <div className="max-h-[272px] overflow-y-auto pr-1 font-mono text-xs leading-5">
+                  {compactLogRows.length ? (
+                    <>
+                      {compactLogRows.map((log, i) => (
+                        <div key={`${log.time}-${i}`} className="grid grid-cols-[58px_minmax(0,1fr)] gap-2 border-b border-white/[0.03] py-1 last:border-b-0">
+                          <span className="text-gray-600">{log.time}</span>
+                          <span className={`min-w-0 truncate ${logColor(log.level)}`} title={log.msg}>{log.msg}</span>
+                        </div>
+                      ))}
+                      <div ref={logEndRef} />
+                    </>
+                  ) : (
+                    <div className="py-8 text-center text-sm text-gray-600">로그 없음</div>
+                  )}
+                </div>
+              </section>
+            </aside>
           </div>
         </div>
-      )}
-      {stalled && isRunning && (
-        <div className="bg-amber-400/10 border border-amber-400/30 rounded-xl px-5 py-3.5 flex items-center gap-3 flex-shrink-0">
-          <AlertTriangle size={16} className="text-amber-400 flex-shrink-0" />
-          <span className="text-sm text-amber-300">
-            90초 이상 진행률 변화 없음 — API 응답 지연 또는 대용량 처리 중일 수
-            있습니다. 백엔드에서 작업은 계속 진행됩니다.
-          </span>
-        </div>
-      )}
-      {pollFails >= 3 && isRunning && (
-        <div className="bg-accent-danger/10 border border-accent-danger/30 rounded-xl px-5 py-3.5 flex items-center gap-3 flex-shrink-0">
-          <AlertTriangle
-            size={16}
-            className="text-accent-danger flex-shrink-0"
-          />
-          <span className="text-sm text-red-300">
-            서버 응답 없음 ({pollFails}회 연속 실패) — 백엔드 서버가 실행 중인지
-            확인해 주세요. 서버 측 작업은 독립적으로 계속 진행됩니다.
-          </span>
-          <button
-            onClick={handleRefresh}
-            className="ml-auto text-sm bg-accent-danger/20 text-accent-danger rounded-lg px-3 py-1.5 hover:bg-accent-danger/30"
-          >
-            재연결
-          </button>
-        </div>
-      )}
-      {isRunning && (
-        <div
-          className={`rounded-xl px-5 py-3 flex items-center gap-3 flex-shrink-0 border ${
-            pollFails >= 1 || serverSyncStale
-              ? "bg-amber-400/10 border-amber-400/30"
-              : "bg-bg-secondary border-border"
-          }`}
-        >
-          <Clock
-            size={16}
-            className={pollFails >= 1 || serverSyncStale ? "text-amber-300" : "text-gray-500"}
-          />
-          <span
-            className={`text-sm ${
-              pollFails >= 1 || serverSyncStale ? "text-amber-200" : "text-gray-400"
-            }`}
-          >
-            {serverSyncLabel}
-            {pollFails >= 1 || serverSyncStale ? " · 화면 숫자가 잠시 늦을 수 있습니다" : ""}
-          </span>
-        </div>
-      )}
+      </div>
 
+      {/* 실패/지연 메시지는 제작 로그 패널에만 표시한다. */}
       {/* 파이프라인
           v1.2.13: 반응형으로 재작성.
           - xl 이상: 기존처럼 한 줄 6 스텝 + 화살표 커넥터.
           - xl 미만: flex-wrap 로 자동 줄바꿈, 스텝은 min-width 로 찌그러짐 방지,
             화살표는 줄바꿈과 충돌하므로 xl 미만에서 숨김. */}
-      {/* 본체: 로그 + 우측 패널
-          v1.2.13: xl 미만에서는 세로 1열로 붕괴 (우측 패널이 아래로). */}
-      <div className="flex-1 grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(420px,30vw)] 2xl:grid-cols-[minmax(0,1fr)_minmax(460px,32vw)] gap-3.5 lg:gap-5 min-h-0">
-        {/* 로그 */}
-        <div className="bg-[#08080e] border border-border rounded-xl flex flex-col overflow-hidden">
-          <div className="flex items-center gap-2.5 px-3.5 sm:px-4 lg:px-5 py-3 border-b border-border flex-shrink-0">
-            <span className="relative flex h-2.5 w-2.5">
-              <span
-                className={`animate-ping absolute inline-flex h-full w-full rounded-full ${isRunning ? "bg-accent-success" : "bg-gray-600"} opacity-75`}
-              />
-              <span
-                className={`relative inline-flex rounded-full h-2.5 w-2.5 ${isRunning ? "bg-accent-success" : "bg-gray-600"}`}
-              />
-            </span>
-            <span className="text-sm font-bold text-gray-200">
-              제작 로그
-            </span>
-            <span className="text-sm text-gray-600 ml-auto">
-              {logs.length}줄
-            </span>
-          </div>
-          {isRunning && displayTask && (
-            <div className="border-b border-amber-400/30 bg-amber-400/10 px-3.5 sm:px-4 lg:px-5 py-3 flex-shrink-0">
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
-                <span className="font-semibold text-amber-200">
-                  {displayTask.current_step_label || displayTask.current_step_name || "진행 중"}
-                </span>
-                {displayTask.current_step_total ? (
-                  <span className="font-mono text-gray-100">
-                    {(displayTask.current_step_completed ?? 0)} / {displayTask.current_step_total}
-                  </span>
-                ) : null}
-                {typeof displayTask.current_step_cut_progress_pct === "number" ? (
-                  <span className="font-mono text-cyan-200">
-                    컷 내부 {displayTask.current_step_cut_progress_pct.toFixed(0)}%
-                  </span>
-                ) : null}
-                <span className="font-mono text-amber-300">
-                  {(displayTask.progress_pct || 0).toFixed(1)}%
-                </span>
-              </div>
-              {(displayTask.current_step_progress_text || displayTask.sub_status) && (
-                <div className="mt-1 font-mono text-xs text-amber-100 truncate" title={displayTask.sub_status || displayTask.current_step_progress_text || ""}>
-                  {displayTask.current_step_progress_text || displayTask.sub_status}
-                </div>
-              )}
-            </div>
-          )}
-          <div className="flex-1 overflow-y-auto px-3.5 sm:px-4 lg:px-5 py-3 font-mono text-sm leading-7 space-y-1.5">
-            {logs.map((log, i) => (
-              <div key={i} className="flex gap-3">
-                <span className="text-gray-600 flex-shrink-0 select-none">
-                  {log.time}
-                </span>
-                <span className={logColor(log.level)}>{log.msg}</span>
-              </div>
-            ))}
-            <div ref={logEndRef} />
-          </div>
-        </div>
-
-        {/* 우측 패널 */}
-        <div className="flex min-w-0 flex-col gap-3 lg:gap-4 overflow-y-auto">
-          {/* 단계별 작업 활동 — 살아있는지/얼마 남았는지/멈췄는지 시각화 */}
-          <ActivityPanel
-            task={displayTask}
-            isRunningTask={Boolean(isRunning)}
-            clearingStep={clearing}
-            rerunningStep={rerunningStep}
-            uploadingStep={uploadingStep}
-            onClearStep={handleClearStep}
-            onRerunStep={handleRerunFromStep}
-            onReupload={handleReupload}
-          />
-
-          {/* 단계 상세 */}
-          <div className="bg-bg-secondary border border-border rounded-xl p-5 flex-shrink-0">
-            <h3
-              className={`text-base font-bold mb-4 ${
-                isFailed
-                  ? "text-accent-danger"
-                  : isCompleted
-                    ? "text-accent-success"
-                    : "text-amber-400"
-              }`}
-            >
-              {isRunning
-                ? `현재 단계: ${displayTask?.current_step_name || "준비 중"}`
-                : isCompleted
-                  ? "제작 완료"
-                  : isFailed
-                    ? "제작 실패"
-                    : "대기 중"}
-            </h3>
-            <div className="space-y-3 text-sm">
-              {displayTask?.current_step_completed !== undefined &&
-                displayTask?.current_step_total && (
-                  <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1">
-                    <span className="text-gray-500">처리 컷</span>
-                    <span className="min-w-0 text-right text-gray-200 font-medium tabular-nums">
-                      {displayTask.current_step_completed} / {displayTask.current_step_total}
-                    </span>
-                  </div>
-                )}
-              <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1">
-                <span className="text-gray-500">
-                  <Clock size={13} className="inline mr-1.5" />
-                  경과 시간
-                </span>
-                <span className="text-gray-200 font-mono">{elapsedStr}</span>
-              </div>
-              {estimatedRemaining !== null && isRunning && (
-                <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1">
-                  <span className="text-gray-500">
-                    <Timer size={13} className="inline mr-1.5" />
-                    예상 잔여
-                  </span>
-                  <span className="text-gray-200 font-mono">
-                    ~{formatDurationKo(estimatedRemaining)}
-                  </span>
-                </div>
-              )}
-              <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1">
-                <span className="text-gray-500">전체 진행률</span>
-                <span
-                  className={`font-bold ${
-                    isFailed
-                      ? "text-accent-danger"
-                      : isCompleted
-                        ? "text-accent-success"
-                        : "text-amber-400"
-                  }`}
-                >
-                  {pct}%
-                </span>
-              </div>
-              <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1">
-                <span className="text-gray-500">총 컷 수</span>
-                <span className="text-gray-200">{task?.total_cuts || "-"}</span>
-              </div>
-            </div>
-          </div>
-
-          {/* v1.1.52: 썸네일 */}
-          {task && <ThumbnailPanel task={task} />}
-
-          {/* 예상 비용/시간 */}
-          {task?.estimate && (
-            <div className="bg-bg-secondary border border-border rounded-xl p-5 flex-shrink-0">
-              <h3 className="text-base font-bold text-gray-100 mb-4">
-                <DollarSign size={15} className="inline mr-1.5" />
-                예상 비용 · 시간
-              </h3>
-              <div className="space-y-3 text-sm">
-                {task.estimate.estimated_cost_krw != null && (
-                  <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1">
-                    <span className="text-gray-500">예상 비용</span>
-                    <span className="min-w-0 text-right text-gray-200 font-medium tabular-nums">
-                      {formatKrw(task.estimate.estimated_cost_krw)}
-                      {task.estimate.estimated_cost_usd != null && (
-                        <span className="whitespace-nowrap text-gray-500 ml-1.5">
-                          (${task.estimate.estimated_cost_usd.toFixed(2)})
-                        </span>
-                      )}
-                    </span>
-                  </div>
-                )}
-                {task.estimate.estimated_seconds != null && (
-                  <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1">
-                    <span className="text-gray-500">예상 소요</span>
-                    <span className="text-right text-gray-200 font-medium">
-                      {formatDurationKo(task.estimate.estimated_seconds)}
-                    </span>
-                  </div>
-                )}
-                {task.estimate.cost_tier && (
-                  <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1">
-                    <span className="text-gray-500">비용 등급</span>
-                    <span
-                      className={`font-semibold ${
-                        task.estimate.cost_tier === "cheap"
-                          ? "text-accent-success"
-                          : task.estimate.cost_tier === "normal"
-                            ? "text-amber-400"
-                            : "text-accent-danger"
-                      }`}
-                    >
-                      {task.estimate.cost_tier === "cheap"
-                        ? "저렴"
-                        : task.estimate.cost_tier === "normal"
-                          ? "보통"
-                          : "비쌈"}
-                    </span>
-                  </div>
-                )}
-                {/* 비용 상세 (있으면) */}
-                {task.estimate.cost_breakdown && (
-                  <div className="mt-3 pt-3 border-t border-border space-y-2">
-                    <div className="text-sm text-gray-500 font-medium mb-1.5">
-                      비용 상세
-                    </div>
-                    {Object.entries(task.estimate.cost_breakdown).map(
-                      ([key, val]) =>
-                        val > 0 && (
-                          <div
-                            key={key}
-                            className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1 text-sm"
-                          >
-                            <span className="text-gray-500">{key}</span>
-                            <span className="text-right text-gray-400 tabular-nums">
-                              ${(val as number).toFixed(3)}
-                            </span>
-                          </div>
-                        ),
-                    )}
-                  </div>
-                )}
-                {/* 시간 상세 (있으면) */}
-                {task.estimate.time_breakdown && (
-                  <div className="mt-3 pt-3 border-t border-border space-y-2">
-                    <div className="text-sm text-gray-500 font-medium mb-1.5">
-                      시간 상세
-                    </div>
-                    {Object.entries(task.estimate.time_breakdown).map(
-                      ([key, val]) =>
-                        val > 0 && (
-                          <div
-                            key={key}
-                            className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1 text-sm"
-                          >
-                            <span className="text-gray-500">{key}</span>
-                            <span className="text-right text-gray-400">
-                              {formatDurationKo(val as number)}
-                            </span>
-                          </div>
-                        ),
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
     </div>
   );
 }

@@ -501,16 +501,11 @@ class FFmpegService(BaseVideoService):
 
 
 class FFmpegSafeMotionService(BaseVideoService):
-    """Source-locked local still video.
-
-    This path never runs a generative video model and does not animate the
-    frame. It simply holds the original image for the clip duration, so it
-    cannot invent people, faces, limbs, props, or background objects.
-    """
+    """Local shorts-style impact clip from one source image."""
 
     def __init__(self):
         self.model_id = "ffmpeg-safe-motion"
-        self.display_name = "FFmpeg Safe Static (source locked)"
+        self.display_name = "숏츠"
 
     @staticmethod
     def _resolution_for(aspect_ratio: str) -> str:
@@ -538,14 +533,22 @@ class FFmpegSafeMotionService(BaseVideoService):
             raise ValueError("output_path required")
 
         resolution = self._resolution_for(aspect_ratio)
-        fps = 16
+        fps = 30
         pad_wh = resolution.replace("x", ":")
 
-        # Absolutely no pan/zoom/animation here. This is the safe "do nothing"
-        # path for clips where generative I2V may hallucinate people or faces.
+        # Shorts impact only: zoom punches, tiny shake, contrast flash. This
+        # still uses the original image only; no generative model is called.
         vf = (
-            f"[0:v]scale={resolution}:force_original_aspect_ratio=decrease,"
-            f"pad={pad_wh}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p[v]"
+            f"[0:v]scale={resolution}:force_original_aspect_ratio=increase,"
+            f"crop={resolution},setsar=1,fps={fps},"
+            "scale=iw*1.12:ih*1.12,"
+            f"crop={resolution}:"
+            "x=(in_w-out_w)/2+6*sin(2*PI*n/9):"
+            "y=(in_h-out_h)/2+4*cos(2*PI*n/7),"
+            "eq=contrast='1.12+0.10*sin(2*PI*n/30)':"
+            "brightness='0.015*sin(2*PI*n/12)':saturation=1.18,"
+            "unsharp=5:5:0.75:3:3:0.35,"
+            "format=yuv420p[v]"
         )
 
         has_audio = bool(audio_path and os.path.exists(audio_path))

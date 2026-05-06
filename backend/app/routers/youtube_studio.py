@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import subprocess
 import shutil
 import tempfile
@@ -40,9 +41,9 @@ from app.services.youtube_service import (
 from app.models.database import SessionLocal
 from app.models.project import Project
 from app.config import resolve_project_dir
-from app.services.title_utils import with_episode_prefix
+from app.services.title_utils import with_episode_prefix, without_episode_prefix
 from app.services.youtube_metadata import DEFAULT_MAX_TAGS, expand_tags, format_description
-from app.services.multilingual_caption_service import upload_multilingual_captions
+from app.services.multilingual_caption_service import should_upload_youtube_captions, upload_multilingual_captions
 from sqlalchemy.orm.attributes import flag_modified
 
 router = APIRouter()
@@ -241,6 +242,47 @@ def _clean_generated_record(cfg: dict, rel: str) -> bool:
         ]
         changed = changed or len(shorts_uploads) != before
     return changed
+
+
+def _text_matches_language(text: str, language: str) -> bool:
+    text = str(text or "").strip()
+    if not text:
+        return False
+    lang = (language or "").lower()
+    if lang.startswith(("ja", "jp")):
+        return bool(re.search(r"[\u3040-\u30ff\u4e00-\u9fff]", text)) and not bool(re.search(r"[\uac00-\ud7a3]", text))
+    if lang.startswith(("ko", "kr")):
+        return bool(re.search(r"[\uac00-\ud7a3]", text))
+    if lang.startswith("hi"):
+        return bool(re.search(r"[\u0900-\u097f]", text))
+    return bool(re.search(r"[A-Za-z]", text))
+
+
+def _compact_title(text: str) -> str:
+    return re.sub(r"\s+", " ", str(text or "").replace("\r", " ").replace("\n", " ")).strip()
+
+
+def _shorts_result_for_relative_path(project_dir: Path, rel: str) -> dict:
+    if "/shorts/" not in f"/{_norm_rel(rel)}":
+        return {}
+    meta_path = project_dir / "output" / "shorts" / "shorts.json"
+    if not meta_path.exists():
+        return {}
+    try:
+        data = json.loads(meta_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    results = data.get("results") if isinstance(data, dict) else None
+    if not isinstance(results, list):
+        return {}
+    target = Path(rel).name
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        path_value = item.get("path") or item.get("download_url") or ""
+        if Path(str(path_value)).name == target:
+            return item
+    return results[0] if results and isinstance(results[0], dict) else {}
 
 
 def _open_folder(path: Path) -> None:
@@ -707,6 +749,8 @@ async def upload_generated_video(
             body.title or project.title or project.topic or video_path.stem,
             cfg.get("episode_number"),
         )
+        if kind == "shorts":
+            title = without_episode_prefix(body.title or project.title or project.topic or video_path.stem) or "Shorts"
         if kind == "main" and not thumbnail_path:
             try:
                 from app.services.thumbnail_service import ensure_standard_thumbnail
@@ -731,10 +775,25 @@ async def upload_generated_video(
         if kind == "shorts" and "#shorts" not in title.lower():
             title = f"{title[:85]} #Shorts"
         language = (cfg.get("language") or body.default_language or "ko")
+        shorts_meta = _shorts_result_for_relative_path(project_dir, rel) if kind == "shorts" else {}
+        if kind == "shorts" and shorts_meta:
+            meta_title = _compact_title(str(shorts_meta.get("title") or ""))
+            if meta_title:
+                title = meta_title if "#shorts" in meta_title.lower() else f"{meta_title[:85]} #Shorts"
+            language = str(shorts_meta.get("language") or language)
+        topic_seed = project.topic or ""
+        description_seed = body.description or cfg.get("youtube_description") or ""
+        if kind == "shorts":
+            meta_source = _compact_title(str(shorts_meta.get("source_title") or "")) if shorts_meta else ""
+            topic_seed = meta_source or title
+            if not _text_matches_language(description_seed, language):
+                description_seed = ""
+            if not _text_matches_language(topic_seed, language):
+                topic_seed = title
         description = format_description(
-            body.description or cfg.get("youtube_description") or project.topic or "",
+            description_seed,
             title=title,
-            topic=project.topic or "",
+            topic=topic_seed,
             narration="",
             language=language,
             shorts=kind == "shorts",
@@ -742,7 +801,7 @@ async def upload_generated_video(
         tags = expand_tags(
             body.tags or [],
             title=title,
-            topic=project.topic or "",
+            topic=topic_seed,
             narration="",
             language=language,
             max_tags=DEFAULT_MAX_TAGS,
@@ -812,7 +871,7 @@ async def upload_generated_video(
             and upload_result.get("video_id")
             and not upload_result.get("already_uploaded")
             and caption_file.exists()
-            and bool(cfg.get("youtube_captions_enabled", False))
+            and should_upload_youtube_captions(cfg)
         ):
             try:
                 caption_result = await upload_multilingual_captions(
@@ -1014,7 +1073,7 @@ async def direct_upload(
             if project is not None:
                 cfg = dict(project.config or {})
                 caption_file = resolve_project_dir(project.id, cfg, create=False) / "subtitles" / "subtitles.srt"
-                if caption_file.exists() and bool(cfg.get("youtube_captions_enabled", False)):
+                if caption_file.exists() and should_upload_youtube_captions(cfg):
                     try:
                         caption_result = await upload_multilingual_captions(
                             up,

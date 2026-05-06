@@ -10,9 +10,15 @@ from app.models.database import get_db
 from app.models.project import Project
 from app.models.cut import Cut
 from app.config import DATA_DIR, BASE_DIR as _BASE_DIR_FOR_LOG
-from app.services.image.factory import get_image_service, resolve_image_model
+from app.services.image.factory import IMAGE_REGISTRY, get_image_service, resolve_image_model
 from app.services.image.base import get_size
 from app.services.image.prompt_builder import append_prompt_specific_negative_prompt
+from app.services.image.asset_guard import (
+    find_existing_cut_image,
+    image_matches_prompt,
+    write_prompt_sidecar,
+)
+from app.services.llm.visual_policy import normalize_cut_image_prompt
 
 router = APIRouter()
 
@@ -220,16 +226,17 @@ def _build_image_prompt(
     )
 
 
-def _apply_historical_negative_prompt(image_service, config: dict, *context_values) -> bool:
+def _apply_historical_negative_prompt(image_service, config: dict, *context_values, force: bool = False) -> bool:
     from app.services.image.prompt_builder import (
         historical_negative_prompt,
         map_negative_prompt,
         should_enable_historical_guard_for_context,
+        symbol_negative_prompt,
         text_negative_prompt,
     )
 
     cfg = config or {}
-    enabled = should_enable_historical_guard_for_context(cfg, *context_values)
+    enabled = bool(force) or should_enable_historical_guard_for_context(cfg, *context_values)
     current_neg = (getattr(image_service, "negative_prompt", "") or "").strip()
     text_negative = text_negative_prompt()
     if text_negative and text_negative not in current_neg:
@@ -237,6 +244,9 @@ def _apply_historical_negative_prompt(image_service, config: dict, *context_valu
     map_negative = map_negative_prompt()
     if map_negative and map_negative not in current_neg:
         current_neg = f"{map_negative}, {current_neg}".strip(" ,")
+    symbol_negative = symbol_negative_prompt()
+    if symbol_negative and symbol_negative not in current_neg:
+        current_neg = f"{symbol_negative}, {current_neg}".strip(" ,")
     if not enabled:
         image_service.negative_prompt = current_neg
         return False
@@ -382,6 +392,9 @@ async def generate_all_images(project_id: str, db: Session = Depends(get_db)):
     enable_historical_guard = should_enable_historical_guard_for_context(
         project.config, project_id, project.title, project.topic
     )
+    is_comfyui_model = IMAGE_REGISTRY.get(image_model, {}).get("provider") == "comfyui"
+    if is_comfyui_model:
+        enable_historical_guard = True
     _apply_historical_negative_prompt(image_service, project.config, project_id, project.title, project.topic)
     base_negative_prompt = (getattr(image_service, "negative_prompt", "") or "").strip()
     ref_images = _collect_reference_images(project_id, project.config)
@@ -405,7 +418,11 @@ async def generate_all_images(project_id: str, db: Session = Depends(get_db)):
             # v1.1.26: 3컷마다 1장 캐릭터 슬롯 (1, 4, 7, ...)
             is_character_cut = cut_has_character(cut.cut_number) and (bool(char_images) or bool(character_description))
             prompt = _build_image_prompt(
-                cut.image_prompt,
+                normalize_cut_image_prompt(
+                    cut.image_prompt,
+                    cut.narration,
+                    " ".join(str(x or "") for x in (project.title, project.topic)),
+                ),
                 global_style,
                 has_reference=bool(ref_images),
                 has_character_slot=is_character_cut,
@@ -429,6 +446,14 @@ async def generate_all_images(project_id: str, db: Session = Depends(get_db)):
                 height,
                 image_path,
                 reference_images=all_refs if all_refs else None,
+            )
+            write_prompt_sidecar(
+                result_path,
+                cut_number=cut.cut_number,
+                image_model=image_model,
+                source_prompt=cut.image_prompt or "",
+                final_prompt=prompt,
+                narration=cut.narration or "",
             )
             image_service.negative_prompt = base_negative_prompt
 
@@ -509,7 +534,8 @@ async def generate_all_images_async(project_id: str, db: Session = Depends(get_d
             aspect_ratio = proj.config.get("aspect_ratio", "16:9")
             global_style = proj.config.get("image_global_prompt", "")
 
-            if IMAGE_REGISTRY.get(image_model, {}).get("provider") == "comfyui":
+            is_comfyui_model = IMAGE_REGISTRY.get(image_model, {}).get("provider") == "comfyui"
+            if is_comfyui_model:
                 CONCURRENT_IMAGES = 1
 
             image_service = get_image_service(image_model)
@@ -525,6 +551,8 @@ async def generate_all_images_async(project_id: str, db: Session = Depends(get_d
             enable_historical_guard = should_enable_historical_guard_for_context(
                 proj.config, project_id, proj.title, proj.topic
             )
+            if is_comfyui_model:
+                enable_historical_guard = True
             _apply_historical_negative_prompt(image_service, proj.config, project_id, proj.title, proj.topic)
             base_negative_prompt = (getattr(image_service, "negative_prompt", "") or "").strip()
 
@@ -557,7 +585,11 @@ async def generate_all_images_async(project_id: str, db: Session = Depends(get_d
                     image_path = str(image_dir / f"cut_{cut.cut_number}.png")
                     is_character_cut = cut_has_character(cut.cut_number) and (bool(char_images) or bool(character_description))
                     prompt = _build_image_prompt(
-                        cut.image_prompt,
+                        normalize_cut_image_prompt(
+                            cut.image_prompt,
+                            cut.narration,
+                            " ".join(str(x or "") for x in (proj.title, proj.topic)),
+                        ),
                         global_style,
                         has_reference=bool(ref_images),
                         has_character_slot=is_character_cut,
@@ -578,6 +610,14 @@ async def generate_all_images_async(project_id: str, db: Session = Depends(get_d
                         result_path = await image_service.generate(
                             prompt, width, height, image_path,
                             reference_images=all_refs if all_refs else None,
+                        )
+                        write_prompt_sidecar(
+                            result_path,
+                            cut_number=cut.cut_number,
+                            image_model=image_model,
+                            source_prompt=cut.image_prompt or "",
+                            final_prompt=prompt,
+                            narration=cut.narration or "",
                         )
                         image_service.negative_prompt = base_negative_prompt
                         _ilog(f"_gen_one cut={cut.cut_number} SUCCESS in {_t.time()-_s:.1f}s → {result_path}")
@@ -691,7 +731,47 @@ async def resume_images_async(project_id: str, db: Session = Depends(get_db)):
         return {"status": "already_running", "step": "image"}
 
     cuts = db.query(Cut).filter(Cut.project_id == project_id).order_by(Cut.cut_number).all()
-    pending_cuts = [c for c in cuts if not c.image_path and c.image_prompt]
+    project_dir = DATA_DIR / project_id
+    image_model = resolve_image_model(project.config.get("image_model"))
+    global_style = project.config.get("image_global_prompt", "")
+    ref_images = _collect_reference_images(project_id, project.config)
+    char_images = _collect_character_images(project_id, project.config)
+    character_description = (project.config.get("character_description") or "").strip()
+    from app.services.image.prompt_builder import should_enable_historical_guard_for_context
+    enable_historical_guard = should_enable_historical_guard_for_context(
+        project.config, project_id, project.title, project.topic
+    )
+    if IMAGE_REGISTRY.get(image_model, {}).get("provider") == "comfyui":
+        enable_historical_guard = True
+    pending_cuts = []
+    for c in cuts:
+        if not c.image_prompt:
+            continue
+        existing = find_existing_cut_image(project_dir, c.cut_number)
+        if not c.image_path or not existing:
+            pending_cuts.append(c)
+            continue
+        is_character_cut = cut_has_character(c.cut_number) and (bool(char_images) or bool(character_description))
+        prompt = _build_image_prompt(
+            normalize_cut_image_prompt(
+                c.image_prompt,
+                c.narration,
+                " ".join(str(x or "") for x in (project.title, project.topic)),
+            ),
+            global_style,
+            has_reference=bool(ref_images),
+            has_character_slot=is_character_cut,
+            character_description=character_description,
+            enable_historical_guard=enable_historical_guard,
+        )
+        matches, _reason = image_matches_prompt(
+            existing,
+            source_prompt=c.image_prompt or "",
+            final_prompt=prompt,
+            image_model=image_model,
+        )
+        if not matches:
+            pending_cuts.append(c)
     if not pending_cuts:
         _ilog(f"resume-async nothing_to_resume project={project_id} cuts={len(cuts)}")
         return {"status": "nothing_to_resume", "step": "image", "total": 0}
@@ -736,15 +816,49 @@ async def resume_images_async(project_id: str, db: Session = Depends(get_db)):
             enable_historical_guard = should_enable_historical_guard_for_context(
                 proj.config, project_id, proj.title, proj.topic
             )
+            is_comfyui_model = IMAGE_REGISTRY.get(image_model, {}).get("provider") == "comfyui"
+            if is_comfyui_model:
+                enable_historical_guard = True
             _apply_historical_negative_prompt(image_service, proj.config, project_id, proj.title, proj.topic)
             base_negative_prompt = (getattr(image_service, "negative_prompt", "") or "").strip()
 
-            db_cuts = local_db.query(Cut).filter(Cut.project_id == project_id).order_by(Cut.cut_number).all()
-            pending = [c for c in db_cuts if not c.image_path and c.image_prompt]
-            _ilog(f"resume _run pending={len(pending)} refs={len(ref_images)} chars={len(char_images)}")
-
             image_dir = DATA_DIR / project_id / "images"
             image_dir.mkdir(parents=True, exist_ok=True)
+
+            db_cuts = local_db.query(Cut).filter(Cut.project_id == project_id).order_by(Cut.cut_number).all()
+            pending = []
+            for c in db_cuts:
+                if not c.image_prompt:
+                    continue
+                existing = find_existing_cut_image(DATA_DIR / project_id, c.cut_number)
+                if not c.image_path or not existing:
+                    pending.append(c)
+                    continue
+                is_character_cut = cut_has_character(c.cut_number) and (bool(char_images) or bool(character_description))
+                prompt = _build_image_prompt(
+                    normalize_cut_image_prompt(
+                        c.image_prompt,
+                        c.narration,
+                        " ".join(str(x or "") for x in (proj.title, proj.topic)),
+                    ),
+                    global_style,
+                    has_reference=bool(ref_images),
+                    has_character_slot=is_character_cut,
+                    character_description=character_description,
+                    enable_historical_guard=enable_historical_guard,
+                )
+                matches, reason = image_matches_prompt(
+                    existing,
+                    source_prompt=c.image_prompt or "",
+                    final_prompt=prompt,
+                    image_model=image_model,
+                )
+                if not matches:
+                    _ilog(f"resume stale image cut={c.cut_number} reason={reason}")
+                    c.image_path = None
+                    c.status = "pending"
+                    pending.append(c)
+            _ilog(f"resume _run pending={len(pending)} refs={len(ref_images)} chars={len(char_images)}")
 
             semaphore = asyncio.Semaphore(CONCURRENT_IMAGES)
             done_count = 0
@@ -761,7 +875,11 @@ async def resume_images_async(project_id: str, db: Session = Depends(get_db)):
                     image_path = str(image_dir / f"cut_{cut.cut_number}.png")
                     is_character_cut = cut_has_character(cut.cut_number) and (bool(char_images) or bool(character_description))
                     prompt = _build_image_prompt(
-                        cut.image_prompt,
+                        normalize_cut_image_prompt(
+                            cut.image_prompt,
+                            cut.narration,
+                            " ".join(str(x or "") for x in (proj.title, proj.topic)),
+                        ),
                         global_style,
                         has_reference=bool(ref_images),
                         has_character_slot=is_character_cut,
@@ -782,6 +900,14 @@ async def resume_images_async(project_id: str, db: Session = Depends(get_db)):
                         result_path = await image_service.generate(
                             prompt, width, height, image_path,
                             reference_images=all_refs if all_refs else None,
+                        )
+                        write_prompt_sidecar(
+                            result_path,
+                            cut_number=cut.cut_number,
+                            image_model=image_model,
+                            source_prompt=cut.image_prompt or "",
+                            final_prompt=prompt,
+                            narration=cut.narration or "",
                         )
                         image_service.negative_prompt = base_negative_prompt
                         _ilog(f"resume _gen_one cut={cut.cut_number} SUCCESS in {_t.time()-_s:.1f}s → {result_path}")
@@ -873,6 +999,9 @@ async def generate_one_image(
     enable_historical_guard = should_enable_historical_guard_for_context(
         project.config, project_id, project.title, project.topic
     )
+    is_comfyui_model = IMAGE_REGISTRY.get(image_model, {}).get("provider") == "comfyui"
+    if is_comfyui_model:
+        enable_historical_guard = True
     _apply_historical_negative_prompt(image_service, project.config, project_id, project.title, project.topic)
     base_negative_prompt = (getattr(image_service, "negative_prompt", "") or "").strip()
     ref_images = _collect_reference_images(project_id, project.config)
@@ -885,7 +1014,11 @@ async def generate_one_image(
 
         is_character_cut = cut_has_character(cut_number) and (bool(char_images) or bool(character_description))
         prompt = _build_image_prompt(
-            cut.image_prompt,
+            normalize_cut_image_prompt(
+                cut.image_prompt,
+                cut.narration,
+                " ".join(str(x or "") for x in (project.title, project.topic)),
+            ),
             global_style,
             has_reference=bool(ref_images),
             has_character_slot=is_character_cut,
@@ -907,6 +1040,14 @@ async def generate_one_image(
             height,
             image_path,
             reference_images=all_refs if all_refs else None,
+        )
+        write_prompt_sidecar(
+            result_path,
+            cut_number=cut_number,
+            image_model=image_model,
+            source_prompt=cut.image_prompt or "",
+            final_prompt=prompt,
+            narration=cut.narration or "",
         )
         image_service.negative_prompt = base_negative_prompt
 

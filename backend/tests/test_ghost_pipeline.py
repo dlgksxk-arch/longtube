@@ -45,7 +45,7 @@ import app.tasks.pipeline_tasks as _pt
 _ocs.SessionLocal = _new_session
 _pt.SessionLocal = _new_session
 
-from app.config import DATA_DIR
+from app.config import DATA_DIR, resolve_project_dir
 
 # ─── 더미 데이터 ──────────────────────────────────────────
 
@@ -77,6 +77,10 @@ class DummyLLMService:
     async def generate_script(self, topic, config):
         print(f"  [GHOST-LLM] generate_script({topic!r}) → {GHOST_CUTS}컷 더미 대본")
         return DUMMY_SCRIPT
+
+    @staticmethod
+    def assert_script_timing(script, config):
+        return None
 
 
 class DummyTTSService:
@@ -141,6 +145,12 @@ def run_ghost_test():
     print("=" * 60)
     print("고스트 테스트 시작 — API 호출 없음")
     print("=" * 60)
+    try:
+        from app.services.cancel_ctx import clear_all_halted, set_cancel_key
+        clear_all_halted()
+        set_cancel_key(None)
+    except Exception:
+        pass
 
     # 1. DB 세팅 — 교체된 엔진으로 테이블 생성
     from app.models.database import Base
@@ -160,6 +170,11 @@ def run_ghost_test():
 
     project = _clone_project_from_template(None, GHOST_TOPIC, "[고스트] 테스트")
     project_id = project.id
+    try:
+        from app.tasks.pipeline_tasks import _redis_delete
+        _redis_delete(f"pipeline:cancel:{project_id}", f"pipeline:pause:{project_id}")
+    except Exception:
+        pass
     print(f"\n[1] 프로젝트 생성: {project_id}")
     print(f"    topic={project.topic}, config keys={list((project.config or {}).keys())[:10]}")
 
@@ -179,12 +194,30 @@ def run_ghost_test():
     print(f"[2] 태스크 생성: {task_id}")
 
     # 4. 서비스 mock 패치
+    def _ghost_redis_get(key):
+        key = str(key)
+        if key.startswith("pipeline:cancel:") or key.startswith("pipeline:pause:"):
+            return None
+        return _pt._progress_mem.get(key)
+
+    _original_step_script = _pt._step_script
+
+    def _ghost_step_script(project_id_arg, config_arg):
+        result = _original_step_script(project_id_arg, config_arg)
+        task["status"] = "running"
+        task["error"] = None
+        return result
+
     patches = [
+        patch("app.tasks.pipeline_tasks._step_script", side_effect=_ghost_step_script),
         patch("app.services.llm.factory.get_llm_service", return_value=DummyLLMService()),
         patch("app.services.tts.factory.get_tts_service", return_value=DummyTTSService()),
         patch("app.services.image.factory.get_image_service", return_value=DummyImageService()),
         patch("app.services.video.factory.get_video_service", return_value=DummyVideoService()),
         patch("app.services.video.ffmpeg_service.FFmpegService", DummyVideoService),
+        patch("app.services.oneclick_service._redis_get", side_effect=_ghost_redis_get),
+        patch("app.tasks.pipeline_tasks._redis_get", side_effect=_ghost_redis_get),
+        patch("app.services.cancel_ctx.is_halted", return_value=False),
     ]
 
     for p in patches:
@@ -215,7 +248,7 @@ def run_ghost_test():
         print(f"    {mark} Step {num} ({label}): {state}")
 
     # 7. 생성된 파일 확인
-    pdir = Path(DATA_DIR) / project_id
+    pdir = resolve_project_dir(project_id, config=project.config, create=True)
     print(f"\n[6] 생성된 파일 확인 ({pdir}):")
     for sub in ["audio", "images", "videos", "output"]:
         d = pdir / sub
@@ -271,6 +304,7 @@ def run_ghost_test():
     # 테스트 프로젝트 정리
     print(f"\n정리: 테스트 프로젝트 삭제 중...")
     try:
+        _new_engine.dispose()
         shutil.rmtree("/tmp/longtube_ghost_test", ignore_errors=True)
         Path("/tmp/test_ghost.db").unlink(missing_ok=True)
         print("  정리 완료")
@@ -285,8 +319,18 @@ def run_resume_test():
     print("\n" + "=" * 60)
     print("이어하기 고스트 테스트 시작")
     print("=" * 60)
+    try:
+        from app.services.cancel_ctx import clear_all_halted, set_cancel_key
+        clear_all_halted()
+        set_cancel_key(None)
+    except Exception:
+        pass
 
     # DB 파일 재생성 (이전 테스트에서 삭제됐을 수 있음)
+    try:
+        _db.engine.dispose()
+    except Exception:
+        pass
     Path("/tmp/test_ghost.db").unlink(missing_ok=True)
     resume_engine = create_engine("sqlite:////tmp/test_ghost.db", connect_args={"check_same_thread": False})
     resume_session = sessionmaker(bind=resume_engine, autoflush=False, autocommit=False)
@@ -311,7 +355,12 @@ def run_resume_test():
     # 1. 프로젝트 생성 + Step 2 (대본), Step 3 (음성) 완료 상태 만들기
     project = _clone_project_from_template(None, "[고스트] 이어하기 테스트", None)
     project_id = project.id
-    pdir = Path(DATA_DIR) / project_id
+    try:
+        from app.tasks.pipeline_tasks import _redis_delete
+        _redis_delete(f"pipeline:cancel:{project_id}", f"pipeline:pause:{project_id}")
+    except Exception:
+        pass
+    pdir = resolve_project_dir(project_id, config=project.config, create=True)
     print(f"\n[1] 프로젝트: {project_id}")
 
     # script.json 생성
@@ -352,6 +401,15 @@ def run_resume_test():
         + chunk(b"IEND", b"")
     )
     img1.write_bytes(png)
+    from app.services.image.asset_guard import write_prompt_sidecar
+    write_prompt_sidecar(
+        img1,
+        cut_number=1,
+        image_model=str((project.config or {}).get("image_model") or ""),
+        source_prompt=str(DUMMY_SCRIPT["cuts"][0]["image_prompt"]),
+        final_prompt=str(DUMMY_SCRIPT["cuts"][0]["image_prompt"]),
+        narration=str(DUMMY_SCRIPT["cuts"][0]["narration"]),
+    )
 
     print(f"    audio/: 3개 (전부 생성됨)")
     print(f"    images/: 1개 (cut_001 만 — 나머지 2개는 미생성)")
@@ -404,6 +462,9 @@ def run_resume_test():
         patch("app.services.image.factory.get_image_service", return_value=TrackingImageService()),
         patch("app.services.video.factory.get_video_service", return_value=DummyVideoService()),
         patch("app.services.video.ffmpeg_service.FFmpegService", DummyVideoService),
+        patch("app.services.oneclick_service._redis_get", side_effect=lambda key: None if str(key).startswith(("pipeline:cancel:", "pipeline:pause:")) else _pt._progress_mem.get(key)),
+        patch("app.tasks.pipeline_tasks._redis_get", side_effect=lambda key: None if str(key).startswith(("pipeline:cancel:", "pipeline:pause:")) else _pt._progress_mem.get(key)),
+        patch("app.services.cancel_ctx.is_halted", return_value=False),
     ]
     for p in patches:
         p.start()
@@ -451,6 +512,7 @@ def run_resume_test():
     print("=" * 60)
 
     # 정리
+    resume_engine.dispose()
     shutil.rmtree("/tmp/longtube_ghost_test", ignore_errors=True)
     Path("/tmp/test_ghost.db").unlink(missing_ok=True)
     return True

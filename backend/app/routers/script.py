@@ -17,7 +17,7 @@ from app.services.llm.visual_policy import (
     normalize_image_prompt,
 )
 from app.services.shorts_service import annotate_script_shorts
-from app.services.title_utils import with_episode_prefix
+from app.services.title_utils import script_title_for_language, with_episode_prefix
 from app.services.tts.voice_profile import ensure_voice_profile_from_config
 
 router = APIRouter()
@@ -107,16 +107,22 @@ async def generate_script(project_id: str, db: Session = Depends(get_db)):
     llm_service = get_llm_service(model_id)
 
     try:
+        llm_config = dict(project.config or {})
+        llm_config["__project_id"] = project_id
         try:
-            await ensure_voice_profile_from_config(project.config, log=print)
+            await ensure_voice_profile_from_config(llm_config, log=print)
         except Exception as profile_error:
             print(f"[voice-profile] warning: using default timing because profiling failed: {profile_error}")
-        script = await llm_service.generate_script(project.topic, project.config)
+        script = await llm_service.generate_script(project.topic, llm_config)
         script = apply_script_visual_policy(script)
         script = annotate_script_shorts(script)
-        script["title"] = with_episode_prefix(
-            script.get("title") or project.title or project.topic,
-            (project.config or {}).get("episode_number"),
+        llm_service.assert_script_timing(script, llm_config)
+        script["title"] = script_title_for_language(
+            generated_title=script.get("title"),
+            project_title=project.title,
+            topic=project.topic,
+            episode_number=(project.config or {}).get("episode_number"),
+            language=(project.config or {}).get("language", "ko"),
         )
         script = _strip_script_motion_prompts(script)
     except Exception as e:
@@ -130,11 +136,12 @@ async def generate_script(project_id: str, db: Session = Depends(get_db)):
 
         if existing:
             existing.narration = cut_data.get("narration")
-            existing.image_prompt = cut_data.get("image_prompt")
+            existing.image_prompt = normalize_image_prompt(cut_data.get("image_prompt") or "")
             existing.scene_type = cut_data.get("scene_type")
             # Reset generated assets — new script means re-generation needed
             existing.audio_path = None
             existing.audio_duration = None
+            existing.audio_original_duration = None
             existing.image_path = None
             existing.image_model = None
             existing.video_path = None
@@ -144,7 +151,7 @@ async def generate_script(project_id: str, db: Session = Depends(get_db)):
                 project_id=project_id,
                 cut_number=cut_data["cut_number"],
                 narration=cut_data.get("narration"),
-                image_prompt=cut_data.get("image_prompt"),
+                image_prompt=normalize_image_prompt(cut_data.get("image_prompt") or ""),
                 scene_type=cut_data.get("scene_type"),
                 status="pending"
             )
@@ -152,7 +159,6 @@ async def generate_script(project_id: str, db: Session = Depends(get_db)):
 
     db.commit()
     project.total_cuts = len(script.get("cuts", []))
-    project.title = script.get("title") or project.title
 
     # Mark script step as completed, reset subsequent steps
     # v1.1.26 스텝 순서: 2 대본 · 3 음성 · 4 간지 · 5 이미지 · 6 영상 · 7 자막
@@ -225,6 +231,7 @@ async def generate_script_async(project_id: str, db: Session = Depends(get_db)):
 
     # 작업에 필요한 값을 미리 캡처 (DB 세션은 공유 불가)
     topic = project.topic
+    project_title = project.title
     config = dict(project.config or {})
     config["__project_id"] = project_id
     config["__script_chunk_size"] = chunk_size
@@ -242,9 +249,13 @@ async def generate_script_async(project_id: str, db: Session = Depends(get_db)):
             script = await llm_service.generate_script(topic, config)
             script = apply_script_visual_policy(script)
             script = annotate_script_shorts(script)
-            script["title"] = with_episode_prefix(
-                script.get("title") or topic,
-                config.get("episode_number"),
+            llm_service.assert_script_timing(script, config)
+            script["title"] = script_title_for_language(
+                generated_title=script.get("title"),
+                project_title=project_title,
+                topic=topic,
+                episode_number=config.get("episode_number"),
+                language=config.get("language", "ko"),
             )
             script = _strip_script_motion_prompts(script)
 
@@ -259,10 +270,11 @@ async def generate_script_async(project_id: str, db: Session = Depends(get_db)):
                 ).first()
                 if existing:
                     existing.narration = cut_data.get("narration")
-                    existing.image_prompt = cut_data.get("image_prompt")
+                    existing.image_prompt = normalize_image_prompt(cut_data.get("image_prompt") or "")
                     existing.scene_type = cut_data.get("scene_type")
                     existing.audio_path = None
                     existing.audio_duration = None
+                    existing.audio_original_duration = None
                     existing.image_path = None
                     existing.image_model = None
                     existing.video_path = None
@@ -272,14 +284,13 @@ async def generate_script_async(project_id: str, db: Session = Depends(get_db)):
                         project_id=project_id,
                         cut_number=cut_data["cut_number"],
                         narration=cut_data.get("narration"),
-                        image_prompt=cut_data.get("image_prompt"),
+                        image_prompt=normalize_image_prompt(cut_data.get("image_prompt") or ""),
                         scene_type=cut_data.get("scene_type"),
                         status="pending",
                     ))
 
             local_db.commit()
             proj.total_cuts = len(script.get("cuts", []))
-            proj.title = script.get("title") or proj.title
 
             ss = dict(proj.step_states or {})
             ss["2"] = "completed"
@@ -293,15 +304,6 @@ async def generate_script_async(project_id: str, db: Session = Depends(get_db)):
             local_db.commit()
 
             _save_script(project_id, script, config.get("language", "ko"))
-            # v1.1.55-fix: 스튜디오 LLM 스크립트 생성 비용 기록
-            try:
-                from app.services import spend_ledger
-                spend_ledger.record_llm(
-                    model_id, input_tokens=0, output_tokens=0,
-                    project_id=project_id, note=f"studio script {len(script.get('cuts',[]))} cuts",
-                )
-            except Exception as _le:
-                print(f"[spend_ledger] studio script record skipped: {_le}")
             complete_task(project_id, "script")
         except Exception as e:
             fail_task(project_id, "script", str(e))
@@ -356,6 +358,7 @@ def list_cuts(project_id: str, db: Session = Depends(get_db)):
         if c.audio_path and not _asset_exists(project_dir, c.audio_path):
             c.audio_path = None
             c.audio_duration = None
+            c.audio_original_duration = None
             dirty = True
         if c.image_path and not _asset_exists(project_dir, c.image_path):
             c.image_path = None
@@ -380,6 +383,7 @@ def list_cuts(project_id: str, db: Session = Depends(get_db)):
                 "scene_type": c.scene_type,
                 "audio_path": c.audio_path,
                 "audio_duration": c.audio_duration,
+                "audio_original_duration": c.audio_original_duration,
                 "image_path": c.image_path,
                 "image_model": c.image_model,
                 "video_path": c.video_path,
@@ -506,6 +510,7 @@ def edit_cut(
         cut.narration = body.narration
         cut.audio_path = None
         cut.audio_duration = None
+        cut.audio_original_duration = None
         cut.video_path = None
         cut.video_model = None
         cut.status = "pending"
@@ -642,6 +647,7 @@ def clear_step_results(project_id: str, step: str, db: Session = Depends(get_db)
                 _safe_unlink(p if p.is_absolute() else project_dir / c.audio_path)
             c.audio_path = None
             c.audio_duration = None
+            c.audio_original_duration = None
         _safe_rmtree(project_dir / "audio")
 
     elif step == "image":
