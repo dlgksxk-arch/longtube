@@ -6157,7 +6157,6 @@ def _load_queue_from_disk() -> None:
         if _QUEUE_FILE.exists():
             raw = json.loads(_QUEUE_FILE.read_text(encoding="utf-8"))
             _QUEUE = _queue_normalize(raw)
-            _sort_queue_state_in_place(_QUEUE)
             return
     except Exception as e:
         print(f"[oneclick.queue] load failed, falling back to default: {e}")
@@ -6177,7 +6176,6 @@ def _ensure_state_loaded() -> None:
 
 def _save_queue_to_disk() -> None:
     try:
-        _sort_queue_state_in_place(_QUEUE)
         _QUEUE_FILE.parent.mkdir(parents=True, exist_ok=True)
         _QUEUE_FILE.write_text(
             json.dumps(_QUEUE, ensure_ascii=False, indent=2),
@@ -6212,7 +6210,6 @@ def _resolve_item_preset(item: dict) -> Optional[str]:
 def get_queue() -> dict[str, Any]:
     """현재 큐 상태 반환 (UI 조회용). 복사본을 돌려준다."""
     _ensure_state_loaded()
-    _sort_queue_state_in_place(_QUEUE)
     return {
         "channel_times": dict(_QUEUE.get("channel_times") or {}),
         "last_run_dates": dict(_QUEUE.get("last_run_dates") or {}),
@@ -6229,7 +6226,6 @@ def set_queue(new_state: dict[str, Any]) -> dict[str, Any]:
     # last_run_dates 는 사용자가 바꿀 값이 아니므로 기존 값 유지.
     if not isinstance(new_state.get("last_run_dates"), dict):
         normalized["last_run_dates"] = dict(_QUEUE.get("last_run_dates") or {})
-    _sort_queue_state_in_place(normalized)
     _QUEUE = normalized
     _save_queue_to_disk()
     _sync_windows_wake_timers(reason="queue-save")
