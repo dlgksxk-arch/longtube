@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import random
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -120,14 +121,14 @@ LONGTUBE_LOCAL_V1_MASTER_PROMPT = """CUT IMAGE PROMPT — SOURCE OF TRUTH
 
 The cut image prompt above is the only source for visible subject, place, era, objects, action, weather, and composition.
 
-[MASTER PROMPT — SDXL LIGHTNING DOCUMENTARY STYLE]
+[MASTER PROMPT — DOCUMENTARY ILLUSTRATION STYLE]
 
 longtubestyle,
 simple cartoon illustration,
 cinematic documentary illustration style,
 clean composition,
 thick outlines,
-soft dramatic shadows,
+soft natural shadows,
 muted natural color palette,
 story-driven scene,
 emotional atmosphere,
@@ -198,7 +199,7 @@ high-detail foreground,
 clean background separation,
 optimized for YouTube documentary visuals,
 optimized for motion-video editing,
-optimized for SDXL Lightning generation.
+optimized for local SDXL generation.
 
 || OUTPUT STYLE
 
@@ -219,11 +220,6 @@ LONGTUBE_LOCAL_V1_BASE_NEGATIVE_PROMPT = (
 
 
 _LOCAL_V1_SCENE_NEGATIVE_GROUPS = (
-    (("fire", "flame", "torch", "burning", "smoke"), "fire, flames, torch, burning building, smoke, bonfire"),
-    (("temple", "shrine", "pagoda", "monastery"), "temple, shrine, pagoda, monastery"),
-    (("castle", "fortress", "citadel", "palace"), "castle, fortress, citadel, palace"),
-    (("ocean", "sea", "shore", "coast", "beach", "island"), "ocean, sea, coastline, beach, island shore"),
-    (("armor", "armour", "battle", "soldier", "samurai", "weapon", "sword"), "armor, battle, battlefield, soldier, samurai, weapon, sword"),
 )
 
 
@@ -239,6 +235,56 @@ def _append_unique_negative(base: str, extra: str) -> str:
     return ", ".join(out)
 
 
+def _strip_local_v1_positive_only_prompt(prompt: str) -> str:
+    cleaned = prompt or ""
+    markers = (
+        " || HARD HISTORICAL MATERIAL CULTURE LOCK - ",
+        " || HISTORICAL ACCURACY LOCK - ",
+        " || ★ HARD CONSTRAINT — ABSOLUTELY NO TEXT",
+        " || ★ HARD CONSTRAINT — ABSOLUTELY NO MAPS",
+        " || BOOK RENDERING LOCK - ",
+    )
+    for marker in markers:
+        pos = cleaned.find(marker)
+        if pos >= 0:
+            cleaned = cleaned[:pos]
+    cleaned = re.sub(
+        r",?\s*\bno\s+(?:readable\s+)?(?:text|labels|letters|numbers|captions|logo|watermark|exterior\s+landscape\s+view)\b",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip(" ,")
+    return cleaned or (prompt or "").strip() or "an image"
+
+
+def _enrich_local_v1_positive_prompt(prompt: str) -> str:
+    p = (prompt or "").strip() or "an image"
+    lower = p.lower()
+    prefixes: list[str] = []
+    modern_markers = ("2020s", "present day", "present-day", "modern", "現代", "令和")
+    if any(marker in lower or marker in p for marker in modern_markers):
+        prefixes.append(
+            "Present-day modern setting, current era, contemporary everyday interior, modern household objects."
+        )
+    if "日本の一般家庭の台所" in p or "台所・食卓" in p or "home kitchen" in lower:
+        prefixes.append(
+            "Ordinary modern Japanese home kitchen and dining table, indoor close table scene, softly lit paper screen."
+        )
+    if "味噌汁" in p or "miso soup" in lower:
+        prefixes.append("The main subject is a bowl of miso soup on the table.")
+    if not prefixes:
+        return p
+    return " ".join(prefixes + [p])
+
+
+def _prompt_mentions_any(prompt: str, triggers: tuple[str, ...]) -> bool:
+    for trigger in triggers:
+        if re.search(rf"(?<![a-z]){re.escape(trigger)}(?![a-z])", prompt, re.IGNORECASE):
+            return True
+    return False
+
+
 def apply_longtube_local_v1_master_prompt(prompt: str) -> str:
     cut_prompt = (prompt or "").strip() or "an image"
     return LONGTUBE_LOCAL_V1_MASTER_PROMPT.replace("{CUT_IMAGE_PROMPT}", cut_prompt)
@@ -248,7 +294,7 @@ def build_longtube_local_v1_negative_prompt(base_negative: str, prompt: str) -> 
     cut_prompt = (prompt or "").lower()
     negative = _append_unique_negative(base_negative, LONGTUBE_LOCAL_V1_BASE_NEGATIVE_PROMPT)
     for triggers, extra in _LOCAL_V1_SCENE_NEGATIVE_GROUPS:
-        if not any(trigger in cut_prompt for trigger in triggers):
+        if not _prompt_mentions_any(cut_prompt, triggers):
             negative = _append_unique_negative(negative, extra)
     return negative
 
@@ -513,6 +559,8 @@ class ComfyUIImageService(BaseImageService):
 
         # 로컬모델 v1 전용 마스터 프롬프트 적용.
         if self.model_id.startswith("comfyui-dreamshaper-xl-longtube"):
+            final_prompt_text = _strip_local_v1_positive_only_prompt(final_prompt_text)
+            final_prompt_text = _enrich_local_v1_positive_prompt(final_prompt_text)
             neg = build_longtube_local_v1_negative_prompt(neg, final_prompt_text)
             final_prompt_text = apply_longtube_local_v1_master_prompt(final_prompt_text)
         self.last_positive_prompt = final_prompt_text

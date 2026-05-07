@@ -19,6 +19,8 @@ from app.services.image import prompt_builder  # noqa: E402
 from app.services.image.comfyui_service import (  # noqa: E402
     apply_longtube_local_v1_master_prompt,
     build_longtube_local_v1_negative_prompt,
+    _enrich_local_v1_positive_prompt,
+    _strip_local_v1_positive_only_prompt,
 )
 from app.services.llm.base import BaseLLMService  # noqa: E402
 from app.services.llm.visual_policy import apply_script_visual_policy  # noqa: E402
@@ -358,14 +360,25 @@ class HistoricalImagePromptStabilityTests(unittest.TestCase):
         )
 
         self.assertTrue(wrapped.startswith("CUT IMAGE PROMPT — SOURCE OF TRUTH\n" + cut_prompt))
-        self.assertIn("[MASTER PROMPT — SDXL LIGHTNING DOCUMENTARY STYLE]", wrapped)
+        self.assertIn("[MASTER PROMPT — DOCUMENTARY ILLUSTRATION STYLE]", wrapped)
         self.assertIn("longtubestyle", wrapped)
         self.assertIn("CUT PROMPT LOCK — ABSOLUTE PRIORITY", wrapped)
         self.assertNotIn("{CUT_IMAGE_PROMPT}", wrapped)
-        for forbidden_positive in ("Do not", "ABSOLUTELY NO", "temple", "castle", "ocean", "fire", "armor", "battle"):
+        for forbidden_positive in (
+            "Do not",
+            "ABSOLUTELY NO",
+            "temple",
+            "castle",
+            "ocean",
+            "fire",
+            "armor",
+            "battle",
+            "lightning",
+            "no exterior",
+        ):
             self.assertNotIn(forbidden_positive, wrapped)
 
-    def test_longtube_local_v1_moves_absent_scene_blocks_to_negative_prompt(self):
+    def test_longtube_local_v1_does_not_add_scene_words_to_negative_prompt(self):
         cut_prompt = (
             "Year/period: 2020s; Exact place: Japanese home kitchen; "
             "Scene: white ceramic bowl of miso soup on a breakfast table"
@@ -373,19 +386,42 @@ class HistoricalImagePromptStabilityTests(unittest.TestCase):
         negative = build_longtube_local_v1_negative_prompt("blurry", cut_prompt)
 
         self.assertIn("blurry", negative)
-        self.assertIn("temple", negative)
-        self.assertIn("castle", negative)
-        self.assertIn("ocean", negative)
-        self.assertIn("fire", negative)
+        for scene_word in ("temple", "castle", "ocean", "fire", "boat", "mountain", "lightning", "storm"):
+            self.assertNotIn(scene_word, negative)
 
-    def test_longtube_local_v1_keeps_requested_scene_terms_out_of_negative_prompt(self):
+    def test_longtube_local_v1_keeps_scene_terms_out_of_negative_prompt(self):
         cut_prompt = "Year/period: c. 1300; Exact place: temple kitchen; Scene: pot over open fire"
         negative = build_longtube_local_v1_negative_prompt("", cut_prompt)
 
         self.assertNotIn("temple", negative)
         self.assertNotIn("fire", negative)
-        self.assertIn("castle", negative)
-        self.assertIn("ocean", negative)
+        self.assertNotIn("castle", negative)
+        self.assertNotIn("ocean", negative)
+
+    def test_longtube_local_v1_strips_common_positive_negative_directives(self):
+        raw = (
+            "Year/period: 2020s; Exact place: home kitchen; Scene: miso soup, no text "
+            "|| HARD HISTORICAL MATERIAL CULTURE LOCK - match the exact time period, season "
+            "|| ★ HARD CONSTRAINT — ABSOLUTELY NO MAPS"
+        )
+        cleaned = _strip_local_v1_positive_only_prompt(raw)
+
+        self.assertIn("miso soup", cleaned)
+        self.assertNotIn("HARD HISTORICAL", cleaned)
+        self.assertNotIn("ABSOLUTELY NO", cleaned)
+        self.assertNotIn("no text", cleaned.lower())
+        self.assertNotIn("no exterior", cleaned.lower())
+        negative = build_longtube_local_v1_negative_prompt("", cleaned)
+        self.assertNotIn("ocean", negative)
+
+    def test_longtube_local_v1_enriches_modern_japanese_kitchen_prompt(self):
+        raw = "Year/period: 2020s; 現代日本、令和時代; Exact place: 日本の一般家庭の台所・食卓; Scene: miso soup"
+        enriched = _enrich_local_v1_positive_prompt(raw)
+
+        self.assertIn("Present-day modern setting", enriched)
+        self.assertIn("Ordinary modern Japanese home kitchen", enriched)
+        self.assertIn("main subject is a bowl of miso soup", enriched)
+        self.assertNotIn("no exterior", enriched.lower())
 
     def test_default_historical_image_guard_locks_period_material_culture(self):
         guard = prompt_builder.GENERAL_HISTORY_ACCURACY_DIRECTIVE
