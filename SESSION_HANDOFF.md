@@ -1,6 +1,6 @@
 # LongTube Session Handoff
 
-Saved at: 2026-05-08 00:20 +09:00
+Saved at: 2026-05-08 00:22 +09:00
 Workspace: `C:\Users\Ai_M9\Desktop\longtube`
 
 ## 최상위 절대 지킴
@@ -19,6 +19,7 @@ Workspace: `C:\Users\Ai_M9\Desktop\longtube`
   4. `CONTEXT.md`
   5. 현재 요청과 직접 관련된 코드 파일
 - `SESSION_QA_V3_2026-05-08.md`는 요약으로 대체하지 않고 처음부터 끝까지 읽습니다.
+- `SESSION_QA_V3_2026-05-08.md`는 1,097줄 파일입니다. 한 번 출력이 잘리면 줄 범위를 나눠 EOF까지 읽습니다. 출력 제한으로 일부만 읽은 상태에서 작업을 시작하지 않습니다.
 - 날짜별 `SESSION_HANDOFF_YYYY-MM-DD.md` 파일은 보관본입니다.
 - `docs/ARCHITECTURE.md`는 초기 설계 기록이며 현재 구현 판단 기준이 아닙니다.
 
