@@ -72,6 +72,27 @@ def _coerce_channel(value) -> int | None:
     return ch if ch >= 1 else None
 
 
+def parse_v3_oneclick_project_id(project_id: str) -> tuple[int, int, str] | None:
+    """Return (channel, episode, unique_id) for V3 workbench run project ids."""
+    pid = str(project_id or "").strip()
+    m = re.fullmatch(r"V3_CH([1-9]\d*)_EP(\d+)_([A-Za-z0-9][A-Za-z0-9_-]*)", pid)
+    if m:
+        return int(m.group(1)), int(m.group(2)), m.group(3)
+    # Read compatibility for an early discussed external shape.
+    m = re.fullmatch(r"CH([1-9]\d*)_EP\.(\d+)\.([A-Za-z0-9][A-Za-z0-9_-]*)", pid)
+    if m:
+        return int(m.group(1)), int(m.group(2)), m.group(3)
+    return None
+
+
+def v3_oneclick_project_dir(project_id: str) -> Path | None:
+    parsed = parse_v3_oneclick_project_id(project_id)
+    if not parsed:
+        return None
+    channel, episode, unique_id = parsed
+    return RESULT_ARCHIVE_DIR / f"CH{channel}" / f"EP.{episode}.{unique_id}"
+
+
 def infer_project_channel(project_id: str, config: dict | None = None) -> int | None:
     """프로젝트의 채널 번호를 추론한다.
 
@@ -81,6 +102,9 @@ def infer_project_channel(project_id: str, config: dict | None = None) -> int | 
     3. config["youtube_channel"]
     """
     pid = str(project_id or "").strip()
+    parsed_v3 = parse_v3_oneclick_project_id(pid)
+    if parsed_v3:
+        return parsed_v3[0]
     m = re.search(r"(?:^|[_-])CH([1-4])(?:[_-]|$)", pid, flags=re.IGNORECASE)
     if m:
         return int(m.group(1))
@@ -112,6 +136,8 @@ def _looks_like_project_key(value) -> bool:
     key = str(value or "").strip()
     if not key:
         return False
+    if parse_v3_oneclick_project_id(key):
+        return True
     if "\\" in key or "/" in key:
         return False
     if key in _ROOT_RESERVED_NAMES:
@@ -131,6 +157,12 @@ def resolve_project_dir(project_id: str, config: dict | None = None, create: boo
     - 구버전 루트 경로가 이미 있으면 읽기 호환용으로만 그대로 사용
     """
     pid = str(project_id or "").strip()
+    v3_path = v3_oneclick_project_dir(pid)
+    if v3_path is not None:
+        if create:
+            v3_path.mkdir(parents=True, exist_ok=True)
+        return v3_path
+
     ch = infer_project_channel(pid, config)
     if ch is not None:
         actual_path = get_channel_projects_root(ch) / pid

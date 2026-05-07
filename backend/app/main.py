@@ -143,7 +143,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="LongTube",
     description="YouTube longform video automation pipeline",
-    version="1.2.29",
+    version="V3",
     lifespan=lifespan,
 )
 
@@ -248,4 +248,4 @@ app.mount("/assets", StaticFiles(directory=str(DATA_DIR)), name="assets")
 @app.get("/api/health")
 async def health():
     from app.config import COMFYUI_BASE_URL as _CU
-    return {"status": "ok", "version": "1.2.29", "comfyui_base_url": _CU or None}
+    return {"status": "ok", "version": "V3", "comfyui_base_url": _CU or None}

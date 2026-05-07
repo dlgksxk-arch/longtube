@@ -1,6 +1,6 @@
 # LongTube Session Handoff
 
-Saved at: 2026-05-08 00:03 +09:00
+Saved at: 2026-05-08 00:20 +09:00
 Workspace: `C:\Users\Ai_M9\Desktop\longtube`
 
 ## 최상위 절대 지킴
@@ -28,6 +28,23 @@ Workspace: `C:\Users\Ai_M9\Desktop\longtube`
 - V3 작업대/스튜디오 문답 원문 파일:
   - `SESSION_QA_V3_2026-05-08.md`
 
+## V3 Workbench Current Facts
+
+- 작업대 새 실행 프로젝트 ID는 `V3_CH{channel}_EP{episode}_{unique}` 형식입니다.
+- 실제 결과 폴더는 `D:\long_result\CH{channel}\EP.{episode}.{unique}`입니다.
+- `backend/app/config.py`의 `resolve_project_dir()`가 V3 프로젝트 ID를 위 폴더로 직접 매핑합니다.
+- 작업대 `prepare_task()`는 채널에 연결된 Studio 프로젝트를 원본으로 새 V3 실행 프로젝트를 만듭니다.
+- 큐 아이템별 `template_project_id`보다 채널 `channel_presets` 연결 Studio가 실행 원본입니다.
+- V3 실행 Step 2~6은 `pipeline_tasks._step_*` 직접 호출이 아니라 Studio 개별 탭 라우터를 호출합니다:
+  - script: `app.routers.script.generate_script_async`
+  - voice: `app.routers.voice.generate_all_voices_async`
+  - image: `app.routers.image.generate_all_images_async`
+  - video: `app.routers.video.generate_all_videos_async`
+  - render: `app.routers.subtitle.render_video_async`
+- 각 단계 시작 직전에 연결 Studio의 현재 config를 다시 읽고 V3 실행 프로젝트에 반영합니다.
+- Step 7 업로드는 기존 작업대 업로드 경로를 유지하되, `template_project_id/source_project_id`를 연결 Studio로 둬서 Studio OAuth를 우선 사용합니다.
+- 단계 삭제는 산출물과 DB Cut 필드를 같이 정리합니다.
+
 ## User Rules
 
 - 추론하지 않습니다. 실제 파일, 로그, DB, API 응답 기준으로 답합니다.
@@ -38,22 +55,37 @@ Workspace: `C:\Users\Ai_M9\Desktop\longtube`
 
 ## Current Verified Runtime State
 
-- Backend health checked on 2026-05-06:
+- Backend health checked on 2026-05-08:
   - `GET http://127.0.0.1:8000/api/health`
-  - response: `status=ok`, `version=1.2.29`, `comfyui_base_url=http://127.0.0.1:8188`
+  - expected response after restart: `status=ok`, `version=V3`, `comfyui_base_url=http://127.0.0.1:8188`
 - Frontend is listening on `0.0.0.0:3000`.
 - Backend is listening on `0.0.0.0:8000`.
 - ComfyUI is listening on `0.0.0.0:8188`.
 - `GET /api/oneclick/safety` without login cookie returns `401`. This matches the current auth middleware in `backend/app/main.py`.
+- In-app browser was checked at `http://127.0.0.1:3000/oneclick/live` on 2026-05-08 00:19 +09:00.
+- Browser-visible workbench state:
+  - version badge: `vV3`
+  - queue: `553건 대기`
+  - current work target: `CH3 EP.06 히미코는 정말 일본 첫 여왕이었을까`
+  - current target status: `대기`, progress `0.0%`
+  - visible log: `[시스템] 현재 진행 중인 태스크가 없습니다.`
+  - visible safety warning: `[안전장치] 실행 중인 OneClick 작업이 없는데 API 비용 기록이 발생했습니다. 자동제작을 30분간 중지했습니다.`
+  - queue counts: `CH1 29`, `CH2 45`, `CH3 195`, `CH4 284`
+  - first visible queue items:
+    1. `CH3 EP.06 히미코는 정말 일본 첫 여왕이었을까` - 실패 재시도
+    2. `CH1 EP.37 500년을 버티고도 통일되지 못한 나라` - 실패 재시도
+    3. `CH2 EP.16 The Tea Bag: Invented Because Someone Was Cheap` - 실패 재시도
+    4. `CH3 EP.07 야마타이국은 어디에 있었을까` - 엑셀 등록
+    5. `CH4 EP.17 마우리아 제국` - 미완성 복구
 
 ## Current Source Of Truth
 
 - Backend version:
-  - `backend/app/main.py`: `1.2.29`
-  - `/api/health`: `1.2.29`
+  - `backend/app/main.py`: `V3`
+  - `/api/health`: `V3`
 - Frontend version:
-  - `frontend/package.json`: `1.2.29`
-  - `frontend/src/lib/version.ts`: `1.2.29`
+  - `frontend/package.json`: `3.0.0`
+  - `frontend/src/lib/version.ts`: `V3`
 - Actual workspace path:
   - `C:\Users\Ai_M9\Desktop\longtube`
 - Current data root in code:
@@ -139,7 +171,7 @@ Workspace: `C:\Users\Ai_M9\Desktop\longtube`
   - `python -m unittest backend.tests.test_oneclick_stability.HistoricalImagePromptStabilityTests -q`
 - 백엔드:
   - `GET http://127.0.0.1:8000/api/health` 정상.
-  - 응답: `status=ok`, `version=1.2.29`, `comfyui_base_url=http://127.0.0.1:8188`
+  - 응답 기준: `status=ok`, `version=V3`, `comfyui_base_url=http://127.0.0.1:8188`
 - 관련 커밋:
   - `47b8c58 fix: prioritize cut prompt for local v1 images`
   - `1b9d838 fix: split local v1 positive and negative prompts`

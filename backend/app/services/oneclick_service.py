@@ -73,7 +73,13 @@ from typing import Any, List, Optional
 if os.name == "nt":
     import msvcrt
 
-from app.config import DATA_DIR, SYSTEM_DIR, resolve_project_dir, get_channel_projects_root
+from app.config import (
+    DATA_DIR,
+    SYSTEM_DIR,
+    parse_v3_oneclick_project_id,
+    resolve_project_dir,
+    get_channel_projects_root,
+)
 from app.models.database import SessionLocal
 from app.models.api_log import ApiLog
 from app.models.cut import Cut
@@ -92,7 +98,7 @@ from app.services.title_utils import coerce_episode_number, with_episode_prefix,
 
 # v1.1.52: pipeline_tasks 의 _redis_get 을 사용 — 인메모리 fallback 포함이라
 # Redis 없어도 같은 프로세스 내에서 진행률을 정확히 읽는다.
-from app.tasks.pipeline_tasks import _redis_get, _redis_delete, run_async
+from app.tasks.pipeline_tasks import _redis_get, _redis_delete, run_async, PipelineCancelled
 
 
 # --------------------------------------------------------------------------- #
@@ -180,6 +186,9 @@ def _dedupe_tasks_by_project_id() -> bool:
 
 
 def _task_work_key(task: dict[str, Any]) -> str:
+    pid = str(task.get("project_id") or "").strip()
+    if parse_v3_oneclick_project_id(pid):
+        return ""
     topic = str(task.get("topic") or "").strip().casefold()
     if not topic:
         return ""
@@ -193,6 +202,8 @@ def _task_work_key(task: dict[str, Any]) -> str:
 
 
 def _project_work_key(project: Project, config: dict[str, Any]) -> str:
+    if parse_v3_oneclick_project_id(project.id or ""):
+        return ""
     topic = str(project.topic or "").strip().casefold()
     if not topic:
         return ""
@@ -722,6 +733,7 @@ def _safety_stop_task(task: dict[str, Any], reason: str) -> None:
             _redis_set(f"pipeline:cancel:{project_id}", "1")
         except Exception:
             pass
+        _cancel_studio_task_manager_steps(project_id)
         try:
             from app.services.cancel_ctx import mark_halted
             mark_halted(project_id)
@@ -1077,7 +1089,9 @@ def _make_task_record(
     return {
         "task_id": task_id,
         "template_project_id": effective_template_project_id,
+        "source_project_id": cfg.get("source_project_id") or effective_template_project_id,
         "project_id": project_id,
+        "result_dir": cfg.get("result_dir"),
         "topic": topic,
         "title": display_title,
         "episode_number": _ep_num,
@@ -1662,6 +1676,9 @@ def _find_existing_unfinished_oneclick_project(
 
 def _project_channel_from_id_or_config(project: Project, config: dict[str, Any]) -> Optional[int]:
     try:
+        parsed = parse_v3_oneclick_project_id(project.id or "")
+        if parsed:
+            return parsed[0]
         m = re.match(r"^딸깍_CH(\d+)_", project.id or "")
         if m:
             ch = int(m.group(1))
@@ -1909,13 +1926,20 @@ def _find_existing_project_for_queue_item(item: dict[str, Any]) -> Optional[str]
                 .all()
             )
 
-        query = (
+        candidates.extend(
             db.query(Project)
             .filter(Project.id.like("딸깍_%"))
             .order_by(Project.created_at.desc())
             .limit(500)
+            .all()
         )
-        candidates.extend(query.all())
+        candidates.extend(
+            db.query(Project)
+            .filter(Project.id.like("V3_CH%"))
+            .order_by(Project.created_at.desc())
+            .limit(500)
+            .all()
+        )
 
         scored: list[tuple[int, str]] = []
         seen: set[str] = set()
@@ -2255,6 +2279,189 @@ def _ensure_project_layout(project_id: str) -> Path:
     return project_dir
 
 
+def _channel_studio_project_id(channel: Optional[int], fallback_project_id: Optional[str] = None) -> Optional[str]:
+    """Return the Studio project linked to the channel."""
+    ch = _valid_channel(channel)
+    if ch is not None:
+        cp = (_QUEUE.get("channel_presets") or {}).get(str(ch))
+        if cp:
+            return str(cp).strip() or None
+    fallback = str(fallback_project_id or "").strip()
+    return fallback or None
+
+
+def _generate_v3_run_project_id(channel: Optional[int], episode_number: Optional[int], db) -> str:
+    ch = _valid_channel(channel) or 1
+    ep = coerce_episode_number(episode_number) or 0
+    while True:
+        unique_id = f"{datetime.now().strftime('%y%m%d%H%M%S')}{uuid.uuid4().hex[:6]}"
+        project_id = f"V3_CH{ch}_EP{ep}_{unique_id}"
+        if not db.query(Project).filter(Project.id == project_id).first():
+            return project_id
+
+
+def _apply_v3_episode_overrides(
+    config: dict[str, Any],
+    *,
+    source_project_id: str,
+    project_id: str,
+    result_dir: Path,
+    topic: str,
+    channel: Optional[int],
+    episode_openings: Optional[List[str]] = None,
+    episode_endings: Optional[List[str]] = None,
+    episode_core_content: Optional[str] = None,
+    episode_number: Optional[int] = None,
+    next_episode_preview: Optional[str] = None,
+) -> dict[str, Any]:
+    cfg = dict(config or {})
+    cfg["__oneclick__"] = True
+    cfg["__oneclick_v3__"] = True
+    cfg["template_project_id"] = source_project_id
+    cfg["source_project_id"] = source_project_id
+    cfg["auto_pause_after_step"] = False
+    cfg["topic"] = topic
+    cfg["result_dir"] = str(result_dir)
+    parsed = parse_v3_oneclick_project_id(project_id)
+    if parsed:
+        ch_from_id, ep_from_id, _uid = parsed
+        cfg["result_channel_dir"] = f"CH{ch_from_id}"
+        cfg["result_episode_dir"] = Path(result_dir).name
+        cfg["episode_number"] = ep_from_id if ep_from_id > 0 else cfg.get("episode_number")
+
+    ch = _valid_channel(channel)
+    if ch is not None:
+        cfg["channel"] = ch
+
+    def _clean_list(xs: Optional[List[str]]) -> list[str]:
+        return [x for x in [str(v or "").strip() for v in (xs or [])] if x]
+
+    if episode_openings is not None:
+        filtered = _clean_list(episode_openings)
+        if filtered:
+            cfg["episode_openings"] = filtered
+        else:
+            cfg.pop("episode_openings", None)
+    if episode_endings is not None:
+        filtered = _clean_list(episode_endings)
+        if filtered:
+            cfg["episode_endings"] = filtered
+        else:
+            cfg.pop("episode_endings", None)
+    if episode_core_content is not None:
+        cc = str(episode_core_content or "").strip()
+        if cc:
+            cfg["episode_core_content"] = cc
+        else:
+            cfg.pop("episode_core_content", None)
+    if episode_number is not None:
+        ep = coerce_episode_number(episode_number)
+        if ep:
+            cfg["episode_number"] = ep
+        else:
+            cfg.pop("episode_number", None)
+    if next_episode_preview is not None:
+        nep = str(next_episode_preview or "").strip()
+        if nep:
+            cfg["next_episode_preview"] = nep
+        else:
+            cfg.pop("next_episode_preview", None)
+    return cfg
+
+
+def _is_v3_studio_linked_project(project_id: str, config: Optional[dict] = None) -> bool:
+    cfg = config or {}
+    return bool(
+        parse_v3_oneclick_project_id(project_id)
+        or cfg.get("__oneclick_v3__")
+        or cfg.get("source_project_id")
+    )
+
+
+def _prepare_v3_studio_linked_task(
+    *,
+    source_project_id: str,
+    topic: str,
+    title: Optional[str] = None,
+    episode_openings: Optional[List[str]] = None,
+    episode_endings: Optional[List[str]] = None,
+    episode_core_content: Optional[str] = None,
+    episode_number: Optional[int] = None,
+    next_episode_preview: Optional[str] = None,
+    channel: Optional[int] = None,
+) -> dict:
+    db = SessionLocal()
+    try:
+        source = db.query(Project).filter(Project.id == source_project_id).first()
+        if not source:
+            raise ValueError(f"채널 연결 스튜디오 프로젝트를 찾을 수 없습니다: {source_project_id}")
+
+        clean_topic = (topic or "").strip() or "Untitled"
+        ep = coerce_episode_number(episode_number)
+        clean_title = with_episode_prefix((title or clean_topic[:50]).strip() or clean_topic[:50], ep)
+        project_id = _generate_v3_run_project_id(channel, ep, db)
+        result_dir = resolve_project_dir(project_id, create=True)
+        config = _apply_v3_episode_overrides(
+            dict(source.config or {}),
+            source_project_id=source_project_id,
+            project_id=project_id,
+            result_dir=result_dir,
+            topic=clean_topic,
+            channel=channel,
+            episode_openings=episode_openings,
+            episode_endings=episode_endings,
+            episode_core_content=episode_core_content,
+            episode_number=ep,
+            next_episode_preview=next_episode_preview,
+        )
+
+        project = Project(
+            id=project_id,
+            title=clean_title,
+            topic=clean_topic,
+            config=config,
+            status="draft",
+        )
+        db.add(project)
+        db.commit()
+        db.refresh(project)
+
+        for sub in ("audio", "images", "videos", "subtitles", "output"):
+            (result_dir / sub).mkdir(parents=True, exist_ok=True)
+        try:
+            _copy_template_assets(resolve_project_dir(source_project_id, source.config or {}), result_dir, config)
+        except Exception as e:
+            print(f"[oneclick.v3] source asset sync skipped: {e}")
+
+        task_id = str(uuid.uuid4())[:8]
+        estimate = estimate_project(config)
+        task = _make_task_record(
+            task_id,
+            template_project_id=source_project_id,
+            project_id=project.id,
+            topic=project.topic,
+            title=project.title,
+            estimate=estimate,
+            config=config,
+        )
+        task["source_project_id"] = source_project_id
+        task["template_project_id"] = source_project_id
+        task["result_dir"] = str(result_dir)
+        ch = _valid_channel(channel)
+        if ch is not None:
+            task["channel"] = ch
+        _add_log(
+            task,
+            f"V3 작업 생성: Studio={source_project_id}, 결과={result_dir}",
+            "info",
+        )
+        _TASKS[task_id] = task
+        _save_tasks_to_disk()
+        return task
+    finally:
+        db.close()
+
+
 def _clone_project_from_template(
     template_project_id: Optional[str],
     topic: str,
@@ -2444,6 +2651,15 @@ def _compute_progress_pct(task: dict) -> float:
                     total_cuts if step_num != 6 else 0
                 )
         elif state == "running":
+            studio_state = _task_manager_state(project_id, step_num)
+            if studio_state is not None and studio_state.status == "running":
+                ratio = max(0.0, min(1.0, float(studio_state.progress_pct or 0) / 100.0))
+                pct += weight * ratio
+                task["completed_cuts_by_step"][str(step_num)] = int(studio_state.completed or 0)
+                task["current_step_completed"] = int(studio_state.completed or 0)
+                task["current_step_total"] = int(studio_state.total or 0)
+                running_labels.append(label)
+                continue
             if step_num == 6:
                 # 렌더링은 컷 단위 카운터가 없음 — 단계 라벨만 노출
                 running_labels.append(label)
@@ -3075,7 +3291,12 @@ def _sync_task_display_language(task: dict) -> bool:
         return False
 _ONECLICK_CLONE_PRESERVE_KEYS = (
     "__oneclick__",
+    "__oneclick_v3__",
     "template_project_id",
+    "source_project_id",
+    "result_dir",
+    "result_channel_dir",
+    "result_episode_dir",
     "topic",
     "episode_number",
     "episode_openings",
@@ -3130,7 +3351,14 @@ def _effective_live_config_for_task(task: dict) -> dict:
 
     template = _load_project(str(template_project_id))
     template_config = dict(template.config or {}) if template and isinstance(template.config, dict) else {}
-    return _merge_template_config(project_config, template_config, str(template_project_id))
+    effective = _merge_template_config(project_config, template_config, str(template_project_id))
+    if project_config.get("__oneclick_v3__") or project_config.get("source_project_id"):
+        for live_key in ("target_duration", "target_cuts"):
+            if live_key in template_config:
+                effective[live_key] = template_config[live_key]
+            else:
+                effective.pop(live_key, None)
+    return effective
 
 
 def _refresh_task_estimate(task: dict) -> bool:
@@ -3163,7 +3391,14 @@ def _effective_project_config(project_id: str, fallback_config: Optional[dict] =
     template_config = dict(template.config or {}) if template and isinstance(template.config, dict) else {}
     if not template_config:
         return project_config
-    return _merge_template_config(project_config, template_config, str(template_project_id))
+    effective = _merge_template_config(project_config, template_config, str(template_project_id))
+    if project_config.get("__oneclick_v3__") or project_config.get("source_project_id"):
+        for live_key in ("target_duration", "target_cuts"):
+            if live_key in template_config:
+                effective[live_key] = template_config[live_key]
+            else:
+                effective.pop(live_key, None)
+    return effective
 
 
 def _persist_project_config_if_changed(project_id: str, config: dict) -> bool:
@@ -3230,6 +3465,270 @@ def _refresh_task_from_current_preset(task: dict, *, persist_project: bool = Tru
     if changes:
         _add_log(task, "ℹ 프리셋 현재 설정 반영: " + "; ".join(changes))
     return config
+
+
+_STUDIO_STEP_KEYS = {
+    2: "script",
+    3: "voice",
+    4: "image",
+    5: "video",
+    6: "render",
+}
+
+
+def _task_manager_state(project_id: str, step_num: int):
+    step_key = _STUDIO_STEP_KEYS.get(int(step_num))
+    if not step_key:
+        return None
+    try:
+        from app.services import task_manager
+
+        return task_manager.get_task(project_id, step_key)
+    except Exception:
+        return None
+
+
+def _cancel_studio_task_manager_steps(project_id: str | None) -> None:
+    if not project_id:
+        return
+    try:
+        from app.services import task_manager
+
+        for step_key in _STUDIO_STEP_KEYS.values():
+            task_manager.cancel_task(str(project_id), step_key)
+    except Exception:
+        pass
+
+
+def _sync_v3_run_project_from_source(task: dict, *, step_label: str = "") -> dict:
+    """Copy the linked Studio project's latest config into the run project."""
+    project_id = str(task.get("project_id") or "").strip()
+    if not project_id:
+        return {}
+
+    project = _load_project(project_id)
+    project_config = dict(project.config or {}) if project and isinstance(project.config, dict) else {}
+    source_project_id = str(
+        task.get("source_project_id")
+        or project_config.get("source_project_id")
+        or task.get("template_project_id")
+        or project_config.get("template_project_id")
+        or ""
+    ).strip()
+    if not source_project_id:
+        return project_config
+
+    source = _load_project(source_project_id)
+    if not source:
+        raise RuntimeError(f"연결된 Studio 프로젝트를 찾을 수 없습니다: {source_project_id}")
+
+    source_config = dict(source.config or {})
+    config = _merge_template_config(project_config, source_config, source_project_id)
+    # V3는 연결된 Studio 설정 변경을 다음 단계부터 그대로 따른다.
+    for live_key in ("target_duration", "target_cuts"):
+        if live_key in source_config:
+            config[live_key] = source_config[live_key]
+        else:
+            config.pop(live_key, None)
+    config["__oneclick__"] = True
+    config["__oneclick_v3__"] = True
+    config["template_project_id"] = source_project_id
+    config["source_project_id"] = source_project_id
+    config["auto_pause_after_step"] = False
+    if project:
+        config["topic"] = project.topic or config.get("topic") or ""
+
+    result_dir = resolve_project_dir(project_id, config, create=True)
+    config["result_dir"] = str(result_dir)
+    parsed = parse_v3_oneclick_project_id(project_id)
+    if parsed:
+        ch, _ep, _uid = parsed
+        config["result_channel_dir"] = f"CH{ch}"
+        config["result_episode_dir"] = result_dir.name
+
+    _persist_project_config_if_changed(project_id, config)
+    task["source_project_id"] = source_project_id
+    task["template_project_id"] = source_project_id
+    task["result_dir"] = str(result_dir)
+    _sync_task_models_from_config(task, config)
+    try:
+        task["estimate"] = estimate_project(config)
+    except Exception:
+        pass
+
+    try:
+        _copy_template_assets(resolve_project_dir(source_project_id, source.config or {}), result_dir, config)
+    except Exception as e:
+        _add_log(task, f"⚠ Studio 에셋 동기화 실패: {type(e).__name__}: {e}", "warn")
+
+    if step_label:
+        _add_log(task, f"↻ Studio 현재 설정 반영 후 {step_label} 실행: {source_project_id}", "info")
+    return config
+
+
+async def _start_studio_router_step(project_id: str, step_num: int) -> None:
+    db = SessionLocal()
+    try:
+        if step_num == 2:
+            from app.routers.script import generate_script_async
+
+            await generate_script_async(project_id, db=db)
+            return
+        if step_num == 3:
+            from app.routers.voice import generate_all_voices_async
+
+            await generate_all_voices_async(project_id, db=db)
+            return
+        if step_num == 4:
+            from app.routers.image import generate_all_images_async
+
+            await generate_all_images_async(project_id, db=db)
+            return
+        if step_num == 5:
+            from app.routers.video import generate_all_videos_async
+
+            await generate_all_videos_async(project_id, db=db)
+            return
+        if step_num == 6:
+            from app.routers.subtitle import render_video_async
+
+            await render_video_async(project_id, db=db)
+            return
+        raise RuntimeError(f"지원하지 않는 Studio 단계: {step_num}")
+    except Exception as e:
+        detail = getattr(e, "detail", None)
+        if detail:
+            raise RuntimeError(str(detail)) from e
+        raise
+    finally:
+        db.close()
+
+
+def _project_step_state(project_id: str, step_num: int) -> Optional[str]:
+    db = SessionLocal()
+    try:
+        project = db.query(Project).filter(Project.id == project_id).first()
+        if not project:
+            return None
+        return str((project.step_states or {}).get(str(step_num)) or "")
+    finally:
+        db.close()
+
+
+async def _wait_studio_router_step(task: dict, step_num: int, label: str) -> None:
+    project_id = str(task.get("project_id") or "")
+    step_key = _STUDIO_STEP_KEYS.get(step_num)
+    if not project_id or not step_key:
+        raise RuntimeError(f"Studio 단계 키를 찾을 수 없습니다: {step_num}")
+
+    missing_state_ticks = 0
+    while True:
+        if task.get("status") == "cancelled":
+            _cancel_studio_task_manager_steps(project_id)
+            raise PipelineCancelled("사용자 취소")
+
+        state = _task_manager_state(project_id, step_num)
+        if state is None:
+            missing_state_ticks += 1
+            db_state = _project_step_state(project_id, step_num)
+            if db_state == "completed":
+                return
+            if db_state == "failed":
+                raise RuntimeError(f"{label} 실패")
+            if missing_state_ticks > 10:
+                raise RuntimeError(f"{label} Studio task 상태를 찾을 수 없습니다")
+            await asyncio.sleep(1)
+            continue
+
+        task["current_step_completed"] = int(state.completed or 0)
+        task["current_step_total"] = int(state.total or 0)
+        task["current_step_label"] = label
+        task["sub_status"] = f"{state.completed}/{state.total}" if state.total else state.status
+        task["progress_pct"] = _compute_progress_pct(task)
+        _save_tasks_to_disk()
+
+        if state.status == "completed":
+            return
+        if state.status == "failed":
+            raise RuntimeError(state.error or f"{label} 실패")
+        if state.status == "cancelled":
+            raise PipelineCancelled("사용자 취소")
+        await asyncio.sleep(1)
+
+
+async def _run_studio_router_step(task: dict, step_num: int, label: str) -> None:
+    project_id = task["project_id"]
+    config = _sync_v3_run_project_from_source(task, step_label=label)
+    task["current_step"] = step_num
+    task["current_step_name"] = label
+    task["step_states"][str(step_num)] = "running"
+    task["sub_status"] = None
+    _sync_task_models_from_config(task, config)
+    _add_log(task, f"▶ Studio {label} 시작")
+    _save_tasks_to_disk()
+    import time as _time
+
+    t0 = _time.monotonic()
+    await _start_studio_router_step(project_id, step_num)
+    await _wait_studio_router_step(task, step_num, label)
+    elapsed = _time.monotonic() - t0
+    task["step_states"][str(step_num)] = "completed"
+    task["sub_status"] = None
+    if step_num == 2:
+        fresh = _load_project(project_id)
+        if fresh and fresh.total_cuts:
+            task["total_cuts"] = int(fresh.total_cuts)
+    _add_log(task, f"✓ Studio {label} 완료 ({elapsed:.1f}초)")
+    _save_tasks_to_disk()
+
+
+async def _run_studio_router_pipeline(task: dict, project_id: str, resume_from) -> str:
+    """Run Workbench by pressing the linked Studio project's actual step routes."""
+    steps = [
+        (2, "대본 생성"),
+        (3, "음성 생성"),
+        (4, "이미지 생성"),
+        (5, "영상 생성"),
+        (6, "최종 렌더링"),
+    ]
+
+    def _should_skip(step_num: int) -> bool:
+        if resume_from is not None and step_num < int(resume_from):
+            return task["step_states"].get(str(step_num)) == "completed"
+        return task["step_states"].get(str(step_num)) == "completed"
+
+    try:
+        for step_num, label in steps:
+            if _should_skip(step_num):
+                continue
+            if task.get("status") == "cancelled":
+                raise PipelineCancelled("사용자 취소")
+            await _run_studio_router_step(task, step_num, label)
+        return "ok"
+    except PipelineCancelled as e:
+        current_step = int(task.get("current_step") or 0)
+        current_label = str(task.get("current_step_name") or "작업")
+        if current_step:
+            task["step_states"][str(current_step)] = "cancelled"
+        task["status"] = "cancelled"
+        task["error"] = task.get("error") or str(e) or "사용자 취소"
+        task["finished_at"] = task.get("finished_at") or _utcnow_iso()
+        _update_project_status(project_id, "cancelled")
+        _add_log(task, f"⏹ {current_label} 취소: {e}", "warn")
+        _save_tasks_to_disk()
+        return "cancelled"
+    except Exception as e:
+        current_step = int(task.get("current_step") or 0)
+        current_label = str(task.get("current_step_name") or "작업")
+        if current_step:
+            task["step_states"][str(current_step)] = "failed"
+        task["status"] = "failed"
+        task["error"] = f"{current_label} 실패: {type(e).__name__}: {e}"
+        task["finished_at"] = _utcnow_iso()
+        _update_project_status(project_id, "failed")
+        _add_log(task, f"✗ {current_label} 실패: {type(e).__name__}: {e}", "error")
+        _save_tasks_to_disk()
+        return f"failed:{task['error']}"
 
 
 def _apply_live_config_to_task(task: dict, config: dict, *, update_channel: bool) -> list[str]:
@@ -3925,6 +4424,7 @@ def _schedule_oneclick_run(task_id: str) -> None:
                 _redis_set(f"pipeline:cancel:{pid}", "1")
             except Exception:
                 pass
+            _cancel_studio_task_manager_steps(pid)
         # 2) 코루틴을 cancel — `async with _RUN_LOCK` 블록이 풀리며 락이 즉시 반환된다.
         try:
             prev.cancel()
@@ -4090,10 +4590,14 @@ async def _run_oneclick_task(task_id: str) -> None:
             if fresh and fresh.total_cuts:
                 task["total_cuts"] = int(fresh.total_cuts)
 
-        # --- Step 2~5: 단일 스레드에서 직접 호출 (run_pipeline 과 동일) ---
-        result = await asyncio.to_thread(
-            _run_sync_pipeline, task, project_id, config, resume_from
-        )
+        # --- Step 2~6: V3 Studio-linked tasks call the actual Studio tab routes. ---
+        if _is_v3_studio_linked_project(project_id, config):
+            result = await _run_studio_router_pipeline(task, project_id, resume_from)
+            config = _sync_v3_run_project_from_source(task)
+        else:
+            result = await asyncio.to_thread(
+                _run_sync_pipeline, task, project_id, config, resume_from
+            )
         if result != "ok":
             return  # cancelled 또는 failed — _run_sync_pipeline 이 상태 갱신 완료
 
@@ -4301,6 +4805,20 @@ def prepare_task(
     v1.1.42: `target_duration` (초) 을 받아 clone 시 config 에 반영.
     """
     _ensure_state_loaded()
+    source_project_id = _channel_studio_project_id(channel, template_project_id)
+    if source_project_id:
+        return _prepare_v3_studio_linked_task(
+            source_project_id=source_project_id,
+            topic=topic,
+            title=title,
+            episode_openings=episode_openings,
+            episode_endings=episode_endings,
+            episode_core_content=episode_core_content,
+            episode_number=episode_number,
+            next_episode_preview=next_episode_preview,
+            channel=channel,
+        )
+
     # ── 기존 미완성 프로젝트 재사용 시도 ──
     reusable = _find_reusable_project(template_project_id, topic, channel)
     if reusable:
@@ -4924,6 +5442,7 @@ def cancel_task(task_id: str) -> dict:
             _redis_set(f"pipeline:cancel:{pid}", "1")
         except Exception as _e:
             print(f"[oneclick.cancel] redis flag set failed: {_e}")
+        _cancel_studio_task_manager_steps(pid)
         # v1.2.29: 프로세스 halt 집합에도 마킹 — redis 장애시에도 보장되는 경로
         try:
             from app.services.cancel_ctx import mark_halted
@@ -5070,6 +5589,10 @@ async def emergency_stop_all() -> dict:
                 _redis_set(f"pipeline:cancel:{pid}", "1")
             except Exception as e:
                 errors.append(f"redis cancel {task_id}: {e}")
+            try:
+                _cancel_studio_task_manager_steps(pid)
+            except Exception as e:
+                errors.append(f"studio task cancel {task_id}: {e}")
             try:
                 mark_halted(pid)
             except Exception as e:
@@ -5324,8 +5847,6 @@ def clear_step_outputs(task_id: str, step: int) -> dict:
         4 — images/*.png (커스텀 이미지 제외)
         5 — videos/*.mp4 + output/merged.mp4
     """
-    import glob as _glob
-
     task = _TASKS.get(task_id)
     if not task:
         raise KeyError(f"task {task_id} not found")
@@ -5335,31 +5856,73 @@ def clear_step_outputs(task_id: str, step: int) -> dict:
     project_id = task["project_id"]
     project_dir = resolve_project_dir(project_id)
 
-    STEP_MAP = {
-        2: ("script", ["script.json", "output/thumbnail*.png", "output/thumbnail*.jpg", "output/thumbnail*.jpeg", "output/thumbnail*.webp"]),
-        3: ("audio", ["audio/*.mp3"]),
-        4: ("images", ["images/*.png"]),
-        5: ("videos", ["videos/*.mp4", "output/merged.mp4"]),
-        6: ("render", ["output/final.mp4", "output/merged.mp4"]),
+    STEP_LABELS = {
+        2: "script",
+        3: "audio",
+        4: "images",
+        5: "videos",
+        6: "render",
     }
-    if step not in STEP_MAP:
-        raise ValueError(f"초기화 가능한 단계: 2(대본), 3(음성), 4(이미지), 5(영상), 6(렌더)")
+    if step not in STEP_LABELS:
+        raise ValueError("초기화 가능한 단계: 2(대본), 3(음성), 4(이미지), 5(영상), 6(렌더)")
 
-    label, patterns = STEP_MAP[step]
+    def _delete_path(path: Path) -> int:
+        if not path.exists():
+            return 0
+        try:
+            if path.is_dir():
+                count = sum(1 for p in path.rglob("*") if p.is_file())
+                shutil.rmtree(path, ignore_errors=True)
+                return count
+            path.unlink()
+            return 1
+        except OSError:
+            return 0
+
+    label = STEP_LABELS[step]
     deleted = 0
-    for pattern in patterns:
-        for fp in _glob.glob(str(project_dir / pattern)):
-            try:
-                os.remove(fp)
-                deleted += 1
-            except OSError:
-                pass
+    if step == 2:
+        deleted += _delete_path(project_dir / "script.json")
+    elif step == 3:
+        deleted += _delete_path(project_dir / "audio")
+        (project_dir / "audio").mkdir(parents=True, exist_ok=True)
+    elif step == 4:
+        deleted += _delete_path(project_dir / "images")
+        (project_dir / "images").mkdir(parents=True, exist_ok=True)
+    elif step == 5:
+        deleted += _delete_path(project_dir / "videos")
+        (project_dir / "videos").mkdir(parents=True, exist_ok=True)
+    elif step == 6:
+        deleted += _delete_path(project_dir / "subtitles")
+        deleted += _delete_path(project_dir / "output")
+        deleted += _delete_path(project_dir / "tmp_render")
+        (project_dir / "subtitles").mkdir(parents=True, exist_ok=True)
+        (project_dir / "output").mkdir(parents=True, exist_ok=True)
 
     # DB step_state 도 되돌린다
     db = SessionLocal()
     try:
         project = db.query(Project).filter(Project.id == project_id).first()
         if project:
+            if step == 2:
+                db.query(Cut).filter(Cut.project_id == project_id).delete(synchronize_session=False)
+                project.total_cuts = 0
+            elif step == 3:
+                for cut in db.query(Cut).filter(Cut.project_id == project_id).all():
+                    cut.audio_path = None
+                    cut.audio_duration = None
+                    cut.audio_original_duration = None
+                    cut.status = "pending"
+            elif step == 4:
+                for cut in db.query(Cut).filter(Cut.project_id == project_id).all():
+                    cut.image_path = None
+                    cut.image_model = None
+                    cut.status = "pending"
+            elif step == 5:
+                for cut in db.query(Cut).filter(Cut.project_id == project_id).all():
+                    cut.video_path = None
+                    cut.status = "pending"
+
             states = dict(project.step_states or {})
             states[str(step)] = "pending"
             # 이후 단계도 pending 으로 (예: 이미지 삭제 시 영상도 무효)
@@ -5380,6 +5943,12 @@ def clear_step_outputs(task_id: str, step: int) -> dict:
         if str(s) in step_states:
             step_states[str(s)] = "pending"
     task["step_states"] = step_states
+    if step == 2:
+        task["total_cuts"] = 0
+    cuts_by_step = dict(task.get("completed_cuts_by_step") or {})
+    for s in range(step, 6):
+        cuts_by_step[str(s)] = 0
+    task["completed_cuts_by_step"] = cuts_by_step
     _add_log(task, f"🧹 {label} 초기화 완료 ({deleted}개 파일 삭제)", "warn")
     _save_tasks_to_disk()
 
@@ -5477,6 +6046,7 @@ def delete_task(task_id: str) -> bool:
             _redis_set(f"pipeline:cancel:{pid}", "1")
         except Exception as e:
             print(f"[oneclick] delete: cancel 플래그 설정 실패: {e}")
+        _cancel_studio_task_manager_steps(pid)
         # v1.2.29: 프로세스 halt 집합에도 마킹 (redis 와 독립적인 최후 안전선)
         try:
             from app.services.cancel_ctx import mark_halted
@@ -6587,14 +7157,11 @@ def _save_queue_to_disk() -> None:
 
 
 def _resolve_item_preset(item: dict) -> Optional[str]:
-    """아이템의 template_project_id 가 비어 있으면 채널별 기본 프리셋을 사용.
+    """Return the Studio project linked to the item's channel.
 
-    v1.2.14: `channel_presets[str(ch)]` 를 fallback 으로. 둘 다 없으면 None
-    → prepare_task 가 빈 템플릿으로 DEFAULT_CONFIG 만으로 돌린다.
+    V3 작업대는 큐 아이템별 template_project_id 로 실행 원본을 바꾸지 않는다.
+    채널 편집에 연결된 Studio 프로젝트가 실행 원본이다.
     """
-    tpl = item.get("template_project_id")
-    if tpl:
-        return str(tpl)
     ch = item.get("channel") or 1
     try:
         ch = int(ch)
@@ -6605,6 +7172,9 @@ def _resolve_item_preset(item: dict) -> Optional[str]:
     cp = (_QUEUE.get("channel_presets") or {}).get(str(ch))
     if cp:
         return str(cp)
+    tpl = item.get("template_project_id")
+    if tpl:
+        return str(tpl)
     return None
 
 

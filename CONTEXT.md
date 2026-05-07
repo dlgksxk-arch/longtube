@@ -26,7 +26,7 @@
 - **클라우드 AI**: Anthropic / OpenAI / ElevenLabs / fal.ai / xAI / Kling / Runway / Midjourney
 
 ## 현재 버전
-- **v1.2.29** — `backend/app/main.py`, `/api/health`, `frontend/package.json`, `frontend/src/lib/version.ts` 기준.
+- **V3** — `backend/app/main.py`, `/api/health`, `frontend/src/lib/version.ts` 기준. `frontend/package.json` 메타 버전은 `3.0.0`.
 
 ## 폴더 구조
 ```
@@ -78,4 +78,4 @@ longtube/
 - API 키는 `backend/.env` 에 저장, UI (`/api/api-keys`) 로 교체 시 v1.1.63 부터 즉시 반영
 - `client_secret.json`, `token.json`, `*.db`, `data/`, `backend/logs/` 는 git 제외
 
-> 업데이트: 2026-05-06 (v1.2.29)
+> 업데이트: 2026-05-08 (V3)
