@@ -12,6 +12,7 @@ from app.models.project import Project
 from app.models.cut import Cut
 from app.services.title_utils import script_title_for_language, with_episode_prefix, without_episode_prefix
 from app.services.llm.visual_policy import apply_script_visual_policy, normalize_cut_image_prompt, normalize_image_prompt
+from app.services.shorts_service import annotate_script_shorts
 from app.services.youtube_metadata import expand_tags, format_description
 from app.services.multilingual_caption_service import should_upload_youtube_captions, upload_multilingual_captions
 
@@ -178,14 +179,13 @@ def _ensure_project_layout(project_id: str):
 
 def save_script(project_id: str, script: dict, language: str = "ko"):
     try:
-        from app.services.shorts_service import annotate_script_shorts
-        script = annotate_script_shorts(script)
+        from app.routers.script import _strip_script_motion_prompts
+        script = _strip_script_motion_prompts(script)
     except Exception:
-        pass
-    for cut_data in script.get("cuts", []) or []:
-        if isinstance(cut_data, dict):
-            cut_data.pop("motion_prompt", None)
-            cut_data.pop("video_motion_prompt", None)
+        for cut_data in script.get("cuts", []) or []:
+            if isinstance(cut_data, dict):
+                cut_data.pop("motion_prompt", None)
+                cut_data.pop("video_motion_prompt", None)
     project_dir = _ensure_project_layout(project_id)
     path = project_dir / "script.json"
     with open(path, "w", encoding="utf-8") as f:
@@ -480,6 +480,7 @@ def _step_script(project_id: str, config: dict):
     if script is None:
         raise RuntimeError("Script generation failed")
     script = apply_script_visual_policy(script)
+    script = annotate_script_shorts(script)
     service.assert_script_timing(script, script_config)
 
     # v1.1.48: LLM 완료 후에도 취소 여부 확인
@@ -491,8 +492,15 @@ def _step_script(project_id: str, config: dict):
         topic=project.topic,
         episode_number=config.get("episode_number"),
         language=config.get("language", "ko"),
-        first_narration=(script.get("cuts") or [{}])[0].get("narration") if script.get("cuts") else None,
     )
+    try:
+        from app.routers.script import _strip_script_motion_prompts
+        script = _strip_script_motion_prompts(script)
+    except Exception:
+        for cut_data in script.get("cuts", []) or []:
+            if isinstance(cut_data, dict):
+                cut_data.pop("motion_prompt", None)
+                cut_data.pop("video_motion_prompt", None)
     save_script(project_id, script, config.get("language", "ko"))
 
     db.query(Cut).filter(Cut.project_id == project_id).delete()
@@ -920,15 +928,14 @@ def _step_image(project_id: str, config: dict):
     from app.services.image.base import get_size
     from app.services.image.prompt_builder import (
         append_prompt_specific_negative_prompt,
-        build_image_prompt,
         collect_reference_images,
         collect_character_images,
         cut_has_character,
         should_enable_historical_guard_for_context,
-        historical_negative_prompt,
-        map_negative_prompt,
-        symbol_negative_prompt,
-        text_negative_prompt,
+    )
+    from app.routers.image import (
+        _apply_historical_negative_prompt,
+        _build_image_prompt,
     )
     from app.services.image.asset_guard import (
         canonical_cut_image_path,
@@ -996,33 +1003,14 @@ def _step_image(project_id: str, config: dict):
             pass
     # v1.1.59: 사용자 네거티브 프롬프트 주입 (ComfyUI 만 반영; 그 외 서비스는 무시)
     try:
-        negative_prompt = (config.get("image_negative_prompt") or "").strip()
-        text_negative = text_negative_prompt()
-        if text_negative and text_negative not in negative_prompt:
-            negative_prompt = f"{text_negative}, {negative_prompt}".strip(" ,")
-        map_negative = map_negative_prompt()
-        if map_negative and map_negative not in negative_prompt:
-            negative_prompt = f"{map_negative}, {negative_prompt}".strip(" ,")
-        symbol_negative = symbol_negative_prompt()
-        if symbol_negative and symbol_negative not in negative_prompt:
-            negative_prompt = f"{symbol_negative}, {negative_prompt}".strip(" ,")
-        guard_negative = historical_negative_prompt(
-            " ".join(
-                str(x or "")
-                for x in (
-                    project_id,
-                    config.get("title"),
-                    config.get("topic"),
-                    config.get("image_global_prompt"),
-                    script.get("title"),
-                    script.get("topic"),
-                )
-            ),
-            enable_historical_negative_guard,
+        service.negative_prompt = (config.get("image_negative_prompt") or "").strip()
+        _apply_historical_negative_prompt(
+            service,
+            config,
+            project_id,
+            config.get("title"),
+            config.get("topic"),
         )
-        if guard_negative and guard_negative not in negative_prompt:
-            negative_prompt = f"{guard_negative}, {negative_prompt}".strip(" ,")
-        service.negative_prompt = negative_prompt
     except Exception:
         pass
     base_negative_prompt = (getattr(service, "negative_prompt", "") or "").strip()
@@ -1072,7 +1060,7 @@ def _step_image(project_id: str, config: dict):
         is_char_cut = cut_has_character(num) and has_character_anchor
         prompt_source = (cut.image_prompt if cut and cut.image_prompt else cut_data.get("image_prompt", "")) or ""
         prompt_narration = (cut.narration if cut and cut.narration else cut_data.get("narration", "")) or ""
-        prompt = build_image_prompt(
+        prompt = _build_image_prompt(
             normalize_cut_image_prompt(
                 prompt_source,
                 prompt_narration,

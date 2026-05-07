@@ -1,5 +1,5 @@
 /**
- * /v2/live — 실시간 현황 (기획 §12).
+ * /v2/live — 작업대 (기획 §12).
  *
  * 진행 중 태스크 카드 + 대기 태스크 + 최근 이벤트 피드.
  * 5초 폴링. 비용 표시 없음.
@@ -179,7 +179,7 @@ export default function V2LivePage() {
   return (
     <div className="p-6 space-y-5">
       <header>
-        <h1 className="text-gray-100">실시간 현황</h1>
+        <h1 className="text-gray-100">작업대</h1>
         <p className="text-sm text-gray-500 mt-1">
           진행 중 태스크와 최근 이벤트. 5초마다 자동 새로고침. 예산 +120초
           초과 시 지연 경고.

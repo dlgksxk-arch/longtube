@@ -200,28 +200,20 @@ def _short_korean_subject(text: str) -> str:
         return "바다 건넌 여인"
     if "왕" in text and any(word in text for word in ("죽", "잃", "무너", "멸망")):
         return "무너진 왕의 비밀"
-    words = text.split()
-    if len(words) <= 3:
-        return text
-    return " ".join(words[:3])
+    return text
 
 
 def _wrap_overlay_lines(text: str) -> str:
     text = re.sub(r"\s+", " ", (text or "").replace("\n", " ")).strip()
     if not text:
         return ""
-    if _has_hangul(text):
-        words = text.split()
-        if len(words) <= 2:
-            return text
-        first = " ".join(words[:2])
-        second = " ".join(words[2:5])
-        return f"{first}\n{second}".strip()
     words = text.split()
-    if len(words) <= 4:
+    if len(words) <= 2:
         return text
-    mid = min(4, max(2, len(words) // 2))
-    return f"{' '.join(words[:mid])}\n{' '.join(words[mid:mid + 4])}".strip()
+    target_lines = 2 if len(words) <= 6 else 3 if len(words) <= 12 else 4
+    per_line = max(1, (len(words) + target_lines - 1) // target_lines)
+    lines = [" ".join(words[i:i + per_line]) for i in range(0, len(words), per_line)]
+    return "\n".join(lines).strip()
 
 
 async def ensure_standard_thumbnail(
@@ -740,18 +732,16 @@ def generate_thumbnail(
 
     # ── 메인 후크: 큰 그림텍스트 ──
     # 박스 없이 크게 — 박스가 먹던 공간이 없으므로 폰트를 확 키움.
-    # 후보 사이즈를 높은 것부터 내려가며 2줄 이내, 높이 35% 이내에 맞추기.
+    # 후보 사이즈를 높은 것부터 내려가며 전체 문장이 잘리지 않도록 줄바꿈/축소한다.
     # v2.1.2: 폰트 크기 상향 — 제목이 짧아졌으므로 더 크게 표시
-    candidates = (200, 180, 160, 140, 124, 108, 96, 86, 76, 68)
-    max_title_block_h = int(THUMB_H * 0.45)
+    candidates = (200, 180, 160, 140, 124, 108, 96, 86, 76, 68, 60, 54, 48, 42, 36, 32, 28, 24)
+    max_title_block_h = int(THUMB_H * 0.62)
 
     def pick_title_font() -> tuple[ImageFont.ImageFont, list[str]]:
         for size in candidates:
             f = _find_font(size, text)
             lines = _wrap_text(text, f, max_text_w, draw)
             if not lines:
-                continue
-            if len(lines) > 3:
                 continue
             lh = _text_size(draw, "가Ag", f)[1]
             total_h = len(lines) * lh + (len(lines) - 1) * int(lh * 0.15)

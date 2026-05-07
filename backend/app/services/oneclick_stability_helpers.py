@@ -95,7 +95,9 @@ def is_immediate_queue_item(item: dict[str, Any] | None) -> bool:
     source = str(item.get("queued_source") or "").lower()
     note = str(item.get("queued_note") or "")
     return source == "manual" and (
-        "\uc2e4\uc2dc\uac04 \ud604\ud669" in note or "\uc218\ub3d9 \uc2e4\ud589" in note
+        "\uc791\uc5c5\ub300" in note
+        or "\uc2e4\uc2dc\uac04 \ud604\ud669" in note
+        or "\uc218\ub3d9 \uc2e4\ud589" in note
     )
 
 

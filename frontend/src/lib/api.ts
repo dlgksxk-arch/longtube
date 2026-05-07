@@ -1616,6 +1616,11 @@ export const oneclickApi = {
     api.post(
       `/oneclick/queue/run-next${typeof channel === "number" ? `?channel=${channel}` : ""}`,
     ),
+  recoverExistingQueueItem: (itemId: string): Promise<{
+    ok: boolean;
+    task: OneClickTask | null;
+    queue: OneClickQueueState;
+  }> => api.post(`/oneclick/queue/recover-existing`, { item_id: itemId }),
 
   // v1.2.28: 고아 프로젝트 — _TASKS 에 없지만 DB/디스크에 남아있는 딸깍 프로젝트.
   // 채널 편집 패널의 "고아 프로젝트" 섹션이 사용.

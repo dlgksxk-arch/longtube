@@ -2,6 +2,7 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
 import json
+from pathlib import Path
 import re
 import anthropic
 from app.services.llm.base import BaseLLMService
@@ -117,6 +118,43 @@ class ClaudeService(BaseLLMService):
         self.assert_script_timing(parsed, config)
         return parsed
 
+    @staticmethod
+    def _save_partial_script(
+        project_id: str | None,
+        config_data: dict,
+        topic: str,
+        chunks: list[dict],
+        cuts: list[dict],
+        expected_cuts: int,
+    ) -> None:
+        if not project_id or not cuts:
+            return
+        try:
+            project_dir = config.resolve_project_dir(str(project_id), config=config_data, create=True)
+            project_dir.mkdir(parents=True, exist_ok=True)
+            first = chunks[0] if chunks else {}
+            payload = {
+                "title": first.get("title") or str(topic),
+                "description": first.get("description") or "",
+                "tags": first.get("tags") or [],
+                "thumbnail_prompt": first.get("thumbnail_prompt") or "",
+                "thumbnail_hook": first.get("thumbnail_hook") or "",
+                "cuts": cuts,
+                "_partial": len(cuts) < expected_cuts,
+                "_partial_cuts": len(cuts),
+                "_expected_cuts": expected_cuts,
+            }
+            tmp = project_dir / "script.partial.json.tmp"
+            partial_path = project_dir / "script.partial.json"
+            script_path = project_dir / "script.json"
+            tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            tmp.replace(partial_path)
+            tmp = project_dir / "script.json.tmp"
+            tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            tmp.replace(script_path)
+        except Exception:
+            pass
+
     async def _generate_script_chunked(
         self,
         topic: str,
@@ -161,12 +199,15 @@ class ClaudeService(BaseLLMService):
                     f"- Output exactly {chunk_count} cuts.\n"
                     f"- cut_number must start at {start} and end at {end}.\n"
                     f"- Do not include cuts outside this range.\n"
+                    f"- ABSOLUTE TIMING RULE: every narration must be written as a spoken 5-second cut.\n"
+                    f"- No narration may exceed 5 seconds. If a sentence risks exceeding 5 seconds, shorten it before output.\n"
+                    f"- Put only one core idea in each narration and set duration_estimate to 5.0.\n"
                     f"- Keep continuity with this previous tail: {previous_tail or '(none)'}\n"
                     f"- Still return one valid JSON object with title, description, tags, "
                     f"thumbnail_prompt, and cuts.\n"
                 )
-                max_tokens = max(8192, chunk_count * 260 + 2048)
-                max_tokens = min(max_tokens, 24000)
+                max_tokens = self._safe_int(config.get("__script_max_tokens"), 64000)
+                max_tokens = max(24000, min(max_tokens, 64000))
                 if project_id:
                     try:
                         from app.services.oneclick_service import append_task_log, update_task_sub_status
@@ -215,9 +256,17 @@ class ClaudeService(BaseLLMService):
                     raise ValueError(
                         f"script chunk {chunk_index}/{chunk_total} cut numbers invalid: "
                         f"{numbers[:3]}...{numbers[-3:]}"
-                    )
+                )
                 chunks.append(parsed)
                 all_cuts.extend(cuts)
+                self._save_partial_script(
+                    str(project_id) if project_id else None,
+                    config,
+                    topic,
+                    chunks,
+                    all_cuts,
+                    estimated_cuts,
+                )
                 previous_tail = " / ".join(
                     str(c.get("narration") or "").strip()
                     for c in cuts[-3:]

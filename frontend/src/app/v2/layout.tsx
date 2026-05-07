@@ -15,7 +15,6 @@ import {
   Layers,
   ListChecks,
   Activity,
-  Calendar,
   Film,
   Youtube,
   Image as ImageIcon,
@@ -43,8 +42,7 @@ const SECTIONS: NavSection[] = [
     label: "딸깍",
     items: [
       { href: "/v2/queue", label: "제작 큐", icon: <ListChecks size={15} /> },
-      { href: "/v2/live", label: "실시간 현황", icon: <Activity size={15} /> },
-      { href: "/v2/schedule", label: "스케줄", icon: <Calendar size={15} /> },
+      { href: "/v2/live", label: "작업대", icon: <Activity size={15} /> },
     ],
   },
   {

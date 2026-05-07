@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * v1.1.49 — 딸깍 대시보드 > 실시간 현황
+ * v1.1.49 — 딸깍 대시보드 > 작업대
  * - 파이프라인 진행 + 터미널 로그 + 미리보기 + 단계 상세
  * - 예상 비용/시간 표시
  * - 에러/멈춤 이유 표시
@@ -449,6 +449,7 @@ function StepIcon({ state }: { state: "done" | "active" | "pending" | "failed" }
 
 export default function LivePage() {
   const [task, setTask] = useState<OneClickTask | null>(null);
+  const taskRef = useRef<OneClickTask | null>(null);
   // v1.1.65: 동시/대기 중 task 전체 목록. 화면에 "진행 중 N건" 스트립으로 노출.
   // 백엔드는 _RUN_LOCK 으로 한 번에 1건만 실행하지만 사용자가 여러 건을 시작하거나
   // 큐 스케줄러(_queue_loop)가 여러 채널을 동시에 fire 하면 prepared/queued/running
@@ -502,6 +503,10 @@ export default function LivePage() {
   const serverLogCountRef = useRef<number>(0);
   const selectedTaskIdRef = useRef<string | null>(null);
   const uploadVerifiedReloadRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    taskRef.current = task;
+  }, [task]);
 
   useEffect(() => {
     if (!recoveryOpen) return;
@@ -725,6 +730,42 @@ export default function LivePage() {
       const running = runningState.running;
       if (!running?.task_id) {
         setActiveTasks([]);
+        const selectedTask = taskRef.current;
+        if (selectedTask && ["failed", "cancelled", "paused", "prepared", "queued"].includes(selectedTask.status)) {
+          return selectedTask;
+        }
+        const topQueueItem = (queueState.items || [])[0] || null;
+        if (topQueueItem?.id) {
+          try {
+            const recovered = await oneclickApi.recoverExistingQueueItem(topQueueItem.id);
+            markServerSync();
+            if (recovered.queue) {
+              setPendingQueueItems(recovered.queue.items || []);
+              setQueueChannelTimes(normalizeQueueChannelTimes(recovered.queue.channel_times));
+            }
+            if (recovered.task) {
+              setTask(recovered.task);
+              replaceLogsFromTask(recovered.task, [
+                {
+                  time: timeStr(),
+                  msg: `[시스템] 기존 진행 자료 불러오기: ${recovered.task.topic}`,
+                  level: "info",
+                },
+              ]);
+              setPollFails(0);
+              setStalled(false);
+              return recovered.task;
+            }
+          } catch (e: any) {
+            const message = String(e?.message || e || "");
+            const routeMissing =
+              message.toLowerCase().includes("not found") ||
+              message.includes("404");
+            if (mode === "manual" && !routeMissing) {
+              addLog(`[오류] 기존 자료 불러오기 실패: ${e?.message || e}`, "error");
+            }
+          }
+        }
         setTask(null);
         selectedTaskIdRef.current = null;
         serverLogCountRef.current = 0;
@@ -1248,15 +1289,12 @@ export default function LivePage() {
     }
   };
 
-  const runQueueItemsNow = async (orderedKeys: string[]) => {
+  const promoteQueueItemsToNext = async (orderedKeys: string[]) => {
     const keys = Array.from(new Set(orderedKeys.filter(Boolean)));
     if (keys.length === 0 || queueBatchRunning) return;
     setQueueBatchRunning(true);
     try {
-      const [{ tasks }, queueState] = await Promise.all([
-        oneclickApi.list(),
-        oneclickApi.getQueue(),
-      ]);
+      const queueState = await oneclickApi.getQueue();
       markServerSync();
       const currentItems = queueState.items || [];
       const keyToOrder = new Map(keys.map((key, index) => [key, index]));
@@ -1304,7 +1342,7 @@ export default function LivePage() {
         setQueueChannelTimes(normalizeQueueChannelTimes(updated.channel_times));
         setSelectedQueueIds(new Set());
         markServerSync();
-        addLog(`[시스템] 다음 실행 예약 취소: ${cancelled.topic}`, "warn");
+        addLog(`[시스템] 실행순 지정 취소: ${cancelled.topic}`, "warn");
         await handleRefresh();
         return;
       }
@@ -1314,8 +1352,8 @@ export default function LivePage() {
         queued_source: "manual",
         queued_at: now,
         queued_note: selected.length > 1
-          ? `실시간 현황에서 선택 ${selected.length}건 즉시 순차 실행`
-          : "실시간 현황에서 바로 실행",
+          ? `작업대에서 선택 ${selected.length}건 실행순 지정`
+          : "작업대에서 실행순 1번 지정",
       }));
       const existingLiveNext: OneClickQueueItem[] = [];
       const normalRemaining: OneClickQueueItem[] = [];
@@ -1329,25 +1367,15 @@ export default function LivePage() {
       const updated = await oneclickApi.setQueue({
         channel_times: queueState.channel_times,
         channel_presets: queueState.channel_presets,
-        items: [...existingLiveNext, ...promoted, ...normalRemaining],
+        items: [...promoted, ...existingLiveNext, ...normalRemaining],
       });
       setPendingQueueItems(updated.items || []);
       setQueueChannelTimes(normalizeQueueChannelTimes(updated.channel_times));
       setSelectedQueueIds(new Set());
-
-      const activeList = (tasks || []).filter((t) => ["prepared", "queued", "running"].includes(t.status));
-      const hasActiveWork =
-        activeList.length > 0 ||
-        Boolean(task && ["prepared", "queued", "running"].includes(task.status));
-      if (!hasActiveWork) {
-        await oneclickApi.runQueueNext();
-        addLog(`[시스템] 선택 ${promoted.length}건 즉시 실행 시작: ${promoted[0].topic}`, "success");
-      } else {
-        addLog(`[시스템] 선택 ${promoted.length}건을 다음 실행 목록 뒤에 추가했습니다. 현재 작업 완료 후 예약한 순서대로 실행합니다.`, "success");
-      }
+      addLog(`[시스템] 선택 ${promoted.length}건 실행순 지정: 1번 ${promoted[0].topic}`, "success");
       await handleRefresh();
     } catch (e: any) {
-      addLog(`[오류] 선택 작업 즉시 실행 실패: ${e?.message || e}`, "error");
+      addLog(`[오류] 선택 작업 실행순 지정 실패: ${e?.message || e}`, "error");
     } finally {
       setQueueBatchRunning(false);
     }
@@ -1759,7 +1787,7 @@ export default function LivePage() {
       if (displayTask?.task_id && ["prepared", "queued"].includes(displayTask.status)) {
         started = await oneclickApi.start(displayTask.task_id);
       } else if (previewQueueItem) {
-        started = await oneclickApi.runQueueNext();
+        started = await oneclickApi.runQueueNext(currentPanelChannel);
       }
       if (started && ["prepared", "queued", "running"].includes(started.status)) {
         markServerSync();
@@ -1778,6 +1806,8 @@ export default function LivePage() {
   const currentPanelStatus =
     displayTask?.status === "running"
       ? "진행 중"
+      : currentPanelCanResume
+        ? "이어하기"
       : displayTask?.status === "failed"
         ? "실패"
         : displayTask?.status === "cancelled"
@@ -2026,7 +2056,7 @@ export default function LivePage() {
       <div className="flex flex-col gap-3 xl:gap-4 flex-shrink-0">
         <div className="grid grid-cols-1 items-center gap-2 lg:grid-cols-[minmax(300px,1fr)_auto_auto_auto_minmax(220px,260px)] lg:gap-3">
           <div className="flex flex-wrap items-center gap-2 lg:gap-3">
-            <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold leading-none text-white">실시간 현황</h1>
+            <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold leading-none text-white">작업대</h1>
             <button
               onClick={handleRefresh}
               className="p-2 rounded-lg hover:bg-bg-secondary text-gray-500 hover:text-gray-300 transition-colors"
@@ -2195,7 +2225,7 @@ export default function LivePage() {
                   });
                 }}
                 className="h-5 w-5 shrink-0 accent-accent-primary"
-                title="즉시 순차 실행 선택"
+                title="실행순 지정 선택"
               />
               <span className="w-14 shrink-0 rounded bg-blue-400/15 px-2 py-1 text-center text-sm font-bold text-blue-200">
                 #{index + 1}
@@ -2218,7 +2248,7 @@ export default function LivePage() {
                   <span className="text-gray-500">{meta.queuedAt}</span>
                   {isPromotedNext && (
                     <span className="rounded border border-amber-300/40 bg-amber-300/15 px-2 py-1 font-bold text-amber-200">
-                      다음 실행 #{liveNextRank}{nextStartLabel ? ` · 예상 ${nextStartLabel}` : ""}
+                      실행순 #{liveNextRank}{nextStartLabel ? ` · 예상 ${nextStartLabel}` : ""}
                     </span>
                   )}
                   {meta.note && <span className="min-w-0 truncate text-gray-500">· {meta.note}</span>}
@@ -2227,17 +2257,17 @@ export default function LivePage() {
               <div className="flex shrink-0 items-center gap-1">
                 <button
                   type="button"
-                  onClick={() => void runQueueItemsNow([rowKey])}
+                  onClick={() => void promoteQueueItemsToNext([rowKey])}
                   disabled={queueBatchRunning}
                   className={`inline-flex min-w-16 items-center justify-center gap-1.5 rounded border px-3 py-1.5 text-sm font-bold disabled:opacity-40 ${
                     isPromotedNext
                       ? "border-amber-300/50 bg-amber-300/15 text-amber-200 hover:bg-amber-300/25"
                       : "border-accent-success/40 bg-accent-success/10 text-accent-success hover:bg-accent-success/20"
                   }`}
-                  title={isPromotedNext ? "다음 실행 예약 취소" : "자동 실행 시간을 무시하고 이 작업을 다음 순서로 실행"}
+                  title={isPromotedNext ? "실행순 지정 취소" : "이 작업을 실행순 1번으로 지정"}
                 >
                   <PlayCircle size={14} />
-                  {isPromotedNext ? "취소" : "실행"}
+                  {isPromotedNext ? "취소" : "1번 지정"}
                 </button>
                 <button
                   type="button"
@@ -2291,7 +2321,7 @@ export default function LivePage() {
               </span>
               {liveNextCount > 0 && (
                 <span className="rounded border border-amber-300/35 bg-amber-300/10 px-2 py-0.5 text-[11px] font-bold text-amber-200">
-                  다음 실행 {liveNextCount}
+                  실행순 지정 {liveNextCount}
                 </span>
               )}
               <div className="ml-auto flex items-center gap-2">
@@ -2536,13 +2566,13 @@ export default function LivePage() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => void runQueueItemsNow(visibleQueueKeys.filter((key) => selectedQueueIds.has(key)))}
+                      onClick={() => void promoteQueueItemsToNext(visibleQueueKeys.filter((key) => selectedQueueIds.has(key)))}
                       disabled={selectedVisibleCount === 0 || queueBatchRunning}
                       className="inline-flex items-center gap-2 rounded-md border border-accent-success/40 bg-accent-success/15 px-4 py-2 text-sm font-bold text-accent-success hover:bg-accent-success/25 disabled:opacity-40"
-                      title="체크한 작업을 큐 맨 앞으로 올리고 자동 실행 시간을 무시해서 순차 실행"
+                      title="체크한 작업을 큐 맨 앞으로 올리고 1번부터 실행순을 지정"
                     >
                       {queueBatchRunning ? <Loader2 size={15} className="animate-spin" /> : <PlayCircle size={15} />}
-                      선택 {selectedVisibleCount}건 실행
+                      선택 {selectedVisibleCount}건 순번 지정
                     </button>
                     <button
                       type="button"
@@ -2583,7 +2613,7 @@ export default function LivePage() {
                           )}
                           {liveNextCount > 0 && (
                             <span className="rounded border border-amber-300/40 bg-amber-300/15 px-2.5 py-1 font-bold text-amber-200">
-                              다음 실행 {liveNextCount}건
+                              실행순 지정 {liveNextCount}건
                             </span>
                           )}
                           {channelsByNextRun.map((ch) => (

@@ -1,6 +1,6 @@
 # LongTube Session Handoff
 
-Saved at: 2026-05-07 09:55 +09:00
+Saved at: 2026-05-08 00:03 +09:00
 Workspace: `C:\Users\Ai_M9\Desktop\longtube`
 
 ## 최상위 절대 지킴
@@ -15,10 +15,18 @@ Workspace: `C:\Users\Ai_M9\Desktop\longtube`
 - 새 세션 시작 순서:
   1. `docs/SESSION_PROTOCOL.md`
   2. `SESSION_HANDOFF.md`
-  3. `CONTEXT.md`
-  4. 현재 요청과 직접 관련된 코드 파일
+  3. `SESSION_QA_V3_2026-05-08.md` 전체 원문
+  4. `CONTEXT.md`
+  5. 현재 요청과 직접 관련된 코드 파일
+- `SESSION_QA_V3_2026-05-08.md`는 요약으로 대체하지 않고 처음부터 끝까지 읽습니다.
 - 날짜별 `SESSION_HANDOFF_YYYY-MM-DD.md` 파일은 보관본입니다.
 - `docs/ARCHITECTURE.md`는 초기 설계 기록이며 현재 구현 판단 기준이 아닙니다.
+
+## V3 Naming
+
+- 앞으로의 버전 명명은 사용자 지시대로 V3를 사용합니다.
+- V3 작업대/스튜디오 문답 원문 파일:
+  - `SESSION_QA_V3_2026-05-08.md`
 
 ## User Rules
 

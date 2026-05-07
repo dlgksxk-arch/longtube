@@ -608,6 +608,10 @@ class AutoProductionRequest(BaseModel):
     enabled: bool
 
 
+class QueueRecoverExistingRequest(BaseModel):
+    item_id: str
+
+
 @router.get("/queue")
 def get_queue():
     """v1.1.43 — 주제 큐 상태 조회."""
@@ -683,6 +687,18 @@ async def run_queue_next(channel: Optional[int] = None):
     if task is None:
         raise HTTPException(status_code=404, detail="queue is empty")
     return task
+
+
+@router.post("/queue/recover-existing")
+def recover_existing_queue_item(body: QueueRecoverExistingRequest):
+    """작업대에 올라온 큐 항목의 기존 산출물이 있으면 태스크로 복구."""
+    try:
+        return oneclick_service.recover_existing_for_queue_item(body.item_id)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"recover-existing failed: {type(e).__name__}: {e}",
+        )
 
 
 # --------------------------------------------------------------------------- #

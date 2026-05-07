@@ -11,7 +11,6 @@ import {
   Zap,
   ListTodo,
   Activity,
-  CalendarDays,
   Film,
   Upload,
   LayoutDashboard,
@@ -28,8 +27,7 @@ import LocalServiceStatus from "@/components/common/LocalServiceStatus";
 const NAV = [
   { href: "/oneclick", label: "제작 큐", icon: ListTodo },
   { href: "/oneclick/upload-pending", label: "업로드 대기", icon: Upload },
-  { href: "/oneclick/live", label: "실시간 현황", icon: Activity },
-  { href: "/oneclick/schedule", label: "스케줄", icon: CalendarDays },
+  { href: "/oneclick/live", label: "작업대", icon: Activity },
   { href: "/oneclick/library", label: "완성작 관리", icon: Film },
 ] as const;
 
@@ -108,8 +106,7 @@ function activeModelEntries(task: OneClickTask) {
 const ONECLICK_SUBNAV = [
   { href: "/oneclick", label: "제작 큐", icon: ListTodo },
   { href: "/oneclick/upload-pending", label: "업로드 대기", icon: Upload },
-  { href: "/oneclick/live", label: "실시간 현황", icon: Activity },
-  { href: "/oneclick/schedule", label: "스케줄", icon: CalendarDays },
+  { href: "/oneclick/live", label: "작업대", icon: Activity },
   { href: "/oneclick/library", label: "완성작 관리", icon: Film },
 ] as const;
 

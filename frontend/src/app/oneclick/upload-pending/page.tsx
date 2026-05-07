@@ -317,7 +317,7 @@ export default function UploadPendingPage() {
                 <Link
                   href="/oneclick/live"
                   className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-bg-primary text-gray-400 hover:text-gray-100"
-                  title="실시간 현황"
+                  title="작업대"
                 >
                   <ExternalLink size={14} />
                 </Link>

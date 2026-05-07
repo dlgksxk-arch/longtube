@@ -147,7 +147,9 @@ export function isLiveNextQueueItem(item: OneClickQueueItem) {
   const note = String(item.queued_note || "");
   return (
     String(item.queued_source || "").toLowerCase() === "manual" &&
-    (note.includes("\uc2e4\uc2dc\uac04 \ud604\ud669") || note.includes("\uc218\ub3d9 \uc2e4\ud589"))
+    (note.includes("\uc791\uc5c5\ub300") ||
+      note.includes("\uc2e4\uc2dc\uac04 \ud604\ud669") ||
+      note.includes("\uc218\ub3d9 \uc2e4\ud589"))
   );
 }
 

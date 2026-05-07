@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Plus, Play, Trash2, ExternalLink, RefreshCw, CheckCircle, XCircle, AlertCircle, MinusCircle, Key, Youtube as YoutubeIcon, Clock, DollarSign, LayoutDashboard, Zap, Info, ListTodo, Activity, CalendarDays, Film, Upload } from "lucide-react";
+import { Plus, Play, Trash2, ExternalLink, RefreshCw, CheckCircle, XCircle, AlertCircle, MinusCircle, Key, Youtube as YoutubeIcon, Clock, DollarSign, LayoutDashboard, Zap, Info, ListTodo, Activity, Film, Upload } from "lucide-react";
 import { api, apiStatusApi, type ApiStatusInfo, type ProjectEstimate } from "@/lib/api";
 import { APP_VERSION } from "@/lib/version";
 import { formatDurationKo, formatKrw, costTierClasses } from "@/lib/format";
@@ -23,8 +23,7 @@ const SIDEBAR_NAV = [
 const ONECLICK_SUBNAV = [
   { href: "/oneclick", label: "제작 큐", icon: ListTodo },
   { href: "/oneclick/upload-pending", label: "업로드 대기", icon: Upload },
-  { href: "/oneclick/live", label: "실시간 현황", icon: Activity },
-  { href: "/oneclick/schedule", label: "스케줄", icon: CalendarDays },
+  { href: "/oneclick/live", label: "작업대", icon: Activity },
   { href: "/oneclick/library", label: "완성작 관리", icon: Film },
 ] as const;
 

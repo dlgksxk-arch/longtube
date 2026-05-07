@@ -1380,7 +1380,7 @@ def _detect_completed_steps(project_id: str) -> dict[str, str]:
         try:
             script = json.loads(script_path.read_text(encoding="utf-8"))
             cuts = script.get("cuts", [])
-            if cuts:
+            if cuts and not script.get("_partial"):
                 script_ok = True
                 total_cuts = len(cuts)
         except Exception:
@@ -1656,6 +1656,339 @@ def _find_existing_unfinished_oneclick_project(
             return None
         matches.sort(key=lambda item: item[0], reverse=True)
         return matches[0][1]
+    finally:
+        db.close()
+
+
+def _project_channel_from_id_or_config(project: Project, config: dict[str, Any]) -> Optional[int]:
+    try:
+        m = re.match(r"^딸깍_CH(\d+)_", project.id or "")
+        if m:
+            ch = int(m.group(1))
+            if 1 <= ch <= 4:
+                return ch
+    except Exception:
+        pass
+    try:
+        ch = int(config.get("channel") or 0)
+        if 1 <= ch <= 4:
+            return ch
+    except (TypeError, ValueError):
+        pass
+    return None
+
+
+def _project_episode_from_id_or_config(project: Project, config: dict[str, Any]) -> Optional[int]:
+    try:
+        ep = int(config.get("episode_number") or 0)
+        if ep > 0:
+            return ep
+    except (TypeError, ValueError):
+        pass
+    try:
+        m = re.search(r"_EP(\d+)_", project.id or "", re.IGNORECASE)
+        if m:
+            ep = int(m.group(1))
+            if ep > 0:
+                return ep
+    except Exception:
+        pass
+    return None
+
+
+def _project_total_cuts_from_disk(project_id: str) -> int:
+    try:
+        script_path = resolve_project_dir(project_id) / "script.json"
+        if script_path.exists():
+            data = json.loads(script_path.read_text(encoding="utf-8"))
+            cuts = data.get("cuts") or []
+            if isinstance(cuts, list):
+                return len(cuts)
+    except Exception:
+        pass
+    return 0
+
+
+def _project_cut_row_count(project_id: str) -> int:
+    db = SessionLocal()
+    try:
+        return int(db.query(Cut).filter(Cut.project_id == project_id).count() or 0)
+    except Exception:
+        return 0
+    finally:
+        db.close()
+
+
+def _backup_dir_for_queue_item(item: dict[str, Any], project_id: str | None = None) -> Optional[Path]:
+    try:
+        ch = int(item.get("channel") or 0)
+        ep = int(item.get("episode_number") or 0)
+    except (TypeError, ValueError):
+        return None
+    if ch <= 0 or ep <= 0:
+        return None
+    pattern = f"CH{ch}_EP{ep}_"
+    candidates: list[Path] = []
+    try:
+        for root in SYSTEM_DIR.iterdir():
+            if not root.is_dir() or "backup" not in root.name.lower():
+                continue
+            for child in root.iterdir():
+                if not child.is_dir():
+                    continue
+                name = child.name
+                if pattern not in name:
+                    continue
+                if project_id and project_id in name:
+                    candidates.append(child)
+                elif not project_id:
+                    candidates.append(child)
+    except Exception:
+        return None
+    if not candidates:
+        return None
+    candidates.sort(key=lambda p: p.stat().st_mtime if p.exists() else 0, reverse=True)
+    return candidates[0]
+
+
+def _inspect_backup_progress(path: Path) -> dict[str, Any]:
+    out: dict[str, Any] = {
+        "has_script": (path / "script.json").exists(),
+        "audio_count": 0,
+        "image_count": 0,
+        "video_count": 0,
+        "has_merged": False,
+        "has_thumbnail": False,
+        "total_cuts": 0,
+        "progress_pct": 0.0,
+        "disk_bytes": _dir_size(path),
+    }
+    for sub, key, exts in [
+        ("audio", "audio_count", (".mp3", ".wav", ".m4a", ".ogg")),
+        ("images", "image_count", (".png", ".jpg", ".jpeg", ".webp")),
+        ("videos", "video_count", (".mp4", ".mov", ".webm")),
+    ]:
+        try:
+            d = path / sub
+            if d.exists():
+                out[key] = sum(1 for f in d.iterdir() if f.is_file() and f.suffix.lower() in exts)
+        except Exception:
+            pass
+    try:
+        out["has_merged"] = any((path / "output" / name).exists() for name in ("merged.mp4", "final.mp4", "final_with_subtitles.mp4"))
+        out["has_thumbnail"] = (path / "output" / "thumbnail.png").exists()
+    except Exception:
+        pass
+    total = max(int(out["audio_count"] or 0), int(out["image_count"] or 0), int(out["video_count"] or 0))
+    out["total_cuts"] = total
+    denom = max(1, total)
+    out["progress_pct"] = round(
+        (10.0 if out["has_script"] else 0.0)
+        + 20.0 * min(1.0, int(out["audio_count"] or 0) / denom)
+        + 30.0 * min(1.0, int(out["image_count"] or 0) / denom)
+        + 30.0 * min(1.0, int(out["video_count"] or 0) / denom)
+        + (5.0 if out["has_merged"] else 0.0)
+        + (5.0 if out["has_thumbnail"] else 0.0),
+        1,
+    )
+    return out
+
+
+def _write_script_from_cut_rows(project_id: str, project: Project, dest_dir: Path) -> bool:
+    script_path = dest_dir / "script.json"
+    if script_path.exists():
+        return True
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(Cut)
+            .filter(Cut.project_id == project_id)
+            .order_by(Cut.cut_number.asc())
+            .all()
+        )
+        if not rows:
+            return False
+        cuts = []
+        for row in rows:
+            cuts.append({
+                "cut_number": int(row.cut_number or len(cuts) + 1),
+                "narration": row.narration or "",
+                "image_prompt": row.image_prompt or "",
+                "scene_type": row.scene_type or "narration",
+            })
+        payload = {
+            "title": project.title or project.topic or "",
+            "topic": project.topic or project.title or "",
+            "cuts": cuts,
+        }
+        script_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        return True
+    finally:
+        db.close()
+
+
+def _restore_backup_for_queue_item(project_id: str, item: dict[str, Any]) -> bool:
+    project = _load_project(project_id)
+    if not project:
+        return False
+    backup_dir = _backup_dir_for_queue_item(item, project_id) or _backup_dir_for_queue_item(item)
+    if not backup_dir or not backup_dir.exists():
+        return False
+    config = dict(project.config or {})
+    config["__oneclick__"] = True
+    try:
+        ch = int(item.get("channel") or config.get("channel") or 0)
+        if 1 <= ch <= 4:
+            config["channel"] = ch
+    except (TypeError, ValueError):
+        pass
+    try:
+        ep = int(item.get("episode_number") or config.get("episode_number") or 0)
+        if ep > 0:
+            config["episode_number"] = ep
+    except (TypeError, ValueError):
+        pass
+    if item.get("template_project_id"):
+        config["template_project_id"] = item.get("template_project_id")
+
+    db = SessionLocal()
+    try:
+        row = db.query(Project).filter(Project.id == project_id).first()
+        if row:
+            row.config = config
+            from sqlalchemy.orm.attributes import flag_modified
+            flag_modified(row, "config")
+            db.commit()
+            db.refresh(row)
+            project = row
+    finally:
+        db.close()
+
+    dest_dir = resolve_project_dir(project_id, config, create=True)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        shutil.copytree(str(backup_dir), str(dest_dir), dirs_exist_ok=True)
+    except Exception as e:
+        print(f"[oneclick] backup restore copy failed: {backup_dir} -> {dest_dir}: {e}")
+        return False
+    _write_script_from_cut_rows(project_id, project, dest_dir)
+    return True
+
+
+def _find_existing_project_for_queue_item(item: dict[str, Any]) -> Optional[str]:
+    """작업대 큐 항목과 같은 에피소드의 기존 산출물 프로젝트를 찾는다."""
+    topic = str(item.get("topic") or "").strip()
+    template_project_id = str(item.get("template_project_id") or "").strip() or None
+    try:
+        channel = int(item.get("channel") or 0)
+    except (TypeError, ValueError):
+        channel = 0
+    try:
+        episode_number = int(item.get("episode_number") or 0)
+    except (TypeError, ValueError):
+        episode_number = 0
+
+    explicit_ids: list[str] = []
+    for key in ("restored_from_project_id", "project_id"):
+        pid = str(item.get(key) or "").strip()
+        if pid:
+            explicit_ids.append(pid)
+    old_task_id = str(item.get("requeued_from_task_id") or "").strip()
+    if old_task_id and old_task_id in _TASKS:
+        pid = str(_TASKS[old_task_id].get("project_id") or "").strip()
+        if pid:
+            explicit_ids.append(pid)
+
+    db = SessionLocal()
+    try:
+        candidates: list[Project] = []
+        if explicit_ids:
+            candidates.extend(
+                db.query(Project)
+                .filter(Project.id.in_(list(dict.fromkeys(explicit_ids))))
+                .all()
+            )
+
+        query = (
+            db.query(Project)
+            .filter(Project.id.like("딸깍_%"))
+            .order_by(Project.created_at.desc())
+            .limit(500)
+        )
+        candidates.extend(query.all())
+
+        scored: list[tuple[int, str]] = []
+        seen: set[str] = set()
+        for project in candidates:
+            if not project or project.id in seen:
+                continue
+            seen.add(project.id)
+            config = dict(project.config or {})
+            if not config.get("__oneclick__"):
+                continue
+            if str(project.status or "").lower() == "completed" and project.youtube_url:
+                continue
+            backup_dir: Optional[Path] = None
+            cut_row_count = _project_cut_row_count(project.id)
+            try:
+                pdir = resolve_project_dir(project.id, config, create=False)
+                if not pdir.exists():
+                    backup_dir = _backup_dir_for_queue_item(item, project.id) or _backup_dir_for_queue_item(item)
+                    if not backup_dir and cut_row_count <= 0:
+                        continue
+            except Exception:
+                backup_dir = _backup_dir_for_queue_item(item, project.id) or _backup_dir_for_queue_item(item)
+                if not backup_dir and cut_row_count <= 0:
+                    continue
+
+            score = 0
+            if project.id in explicit_ids:
+                score += 100_000
+
+            proj_ch = _project_channel_from_id_or_config(project, config)
+            proj_ep = _project_episode_from_id_or_config(project, config)
+            if episode_number > 0:
+                if proj_ep != episode_number:
+                    continue
+                score += 20_000
+            if channel > 0:
+                if proj_ch is not None and proj_ch != channel:
+                    continue
+                if proj_ch == channel:
+                    score += 10_000
+            if template_project_id:
+                if config.get("template_project_id") == template_project_id:
+                    score += 2_000
+                elif episode_number <= 0:
+                    continue
+            if topic and str(project.topic or "").strip() == topic:
+                score += 5_000
+
+            total_cuts = _project_total_cuts_from_disk(project.id)
+            progress = _inspect_backup_progress(backup_dir) if backup_dir else _inspect_project_progress(project.id, total_cuts)
+            if cut_row_count > 0 and not progress.get("has_script"):
+                progress["has_script"] = True
+                progress["total_cuts"] = max(int(progress.get("total_cuts") or 0), cut_row_count)
+                progress["progress_pct"] = max(float(progress.get("progress_pct") or 0.0), 10.0)
+            progress_score = int(progress.get("progress_pct") or 0)
+            has_files = bool(progress.get("disk_bytes")) and (
+                progress.get("has_script")
+                or int(progress.get("audio_count") or 0) > 0
+                or int(progress.get("image_count") or 0) > 0
+                or int(progress.get("video_count") or 0) > 0
+                or progress.get("has_merged")
+                or progress.get("has_thumbnail")
+            )
+            has_files = has_files or cut_row_count > 0
+            if not has_files:
+                continue
+            score += progress_score
+            scored.append((score, project.id))
+
+        if not scored:
+            return None
+        scored.sort(key=lambda row: row[0], reverse=True)
+        return scored[0][1]
     finally:
         db.close()
 
@@ -2800,6 +3133,20 @@ def _effective_live_config_for_task(task: dict) -> dict:
     return _merge_template_config(project_config, template_config, str(template_project_id))
 
 
+def _refresh_task_estimate(task: dict) -> bool:
+    project_id = str(task.get("project_id") or "").strip()
+    config = _effective_live_config_for_task(task) if project_id else dict(task.get("config") or {})
+    if not config:
+        config = dict(task.get("config") or {})
+    if not config:
+        return False
+    estimate = estimate_project(config)
+    if task.get("estimate") == estimate:
+        return False
+    task["estimate"] = estimate
+    return True
+
+
 def _effective_project_config(project_id: str, fallback_config: Optional[dict] = None) -> dict:
     """Return project config with the linked preset's current values applied."""
     project = _load_project(project_id)
@@ -3254,9 +3601,16 @@ def _run_sync_pipeline(task: dict, project_id: str, config: dict, resume_from) -
     # 없으면 폴더만 다시 만들고 외부 API 호출로 진입할 수 있으므로 즉시 중단한다.
     if resume_from is not None and int(resume_from) > 2:
         script_path = resolve_project_dir(project_id) / "script.json"
-        if not script_path.exists():
+        script_missing_or_partial = not script_path.exists()
+        if not script_missing_or_partial:
+            try:
+                script_data = json.loads(script_path.read_text(encoding="utf-8"))
+                script_missing_or_partial = bool(script_data.get("_partial"))
+            except Exception:
+                script_missing_or_partial = True
+        if script_missing_or_partial:
             msg = (
-                f"script.json 이 없어 Step {resume_from}부터 이어서 할 수 없습니다. "
+                f"완성된 script.json 이 없어 Step {resume_from}부터 이어서 할 수 없습니다. "
                 "자동 재생성을 막기 위해 중단했습니다."
             )
             task["status"] = "failed"
@@ -4916,6 +5270,8 @@ def list_tasks() -> list[dict]:
             changed = True
         if _sync_task_display_language(_TASKS[tid]):
             changed = True
+        if _refresh_task_estimate(_TASKS[tid]):
+            changed = True
         # v1.2.17: episode_number 지연 백필 — 구버전에서 생성된 task 는
         # 이 필드가 없다. project.config 에서 한 번만 조회해 task 에 박아둔다.
         # 이후 호출부터는 dict 내 캐시로 DB 히트 없이 반환된다.
@@ -6277,6 +6633,70 @@ def set_queue(new_state: dict[str, Any]) -> dict[str, Any]:
     return get_queue()
 
 
+def recover_existing_for_queue_item(item_id: str) -> dict[str, Any]:
+    """큐 항목에 대응하는 기존 산출물이 있으면 태스크로 복구하고 큐에서 제거."""
+    global _QUEUE
+    _ensure_state_loaded()
+    item_id = str(item_id or "").strip()
+    if not item_id:
+        return {"ok": True, "task": None, "queue": get_queue()}
+
+    items = list(_QUEUE.get("items") or [])
+    idx = next((i for i, item in enumerate(items) if str(item.get("id") or "") == item_id), -1)
+    if idx < 0:
+        return {"ok": True, "task": None, "queue": get_queue()}
+
+    item = dict(items[idx] or {})
+    project_id = _find_existing_project_for_queue_item(item)
+    if not project_id:
+        return {"ok": True, "task": None, "queue": get_queue()}
+    try:
+        pdir = resolve_project_dir(project_id, create=False)
+        if not pdir.exists():
+            if not _restore_backup_for_queue_item(project_id, item):
+                project = _load_project(project_id)
+                if project:
+                    config = dict(project.config or {})
+                    dest_dir = resolve_project_dir(project_id, config, create=True)
+                    dest_dir.mkdir(parents=True, exist_ok=True)
+                    for sub in ("audio", "images", "videos", "subtitles", "output"):
+                        (dest_dir / sub).mkdir(parents=True, exist_ok=True)
+                    _write_script_from_cut_rows(project_id, project, dest_dir)
+    except Exception:
+        if not _restore_backup_for_queue_item(project_id, item):
+            project = _load_project(project_id)
+            if project:
+                config = dict(project.config or {})
+                dest_dir = resolve_project_dir(project_id, config, create=True)
+                dest_dir.mkdir(parents=True, exist_ok=True)
+                for sub in ("audio", "images", "videos", "subtitles", "output"):
+                    (dest_dir / sub).mkdir(parents=True, exist_ok=True)
+                _write_script_from_cut_rows(project_id, project, dest_dir)
+
+    task = recover_project(project_id)
+    try:
+        ch = int(item.get("channel") or 0)
+        if 1 <= ch <= 4:
+            task["channel"] = ch
+    except (TypeError, ValueError):
+        pass
+    try:
+        ep = int(item.get("episode_number") or 0)
+        if ep > 0:
+            task["episode_number"] = ep
+    except (TypeError, ValueError):
+        pass
+    _add_log(task, f"작업대 큐에서 기존 자료 불러오기: {project_id}", "info")
+    _reconcile_task_outputs(task, clear_terminal_cursor=True)
+    task["progress_pct"] = _compute_progress_pct(task)
+
+    items.pop(idx)
+    _QUEUE["items"] = items
+    _save_queue_to_disk()
+    _save_tasks_to_disk()
+    return {"ok": True, "task": task, "queue": get_queue()}
+
+
 def _sync_windows_wake_timers(reason: str) -> dict[str, Any] | None:
     """Best-effort Windows wake timer sync for channel_times."""
     try:
@@ -6325,7 +6745,7 @@ def _queue_item_channel(item: dict[str, Any] | None) -> int:
     return _helper_queue_item_channel(item, CHANNELS)
 
 
-async def _fire_queue_for_channel(ch: int, triggered_by: str = "schedule") -> bool:
+async def _fire_queue_for_channel(ch: int, triggered_by: str = "schedule") -> dict[str, Any] | None:
     """채널 ch 의 큐 맨 앞 1 건을 뽑아 즉시 실행.
 
     해당 채널에 items 가 없으면 아무것도 안 함.
@@ -6334,14 +6754,14 @@ async def _fire_queue_for_channel(ch: int, triggered_by: str = "schedule") -> bo
     if triggered_by != "manual":
         if _emergency_stop_active():
             print(f"[oneclick.queue] defer ch{ch}: emergency stop guard active")
-            return False
+            return None
         if _auto_production_paused():
             print(f"[oneclick.queue] defer ch{ch}: auto production paused")
-            return False
+            return None
 
     if _has_inflight_task():
         print(f"[oneclick.queue] defer ch{ch}: 다른 작업이 이미 running/queued 상태")
-        return False
+        return None
 
     items = list(_QUEUE.get("items") or [])
     target_idx = None
@@ -6350,7 +6770,7 @@ async def _fire_queue_for_channel(ch: int, triggered_by: str = "schedule") -> bo
             target_idx = i
             break
     if target_idx is None:
-        return False
+        return None
 
     head = items.pop(target_idx)
     _QUEUE["items"] = items
@@ -6401,7 +6821,7 @@ async def _fire_queue_for_channel(ch: int, triggered_by: str = "schedule") -> bo
             _save_queue_to_disk()
         except Exception as _re:
             print(f"[oneclick.queue] restore fail ch{ch}: {_re}")
-        return False
+        return None
 
     try:
         start_task(task["task_id"])
@@ -6414,9 +6834,9 @@ async def _fire_queue_for_channel(ch: int, triggered_by: str = "schedule") -> bo
             _save_tasks_to_disk()
         except Exception:
             pass
-        return False
+        return None
 
-    return True
+    return task
 
 
 async def _queue_loop() -> None:
@@ -6559,7 +6979,9 @@ async def run_queue_top_now(channel=None):
                 return None
             target_ch = requested_ch
     before_ids = set(_TASKS.keys())
-    await _fire_queue_for_channel(target_ch, "manual")
+    fired_task = await _fire_queue_for_channel(target_ch, "manual")
+    if fired_task:
+        return fired_task
     # 방금 생성된 task 반환. 즉시 실행(manual)과 스케줄 실행(schedule)을 구분한다.
     for t in reversed(list(_TASKS.values())):
         if t.get("task_id") not in before_ids and t.get("channel") == target_ch:
