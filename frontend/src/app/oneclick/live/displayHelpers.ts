@@ -102,6 +102,7 @@ export function stepModelName(stepKey: string, task?: OneClickTask | null) {
       "comfyui-dreamshaper-xl": "SDXL Lightning",
       "comfyui-dreamshaper-xl-longtube": "SDXL 로컬모델 v1",
       "openai-image-1": "GPT Image 1 (gpt-image-1)",
+      "openai-image-2": "OpenAI Image 2 (gpt-image-2)",
       "nano-banana-3": "Nano Banana 3 (Reference style lock)",
       "nano-banana-2": "Nano Banana 2",
       "nano-banana-pro": "Nano Banana Pro",

@@ -28,6 +28,12 @@ IMAGE_REGISTRY: dict[str, dict] = {
         "cost_per_unit": "~$0.02/image",
         "cost_value": 0.02,
     },
+    "openai-image-2": {
+        "name": "OpenAI Image 2 (gpt-image-2)",
+        "provider": "openai",
+        "cost_per_unit": "~$0.04/image",
+        "cost_value": 0.04,
+    },
     "nano-banana-3": {
         "name": "Nano Banana 3 (Reference style lock)",
         "provider": "bbanana",

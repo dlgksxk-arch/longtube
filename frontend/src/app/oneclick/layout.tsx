@@ -74,6 +74,7 @@ function activeModelNameForStep(task: OneClickTask, step: number) {
       "comfyui-dreamshaper-xl": "SDXL Lightning",
       "comfyui-dreamshaper-xl-longtube": "SDXL 로컬모델 v1",
       "openai-image-1": "GPT Image 1",
+      "openai-image-2": "OpenAI Image 2",
       "nano-banana-3": "Nano Banana 3",
       "nano-banana-2": "Nano Banana 2",
       "nano-banana-pro": "Nano Banana Pro",

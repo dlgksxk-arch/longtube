@@ -11,8 +11,11 @@ from app.services.cancel_ctx import raise_if_cancelled  # v1.2.25 cancel 방어
 from app import config
 
 
+GPT_IMAGE_MODELS = {"gpt-image-1", "gpt-image-2", "gpt-image-1-mini"}
+
+
 class OpenAIImageService(BaseImageService):
-    """OpenAI 이미지 생성 (gpt-image-1, dall-e-3)"""
+    """OpenAI 이미지 생성 (GPT Image 계열, dall-e-3)"""
 
     def __init__(self, model_id: str):
         self.model_id = model_id
@@ -21,10 +24,11 @@ class OpenAIImageService(BaseImageService):
         # Map our model ID to OpenAI model name
         self._model_map = {
             "openai-image-1": "gpt-image-1",
+            "openai-image-2": "gpt-image-2",
             "openai-dalle3": "dall-e-3",
         }
-        # gpt-image-1 만 /edits 엔드포인트로 레퍼런스 이미지 받음
-        self.supports_reference_images = (model_id == "openai-image-1")
+        # GPT Image 계열은 /edits 엔드포인트로 레퍼런스 이미지를 받는다.
+        self.supports_reference_images = self._model_map.get(model_id) in GPT_IMAGE_MODELS
 
     async def generate(
         self,
@@ -44,9 +48,9 @@ class OpenAIImageService(BaseImageService):
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 
         # If reference images exist and model supports it, use /edits endpoint
-        if reference_images and openai_model == "gpt-image-1":
+        if reference_images and openai_model in GPT_IMAGE_MODELS:
             return await self._generate_with_references(
-                prompt, size, output_path, reference_images
+                prompt, size, output_path, reference_images, openai_model
             )
 
         # Standard generation without reference images
@@ -61,7 +65,7 @@ class OpenAIImageService(BaseImageService):
             "Content-Type": "application/json",
         }
 
-        if openai_model == "gpt-image-1":
+        if openai_model in GPT_IMAGE_MODELS:
             payload = {
                 "model": openai_model,
                 "prompt": prompt,
@@ -119,9 +123,10 @@ class OpenAIImageService(BaseImageService):
         size: str,
         output_path: str,
         reference_images: list[str],
+        openai_model: str = "gpt-image-1",
     ) -> str:
         """Generate image with reference images using /v1/images/edits endpoint.
-        gpt-image-1 supports up to 10 reference images.
+        GPT Image models support multiple reference images.
 
         v1.1.54: 재시도 로직 추가 + /edits 3회 실패 시 표준 생성 폴백.
         """
@@ -164,11 +169,11 @@ class OpenAIImageService(BaseImageService):
                 # If no reference files could be opened, fall back to standard generation
                 if not files:
                     return await self._generate_standard(
-                        prompt, size, output_path, "gpt-image-1"
+                        prompt, size, output_path, openai_model
                     )
 
                 form_data = {
-                    "model": "gpt-image-1",
+                    "model": openai_model,
                     "prompt": prompt,
                     "n": "1",
                     "size": size,
@@ -240,4 +245,24 @@ class OpenAIImageService(BaseImageService):
 
     def _resolve_size(self, width: int, height: int, model: str) -> str:
         """OpenAI는 정해진 사이즈만 지원"""
-   
+        try:
+            w = int(width)
+            h = int(height)
+        except (TypeError, ValueError):
+            w, h = 1024, 1024
+
+        if model in GPT_IMAGE_MODELS:
+            if w > h:
+                return "1536x1024"
+            if h > w:
+                return "1024x1536"
+            return "1024x1024"
+
+        if model == "dall-e-3":
+            if w > h:
+                return "1792x1024"
+            if h > w:
+                return "1024x1792"
+            return "1024x1024"
+
+        return "1024x1024"

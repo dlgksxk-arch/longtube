@@ -51,6 +51,7 @@ IMAGE_SEC_PER_CUT = {
     "comfyui-dreamshaper-xl-longtube-3k": 20.0,
     "comfyui-qwen-image-edit-2509": 25.0,
     "openai-image-1":  18.0,
+    "openai-image-2":  22.0,
     "openai-dalle3":   22.0,
     "nano-banana-3":   12.0,
     "nano-banana-2":   10.0,
