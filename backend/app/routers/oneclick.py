@@ -293,6 +293,60 @@ def reset_task(task_id: str, body: ResetRequest = ResetRequest()):
 
 class ThumbnailRegenRequest(BaseModel):
     image_model: Optional[str] = None
+    prompt: Optional[str] = None
+
+
+class ThumbnailPromptRequest(BaseModel):
+    prompt: str
+
+
+@router.get("/{task_id}/thumbnail-prompt")
+def get_thumbnail_prompt(task_id: str):
+    task = oneclick_service.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="task not found")
+
+    project_id = task["project_id"]
+    from app.tasks.pipeline_tasks import load_script, build_thumbnail_prompt
+
+    try:
+        script = load_script(project_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="script.json not found")
+
+    raw_prompt = (script.get("thumbnail_prompt") or "").strip()
+    return {
+        "prompt": build_thumbnail_prompt(script),
+        "source": "script" if raw_prompt else "fallback",
+    }
+
+
+@router.put("/{task_id}/thumbnail-prompt")
+def update_thumbnail_prompt(task_id: str, body: ThumbnailPromptRequest):
+    task = oneclick_service.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="task not found")
+
+    prompt = (body.prompt or "").strip()
+    if not prompt:
+        raise HTTPException(status_code=400, detail="thumbnail prompt is empty")
+
+    project_id = task["project_id"]
+    from app.services.oneclick_service import _load_project
+    from app.tasks.pipeline_tasks import load_script, save_script
+
+    project = _load_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="project not found")
+
+    try:
+        script = load_script(project_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="script.json not found")
+
+    script["thumbnail_prompt"] = prompt
+    save_script(project_id, script, (project.config or {}).get("language", "ko"))
+    return {"ok": True, "prompt": prompt}
 
 
 @router.post("/{task_id}/regenerate-thumbnail")
@@ -325,6 +379,13 @@ async def regenerate_thumbnail(task_id: str, body: ThumbnailRegenRequest = Thumb
     import re
 
     script = load_script(project_id)
+    if body.prompt is not None:
+        prompt = (body.prompt or "").strip()
+        if not prompt:
+            raise HTTPException(status_code=400, detail="thumbnail prompt is empty")
+        from app.tasks.pipeline_tasks import save_script
+        script["thumbnail_prompt"] = prompt
+        save_script(project_id, script, config.get("language", "ko"))
     thumb_prompt = build_thumbnail_prompt(script)
 
     from app.services.image.factory import DEFAULT_THUMBNAIL_MODEL, resolve_image_model

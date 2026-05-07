@@ -75,7 +75,7 @@ SHORTS_CAPTION_BOX_HEIGHT = 190
 SHORTS_CAPTION_TEXT_SIZE = 76
 SHORTS_CAPTION_TEXT_BORDER = 7
 SHORTS_CAPTION_WRAP_WIDTH = 18
-SHORTS_PLAYBACK_SPEED = 1.1
+SHORTS_PLAYBACK_SPEED = 1.0
 
 
 def _cut_duration(cut: dict[str, Any]) -> float:
@@ -121,7 +121,7 @@ def _expand_segment(
 
 
 def select_shorts_segments(script: dict[str, Any], *, count: int = 1) -> list[dict[str, Any]]:
-    """Return shorts segments using marked high-curiosity cuts first."""
+    """Return shorts segments using script-marked cuts first."""
     cuts = [c for c in script.get("cuts", []) or [] if isinstance(c, dict)]
     if not cuts:
         return []
@@ -141,60 +141,39 @@ def select_shorts_segments(script: dict[str, Any], *, count: int = 1) -> list[di
             cut_num = int(cut.get("cut_number") or 0)
         except (TypeError, ValueError):
             cut_num = 0
-        if cut.get("shorts_candidate") is True and group > 0 and eligible_first <= cut_num <= eligible_last:
+        if cut.get("shorts_candidate") is True and group > 0 and cut_num > 0:
             by_group.setdefault(group, []).append(cut)
             marked.append((cut_num, _cut_score(cut, cut_num, len(cuts)), cut))
 
     segments: list[dict[str, Any]] = []
     used: set[int] = set()
-    if marked:
-        best_num, _best_score, best_cut = max(marked, key=lambda item: item[1])
-        start = max(eligible_first, best_num - SHORTS_CUT_COUNT // 2)
-        end = min(eligible_last, start + SHORTS_CUT_COUNT - 1)
-        start = max(eligible_first, end - SHORTS_CUT_COUNT + 1)
-        start, end = _expand_segment(
-            start,
-            end,
-            len(cuts),
-            min_start=eligible_first,
-            max_end=eligible_last,
-        )
-        selected_nums = list(range(start, end + 1))
-        if selected_nums:
-            used.update(selected_nums)
-            segments.append({
-                "group": 1,
-                "start_cut": start,
-                "end_cut": end,
-                "cut_numbers": selected_nums,
-                "reason": best_cut.get("shorts_reason") or "marked high-curiosity cuts",
-                "title": best_cut.get("shorts_title") or best_cut.get("headline") or "",
-            })
-            if len(segments) >= count:
-                return segments
-
     for group in sorted(by_group):
-        nums = sorted(int(c["cut_number"]) for c in by_group[group] if c.get("cut_number"))
+        group_cuts = sorted(
+            by_group[group],
+            key=lambda c: (
+                -_cut_score(c, int(c.get("cut_number") or 0), len(cuts)),
+                int(c.get("cut_number") or 0),
+            ),
+        )
+        nums = sorted(
+            int(c["cut_number"])
+            for c in group_cuts[:SHORTS_CUT_COUNT]
+            if c.get("cut_number")
+        )
         if not nums:
             continue
-        start, end = _expand_segment(
-            max(eligible_first, min(nums)),
-            min(eligible_last, max(nums)),
-            len(cuts),
-            min_start=eligible_first,
-            max_end=eligible_last,
-        )
-        if end - start + 1 > SHORTS_CUT_COUNT:
-            end = min(eligible_last, start + SHORTS_CUT_COUNT - 1)
-        span = set(range(start, end + 1))
+        span = set(nums)
         if used.intersection(span):
             continue
         used.update(span)
+        first_cut = by_group[group][0]
         segments.append({
             "group": group,
-            "start_cut": start,
-            "end_cut": end,
-            "reason": by_group[group][0].get("shorts_reason") or "script candidate",
+            "start_cut": nums[0],
+            "end_cut": nums[-1],
+            "cut_numbers": nums,
+            "reason": first_cut.get("shorts_reason") or "script-marked shorts cuts",
+            "title": first_cut.get("shorts_title") or first_cut.get("headline") or "",
         })
         if len(segments) >= count:
             return segments
@@ -895,28 +874,20 @@ async def render_shorts_from_final(
                 if num > 0 and num not in cut_numbers:
                     cut_numbers.append(num)
         cut_numbers = sorted(cut_numbers)[:SHORTS_CUT_COUNT]
+        if not cut_numbers:
+            raise RuntimeError("shorts segment has no script-marked cut_numbers")
         if timeline:
-            if cut_numbers:
-                start_sec = 0.0
-                duration = sum(timeline.get(num, (0.0, float(CUT_VIDEO_DURATION)))[1] for num in cut_numbers)
-                start_cut = cut_numbers[0]
-                end_cut = cut_numbers[-1]
-            else:
-                start_sec = timeline.get(start_cut, ((start_cut - 1) * float(CUT_VIDEO_DURATION), 0.0))[0]
-                end_cut = min(end_cut, start_cut + SHORTS_CUT_COUNT - 1)
-                duration = (end_cut - start_cut + 1) * float(CUT_VIDEO_DURATION)
+            start_sec = 0.0
+            duration = sum(timeline.get(num, (0.0, float(CUT_VIDEO_DURATION)))[1] for num in cut_numbers)
+            start_cut = cut_numbers[0]
+            end_cut = cut_numbers[-1]
         else:
-            if cut_numbers:
-                start_sec = 0.0
-                start_cut = cut_numbers[0]
-                end_cut = cut_numbers[-1]
-                duration = len(cut_numbers) * float(CUT_VIDEO_DURATION)
-            else:
-                start_sec = (start_cut - 1) * float(CUT_VIDEO_DURATION)
-                end_cut = min(end_cut, start_cut + SHORTS_CUT_COUNT - 1)
-                duration = (end_cut - start_cut + 1) * float(CUT_VIDEO_DURATION)
+            start_sec = 0.0
+            start_cut = cut_numbers[0]
+            end_cut = cut_numbers[-1]
+            duration = len(cut_numbers) * float(CUT_VIDEO_DURATION)
         out_path = shorts_dir / f"short_{idx}.mp4"
-        render_duration = duration / SHORTS_PLAYBACK_SPEED
+        render_duration = duration
 
         title_path = text_dir / f"short_{idx}_title.txt"
         channel_path = text_dir / f"short_{idx}_channel.txt"
@@ -966,76 +937,49 @@ async def render_shorts_from_final(
         audio_source = "[0:a]"
         input_video_paths: list[Path] = [final_video]
         use_cut_files = False
-        if cut_numbers:
-            cut_video_paths = [_cut_video_path(output_dir, num) for num in cut_numbers]
-            if all(path is not None for path in cut_video_paths):
-                use_cut_files = True
-                start_sec = 0.0
-                concat_source = shorts_dir / f"_cut_concat_short_{idx}.mp4"
-                concat_list = shorts_dir / f"_cut_concat_short_{idx}.txt"
-                concat_list.write_text(
-                    "\n".join(
-                        f"file '{str(path).replace(chr(39), chr(39) + '\\\\' + chr(39) + chr(39))}'"
-                        for path in cut_video_paths
-                        if path is not None
-                    ),
-                    encoding="utf-8",
-                )
-                concat_cmd = [
-                    ffmpeg, "-y",
-                    "-f", "concat",
-                    "-safe", "0",
-                    "-i", str(concat_list),
-                    "-c", "copy",
-                    str(concat_source),
-                ]
-                rc, _, stderr = await run_subprocess(
-                    concat_cmd,
-                    timeout=180.0,
-                    capture_stdout=False,
-                    capture_stderr=True,
-                )
-                if rc != 0:
-                    err = (stderr or b"").decode(errors="replace")[-500:]
-                    raise RuntimeError(f"shorts cut concat failed for short_{idx}: {err}")
-                input_video_paths = [concat_source]
-                source_prefix = (
-                    f"[0:v]setpts=PTS/{SHORTS_PLAYBACK_SPEED:.3f}[fastv];"
-                    f"[0:a]atempo={SHORTS_PLAYBACK_SPEED:.3f}[fasta];"
-                )
-            else:
-                trim_parts: list[str] = []
-                v_labels: list[str] = []
-                a_labels: list[str] = []
-                for clip_idx, cut_num in enumerate(cut_numbers):
-                    cut_start, cut_dur = timeline.get(
-                        cut_num,
-                        ((cut_num - 1) * float(CUT_VIDEO_DURATION), float(CUT_VIDEO_DURATION)),
-                    )
-                    v_label = f"hv{clip_idx}"
-                    a_label = f"ha{clip_idx}"
-                    trim_parts.append(
-                        f"[0:v]trim=start={cut_start:.3f}:duration={cut_dur:.3f},setpts=PTS-STARTPTS[{v_label}];"
-                        f"[0:a]atrim=start={cut_start:.3f}:duration={cut_dur:.3f},asetpts=PTS-STARTPTS[{a_label}];"
-                    )
-                    v_labels.append(f"[{v_label}]")
-                    a_labels.append(f"[{a_label}]")
-                concat_inputs = "".join(v + a for v, a in zip(v_labels, a_labels))
-                source_prefix = (
-                    "".join(trim_parts) +
-                    f"{concat_inputs}concat=n={len(cut_numbers)}:v=1:a=1[srcv][srca];"
-                    f"[srcv]setpts=PTS/{SHORTS_PLAYBACK_SPEED:.3f}[fastv];"
-                    f"[srca]atempo={SHORTS_PLAYBACK_SPEED:.3f}[fasta];"
-                )
-            video_source = "[fastv]"
-            audio_source = "[fasta]"
-        else:
-            source_prefix = (
-                f"[0:v]setpts=PTS/{SHORTS_PLAYBACK_SPEED:.3f}[fastv];"
-                f"[0:a]atempo={SHORTS_PLAYBACK_SPEED:.3f}[fasta];"
+        cut_video_paths = [_cut_video_path(output_dir, num) for num in cut_numbers]
+        missing_cuts = [
+            num for num, path in zip(cut_numbers, cut_video_paths)
+            if path is None
+        ]
+        if missing_cuts:
+            raise RuntimeError(
+                f"shorts marked cut video files missing: {missing_cuts}. "
+                "Shorts must be built from script-marked cut clips, not merged trim."
             )
-            video_source = "[fastv]"
-            audio_source = "[fasta]"
+        use_cut_files = True
+        start_sec = 0.0
+        concat_source = shorts_dir / f"_cut_concat_short_{idx}.mp4"
+        concat_list = shorts_dir / f"_cut_concat_short_{idx}.txt"
+        concat_list.write_text(
+            "\n".join(
+                f"file '{str(path).replace(chr(39), chr(39) + '\\\\' + chr(39) + chr(39))}'"
+                for path in cut_video_paths
+                if path is not None
+            ),
+            encoding="utf-8",
+        )
+        concat_cmd = [
+            ffmpeg, "-y",
+            "-f", "concat",
+            "-safe", "0",
+            "-i", str(concat_list),
+            "-c", "copy",
+            str(concat_source),
+        ]
+        rc, _, stderr = await run_subprocess(
+            concat_cmd,
+            timeout=180.0,
+            capture_stdout=False,
+            capture_stderr=True,
+        )
+        if rc != 0:
+            err = (stderr or b"").decode(errors="replace")[-500:]
+            raise RuntimeError(f"shorts cut concat failed for short_{idx}: {err}")
+        input_video_paths = [concat_source]
+        source_prefix = ""
+        video_source = "[0:v]"
+        audio_source = "[0:a]"
 
         filter_base = (
             source_prefix +

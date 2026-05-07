@@ -11,7 +11,7 @@ from app.models.database import SessionLocal
 from app.models.project import Project
 from app.models.cut import Cut
 from app.services.title_utils import script_title_for_language, with_episode_prefix, without_episode_prefix
-from app.services.llm.visual_policy import apply_script_visual_policy, normalize_cut_image_prompt
+from app.services.llm.visual_policy import apply_script_visual_policy, normalize_cut_image_prompt, normalize_image_prompt
 from app.services.youtube_metadata import expand_tags, format_description
 from app.services.multilingual_caption_service import should_upload_youtube_captions, upload_multilingual_captions
 
@@ -501,11 +501,7 @@ def _step_script(project_id: str, config: dict):
             project_id=project_id,
             cut_number=c["cut_number"],
             narration=c.get("narration"),
-            image_prompt=normalize_cut_image_prompt(
-                c.get("image_prompt") or "",
-                c.get("narration") or "",
-                script.get("title") or "",
-            ),
+            image_prompt=normalize_image_prompt(c.get("image_prompt") or ""),
             scene_type=c.get("scene_type"),
             status="pending",
         )
@@ -955,8 +951,7 @@ def _step_image(project_id: str, config: dict):
     # ★ 레퍼런스/캐릭터 수집 — 레퍼런스가 있으면 스타일은 레퍼런스에서만
     ref_images = collect_reference_images(project_id, config)
     char_images = collect_character_images(project_id, config)
-    # v1.1.58: 레퍼런스가 있으면 global_style 무시 (레퍼런스가 스타일의 전부)
-    global_style = "" if ref_images else config.get("image_global_prompt", "")
+    global_style = config.get("image_global_prompt", "")
     character_description = (config.get("character_description") or "").strip()
     enable_historical_guard = should_enable_historical_guard_for_context(
         config,
@@ -970,32 +965,11 @@ def _step_image(project_id: str, config: dict):
     # 주입해서, 스타일 레퍼런스에 등장하는 인물이 캐릭터로 차용되는 사고가 난다.
     has_character_anchor = bool(char_images) or bool(character_description)
 
-    # v1.1.55 → v2.1.2 → v1.2.20: 레퍼런스 미지원 모델 처리.
-    # ComfyUI 로컬: 레퍼런스만 무시 (모델 유지) — GPU 비용 0 이라 사용자 의도 우선.
-    # API 모델: 폴백 금지. 사용자 요구 — "API 이용할 때 설정된 모델의 API 연결
-    # 안되있을때 알림창 띄우고 풀백으로 처리하지마." 명시적 RuntimeError 로 실패시켜
-    # task.error 에 박힌다.
     image_model_id = _img_model
     config["image_model"] = image_model_id
     _is_local_comfyui = IMAGE_REGISTRY.get(image_model_id, {}).get("provider") == "comfyui"
     if _is_local_comfyui:
         enable_historical_guard = True
-    if ref_images or char_images:
-        _probe = get_image_service(image_model_id)
-        if not getattr(_probe, "supports_reference_images", False):
-            if _is_local_comfyui:
-                print(f"[Image] {image_model_id} 는 레퍼런스 미지원이지만 로컬 GPU 모델 → 레퍼런스 무시, 모델 유지")
-                # 레퍼런스/캐릭터 이미지를 비워서 기본 워크플로로 생성
-                ref_images = []
-                char_images = []
-                # 레퍼런스를 안 쓰게 됐으니 global_style 복원
-                global_style = config.get("image_global_prompt", "")
-            else:
-                raise RuntimeError(
-                    f"[Image] 선택한 모델 '{image_model_id}' 은(는) 레퍼런스 이미지를 "
-                    f"지원하지 않습니다. 폴백 비활성화 — 모델을 nano-banana 계열로 "
-                    f"바꾸거나 레퍼런스/캐릭터 이미지를 제거하세요."
-                )
 
     # v1.2.16: 이 시점의 실제 사용 모델을 oneclick task["models"]["image"] 에
     # 반영한다. Live 페이지의 "실제 사용 모델" 라벨이 폴백된 모델까지 반영하도록.
@@ -1096,8 +1070,14 @@ def _step_image(project_id: str, config: dict):
                     cut.status = "pending"
                 continue
         is_char_cut = cut_has_character(num) and has_character_anchor
+        prompt_source = (cut.image_prompt if cut and cut.image_prompt else cut_data.get("image_prompt", "")) or ""
+        prompt_narration = (cut.narration if cut and cut.narration else cut_data.get("narration", "")) or ""
         prompt = build_image_prompt(
-            cut_data.get("image_prompt", ""),
+            normalize_cut_image_prompt(
+                prompt_source,
+                prompt_narration,
+                " ".join(str(x or "") for x in (config.get("title"), config.get("topic"))),
+            ),
             global_style,
             has_reference=bool(ref_images),
             has_character_slot=is_char_cut,
@@ -1108,7 +1088,7 @@ def _step_image(project_id: str, config: dict):
         if existing:
             matches, reason = image_matches_prompt(
                 existing,
-                source_prompt=cut_data.get("image_prompt", ""),
+                source_prompt=prompt_source,
                 final_prompt=prompt,
                 image_model=image_model_id,
             )
@@ -1212,9 +1192,9 @@ def _step_image(project_id: str, config: dict):
                             output,
                             cut_number=num,
                             image_model=image_model_id,
-                            source_prompt=cut_data.get("image_prompt", ""),
+                            source_prompt=(cut_row.image_prompt if cut_row and cut_row.image_prompt else cut_data.get("image_prompt", "")),
                             final_prompt=prompt,
-                            narration=cut_data.get("narration", ""),
+                            narration=(cut_row.narration if cut_row and cut_row.narration else cut_data.get("narration", "")),
                             comfyui_positive_prompt=getattr(service, "last_positive_prompt", ""),
                             comfyui_negative_prompt=getattr(service, "last_negative_prompt", ""),
                         )

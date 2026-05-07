@@ -46,7 +46,7 @@ const SUBTITLE_STYLE_PRESETS = [
     desc: "기존 흰 글자 + 검은 외곽선",
     style: {
       font: "Pretendard Bold",
-      size: 58,
+      size: 68,
       color: "#FFFFFF",
       outline_color: "#000000",
       position: "bottom",
@@ -63,7 +63,7 @@ const SUBTITLE_STYLE_PRESETS = [
     desc: "작업형 다큐에 맞는 반투명 박스",
     style: {
       font: "Pretendard Bold",
-      size: 53,
+      size: 63,
       color: "#FFFFFF",
       outline_color: "#000000",
       position: "bottom",
@@ -82,7 +82,7 @@ const SUBTITLE_STYLE_PRESETS = [
     desc: "노란 대형 자막, 강한 외곽선",
     style: {
       font: "Pretendard Bold",
-      size: 71,
+      size: 81,
       color: "#FFE600",
       outline_color: "#000000",
       position: "bottom",
@@ -99,7 +99,7 @@ const SUBTITLE_STYLE_PRESETS = [
     desc: "큰 글자 + 보라 배경 강조",
     style: {
       font: "Pretendard Bold",
-      size: 77,
+      size: 87,
       color: "#FFFFFF",
       outline_color: "#111111",
       position: "bottom",
@@ -118,7 +118,7 @@ const SUBTITLE_STYLE_PRESETS = [
     desc: "차분한 하단 바 스타일",
     style: {
       font: "Pretendard Bold",
-      size: 49,
+      size: 59,
       color: "#FFFFFF",
       outline_color: "#000000",
       position: "bottom",
@@ -131,6 +131,13 @@ const SUBTITLE_STYLE_PRESETS = [
       bg_opacity: 0.78,
     },
   },
+] as const;
+
+const SUBTITLE_SIZE_OPTIONS = [
+  { label: "작게", size: 59 },
+  { label: "보통", size: 68 },
+  { label: "크게", size: 81 },
+  { label: "매우 큼", size: 87 },
 ] as const;
 
 function _fmtBytes(n?: number): string {
@@ -292,6 +299,35 @@ export default function StepSettings({ project, onUpdate, onNextStep, onDirtyCha
     updateConfig("subtitle_style", {
       ...preset.style,
       preset: preset.id,
+    });
+  };
+
+  const currentSubtitlePreset =
+    SUBTITLE_STYLE_PRESETS.find((item) => item.id === (config.subtitle_style?.preset || "current")) ||
+    SUBTITLE_STYLE_PRESETS[0];
+  const currentSubtitleStyle = {
+    ...currentSubtitlePreset.style,
+    ...(config.subtitle_style || {}),
+  };
+  const previewSubtitleFontSize = Math.max(18, Math.min(42, Math.round((Number(currentSubtitleStyle.size) || 68) * 0.42)));
+  const previewSubtitleOutline = Math.max(1, Math.round((Number(currentSubtitleStyle.outline_width) || 6) * 0.34));
+  const previewSubtitleShadow = [
+    `${previewSubtitleOutline}px 0 0 ${currentSubtitleStyle.outline_color}`,
+    `-${previewSubtitleOutline}px 0 0 ${currentSubtitleStyle.outline_color}`,
+    `0 ${previewSubtitleOutline}px 0 ${currentSubtitleStyle.outline_color}`,
+    `0 -${previewSubtitleOutline}px 0 ${currentSubtitleStyle.outline_color}`,
+    `${previewSubtitleOutline}px ${previewSubtitleOutline}px 0 ${currentSubtitleStyle.outline_color}`,
+    `-${previewSubtitleOutline}px ${previewSubtitleOutline}px 0 ${currentSubtitleStyle.outline_color}`,
+    `${previewSubtitleOutline}px -${previewSubtitleOutline}px 0 ${currentSubtitleStyle.outline_color}`,
+    `-${previewSubtitleOutline}px -${previewSubtitleOutline}px 0 ${currentSubtitleStyle.outline_color}`,
+    ...(currentSubtitleStyle.shadow
+      ? [`0 ${Math.max(1, Math.round(Number(currentSubtitleStyle.shadow) * 0.8))}px 0 rgba(0,0,0,.75)`]
+      : []),
+  ].join(", ");
+  const updateSubtitleStyle = (patch: Partial<ProjectConfig["subtitle_style"]>) => {
+    updateConfig("subtitle_style", {
+      ...currentSubtitleStyle,
+      ...patch,
     });
   };
 
@@ -810,7 +846,7 @@ export default function StepSettings({ project, onUpdate, onNextStep, onDirtyCha
         <div className="flex items-center justify-between gap-3">
           <h3 className="text-sm font-medium text-gray-300">자막 스타일</h3>
           <span className="text-[11px] text-gray-500">
-            기본값: 현재
+            크기: {currentSubtitleStyle.size}px
           </span>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2">
@@ -840,6 +876,55 @@ export default function StepSettings({ project, onUpdate, onNextStep, onDirtyCha
               </button>
             );
           })}
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          {SUBTITLE_SIZE_OPTIONS.map((option) => {
+            const selected = Number(currentSubtitleStyle.size) === option.size;
+            return (
+              <button
+                key={option.size}
+                type="button"
+                onClick={() => updateSubtitleStyle({ size: option.size })}
+                className={`rounded-lg border px-3 py-2 text-left transition-colors ${
+                  selected
+                    ? "border-accent-primary bg-accent-primary/10 text-white"
+                    : "border-border bg-bg-primary text-gray-400 hover:border-gray-500"
+                }`}
+              >
+                <div className="text-xs font-semibold">{option.label}</div>
+                <div className="text-[11px] text-gray-500">{option.size}px</div>
+              </button>
+            );
+          })}
+        </div>
+        <div className="overflow-hidden rounded-lg border border-border bg-black">
+          <div className="relative aspect-video bg-gradient-to-b from-slate-900 via-slate-800 to-slate-950">
+            <div
+              className="absolute left-1/2 w-[88%] -translate-x-1/2 text-center leading-tight"
+              style={{
+                bottom: `${Math.max(8, Math.min(26, (Number(currentSubtitleStyle.margin_v) || 70) / 5))}%`,
+              }}
+            >
+              <span
+                className="inline-block max-w-full break-keep px-4 py-2 font-black"
+                style={{
+                  fontSize: `${previewSubtitleFontSize}px`,
+                  color: currentSubtitleStyle.color,
+                  textShadow: previewSubtitleShadow,
+                  backgroundColor: currentSubtitleStyle.bg_enabled
+                    ? `${currentSubtitleStyle.bg_color || "#000000"}${Math.round(
+                        Math.max(0, Math.min(1, Number(currentSubtitleStyle.bg_opacity) || 0.6)) * 255,
+                      )
+                        .toString(16)
+                        .padStart(2, "0")}`
+                    : "transparent",
+                  borderRadius: currentSubtitleStyle.bg_enabled ? 6 : 0,
+                }}
+              >
+                자막 크기 미리보기
+              </span>
+            </div>
+          </div>
         </div>
       </div>
 

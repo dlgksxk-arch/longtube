@@ -1531,8 +1531,12 @@ export const oneclickApi = {
   clearStep: (taskId: string, step: number): Promise<{ ok: boolean; deleted_files: number }> =>
     api.post(`/oneclick/${taskId}/clear-step/${step}`),
   // v1.1.52: 썸네일 재생성
-  regenerateThumbnail: (taskId: string, imageModel?: string): Promise<{ ok: boolean; path: string; model: string }> =>
-    api.post(`/oneclick/${taskId}/regenerate-thumbnail`, { image_model: imageModel || null }),
+  regenerateThumbnail: (taskId: string, imageModel?: string, prompt?: string): Promise<{ ok: boolean; path: string; model: string }> =>
+    api.post(`/oneclick/${taskId}/regenerate-thumbnail`, { image_model: imageModel || null, prompt: prompt ?? null }),
+  getThumbnailPrompt: (taskId: string): Promise<{ prompt: string; source: "script" | "fallback" }> =>
+    api.get(`/oneclick/${taskId}/thumbnail-prompt`),
+  updateThumbnailPrompt: (taskId: string, prompt: string): Promise<{ ok: boolean; prompt: string }> =>
+    api.put(`/oneclick/${taskId}/thumbnail-prompt`, { prompt }),
   // v1.1.53: 프로젝트 초기화 (from_step 부터 전부 리셋)
   resetTask: (taskId: string, fromStep: number = 2): Promise<{ ok: boolean; from_step: number; deleted_files: number }> =>
     api.post(`/oneclick/${taskId}/reset`, { from_step: fromStep }),

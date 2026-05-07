@@ -25,6 +25,7 @@ import {
   Trash2,
   Film,
   Power,
+  Pencil,
 } from "lucide-react";
 import { oneclickApi, modelsApi, voiceApi, assetUrl, type OneClickTask, type OneClickQueueItem, type OrphanProject } from "@/lib/api";
 import { formatKrw } from "@/lib/format";
@@ -482,6 +483,12 @@ export default function LivePage() {
   const [loading, setLoading] = useState(true);
   const [pollFails, setPollFails] = useState(0);
   const [lastServerSyncAt, setLastServerSyncAt] = useState<number | null>(null);
+  const [thumbnailPromptOpen, setThumbnailPromptOpen] = useState(false);
+  const [thumbnailPrompt, setThumbnailPrompt] = useState("");
+  const [thumbnailPromptLoading, setThumbnailPromptLoading] = useState(false);
+  const [thumbnailPromptSaving, setThumbnailPromptSaving] = useState(false);
+  const [thumbnailRegenerating, setThumbnailRegenerating] = useState(false);
+  const [thumbnailRefreshKey, setThumbnailRefreshKey] = useState(0);
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const logEndRef = useRef<HTMLDivElement | null>(null);
   // 멈춤 감지: 진행률이 일정 시간 변하지 않으면 경고
@@ -1782,8 +1789,59 @@ export default function LivePage() {
               : "대기";
   const currentThumbnailSrc =
     displayTask?.thumbnail_status === "done" && displayTask.project_id
-      ? `${assetUrl(displayTask.project_id, "output/thumbnail.png")}?v=${displayTask.finished_at || displayTask.started_at || displayTask.task_id}`
+      ? `${assetUrl(displayTask.project_id, "output/thumbnail.png")}?v=${displayTask.finished_at || displayTask.started_at || displayTask.task_id}-${thumbnailRefreshKey}`
       : null;
+  const handleOpenThumbnailPrompt = async () => {
+    if (!displayTask?.task_id || thumbnailPromptLoading) return;
+    setThumbnailPromptOpen(true);
+    setThumbnailPromptLoading(true);
+    try {
+      const liveTask = await resolveLiveTask(displayTask);
+      const result = await oneclickApi.getThumbnailPrompt(liveTask.task_id);
+      setThumbnailPrompt(result.prompt || "");
+    } catch (e: any) {
+      addLog(`[오류] 썸네일 프롬프트 로드 실패: ${e?.message || e}`, "error");
+    } finally {
+      setThumbnailPromptLoading(false);
+    }
+  };
+  const handleSaveThumbnailPrompt = async () => {
+    if (!displayTask?.task_id || thumbnailPromptSaving) return;
+    const nextPrompt = thumbnailPrompt.trim();
+    if (!nextPrompt) {
+      addLog("[오류] 썸네일 프롬프트가 비어 있습니다", "error");
+      return;
+    }
+    setThumbnailPromptSaving(true);
+    try {
+      const liveTask = await resolveLiveTask(displayTask);
+      await oneclickApi.updateThumbnailPrompt(liveTask.task_id, nextPrompt);
+      addLog("[시스템] 썸네일 프롬프트 저장 완료", "success");
+    } catch (e: any) {
+      addLog(`[오류] 썸네일 프롬프트 저장 실패: ${e?.message || e}`, "error");
+    } finally {
+      setThumbnailPromptSaving(false);
+    }
+  };
+  const handleRegenerateThumbnail = async () => {
+    if (!displayTask?.task_id || thumbnailRegenerating) return;
+    setThumbnailRegenerating(true);
+    try {
+      const liveTask = await resolveLiveTask(displayTask);
+      await oneclickApi.regenerateThumbnail(liveTask.task_id);
+      markServerSync();
+      setThumbnailRefreshKey((key) => key + 1);
+      addLog("[시스템] 썸네일 재생성 완료", "success");
+      const fresh = await oneclickApi.get(liveTask.task_id);
+      markServerSync();
+      setTask(fresh);
+      syncLogsFromTask(fresh);
+    } catch (e: any) {
+      addLog(`[오류] 썸네일 재생성 실패: ${e?.message || e}`, "error");
+    } finally {
+      setThumbnailRegenerating(false);
+    }
+  };
   const parsedImageCut = (() => {
     const text = `${displayTask?.current_step_progress_text || ""} ${displayTask?.sub_status || ""}`;
     const match = text.match(/컷\s+(\d+)\s*\/\s*(\d+)/);
@@ -2740,7 +2798,7 @@ export default function LivePage() {
             {hasCurrentPanelItem ? (
               <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(220px,30%)_minmax(240px,1fr)_minmax(220px,30%)]">
                 <div className="flex min-w-0 flex-col gap-2">
-                  <div className="relative aspect-video overflow-hidden rounded-lg border border-border bg-black/35">
+                  <div className="group relative aspect-video overflow-hidden rounded-lg border border-border bg-black/35">
                     {currentThumbnailSrc ? (
                       <img
                         src={currentThumbnailSrc}
@@ -2754,6 +2812,28 @@ export default function LivePage() {
                       <div className="flex h-full flex-col items-center justify-center gap-2 bg-gradient-to-br from-slate-900 via-slate-800 to-zinc-950">
                         <Film size={30} className="text-gray-600" />
                         <span className="text-sm font-semibold text-gray-500">썸네일 대기</span>
+                      </div>
+                    )}
+                    {displayTask?.task_id && (
+                      <div className="absolute inset-x-0 bottom-0 flex items-center justify-end gap-2 bg-gradient-to-t from-black/80 via-black/45 to-transparent p-2 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100">
+                        <button
+                          type="button"
+                          onClick={handleOpenThumbnailPrompt}
+                          disabled={thumbnailPromptLoading}
+                          className="inline-flex items-center gap-1.5 rounded-md border border-white/15 bg-black/65 px-2.5 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-black/80 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {thumbnailPromptLoading ? <Loader2 size={13} className="animate-spin" /> : <Pencil size={13} />}
+                          프롬프트 변경
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleRegenerateThumbnail}
+                          disabled={thumbnailRegenerating || displayTask.thumbnail_status === "generating"}
+                          className="inline-flex items-center gap-1.5 rounded-md border border-accent-primary/40 bg-accent-primary/80 px-2.5 py-1.5 text-xs font-black text-white shadow-sm hover:bg-accent-primary disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          <RefreshCw size={13} className={thumbnailRegenerating ? "animate-spin" : ""} />
+                          {thumbnailRegenerating ? "생성 중" : "재생성"}
+                        </button>
                       </div>
                     )}
                     <div className="absolute left-2 top-2 flex gap-1.5">
@@ -2997,6 +3077,59 @@ export default function LivePage() {
           </div>
         </div>
       </div>
+
+      {thumbnailPromptOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4">
+          <div className="w-full max-w-3xl rounded-xl border border-border bg-bg-secondary shadow-2xl">
+            <div className="flex items-center justify-between border-b border-border px-5 py-4">
+              <div>
+                <h2 className="text-base font-bold text-gray-100">썸네일 프롬프트 변경</h2>
+                <p className="mt-1 text-xs text-gray-500">저장된 프롬프트는 다음 썸네일 재생성에 적용됩니다.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setThumbnailPromptOpen(false)}
+                className="rounded-md border border-border bg-bg-primary p-2 text-gray-400 hover:text-white"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="p-5">
+              {thumbnailPromptLoading ? (
+                <div className="flex h-52 items-center justify-center gap-3 text-sm text-gray-400">
+                  <Loader2 size={18} className="animate-spin text-accent-primary" />
+                  프롬프트 불러오는 중...
+                </div>
+              ) : (
+                <textarea
+                  value={thumbnailPrompt}
+                  onChange={(event) => setThumbnailPrompt(event.target.value)}
+                  className="h-64 w-full resize-none rounded-lg border border-border bg-bg-primary px-3 py-3 font-mono text-sm leading-6 text-gray-200 outline-none focus:border-accent-primary"
+                  placeholder="썸네일 이미지 프롬프트"
+                />
+              )}
+            </div>
+            <div className="flex items-center justify-end gap-2 border-t border-border px-5 py-4">
+              <button
+                type="button"
+                onClick={() => setThumbnailPromptOpen(false)}
+                className="rounded-lg border border-border bg-bg-primary px-4 py-2 text-sm font-semibold text-gray-300 hover:text-white"
+              >
+                닫기
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveThumbnailPrompt}
+                disabled={thumbnailPromptLoading || thumbnailPromptSaving}
+                className="inline-flex items-center gap-2 rounded-lg border border-accent-primary/40 bg-accent-primary px-4 py-2 text-sm font-black text-white hover:bg-purple-600 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {thumbnailPromptSaving && <Loader2 size={14} className="animate-spin" />}
+                저장
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 실패/지연 메시지는 제작 로그 패널에만 표시한다. */}
       {/* 파이프라인

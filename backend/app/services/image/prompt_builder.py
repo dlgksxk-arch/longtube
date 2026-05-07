@@ -382,7 +382,7 @@ _HAND_ANATOMY_RE = re.compile(
     re.IGNORECASE,
 )
 _HAND_ACTION_RE = re.compile(
-    r"\b(holding|gripping|grabbing|pointing|reaching)\b",
+    r"\b(holding|gripping|grabbing|pointing|reaching|pressing|pressed|placing|sprinkling)\b",
     re.IGNORECASE,
 )
 _HUMAN_SUBJECT_RE = re.compile(
@@ -411,6 +411,14 @@ _BOOK_OBJECT_RE = re.compile(
 
 _HAND_RISK_IMAGE_PATTERNS = [
     (
+        r"\bclose-up\s+of\s+[^,.;]*\bhands?\s+pressed\s+(?:gently\s+)?together\s+in\s+a\s+prayer\s+gesture\b",
+        "medium shot of a respectful seated figure bowing at the dining table",
+    ),
+    (
+        r"\b(?:both\s+)?hands?\s+pressed\s+(?:gently\s+)?together\s+in\s+a\s+prayer\s+gesture\b",
+        "respectful upper-body bowing posture",
+    ),
+    (
         r"\ba\s+human\s+hand\s+and\s+a\s+robotic\s+hand\s+almost\s+touching\b",
         "a human silhouette and a robotic silhouette facing the same glowing orb",
     ),
@@ -421,6 +429,38 @@ _HAND_RISK_IMAGE_PATTERNS = [
     (
         r"\bhands?\s+(?:almost\s+)?touching\b",
         "two simplified figures facing the same glowing orb",
+    ),
+    (
+        r"\b(?:both\s+)?hands?\s+pressed\s+(?:gently\s+)?together\b",
+        "respectful upper-body bowing posture",
+    ),
+    (
+        r"\bpressed\s+(?:gently\s+)?together\s+in\s+a\s+prayer\s+gesture\b",
+        "shown with a respectful upper-body bowing posture",
+    ),
+    (
+        r"\bprayer\s+gesture\b",
+        "respectful upper-body bowing posture",
+    ),
+    (
+        r"\bholding\s+chopsticks\b",
+        "chopsticks resting beside the bowl",
+    ),
+    (
+        r"\bholding\s+green\s+onions\b",
+        "green onions arranged on the food",
+    ),
+    (
+        r"\bplacing\s+green\s+onions\b",
+        "green onions arranged on the food",
+    ),
+    (
+        r"\bsprinkling\s+green\s+onions\b",
+        "green onions scattered on the food",
+    ),
+    (
+        r"\bholding\s+(?:a\s+)?(?:bowl|plate|cup|dish)\b",
+        "bowl or dish resting on a visible table in front of the person",
     ),
     (r"\bholding\s+([^,.;]+)", r"standing beside \1"),
     (r"\bgripping\s+([^,.;]+)", r"standing beside \1"),
@@ -434,6 +474,12 @@ _HAND_RISK_IMAGE_PATTERNS = [
     (r"\bfingers?\b", "small arm gesture"),
     (r"\bclose-up\s+of\s+(?:a\s+)?hands?\b", "close-up of a symbolic object"),
     (r"\bforeground\s+hands?\b", "foreground symbolic objects"),
+    (r"\bclose-up\s+hands?\b", "close-up of the main object"),
+    (r"\bclose-up\s+of\s+(?:wrinkled|old|elderly|human)\s+hands?\b", "close-up of the main object"),
+    (r"\b(?:wrinkled|old|elderly|human|visible|detailed|foreground)\s+hands?\b", "sleeve-covered arm gesture"),
+    (r"\bhands?\b", "sleeve-covered arm gesture"),
+    (r"\bpalms?\b", "sleeve-covered arm gesture"),
+    (r"\bknuckles?\b", "sleeve-covered arm gesture"),
 ]
 
 _ANATOMY_RISK_IMAGE_PATTERNS = [
@@ -463,6 +509,73 @@ _ANATOMY_RISK_IMAGE_PATTERNS = [
     (r"\bcat\s+jumping\b", "side-view cat standing with all four paws visible"),
 ]
 
+_PHYSICS_RISK_IMAGE_PATTERNS = [
+    (
+        r"\b(?:person|people|man|woman|child|figure|character|soldier|worker|farmer|monk|noble|samurai)\s+standing\s+on\s+(?:the\s+)?water\b",
+        "person standing on a visible wooden dock beside the water",
+    ),
+    (
+        r"\b(?:person|people|man|woman|child|figure|character|soldier|worker|farmer|monk|noble|samurai)\s+walking\s+on\s+(?:the\s+)?water\b",
+        "person walking along the shoreline beside the water",
+    ),
+    (
+        r"\b(?:standing|walking)\s+on\s+(?:the\s+)?water\b",
+        "standing on visible solid ground beside the water",
+    ),
+    (
+        r"\bon\s+the\s+surface\s+of\s+(?:the\s+)?water\b",
+        "on a visible wooden dock beside the water",
+    ),
+    (
+        r"\bmiddle\s+of\s+(?:a\s+)?river\b",
+        "riverbank beside the river",
+    ),
+    (
+        r"\bmiddle\s+of\s+(?:a\s+)?lake\b",
+        "shoreline beside the lake",
+    ),
+    (
+        r"\b(?:person|people|man|woman|child|figure|character)\s+in\s+(?:a\s+)?boat\b",
+        "person seated inside a boat with the boat hull clearly visible",
+    ),
+    (
+        r"\b(?:floating|hovering)\s+(?:bowl|plate|cup|book|scroll|box|object|tool|weapon|sword|lantern|document)s?\b",
+        "object resting firmly on a visible table or ground surface",
+    ),
+    (
+        r"\b(?:bowl|plate|cup|book|scroll|box|object|tool|weapon|sword|lantern|document)s?\s+(?:floating|hovering)\b",
+        "object resting firmly on a visible table or ground surface",
+    ),
+    (
+        r"\bfood\s+floating\b",
+        "food placed clearly on a plate or inside a bowl",
+    ),
+    (
+        r"\bobjects?\s+floating\s+in\s+the\s+air\b",
+        "objects resting on visible shelves, tables, or ground surfaces",
+    ),
+    (
+        r"\bin\s+midair\b",
+        "resting on a visible physical support",
+    ),
+    (
+        r"\bfull\s+meal\s+of\s+rice,\s*miso\s+soup,\s*grilled\s+fish,\s*and\s*pickles\b",
+        "full meal with separate visible dishes: rice bowl, miso soup bowl, grilled fish plate, and pickle dish",
+    ),
+    (
+        r"\brice,\s*miso\s+soup,\s*grilled\s+fish,\s*and\s*pickles\b",
+        "separate visible dishes of rice, miso soup, grilled fish, and pickles",
+    ),
+    (
+        r"\bmultiple\s+people\s+overlapping\b",
+        "two separated people with clear space between their silhouettes",
+    ),
+    (
+        r"\boverlapping\s+people\b",
+        "separated people with clear space between their silhouettes",
+    ),
+]
+
 
 def _sanitize_i2v_source_prompt(text: str) -> str:
     """Remove still-image cues that Hunyuan I2V tends to turn into ghost trails."""
@@ -480,19 +593,19 @@ def _sanitize_hand_risky_prompt(text: str) -> tuple[str, bool]:
         out = re.sub(pattern, replacement, out, flags=re.IGNORECASE)
     out = re.sub(
         r"(?:exactly four short rounded cartoon\s+){2,}fingers",
-        "tiny four-lobed mitten hands",
+        "simple sleeve-covered arm gesture",
         out,
         flags=re.IGNORECASE,
     )
     out = re.sub(
         r"(?:four simple rounded|exactly four short rounded cartoon) (?:simple rounded shapes|four simple rounded fingers|exactly four short rounded cartoon fingers)",
-        "tiny four-lobed mitten hands",
+        "simple sleeve-covered arm gesture",
         out,
         flags=re.IGNORECASE,
     )
     out = re.sub(
         r"(?:tiny\s+)?four-lobed\s+mitten\s+hands(?:,\s*(?:tiny\s+)?four-lobed\s+mitten\s+hands)+",
-        "tiny four-lobed mitten hands",
+        "simple sleeve-covered arm gesture",
         out,
         flags=re.IGNORECASE,
     )
@@ -514,6 +627,19 @@ def _sanitize_anatomy_risky_prompt(text: str) -> tuple[str, dict[str, bool]]:
         out = re.sub(pattern, replacement, out, flags=re.IGNORECASE)
     out = re.sub(r"\s{2,}", " ", out).strip()
     return out, flags
+
+
+def _sanitize_physics_risky_prompt(text: str) -> str:
+    """Keep SDXL scenes physically grounded without adding negative prompt tokens."""
+    out = text or ""
+    for pattern, replacement in _PHYSICS_RISK_IMAGE_PATTERNS:
+        out = re.sub(pattern, replacement, out, flags=re.IGNORECASE)
+    out = re.sub(r"\bin\s+the\s+riverbank\b", "on the riverbank", out, flags=re.IGNORECASE)
+    out = re.sub(r"\bin\s+the\s+shoreline\b", "on the shoreline", out, flags=re.IGNORECASE)
+    out = re.sub(r"\bin\s+the\s+air\b", "on a visible table or ground surface", out, flags=re.IGNORECASE)
+    out = re.sub(r"\bstanding\s+apart\s+people\b", "people standing apart", out, flags=re.IGNORECASE)
+    out = re.sub(r"\bseparated\s+people\s+with\s+clear\s+space\s+between\s+their\s+silhouettes\s+people\b", "separated people with clear space between their silhouettes", out, flags=re.IGNORECASE)
+    return re.sub(r"\s{2,}", " ", out).strip()
 
 
 def _build_anatomy_suffix(base: str, anatomy_flags: dict[str, bool], had_hand_risk: bool) -> str:
@@ -775,6 +901,9 @@ def build_image_prompt(
     레퍼런스가 없을 때만 global_style 을 폴백으로 사용.
     """
     base = _sanitize_flag_motif_positive_prompt(image_prompt or "")
+    base, _ = _sanitize_hand_risky_prompt(base)
+    base, _ = _sanitize_anatomy_risky_prompt(base)
+    base = _sanitize_physics_risky_prompt(base)
     style_hint = sanitize_global_style_for_prompt(global_style, base)
 
     if has_reference:

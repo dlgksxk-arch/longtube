@@ -265,8 +265,8 @@ class InterludeStabilityTests(unittest.TestCase):
 
 
 class ShortsStabilityTests(unittest.TestCase):
-    def test_shorts_speed_is_ten_percent_faster(self):
-        self.assertEqual(shorts_service.SHORTS_PLAYBACK_SPEED, 1.1)
+    def test_shorts_keeps_marked_cut_clip_speed(self):
+        self.assertEqual(shorts_service.SHORTS_PLAYBACK_SPEED, 1.0)
 
     def test_shorts_channel_name_position_matches_ten_minute_history_layout(self):
         self.assertEqual(shorts_service.SHORTS_CHANNEL_Y, 1450)
