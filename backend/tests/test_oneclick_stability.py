@@ -16,6 +16,7 @@ from app.services import oneclick_service as svc  # noqa: E402
 from app.services import shorts_service  # noqa: E402
 from app.services import subtitle_service  # noqa: E402
 from app.services.image import prompt_builder  # noqa: E402
+from app.services.image.comfyui_service import apply_longtube_local_v1_master_prompt  # noqa: E402
 from app.services.llm.base import BaseLLMService  # noqa: E402
 from app.services.llm.visual_policy import apply_script_visual_policy  # noqa: E402
 from app.routers import interlude as interlude_router  # noqa: E402
@@ -347,6 +348,19 @@ class SubtitleStyleStabilityTests(unittest.TestCase):
 
 
 class HistoricalImagePromptStabilityTests(unittest.TestCase):
+    def test_longtube_local_v1_applies_master_prompt(self):
+        wrapped = apply_longtube_local_v1_master_prompt(
+            "Year/period: 1592; Exact place: fortress gate; Scene: guards run"
+        )
+
+        self.assertIn("[MASTER PROMPT — SDXL LIGHTNING HISTORICAL DOCUMENTARY]", wrapped)
+        self.assertIn("longtubestyle", wrapped)
+        self.assertIn("Year/period: 1592; Exact place: fortress gate; Scene: guards run", wrapped)
+        self.assertIn("PERIOD LOCK — ABSOLUTE PRIORITY", wrapped)
+        self.assertIn("HARD NEGATIVE CONSTRAINT — NO TEXT", wrapped)
+        self.assertIn("HARD NEGATIVE CONSTRAINT — NO MAPS", wrapped)
+        self.assertNotIn("{CUT_IMAGE_PROMPT}", wrapped)
+
     def test_default_historical_image_guard_locks_period_material_culture(self):
         guard = prompt_builder.GENERAL_HISTORY_ACCURACY_DIRECTIVE
 

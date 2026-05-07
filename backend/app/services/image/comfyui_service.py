@@ -115,6 +115,185 @@ _SD15_DIMS = {
     "4:3":  (640, 512),
 }
 
+LONGTUBE_LOCAL_V1_MASTER_PROMPT = """[MASTER PROMPT — SDXL LIGHTNING HISTORICAL DOCUMENTARY]
+
+longtubestyle,
+simple cartoon illustration,
+cinematic historical documentary style,
+clean composition,
+thick outlines,
+soft dramatic shadows,
+muted historical color palette,
+story-driven scene,
+emotional atmosphere,
+high visual clarity,
+single focused moment,
+human-scale cinematic framing,
+anime-inspired historical illustration,
+detailed environment,
+consistent historical worldbuilding,
+
+{CUT_IMAGE_PROMPT}
+
+|| PERIOD LOCK — ABSOLUTE PRIORITY
+
+The scene MUST strictly match the exact historical period, season, region, location type, architecture, clothing, hairstyle, tools, weapons, armor, furniture, transportation, landscape, materials, and social atmosphere described in the prompt.
+
+All visible objects must be historically accurate and period-correct.
+
+No fantasy elements.
+No generic "historical" costume.
+No cosplay look.
+No mixed cultures.
+No wrong-era buildings or props.
+No modern objects unless explicitly requested.
+
+If historical details are uncertain, use conservative realistic period-plausible details.
+
+The image must depict a concrete cinematic moment from the narration, not an abstract metaphor.
+
+Maintain continuity between scenes:
+same world,
+same cultural atmosphere,
+same visual identity,
+same historical consistency.
+
+|| CHARACTER CONSISTENCY
+
+If recurring characters appear:
+keep the same face shape,
+body shape,
+hair style,
+clothing silhouette,
+armor style,
+age appearance,
+accessories,
+and visual identity across all cuts.
+
+Only change:
+pose,
+camera angle,
+facial expression,
+lighting,
+action,
+and composition.
+
+|| CINEMATIC STYLE RULE
+
+Prioritize:
+dramatic lighting,
+fog,
+firelight,
+dust,
+rain,
+snow,
+wood,
+stone,
+aged fabric,
+battle damage,
+weathered surfaces,
+temple atmosphere,
+castle interiors,
+old roads,
+historical villages,
+ocean mist,
+dark corridors,
+armor silhouettes,
+emotional tension,
+fear,
+survival,
+betrayal,
+power struggle,
+collapse,
+historical turning points.
+
+Avoid empty backgrounds.
+Avoid generic portrait poses.
+Avoid static museum-style composition.
+
+Every image should feel like a paused frame from a serious historical animated documentary.
+
+|| HARD NEGATIVE CONSTRAINT — NO TEXT
+
+ABSOLUTELY NO:
+text,
+letters,
+numbers,
+symbols,
+logos,
+watermarks,
+captions,
+UI,
+subtitles,
+maps,
+flags with symbols,
+fake kanji,
+fake calligraphy,
+glyphs,
+crests,
+emblems,
+labels,
+signboards,
+book text,
+screen text,
+newspapers,
+posters,
+typography,
+banner text.
+
+Any object that normally contains writing MUST remain completely blank.
+
+|| HARD NEGATIVE CONSTRAINT — NO MAPS
+
+ABSOLUTELY NO:
+maps,
+atlas views,
+territory diagrams,
+migration maps,
+battle maps,
+route lines,
+location pins,
+country outlines,
+coastline graphics,
+topographic graphics,
+compass icons,
+geography UI,
+satellite views,
+strategy overlays,
+tactical interface graphics.
+
+Show the historical scene itself instead.
+
+|| VISUAL QUALITY TARGET
+
+highly readable composition,
+strong silhouette readability,
+clear emotional focus,
+balanced framing,
+cinematic depth,
+historical realism,
+visually consistent art direction,
+high-detail foreground,
+clean background separation,
+optimized for YouTube documentary visuals,
+optimized for motion-video editing,
+optimized for SDXL Lightning generation.
+
+|| OUTPUT STYLE
+
+One strong cinematic moment.
+One main emotional focus.
+No visual clutter.
+No symbolic nonsense.
+No abstract filler imagery.
+No educational infographic feeling.
+Must feel immersive, serious, historical, and emotionally believable."""
+
+
+def apply_longtube_local_v1_master_prompt(prompt: str) -> str:
+    cut_prompt = (prompt or "").strip() or "an image"
+    return LONGTUBE_LOCAL_V1_MASTER_PROMPT.replace("{CUT_IMAGE_PROMPT}", cut_prompt)
+
 
 class ComfyUIImageService(BaseImageService):
     """Flux.2 Dev + Turbo LoRA (8 steps, cfg 1.0) 로컬 추론."""
@@ -370,10 +549,9 @@ class ComfyUIImageService(BaseImageService):
         # 스타일은 global_style/프롬프트 텍스트로 유도.
         final_prompt_text = (prompt or "").strip() or "an image"
 
-        # LoRA 트리거 워드 자동 삽입
+        # 로컬모델 v1 전용 마스터 프롬프트 적용.
         if self.model_id.startswith("comfyui-dreamshaper-xl-longtube"):
-            if "longtubestyle" not in final_prompt_text.lower():
-                final_prompt_text = f"longtubestyle, simple cartoon illustration, round head, thick outlines, {final_prompt_text}"
+            final_prompt_text = apply_longtube_local_v1_master_prompt(final_prompt_text)
         subs = {
             "PROMPT": final_prompt_text,
             "NEGATIVE": neg,
