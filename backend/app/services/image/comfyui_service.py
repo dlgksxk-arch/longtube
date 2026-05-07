@@ -115,7 +115,13 @@ _SD15_DIMS = {
     "4:3":  (640, 512),
 }
 
-LONGTUBE_LOCAL_V1_MASTER_PROMPT = """[MASTER PROMPT — SDXL LIGHTNING HISTORICAL DOCUMENTARY]
+LONGTUBE_LOCAL_V1_MASTER_PROMPT = """CUT IMAGE PROMPT — SOURCE OF TRUTH
+{CUT_IMAGE_PROMPT}
+
+The cut image prompt above is the source of truth.
+Do not add places, objects, eras, buildings, weather, fire, ocean, temple, castle, armor, battle, or symbolic elements unless they are present in or directly implied by the cut image prompt.
+
+[MASTER PROMPT — SDXL LIGHTNING HISTORICAL DOCUMENTARY]
 
 longtubestyle,
 simple cartoon illustration,
@@ -132,8 +138,6 @@ human-scale cinematic framing,
 anime-inspired historical illustration,
 detailed environment,
 consistent historical worldbuilding,
-
-{CUT_IMAGE_PROMPT}
 
 || PERIOD LOCK — ABSOLUTE PRIORITY
 
@@ -180,32 +184,9 @@ and composition.
 
 || CINEMATIC STYLE RULE
 
-Prioritize:
-dramatic lighting,
-fog,
-firelight,
-dust,
-rain,
-snow,
-wood,
-stone,
-aged fabric,
-battle damage,
-weathered surfaces,
-temple atmosphere,
-castle interiors,
-old roads,
-historical villages,
-ocean mist,
-dark corridors,
-armor silhouettes,
-emotional tension,
-fear,
-survival,
-betrayal,
-power struggle,
-collapse,
-historical turning points.
+Prioritize only the lighting, weather, materials, mood, and environment described by the cut image prompt.
+Use drama and atmosphere as style, not as new scene content.
+Do not introduce fire, fog, dust, rain, snow, temples, castles, roads, villages, oceans, corridors, armor, battles, fear, betrayal, collapse, or power struggle unless the cut image prompt explicitly asks for them.
 
 Avoid empty backgrounds.
 Avoid generic portrait poses.

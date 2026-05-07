@@ -349,17 +349,22 @@ class SubtitleStyleStabilityTests(unittest.TestCase):
 
 class HistoricalImagePromptStabilityTests(unittest.TestCase):
     def test_longtube_local_v1_applies_master_prompt(self):
+        cut_prompt = "Year/period: 1592; Exact place: fortress gate; Scene: guards run"
         wrapped = apply_longtube_local_v1_master_prompt(
-            "Year/period: 1592; Exact place: fortress gate; Scene: guards run"
+            cut_prompt
         )
 
+        self.assertTrue(wrapped.startswith("CUT IMAGE PROMPT — SOURCE OF TRUTH\n" + cut_prompt))
         self.assertIn("[MASTER PROMPT — SDXL LIGHTNING HISTORICAL DOCUMENTARY]", wrapped)
         self.assertIn("longtubestyle", wrapped)
-        self.assertIn("Year/period: 1592; Exact place: fortress gate; Scene: guards run", wrapped)
         self.assertIn("PERIOD LOCK — ABSOLUTE PRIORITY", wrapped)
         self.assertIn("HARD NEGATIVE CONSTRAINT — NO TEXT", wrapped)
         self.assertIn("HARD NEGATIVE CONSTRAINT — NO MAPS", wrapped)
         self.assertNotIn("{CUT_IMAGE_PROMPT}", wrapped)
+        self.assertNotIn("temple atmosphere", wrapped)
+        self.assertNotIn("castle interiors", wrapped)
+        self.assertNotIn("ocean mist", wrapped)
+        self.assertNotIn("armor silhouettes", wrapped)
 
     def test_default_historical_image_guard_locks_period_material_culture(self):
         guard = prompt_builder.GENERAL_HISTORY_ACCURACY_DIRECTIVE
