@@ -454,6 +454,8 @@ async def generate_all_images(project_id: str, db: Session = Depends(get_db)):
                 source_prompt=cut.image_prompt or "",
                 final_prompt=prompt,
                 narration=cut.narration or "",
+                comfyui_positive_prompt=getattr(image_service, "last_positive_prompt", ""),
+                comfyui_negative_prompt=getattr(image_service, "last_negative_prompt", ""),
             )
             image_service.negative_prompt = base_negative_prompt
 
@@ -618,6 +620,8 @@ async def generate_all_images_async(project_id: str, db: Session = Depends(get_d
                             source_prompt=cut.image_prompt or "",
                             final_prompt=prompt,
                             narration=cut.narration or "",
+                            comfyui_positive_prompt=getattr(image_service, "last_positive_prompt", ""),
+                            comfyui_negative_prompt=getattr(image_service, "last_negative_prompt", ""),
                         )
                         image_service.negative_prompt = base_negative_prompt
                         _ilog(f"_gen_one cut={cut.cut_number} SUCCESS in {_t.time()-_s:.1f}s → {result_path}")
@@ -908,6 +912,8 @@ async def resume_images_async(project_id: str, db: Session = Depends(get_db)):
                             source_prompt=cut.image_prompt or "",
                             final_prompt=prompt,
                             narration=cut.narration or "",
+                            comfyui_positive_prompt=getattr(image_service, "last_positive_prompt", ""),
+                            comfyui_negative_prompt=getattr(image_service, "last_negative_prompt", ""),
                         )
                         image_service.negative_prompt = base_negative_prompt
                         _ilog(f"resume _gen_one cut={cut.cut_number} SUCCESS in {_t.time()-_s:.1f}s → {result_path}")
@@ -1048,6 +1054,8 @@ async def generate_one_image(
             source_prompt=cut.image_prompt or "",
             final_prompt=prompt,
             narration=cut.narration or "",
+            comfyui_positive_prompt=getattr(image_service, "last_positive_prompt", ""),
+            comfyui_negative_prompt=getattr(image_service, "last_negative_prompt", ""),
         )
         image_service.negative_prompt = base_negative_prompt
 

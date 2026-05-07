@@ -16,7 +16,10 @@ from app.services import oneclick_service as svc  # noqa: E402
 from app.services import shorts_service  # noqa: E402
 from app.services import subtitle_service  # noqa: E402
 from app.services.image import prompt_builder  # noqa: E402
-from app.services.image.comfyui_service import apply_longtube_local_v1_master_prompt  # noqa: E402
+from app.services.image.comfyui_service import (  # noqa: E402
+    apply_longtube_local_v1_master_prompt,
+    build_longtube_local_v1_negative_prompt,
+)
 from app.services.llm.base import BaseLLMService  # noqa: E402
 from app.services.llm.visual_policy import apply_script_visual_policy  # noqa: E402
 from app.routers import interlude as interlude_router  # noqa: E402
@@ -355,16 +358,34 @@ class HistoricalImagePromptStabilityTests(unittest.TestCase):
         )
 
         self.assertTrue(wrapped.startswith("CUT IMAGE PROMPT — SOURCE OF TRUTH\n" + cut_prompt))
-        self.assertIn("[MASTER PROMPT — SDXL LIGHTNING HISTORICAL DOCUMENTARY]", wrapped)
+        self.assertIn("[MASTER PROMPT — SDXL LIGHTNING DOCUMENTARY STYLE]", wrapped)
         self.assertIn("longtubestyle", wrapped)
-        self.assertIn("PERIOD LOCK — ABSOLUTE PRIORITY", wrapped)
-        self.assertIn("HARD NEGATIVE CONSTRAINT — NO TEXT", wrapped)
-        self.assertIn("HARD NEGATIVE CONSTRAINT — NO MAPS", wrapped)
+        self.assertIn("CUT PROMPT LOCK — ABSOLUTE PRIORITY", wrapped)
         self.assertNotIn("{CUT_IMAGE_PROMPT}", wrapped)
-        self.assertNotIn("temple atmosphere", wrapped)
-        self.assertNotIn("castle interiors", wrapped)
-        self.assertNotIn("ocean mist", wrapped)
-        self.assertNotIn("armor silhouettes", wrapped)
+        for forbidden_positive in ("Do not", "ABSOLUTELY NO", "temple", "castle", "ocean", "fire", "armor", "battle"):
+            self.assertNotIn(forbidden_positive, wrapped)
+
+    def test_longtube_local_v1_moves_absent_scene_blocks_to_negative_prompt(self):
+        cut_prompt = (
+            "Year/period: 2020s; Exact place: Japanese home kitchen; "
+            "Scene: white ceramic bowl of miso soup on a breakfast table"
+        )
+        negative = build_longtube_local_v1_negative_prompt("blurry", cut_prompt)
+
+        self.assertIn("blurry", negative)
+        self.assertIn("temple", negative)
+        self.assertIn("castle", negative)
+        self.assertIn("ocean", negative)
+        self.assertIn("fire", negative)
+
+    def test_longtube_local_v1_keeps_requested_scene_terms_out_of_negative_prompt(self):
+        cut_prompt = "Year/period: c. 1300; Exact place: temple kitchen; Scene: pot over open fire"
+        negative = build_longtube_local_v1_negative_prompt("", cut_prompt)
+
+        self.assertNotIn("temple", negative)
+        self.assertNotIn("fire", negative)
+        self.assertIn("castle", negative)
+        self.assertIn("ocean", negative)
 
     def test_default_historical_image_guard_locks_period_material_culture(self):
         guard = prompt_builder.GENERAL_HISTORY_ACCURACY_DIRECTIVE

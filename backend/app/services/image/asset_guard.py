@@ -98,6 +98,8 @@ def write_prompt_sidecar(
     source_prompt: str,
     final_prompt: str,
     narration: str = "",
+    comfyui_positive_prompt: str = "",
+    comfyui_negative_prompt: str = "",
 ) -> None:
     path = sidecar_path(image_path)
     payload = {
@@ -110,6 +112,10 @@ def write_prompt_sidecar(
         "final_prompt": final_prompt or "",
         "narration": narration or "",
     }
+    if comfyui_positive_prompt:
+        payload["comfyui_positive_prompt"] = comfyui_positive_prompt
+    if comfyui_negative_prompt:
+        payload["comfyui_negative_prompt"] = comfyui_negative_prompt
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 

@@ -1215,6 +1215,8 @@ def _step_image(project_id: str, config: dict):
                             source_prompt=cut_data.get("image_prompt", ""),
                             final_prompt=prompt,
                             narration=cut_data.get("narration", ""),
+                            comfyui_positive_prompt=getattr(service, "last_positive_prompt", ""),
+                            comfyui_negative_prompt=getattr(service, "last_negative_prompt", ""),
                         )
                         service.negative_prompt = base_negative_prompt
                         # v1.1.55: 성공한 컷 이미지 1장 지출 기록

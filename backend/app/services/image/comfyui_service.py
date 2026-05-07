@@ -118,41 +118,33 @@ _SD15_DIMS = {
 LONGTUBE_LOCAL_V1_MASTER_PROMPT = """CUT IMAGE PROMPT — SOURCE OF TRUTH
 {CUT_IMAGE_PROMPT}
 
-The cut image prompt above is the source of truth.
-Do not add places, objects, eras, buildings, weather, fire, ocean, temple, castle, armor, battle, or symbolic elements unless they are present in or directly implied by the cut image prompt.
+The cut image prompt above is the only source for visible subject, place, era, objects, action, weather, and composition.
 
-[MASTER PROMPT — SDXL LIGHTNING HISTORICAL DOCUMENTARY]
+[MASTER PROMPT — SDXL LIGHTNING DOCUMENTARY STYLE]
 
 longtubestyle,
 simple cartoon illustration,
-cinematic historical documentary style,
+cinematic documentary illustration style,
 clean composition,
 thick outlines,
 soft dramatic shadows,
-muted historical color palette,
+muted natural color palette,
 story-driven scene,
 emotional atmosphere,
 high visual clarity,
 single focused moment,
 human-scale cinematic framing,
-anime-inspired historical illustration,
+anime-inspired documentary illustration,
 detailed environment,
-consistent historical worldbuilding,
+consistent visual worldbuilding,
 
-|| PERIOD LOCK — ABSOLUTE PRIORITY
+|| CUT PROMPT LOCK — ABSOLUTE PRIORITY
 
-The scene MUST strictly match the exact historical period, season, region, location type, architecture, clothing, hairstyle, tools, weapons, armor, furniture, transportation, landscape, materials, and social atmosphere described in the prompt.
+The scene MUST strictly match the exact era, season, region, location type, architecture, clothing, hairstyle, visible objects, furniture, transportation, landscape, materials, and social atmosphere described in the prompt.
 
-All visible objects must be historically accurate and period-correct.
+All visible objects must be era-accurate and period-correct.
 
-No fantasy elements.
-No generic "historical" costume.
-No cosplay look.
-No mixed cultures.
-No wrong-era buildings or props.
-No modern objects unless explicitly requested.
-
-If historical details are uncertain, use conservative realistic period-plausible details.
+If era details are uncertain, use conservative realistic period-plausible details.
 
 The image must depict a concrete cinematic moment from the narration, not an abstract metaphor.
 
@@ -169,7 +161,7 @@ keep the same face shape,
 body shape,
 hair style,
 clothing silhouette,
-armor style,
+equipment style,
 age appearance,
 accessories,
 and visual identity across all cuts.
@@ -186,64 +178,12 @@ and composition.
 
 Prioritize only the lighting, weather, materials, mood, and environment described by the cut image prompt.
 Use drama and atmosphere as style, not as new scene content.
-Do not introduce fire, fog, dust, rain, snow, temples, castles, roads, villages, oceans, corridors, armor, battles, fear, betrayal, collapse, or power struggle unless the cut image prompt explicitly asks for them.
 
 Avoid empty backgrounds.
 Avoid generic portrait poses.
 Avoid static museum-style composition.
 
-Every image should feel like a paused frame from a serious historical animated documentary.
-
-|| HARD NEGATIVE CONSTRAINT — NO TEXT
-
-ABSOLUTELY NO:
-text,
-letters,
-numbers,
-symbols,
-logos,
-watermarks,
-captions,
-UI,
-subtitles,
-maps,
-flags with symbols,
-fake kanji,
-fake calligraphy,
-glyphs,
-crests,
-emblems,
-labels,
-signboards,
-book text,
-screen text,
-newspapers,
-posters,
-typography,
-banner text.
-
-Any object that normally contains writing MUST remain completely blank.
-
-|| HARD NEGATIVE CONSTRAINT — NO MAPS
-
-ABSOLUTELY NO:
-maps,
-atlas views,
-territory diagrams,
-migration maps,
-battle maps,
-route lines,
-location pins,
-country outlines,
-coastline graphics,
-topographic graphics,
-compass icons,
-geography UI,
-satellite views,
-strategy overlays,
-tactical interface graphics.
-
-Show the historical scene itself instead.
+Every image should feel like a paused frame from a serious animated documentary.
 
 || VISUAL QUALITY TARGET
 
@@ -252,7 +192,7 @@ strong silhouette readability,
 clear emotional focus,
 balanced framing,
 cinematic depth,
-historical realism,
+documentary realism,
 visually consistent art direction,
 high-detail foreground,
 clean background separation,
@@ -264,16 +204,53 @@ optimized for SDXL Lightning generation.
 
 One strong cinematic moment.
 One main emotional focus.
-No visual clutter.
-No symbolic nonsense.
-No abstract filler imagery.
-No educational infographic feeling.
-Must feel immersive, serious, historical, and emotionally believable."""
+Must feel immersive, serious, and emotionally believable."""
+
+
+LONGTUBE_LOCAL_V1_BASE_NEGATIVE_PROMPT = (
+    "text, letters, words, numbers, writing, typography, captions, subtitles, labels, "
+    "sign, signage, readable sign, readable text, glyphs, fake glyphs, pseudo calligraphy, "
+    "fake kanji, fake characters, symbol marks, crests, emblems, logos, watermark, "
+    "map, maps, cartography, atlas, territory map, border map, route map, migration map, "
+    "battle map, geographic diagram, topographic map, country outline, coastline map, "
+    "location pin, compass rose, legend, globe, satellite view, infographic, diagram, "
+    "abstract filler, fantasy elements, generic costume, cosplay, mixed culture, wrong-era props"
+)
+
+
+_LOCAL_V1_SCENE_NEGATIVE_GROUPS = (
+    (("fire", "flame", "torch", "burning", "smoke"), "fire, flames, torch, burning building, smoke, bonfire"),
+    (("temple", "shrine", "pagoda", "monastery"), "temple, shrine, pagoda, monastery"),
+    (("castle", "fortress", "citadel", "palace"), "castle, fortress, citadel, palace"),
+    (("ocean", "sea", "shore", "coast", "beach", "island"), "ocean, sea, coastline, beach, island shore"),
+    (("armor", "armour", "battle", "soldier", "samurai", "weapon", "sword"), "armor, battle, battlefield, soldier, samurai, weapon, sword"),
+)
+
+
+def _append_unique_negative(base: str, extra: str) -> str:
+    seen: set[str] = set()
+    out: list[str] = []
+    for part in (base, extra):
+        for token in [x.strip() for x in (part or "").split(",") if x.strip()]:
+            key = token.lower()
+            if key not in seen:
+                seen.add(key)
+                out.append(token)
+    return ", ".join(out)
 
 
 def apply_longtube_local_v1_master_prompt(prompt: str) -> str:
     cut_prompt = (prompt or "").strip() or "an image"
     return LONGTUBE_LOCAL_V1_MASTER_PROMPT.replace("{CUT_IMAGE_PROMPT}", cut_prompt)
+
+
+def build_longtube_local_v1_negative_prompt(base_negative: str, prompt: str) -> str:
+    cut_prompt = (prompt or "").lower()
+    negative = _append_unique_negative(base_negative, LONGTUBE_LOCAL_V1_BASE_NEGATIVE_PROMPT)
+    for triggers, extra in _LOCAL_V1_SCENE_NEGATIVE_GROUPS:
+        if not any(trigger in cut_prompt for trigger in triggers):
+            negative = _append_unique_negative(negative, extra)
+    return negative
 
 
 class ComfyUIImageService(BaseImageService):
@@ -287,6 +264,8 @@ class ComfyUIImageService(BaseImageService):
     # 호출부에서 세팅 가능: `service.negative_prompt = config.get("image_negative_prompt", "")`
     # 비어있으면 DEFAULT_NEGATIVE_PROMPT 사용.
     negative_prompt: str = ""
+    last_positive_prompt: str = ""
+    last_negative_prompt: str = ""
 
     def __init__(self, model_id: str = "comfyui-flux2-turbo"):
         self.model_id = model_id
@@ -486,6 +465,8 @@ class ComfyUIImageService(BaseImageService):
                 "PREFIX": prefix,
                 "REF_IMAGE": uploaded_name,
             }
+            self.last_positive_prompt = final_prompt_text
+            self.last_negative_prompt = neg
             print(
                 f"[comfyui-image] qwen-image-edit-2509 {w}x{h} "
                 f"ref={uploaded_name} "
@@ -532,7 +513,10 @@ class ComfyUIImageService(BaseImageService):
 
         # 로컬모델 v1 전용 마스터 프롬프트 적용.
         if self.model_id.startswith("comfyui-dreamshaper-xl-longtube"):
+            neg = build_longtube_local_v1_negative_prompt(neg, final_prompt_text)
             final_prompt_text = apply_longtube_local_v1_master_prompt(final_prompt_text)
+        self.last_positive_prompt = final_prompt_text
+        self.last_negative_prompt = neg
         subs = {
             "PROMPT": final_prompt_text,
             "NEGATIVE": neg,
