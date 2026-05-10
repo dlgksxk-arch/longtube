@@ -12,7 +12,7 @@
  * - 필터 (전체/업로드/미업로드/실패)
  * - 전체 통계 (디스크 용량)
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import {
   Film,
   Loader2,
@@ -32,6 +32,7 @@ import {
   Info,
   Check,
   AlertTriangle,
+  RefreshCw,
 } from "lucide-react";
 import {
   oneclickApi,
@@ -56,7 +57,9 @@ const CH_COLORS: Record<string, string> = {
 export default function LibraryPage() {
   const [tasks, setTasks] = useState<OneClickTask[]>([]);
   const [projects, setProjects] = useState<Map<string, Project>>(new Map());
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [filter, setFilter] = useState<FilterType>("all");
   const [channelFilter, setChannelFilter] = useState<ChannelFilter>("all");
   const [stats, setStats] = useState<LibraryStats | null>(null);
@@ -77,6 +80,7 @@ export default function LibraryPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const [{ tasks: t }, pList] = await Promise.all([
         oneclickApi.list(),
@@ -101,17 +105,13 @@ export default function LibraryPage() {
         const s = await oneclickApi.libraryStats();
         setStats(s);
       } catch {}
-    } catch {}
+      setLoaded(true);
+    } catch (e: any) {
+      setLoadError(e?.message || String(e));
+      setLoaded(true);
+    }
     setLoading(false);
   }, []);
-
-  useEffect(() => {
-    void load();
-    // v1.1.58: 탭 포커스 복귀 시 자동 최신화
-    const onFocus = () => { void load(); };
-    window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
-  }, [load]);
 
   // 상세 모달 열기
   const openDetail = useCallback(async (task: OneClickTask) => {
@@ -197,17 +197,18 @@ export default function LibraryPage() {
     });
   };
 
+  const taskYoutubeUrl = (task: OneClickTask) =>
+    projects.get(task.project_id)?.youtube_url || task.youtube_url || null;
+
   // 필터 적용
   const filtered = tasks.filter((t) => {
     // 상태 필터
     if (filter === "failed" && t.status !== "failed") return false;
     if (filter === "uploaded") {
-      const p = projects.get(t.project_id);
-      if (!p?.youtube_url) return false;
+      if (!taskYoutubeUrl(t)) return false;
     }
     if (filter === "not_uploaded") {
-      const p = projects.get(t.project_id);
-      if (t.status !== "completed" || !!p?.youtube_url) return false;
+      if (t.status !== "completed" || !!taskYoutubeUrl(t)) return false;
     }
     // v1.1.58: 채널 필터
     if (channelFilter !== "all") {
@@ -222,7 +223,7 @@ export default function LibraryPage() {
   });
 
   const completed = tasks.filter((t) => t.status === "completed");
-  const uploaded = completed.filter((t) => projects.get(t.project_id)?.youtube_url);
+  const uploaded = completed.filter((t) => !!taskYoutubeUrl(t));
   const failed = tasks.filter((t) => t.status === "failed");
   const formatDateTime = (value?: string | null) => {
     if (!value) return "-";
@@ -248,7 +249,7 @@ export default function LibraryPage() {
     ].join(" · ");
   };
 
-  if (loading) {
+  if (loading && !loaded) {
     return (
       <div className="flex items-center justify-center h-full">
         <Loader2 size={20} className="animate-spin text-gray-500" />
@@ -268,6 +269,14 @@ export default function LibraryPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => void load()}
+            disabled={loading}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-accent-primary text-white hover:bg-accent-primary/90 disabled:opacity-40 transition-colors"
+          >
+            {loading ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+            불러오기
+          </button>
           {selectMode ? (
             <>
               <span className="text-sm text-gray-400">{selected.size}개 선택</span>
@@ -298,7 +307,14 @@ export default function LibraryPage() {
         </div>
       </div>
 
+      {loadError && (
+        <div className="rounded-lg border border-accent-danger/40 bg-accent-danger/10 px-4 py-3 text-sm text-accent-danger">
+          작업기록 불러오기 실패: {loadError}
+        </div>
+      )}
+
       {/* 필터 바 */}
+      {loaded && (
       <div className="flex items-center gap-4">
         <div className="flex gap-2">
           {([
@@ -345,9 +361,18 @@ export default function LibraryPage() {
           ))}
         </div>
       </div>
+      )}
 
       {/* 비어있을 때 */}
-      {filtered.length === 0 ? (
+      {!loaded ? (
+        <div className="text-center text-sm text-gray-500 py-20">
+          작업기록은 자동으로 갱신하지 않습니다. 불러오기를 눌러 확인하십시오.
+        </div>
+      ) : loading ? (
+        <div className="flex items-center justify-center py-20">
+          <Loader2 size={20} className="animate-spin text-gray-500" />
+        </div>
+      ) : filtered.length === 0 ? (
         <div className="text-center text-sm text-gray-500 py-20">
           {filter === "all"
             ? "아직 완성된 작업이 없습니다."
@@ -371,7 +396,7 @@ export default function LibraryPage() {
           </div>
           {filtered.map((task) => {
             const project = projects.get(task.project_id);
-            const hasYT = !!project?.youtube_url;
+            const hasYT = !!taskYoutubeUrl(task);
             const isFailed = task.status === "failed";
             const finDate = task.finished_at ? new Date(task.finished_at) : null;
             const dateLabel = finDate
@@ -380,8 +405,8 @@ export default function LibraryPage() {
             const isSelected = selected.has(task.task_id);
 
             // 썸네일 — png 우선, jpg 폴백
-            const thumbPng = project ? assetUrl(project.id, "output/thumbnail.png") : null;
-            const thumbJpg = project ? assetUrl(project.id, "output/thumbnail.jpg") : null;
+            const thumbPng = task.project_id ? assetUrl(task.project_id, "output/thumbnail.png") : null;
+            const thumbJpg = task.project_id ? assetUrl(task.project_id, "output/thumbnail.jpg") : null;
 
             return (
               <div
@@ -490,7 +515,20 @@ export default function LibraryPage() {
           task={detailTask}
           detail={detail}
           loading={detailLoading}
-          project={projects.get(detailTask.project_id) || null}
+          project={projects.get(detailTask.project_id) || ({
+            id: detailTask.project_id,
+            title: detailTask.title || detailTask.topic || "",
+            topic: detailTask.topic || "",
+            config: {} as Project["config"],
+            status: detailTask.status,
+            current_step: detailTask.current_step || 0,
+            step_states: detailTask.step_states || {},
+            total_cuts: detailTask.total_cuts || 0,
+            youtube_url: detailTask.youtube_url || "",
+            api_cost: 0,
+            created_at: detailTask.created_at,
+            updated_at: detailTask.finished_at || detailTask.created_at,
+          } satisfies Project)}
           uploading={uploading === detailTask.task_id}
           onClose={closeDetail}
           onUpload={() => handleUpload(detailTask.task_id)}

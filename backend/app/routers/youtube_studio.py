@@ -834,13 +834,16 @@ async def upload_generated_video(
                     None,
                 )
                 verified = await asyncio.to_thread(
-                    up.confirm_upload_visible_in_studio,
+                    up.confirm_upload_processed_in_studio,
                     video_id=upload_result.get("video_id"),
                     title=title,
+                    timeout_seconds=1200,
+                    interval_seconds=20,
                 )
                 upload_result = {
                     **upload_result,
                     "studio_verified": True,
+                    "processing_verified": True,
                     "studio_record": verified,
                 }
                 if thumbnail_path and upload_result.get("video_id"):
@@ -1029,13 +1032,16 @@ async def direct_upload(
             None,  # progress_callback — 직접 업로드는 polling 없이 동기 응답
         )
         verified = await asyncio.to_thread(
-            up.confirm_upload_visible_in_studio,
+            up.confirm_upload_processed_in_studio,
             video_id=upload_result.get("video_id"),
             title=upload_title,
+            timeout_seconds=1200,
+            interval_seconds=20,
         )
         upload_result = {
             **upload_result,
             "studio_verified": True,
+            "processing_verified": True,
             "studio_record": verified,
         }
     except Exception as e:

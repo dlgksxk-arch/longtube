@@ -691,7 +691,10 @@ export default function QueuePage() {
   const hasActive = tasks.some((t) => ["prepared", "queued", "running"].includes(t.status));
   useEffect(() => {
     if (hasActive) {
-      pollRef.current = setInterval(load, 2000);
+      pollRef.current = setInterval(() => {
+        if (typeof document !== "undefined" && document.hidden) return;
+        void load();
+      }, 8000);
     } else {
       if (pollRef.current) clearInterval(pollRef.current);
       pollRef.current = null;

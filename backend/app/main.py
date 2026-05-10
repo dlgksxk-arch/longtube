@@ -118,7 +118,11 @@ async def lifespan(app: FastAPI):
     # 루프가 DATA_DIR/oneclick_queue.json 을 감시하다가 설정된 HH:MM 에
     # 맨 위 주제 1 건을 pop 해 실행한다. 큐가 비면 조용히 대기.
     try:
-        oneclick_service.start_queue_scheduler()
+        scheduler_started = oneclick_service.start_queue_scheduler()
+        if scheduler_started:
+            resumed_task_id = oneclick_service.resume_recovered_inflight_tasks_on_startup()
+            if resumed_task_id:
+                print(f"[startup] oneclick recovered task resumed: {resumed_task_id}")
     except Exception as e:
         print(f"[startup] oneclick queue scheduler start failed: {e}")
     # v2.1.0: .env 평문 API 키 → api_key_vault 1회 암호화 동기화.

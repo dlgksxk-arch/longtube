@@ -9,14 +9,14 @@ from pathlib import Path
 
 from app.models.database import get_db
 from app.models.project import Project
-from app.config import DATA_DIR
+from app.config import resolve_project_dir
 
 router = APIRouter()
 
 
 def _load_script(project_id: str) -> dict:
     """Load script.json from disk"""
-    script_path = DATA_DIR / project_id / "script.json"
+    script_path = resolve_project_dir(project_id, create=False) / "script.json"
     if not script_path.exists():
         return {"cuts": []}
     with open(script_path, "r", encoding="utf-8") as f:
@@ -35,7 +35,7 @@ def download_asset(
     if not project:
         raise HTTPException(404, "Project not found")
 
-    project_dir = DATA_DIR / project_id
+    project_dir = resolve_project_dir(project_id, project.config or {}, create=False)
 
     if asset_type == "script":
         script_path = project_dir / "script.json"
@@ -99,7 +99,7 @@ def download_step_assets(
     if not project:
         raise HTTPException(404, "Project not found")
 
-    project_dir = DATA_DIR / project_id
+    project_dir = resolve_project_dir(project_id, project.config or {}, create=False)
     step_dirs = {
         "script": ["script.json"],
         "audio": ["audio"],
@@ -149,7 +149,7 @@ def download_entire_project(
     if not project:
         raise HTTPException(404, "Project not found")
 
-    project_dir = DATA_DIR / project_id
+    project_dir = resolve_project_dir(project_id, project.config or {}, create=False)
 
     if not project_dir.exists():
         raise HTTPException(404, "Project directory not found")

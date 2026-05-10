@@ -3,6 +3,7 @@
 These tests lock down small pure helpers before splitting the large
 oneclick_service module further. They do not call external APIs or start jobs.
 """
+import copy
 import sys
 import unittest
 from datetime import datetime
@@ -30,6 +31,26 @@ from app.services.interlude_service import DEFAULT_INTERMISSION_EVERY  # noqa: E
 
 
 class OneClickQueueStabilityTests(unittest.TestCase):
+    def test_sort_queue_keeps_running_first_and_removes_terminal_rows(self):
+        state = {
+            "channel_times": {"1": "01:00", "2": "03:00", "3": "06:00", "4": "09:00"},
+            "last_run_dates": {},
+        }
+        items = [
+            {"id": "manual", "topic": "Manual next", "channel": 2, "episode_number": 2, "queued_source": "manual", "queued_note": "작업대에서 실행순 1번 지정"},
+            {"id": "normal", "topic": "Normal", "channel": 1, "episode_number": 1},
+            {"id": "running", "topic": "Running", "channel": 4, "episode_number": 19, "status": "running", "task_id": "task-running"},
+            {"id": "failed", "topic": "Failed", "channel": 3, "episode_number": 9, "status": "failed"},
+        ]
+
+        sorted_items = svc._sort_queue_items_for_execution(
+            items,
+            state,
+            now=datetime(2026, 5, 5, 8, 0),
+        )
+
+        self.assertEqual([item["id"] for item in sorted_items], ["running", "manual", "normal"])
+
     def test_sort_queue_keeps_immediate_items_pinned_then_schedules_by_channel_and_episode(self):
         state = {
             "channel_times": {
@@ -95,13 +116,14 @@ class OneClickQueueStabilityTests(unittest.TestCase):
         self.assertEqual(normalized["last_run_dates"]["1"], "2026-05-04")
         self.assertEqual(normalized["channel_presets"]["2"], "preset-ch2")
         self.assertEqual(len(normalized["items"]), 2)
-        self.assertEqual(normalized["items"][0]["channel"], 2)
-        self.assertEqual(normalized["items"][0]["episode_number"], 7)
-        self.assertEqual(normalized["items"][0]["queued_source"], "import")
-        self.assertEqual(normalized["items"][1]["channel"], 1)
-        self.assertEqual(normalized["items"][1]["queued_source"], "manual")
-        self.assertEqual(normalized["items"][0]["target_cuts"], svc.ONECLICK_MAIN_CUT_COUNT)
-        self.assertEqual(normalized["items"][0]["target_duration"], svc.ONECLICK_MAIN_TARGET_DURATION)
+        by_topic = {item["topic"]: item for item in normalized["items"]}
+        self.assertEqual(by_topic["Keep"]["channel"], 2)
+        self.assertEqual(by_topic["Keep"]["episode_number"], 7)
+        self.assertEqual(by_topic["Keep"]["queued_source"], "import")
+        self.assertEqual(by_topic["Bad channel fallback"]["channel"], 1)
+        self.assertEqual(by_topic["Bad channel fallback"]["queued_source"], "manual")
+        self.assertEqual(by_topic["Keep"]["target_cuts"], svc.ONECLICK_MAIN_CUT_COUNT)
+        self.assertEqual(by_topic["Keep"]["target_duration"], svc.ONECLICK_MAIN_TARGET_DURATION)
 
     def test_queue_normalize_uses_template_channel_when_item_channel_is_missing(self):
         normalized = svc._queue_normalize(
@@ -134,6 +156,113 @@ class OneClickQueueStabilityTests(unittest.TestCase):
         )
 
         self.assertEqual(direct["items"][0]["channel"], 4)
+
+    def test_queue_task_sync_prunes_terminal_rows_and_marks_active_as_running(self):
+        old_tasks = copy.deepcopy(svc._TASKS)
+        old_queue = copy.deepcopy(svc._QUEUE)
+        old_saver = svc._save_queue_to_disk
+        old_loaded = svc._STATE_LOADED
+        try:
+            svc._save_queue_to_disk = lambda: None
+            svc._STATE_LOADED = True
+            svc._TASKS.clear()
+            svc._TASKS.update(
+                {
+                    "active": {
+                        "task_id": "active",
+                        "project_id": "project-active",
+                        "status": "queued",
+                        "topic": "Active episode",
+                        "title": "Active episode",
+                        "channel": 1,
+                        "episode_number": 42,
+                        "started_at": "2026-05-09T12:00:00Z",
+                    },
+                    "failed": {
+                        "task_id": "failed",
+                        "project_id": "project-failed",
+                        "status": "failed",
+                        "topic": "Failed episode",
+                    },
+                }
+            )
+            svc._QUEUE.clear()
+            svc._QUEUE.update(
+                {
+                    "channel_times": {"1": "01:00", "2": "03:00", "3": "06:00", "4": "09:00"},
+                    "last_run_dates": {},
+                    "channel_presets": {"1": None, "2": None, "3": None, "4": None},
+                    "items": [
+                        {"id": "active", "topic": "Active episode", "channel": 1, "episode_number": 42, "status": "pending", "task_id": "active"},
+                        {"id": "failed", "topic": "Failed episode", "channel": 2, "episode_number": 1, "status": "running", "task_id": "failed"},
+                        {"id": "cancelled", "topic": "Cancelled episode", "channel": 3, "episode_number": 1, "status": "cancelled"},
+                        {"id": "normal", "topic": "Normal episode", "channel": 4, "episode_number": 1, "status": "pending"},
+                    ],
+                }
+            )
+
+            changed = svc._sync_queue_items_from_tasks_for_save()
+            svc._normalize_queue_runtime_state(save=False)
+
+            self.assertTrue(changed)
+            self.assertEqual([item["id"] for item in svc._QUEUE["items"]], ["active", "normal"])
+            self.assertEqual(svc._QUEUE["items"][0]["status"], "running")
+            self.assertEqual(svc._QUEUE["items"][0]["queued_note"], "실행 중")
+        finally:
+            svc._TASKS.clear()
+            svc._TASKS.update(old_tasks)
+            svc._QUEUE.clear()
+            svc._QUEUE.update(old_queue)
+            svc._save_queue_to_disk = old_saver
+            svc._STATE_LOADED = old_loaded
+
+    def test_queue_task_sync_keeps_active_task_visible_when_queue_row_is_missing(self):
+        old_tasks = copy.deepcopy(svc._TASKS)
+        old_queue = copy.deepcopy(svc._QUEUE)
+        old_saver = svc._save_queue_to_disk
+        old_loaded = svc._STATE_LOADED
+        try:
+            svc._save_queue_to_disk = lambda: None
+            svc._STATE_LOADED = True
+            svc._TASKS.clear()
+            svc._TASKS.update(
+                {
+                    "active": {
+                        "task_id": "active",
+                        "project_id": "project-active",
+                        "status": "running",
+                        "topic": "Active episode",
+                        "title": "Active episode",
+                        "channel": 2,
+                        "episode_number": 21,
+                        "started_at": "2026-05-09T12:00:00Z",
+                    },
+                }
+            )
+            svc._QUEUE.clear()
+            svc._QUEUE.update(
+                {
+                    "channel_times": {"1": "01:00", "2": "03:00", "3": "06:00", "4": "09:00"},
+                    "last_run_dates": {},
+                    "channel_presets": {"1": None, "2": None, "3": None, "4": None},
+                    "items": [],
+                }
+            )
+
+            changed = svc._sync_queue_items_from_tasks_for_save()
+
+            self.assertTrue(changed)
+            self.assertEqual(len(svc._QUEUE["items"]), 1)
+            self.assertEqual(svc._QUEUE["items"][0]["status"], "running")
+            self.assertEqual(svc._QUEUE["items"][0]["task_id"], "active")
+            self.assertEqual(svc._QUEUE["items"][0]["episode_number"], 21)
+        finally:
+            svc._TASKS.clear()
+            svc._TASKS.update(old_tasks)
+            svc._QUEUE.clear()
+            svc._QUEUE.update(old_queue)
+            svc._save_queue_to_disk = old_saver
+            svc._STATE_LOADED = old_loaded
 
 
 class OneClickSafetyStabilityTests(unittest.TestCase):

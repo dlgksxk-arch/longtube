@@ -157,6 +157,13 @@ def resolve_project_dir(project_id: str, config: dict | None = None, create: boo
     - 구버전 루트 경로가 이미 있으면 읽기 호환용으로만 그대로 사용
     """
     pid = str(project_id or "").strip()
+    if config and config.get("result_dir"):
+        result_path = Path(str(config.get("result_dir")))
+        if create or result_path.exists():
+            if create:
+                result_path.mkdir(parents=True, exist_ok=True)
+            return result_path
+
     v3_path = v3_oneclick_project_dir(pid)
     if v3_path is not None:
         if create:

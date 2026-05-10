@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 import json
 import re
+import subprocess
 import time
 from pathlib import Path
 from typing import Optional, Callable
@@ -25,7 +26,7 @@ from google_auth_httplib2 import AuthorizedHttp
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
-from app.config import YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET, BASE_DIR, DATA_DIR, resolve_project_dir
+from app.config import YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET, BASE_DIR, resolve_project_dir
 
 # ì—…ë¡œë“œ + ì¸ë„¤ì¼ ì„¸íŒ… ê¶Œí•œ
 SCOPES = [
@@ -43,9 +44,9 @@ def _project_token_path(project_id: str) -> Path:
     """í”„ë¡œì íŠ¸ë³„ token.json ê²½ë¡œ.
 
     ê° í”„ë¡œì íŠ¸ ë””ë ‰í† ë¦¬ ì•„ëž˜ì— ì €ìž¥í•˜ë©´ í”„ë¡œì íŠ¸ë³„ë¡œ ë‹¤ë¥¸ YouTube ê³„ì •ì„ ì—°ê²°í• 
-    ìˆ˜ ìžˆìŠµë‹ˆë‹¤. `DATA_DIR/{project_id}/youtube_token.json` í˜•íƒœ.
+    ìˆ˜ ìžˆìŠµë‹ˆë‹¤. í”„ë¡œì íŠ¸ ë””ë ‰í† ë¦¬ì˜ `youtube_token.json` í˜•íƒœ.
     """
-    return resolve_project_dir(project_id) / "youtube_token.json"
+    return resolve_project_dir(project_id, create=True) / "youtube_token.json"
 
 
 def _channel_token_path(channel_id: int) -> Path:
@@ -65,6 +66,89 @@ DEFAULT_CATEGORY_ID = "22"
 YOUTUBE_HTTP_TIMEOUT_SECONDS = 180
 YOUTUBE_UPLOAD_CHUNK_SIZE = 8 * 1024 * 1024
 YOUTUBE_UPLOAD_TRANSIENT_RETRIES = 8
+YOUTUBE_UPLOAD_FILE_READY_TIMEOUT_SECONDS = int(os.getenv("YOUTUBE_UPLOAD_FILE_READY_TIMEOUT_SECONDS", "300") or 300)
+YOUTUBE_UPLOAD_FILE_STABLE_SECONDS = float(os.getenv("YOUTUBE_UPLOAD_FILE_STABLE_SECONDS", "5") or 5)
+YOUTUBE_UPLOAD_FFMPEG_VALIDATE_TIMEOUT_SECONDS = int(os.getenv("YOUTUBE_UPLOAD_FFMPEG_VALIDATE_TIMEOUT_SECONDS", "600") or 600)
+
+
+def _short_error(data: bytes, limit: int = 1200) -> str:
+    text = (data or b"").decode("utf-8", errors="replace").strip()
+    return text[-limit:] if len(text) > limit else text
+
+
+def _validate_upload_media_file(path: Path) -> Optional[str]:
+    try:
+        from app.services.video.subprocess_helper import find_ffmpeg
+
+        ffmpeg = find_ffmpeg()
+        result = subprocess.run(
+            [
+                ffmpeg,
+                "-v",
+                "error",
+                "-i",
+                str(path),
+                "-map",
+                "0:v:0",
+                "-map",
+                "0:a?",
+                "-f",
+                "null",
+                "-",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            timeout=YOUTUBE_UPLOAD_FFMPEG_VALIDATE_TIMEOUT_SECONDS,
+            check=False,
+        )
+        if result.returncode != 0:
+            return _short_error(result.stderr) or f"ffmpeg returncode={result.returncode}"
+        return None
+    except subprocess.TimeoutExpired:
+        return f"ffmpeg validation timeout after {YOUTUBE_UPLOAD_FFMPEG_VALIDATE_TIMEOUT_SECONDS}s"
+    except Exception as exc:
+        return str(exc)
+
+
+def _wait_for_upload_media_ready(video_path: str) -> None:
+    path = Path(video_path)
+    deadline = time.monotonic() + max(1, YOUTUBE_UPLOAD_FILE_READY_TIMEOUT_SECONDS)
+    stable_required = max(1.0, YOUTUBE_UPLOAD_FILE_STABLE_SECONDS)
+    last_signature: tuple[int, int] | None = None
+    stable_since: float | None = None
+    last_error = ""
+
+    while time.monotonic() < deadline:
+        try:
+            stat = path.stat()
+            signature = (int(stat.st_size), int(stat.st_mtime_ns))
+            if signature[0] <= 0:
+                last_error = "file size is zero"
+                last_signature = None
+                stable_since = None
+            elif signature == last_signature:
+                if stable_since is None:
+                    stable_since = time.monotonic()
+                if time.monotonic() - stable_since >= stable_required:
+                    validation_error = _validate_upload_media_file(path)
+                    if validation_error is None:
+                        return
+                    last_error = validation_error
+                    last_signature = None
+                    stable_since = None
+            else:
+                last_signature = signature
+                stable_since = None
+        except FileNotFoundError:
+            last_error = "file does not exist yet"
+            last_signature = None
+            stable_since = None
+        time.sleep(1)
+
+    raise YouTubeUploadError(
+        "YouTube 업로드 전 영상 파일 준비 확인 실패: "
+        f"{video_path} ({last_error or 'file did not become stable'})"
+    )
 
 
 def _has_required_scopes(creds: Optional[Credentials]) -> bool:
@@ -140,6 +224,15 @@ def _is_transient_upload_error(e: Exception) -> bool:
         "read operation timed out",
         "connection reset",
         "connection aborted",
+        "connectionabortederror",
+        "winerror 10053",
+        "winerror 10054",
+        "winerror 10060",
+        "현재 연결은",
+        "호스트 시스템",
+        "중단되었습니다",
+        "forcibly closed",
+        "forcibly aborted",
         "temporarily unavailable",
         "internal error",
         "backend error",
@@ -181,7 +274,7 @@ class YouTubeUploader:
 
         í† í° ìš°ì„ ìˆœìœ„:
           1. channel_id ì§€ì • ì‹œ â†’ `BASE_DIR/token_ch{N}.json`
-          2. project_id ì§€ì • ì‹œ â†’ `DATA_DIR/{project_id}/youtube_token.json`
+          2. project_id ì§€ì • ì‹œ â†’ í”„ë¡œì íŠ¸ ë””ë ‰í† ë¦¬ì˜ `youtube_token.json`
           3. ë‘˜ ë‹¤ None â†’ ì „ì—­ `BASE_DIR/token.json` (legacy)
 
         Args:
@@ -399,6 +492,7 @@ class YouTubeUploader:
             )
         if not os.path.exists(video_path):
             raise YouTubeUploadError(f"ì˜ìƒ íŒŒì¼ì´ ì¡´ìž¬í•˜ì§€ ì•ŠìŒ: {video_path}")
+        _wait_for_upload_media_ready(video_path)
 
         if self.youtube is None:
             self.authenticate()
@@ -805,6 +899,32 @@ class YouTubeUploader:
             pages += 1
         return None
 
+    def find_upload_playlist_item_by_id(self, video_id: str, max_pages: int = 4) -> Optional[dict]:
+        """Return an uploads-playlist item by video id, including deleted placeholders."""
+        self._ensure()
+        vid = str(video_id or "").strip()
+        if not vid:
+            return None
+        token = None
+        pages = 0
+        while pages < max(1, int(max_pages or 4)):
+            data = self.list_my_videos(
+                max_results=50,
+                page_token=token,
+                include_details=False,
+            )
+            for item in data.get("items") or []:
+                if str(item.get("video_id") or "").strip() == vid:
+                    video_id_found = str(item.get("video_id") or "").strip()
+                    if video_id_found and not item.get("url"):
+                        item = {**item, "url": f"https://www.youtube.com/watch?v={video_id_found}"}
+                    return item
+            token = data.get("next_page_token")
+            if not token:
+                break
+            pages += 1
+        return None
+
     def confirm_upload_visible_in_studio(
         self,
         *,
@@ -838,6 +958,11 @@ class YouTubeUploader:
                 id_matches = bool(vid and item_video_id == vid)
                 title_matches = bool(wanted_title and item_title == wanted_title)
                 if id_matches or (not vid and title_matches):
+                    if item_title == "deleted video":
+                        raise YouTubeUploadError(
+                            "YouTube 업로드 확인 실패: Studio 업로드 목록에서 "
+                            f"삭제된 영상 placeholder 로 확인되었습니다. (video_id={item_video_id or vid})"
+                        )
                     return {
                         **item,
                         "url": item.get("url") or (
@@ -872,6 +997,32 @@ class YouTubeUploader:
             raise YouTubeUploadError(f"video processing lookup failed: {e}") from e
         items = resp.get("items") or []
         if not items:
+            playlist_item = self.find_upload_playlist_item_by_id(vid)
+            if playlist_item:
+                title = str(playlist_item.get("title") or "")
+                if normalize_upload_title_for_match(title) == "deleted video":
+                    return {
+                        "video_id": vid,
+                        "title": title,
+                        "url": f"https://www.youtube.com/watch?v={vid}",
+                        "upload_status": "deleted",
+                        "processing_status": None,
+                        "processed": False,
+                        "terminal_failure": True,
+                        "failed_reason": "deleted_video",
+                        "playlist_visible": True,
+                    }
+                return {
+                    "video_id": vid,
+                    "title": title,
+                    "url": playlist_item.get("url") or f"https://www.youtube.com/watch?v={vid}",
+                    "upload_status": "uploaded",
+                    "processing_status": "processing",
+                    "processed": False,
+                    "terminal_failure": False,
+                    "failed_reason": None,
+                    "playlist_visible": True,
+                }
             raise YouTubeUploadError(f"video not found: {vid}")
         item = items[0]
         snippet = item.get("snippet") or {}

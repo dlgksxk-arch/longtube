@@ -29,7 +29,7 @@ from typing import Optional
 
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
-from app.config import DATA_DIR, resolve_project_dir
+from app.config import resolve_project_dir
 
 # YouTube 권장 썸네일 해상도
 THUMB_W = 1280
@@ -302,6 +302,7 @@ async def ensure_standard_thumbnail(
             output_path=str(thumb_path),
             reference_images=combined_refs or None,
             enable_historical_guard=enable_historical_guard,
+            config=config,
         )
         return str(result.get("path") or thumb_path)
     except Exception:
@@ -314,6 +315,7 @@ async def ensure_standard_thumbnail(
             base_image_path=str(base_cut),
             output_path=str(thumb_path),
             episode_label=overlay_episode_label,
+            config=config,
         )
 
 
@@ -656,6 +658,7 @@ def generate_thumbnail(
     output_path: Optional[str] = None,
     episode_label: Optional[str] = None,
     subtitle: Optional[str] = None,
+    config: Optional[dict] = None,
 ) -> str:
     """YouTube 썸네일 생성 — v1.1.27 그림텍스트 스타일.
 
@@ -683,7 +686,7 @@ def generate_thumbnail(
         raise ThumbnailError("제목이 비어있습니다.")
 
     if output_path is None:
-        out_dir = resolve_project_dir(project_id) / "output"
+        out_dir = resolve_project_dir(project_id, config or {}, create=True) / "output"
         out_dir.mkdir(parents=True, exist_ok=True)
         output_path = str(out_dir / "thumbnail.png")
     else:
@@ -909,6 +912,7 @@ async def generate_ai_thumbnail(
     output_path: Optional[str] = None,
     reference_images: Optional[list[str]] = None,
     enable_historical_guard: bool = False,
+    config: Optional[dict] = None,
 ) -> dict:
     """AI image 모델로 1280x720 배경을 생성하고 선택적으로 텍스트 오버레이.
 
@@ -920,7 +924,7 @@ async def generate_ai_thumbnail(
         overlay_title_text: None 이면 AI 출력 원본 그대로 저장. 문자열이 주어지면
             Pillow 로 하단 밴드 + 제목 텍스트 오버레이 합성.
         output_path: 최종 썸네일 저장 경로. None 이면
-            DATA_DIR/{project_id}/output/thumbnail.png.
+            프로젝트 디렉토리의 output/thumbnail.png.
         reference_images: image 서비스에 그대로 전달할 참조 이미지 절대경로 목록.
 
     Returns:
@@ -942,7 +946,7 @@ async def generate_ai_thumbnail(
 
     # 경로 결정
     if output_path is None:
-        out_dir = resolve_project_dir(project_id) / "output"
+        out_dir = resolve_project_dir(project_id, config or {}, create=True) / "output"
         out_dir.mkdir(parents=True, exist_ok=True)
         output_path = str(out_dir / "thumbnail.png")
     else:

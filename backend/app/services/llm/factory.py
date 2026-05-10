@@ -12,12 +12,14 @@ LLM_REGISTRY: dict[str, dict] = {
                           "cost_per_unit": "$5 / $25 per 1M tokens", "cost_input": 5.0, "cost_output": 25.0},
     "claude-haiku-4-5":  {"name": "Claude Haiku 4.5",  "provider": "anthropic",
                           "cost_per_unit": "$0.80 / $4 per 1M tokens", "cost_input": 0.8, "cost_output": 4.0},
-    "gpt-4o":            {"name": "GPT-4o",             "provider": "openai",
-                          "cost_per_unit": "$2.50 / $10 per 1M tokens", "cost_input": 2.5, "cost_output": 10.0},
-    "gpt-4o-mini":       {"name": "GPT-4o Mini",        "provider": "openai",
-                          "cost_per_unit": "$0.15 / $0.60 per 1M tokens", "cost_input": 0.15, "cost_output": 0.6},
-    "gpt-4.1":           {"name": "GPT-4.1",            "provider": "openai",
-                          "cost_per_unit": "$2 / $8 per 1M tokens", "cost_input": 2.0, "cost_output": 8.0},
+    "gpt-5.5":           {"name": "GPT-5.5",            "provider": "openai",
+                          "cost_per_unit": "$5 / $30 per 1M tokens", "cost_input": 5.0, "cost_output": 30.0},
+    "gpt-5.4":           {"name": "GPT-5.4",            "provider": "openai",
+                          "cost_per_unit": "$2.50 / $15 per 1M tokens", "cost_input": 2.5, "cost_output": 15.0},
+    "gpt-5.4-mini":      {"name": "GPT-5.4 Mini",       "provider": "openai",
+                          "cost_per_unit": "$0.75 / $4.50 per 1M tokens", "cost_input": 0.75, "cost_output": 4.5},
+    "gpt-5.4-nano":      {"name": "GPT-5.4 Nano",       "provider": "openai",
+                          "cost_per_unit": "$0.20 / $1.25 per 1M tokens", "cost_input": 0.2, "cost_output": 1.25},
 }
 
 

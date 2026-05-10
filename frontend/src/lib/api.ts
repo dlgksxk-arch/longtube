@@ -1410,6 +1410,7 @@ export interface OneClickTask {
   started_at: string | null;
   finished_at: string | null;
   created_at: string;
+  youtube_url?: string | null;
   // v2.1.2: 제작 로그
   logs?: { ts: string; level: "info" | "warn" | "error"; msg: string }[];
 }
@@ -1475,6 +1476,15 @@ export interface OneClickQueueItem {
   queued_note?: string;
   requeued_from_task_id?: string;
   restored_from_project_id?: string;
+  // 실행 중 큐 항목은 작업대 task 와 연결된 상태로 큐에 남는다.
+  status?: "pending" | "running" | "completed" | "failed" | "cancelled" | "paused" | string;
+  task_id?: string | null;
+  project_id?: string | null;
+  source_project_id?: string | null;
+  result_dir?: string | null;
+  title?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
 }
 
 export interface OneClickQueueState {

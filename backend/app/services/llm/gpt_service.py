@@ -1,5 +1,4 @@
 """OpenAI GPT LLM service"""
-import asyncio
 import json
 from openai import AsyncOpenAI
 from app.services.llm.base import BaseLLMService
@@ -17,6 +16,101 @@ class GPTService(BaseLLMService):
     def _client(self):
         """Create a client in the active event loop."""
         return self._client_factory(api_key=config.OPENAI_API_KEY)
+
+    def _is_latest_gpt(self) -> bool:
+        return str(self.model_id or "").startswith("gpt-5")
+
+    def _latest_gpt_output_budget(self, requested: int) -> int:
+        return min(128000, max(64000, int(requested or 0)))
+
+    async def _create_json_chat_completion(
+        self,
+        client,
+        *,
+        messages: list[dict],
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        timeout=None,
+    ):
+        kwargs = {
+            "model": self.model_id,
+            "messages": messages,
+            "response_format": {"type": "json_object"},
+            "timeout": timeout,
+        }
+        if max_tokens is not None:
+            if self._is_latest_gpt():
+                kwargs["max_completion_tokens"] = max_tokens
+            else:
+                kwargs["max_tokens"] = max_tokens
+        if temperature is not None and not self._is_latest_gpt():
+            kwargs["temperature"] = temperature
+        return await client.chat.completions.create(**kwargs)
+
+    @staticmethod
+    def _response_to_jsonable(response) -> dict:
+        try:
+            return response.model_dump(mode="json")
+        except Exception:
+            try:
+                return json.loads(response.model_dump_json())
+            except Exception:
+                return {"repr": repr(response)}
+
+    def _save_raw_response(self, project_id: str | None, label: str, response) -> None:
+        if not project_id:
+            return
+        try:
+            project_dir = config.resolve_project_dir(str(project_id), create=True)
+            raw_dir = project_dir / "llm_raw"
+            raw_dir.mkdir(parents=True, exist_ok=True)
+            safe = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in label).strip("_") or "response"
+            (raw_dir / f"{safe}.json").write_text(
+                json.dumps(self._response_to_jsonable(response), ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
+
+    @staticmethod
+    def _message_content_text(response) -> str:
+        try:
+            content = response.choices[0].message.content
+        except Exception:
+            return ""
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts = []
+            for item in content:
+                if isinstance(item, str):
+                    parts.append(item)
+                elif isinstance(item, dict):
+                    parts.append(str(item.get("text") or item.get("content") or ""))
+                else:
+                    parts.append(str(getattr(item, "text", "") or getattr(item, "content", "") or ""))
+            return "".join(parts)
+        return str(content or "")
+
+    @staticmethod
+    def _finish_reason(response) -> str:
+        try:
+            return str(response.choices[0].finish_reason or "")
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _usage_summary(response) -> str:
+        try:
+            usage = getattr(response, "usage", None)
+            if usage is None:
+                return ""
+            return json.dumps(
+                usage.model_dump(mode="json") if hasattr(usage, "model_dump") else usage,
+                ensure_ascii=False,
+            )
+        except Exception:
+            return ""
 
     def _record_usage(self, response, note: str, project_id: str | None = None):
         try:
@@ -43,37 +137,40 @@ class GPTService(BaseLLMService):
                 target_duration = 300
             estimated_cuts = max(1, target_duration // 5)
         dynamic_max = max(8192, estimated_cuts * 220 + 2048)
-        dynamic_max = min(dynamic_max, 16000)  # GPT-4o 실용 상한
-        default_timeout = 300.0 if estimated_cuts >= 100 else 180.0
-        try:
-            request_timeout = float(config.get("script_generation_timeout_sec", default_timeout) or default_timeout)
-        except (TypeError, ValueError):
-            request_timeout = default_timeout
-        request_timeout = max(30.0, min(300.0, request_timeout))
-
+        dynamic_max = min(dynamic_max, 128000)
+        if self._is_latest_gpt():
+            dynamic_max = self._latest_gpt_output_budget(dynamic_max)
         raise_if_cancelled("gpt generate_script")
         async with self._client() as client:
-            try:
-                response = await asyncio.wait_for(
-                    client.chat.completions.create(
-                        model=self.model_id,
-                        messages=[
-                            {"role": "system", "content": self._get_system_prompt(config)},
-                            {"role": "user", "content": self._build_user_prompt(topic, config)},
-                        ],
-                        response_format={"type": "json_object"},
-                        temperature=0.8,
-                        max_tokens=dynamic_max,
-                    ),
-                    timeout=request_timeout,
-                )
-            except asyncio.TimeoutError as exc:
-                raise TimeoutError(
-                    f"script generation timed out after {request_timeout:.0f}s"
-                ) from exc
+            response = await self._create_json_chat_completion(
+                client,
+                messages=[
+                    {"role": "system", "content": self._get_system_prompt(config)},
+                    {"role": "user", "content": self._build_user_prompt(topic, config)},
+                ],
+                temperature=0.8,
+                max_tokens=dynamic_max,
+                timeout=None,
+            )
         raise_if_cancelled("gpt generate_script")
         self._record_usage(response, "script", config.get("__project_id"))
-        parsed = json.loads(response.choices[0].message.content)
+        project_id = config.get("__project_id")
+        self._save_raw_response(project_id, "script_response", response)
+        raw = self._message_content_text(response).strip()
+        if not raw:
+            raise RuntimeError(
+                "OpenAI script response was empty "
+                f"(model={self.model_id}, finish_reason={self._finish_reason(response)}, "
+                f"usage={self._usage_summary(response)})"
+            )
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                "OpenAI script response was not valid JSON "
+                f"(model={self.model_id}, finish_reason={self._finish_reason(response)}, "
+                f"error={exc})"
+            ) from exc
         cuts = parsed.get("cuts") or []
         if len(cuts) != estimated_cuts:
             raise ValueError(
@@ -95,8 +192,8 @@ class GPTService(BaseLLMService):
         prompt = self._build_tag_prompt(title, topic, narration, max_tags, language)
         raise_if_cancelled("gpt generate_tags")
         async with self._client() as client:
-            response = await client.chat.completions.create(
-                model=self.model_id,
+            response = await self._create_json_chat_completion(
+                client,
                 messages=[
                     {
                         "role": "system",
@@ -108,7 +205,6 @@ class GPTService(BaseLLMService):
                     },
                     {"role": "user", "content": prompt},
                 ],
-                response_format={"type": "json_object"},
                 temperature=0.5,
             )
         raise_if_cancelled("gpt generate_tags")
@@ -131,8 +227,8 @@ class GPTService(BaseLLMService):
         )
         raise_if_cancelled("gpt generate_metadata")
         async with self._client() as client:
-            response = await client.chat.completions.create(
-                model=self.model_id,
+            response = await self._create_json_chat_completion(
+                client,
                 messages=[
                     {
                         "role": "system",
@@ -145,7 +241,6 @@ class GPTService(BaseLLMService):
                     },
                     {"role": "user", "content": prompt},
                 ],
-                response_format={"type": "json_object"},
                 temperature=0.7,
             )
         raise_if_cancelled("gpt generate_metadata")
@@ -168,8 +263,8 @@ class GPTService(BaseLLMService):
         try:
             raise_if_cancelled("gpt thumbnail_prompt")
             async with self._client() as client:
-                response = await client.chat.completions.create(
-                    model=self.model_id,
+                response = await self._create_json_chat_completion(
+                    client,
                     messages=[
                         {
                             "role": "system",
@@ -181,7 +276,6 @@ class GPTService(BaseLLMService):
                         },
                         {"role": "user", "content": prompt},
                     ],
-                    response_format={"type": "json_object"},
                     temperature=0.8,
                 )
             raise_if_cancelled("gpt thumbnail_prompt")
@@ -230,8 +324,8 @@ class GPTService(BaseLLMService):
         )
         raise_if_cancelled("gpt timing_rewrite")
         async with self._client() as client:
-            response = await client.chat.completions.create(
-                model=self.model_id,
+            response = await self._create_json_chat_completion(
+                client,
                 messages=[
                     {
                         "role": "system",
@@ -242,7 +336,6 @@ class GPTService(BaseLLMService):
                     },
                     {"role": "user", "content": prompt},
                 ],
-                response_format={"type": "json_object"},
                 temperature=0.2,
                 max_tokens=300,
             )

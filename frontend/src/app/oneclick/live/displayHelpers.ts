@@ -59,19 +59,21 @@ export function compactSeconds(sec: number | null | undefined) {
 
 export function stepApiName(stepKey: string, task?: OneClickTask | null) {
   const model = task?.models || {};
+  const estimatedModel: Partial<NonNullable<OneClickTask["estimate"]>["models_used"]> =
+    task?.estimate?.models_used || {};
   if (stepKey === "2") {
-    const script = String(model.script || "").toLowerCase();
+    const script = String(model.script || estimatedModel.script || "").toLowerCase();
     if (script.includes("gpt") || script.includes("openai")) return "OpenAI";
     if (script.includes("xai") || script.includes("grok")) return "xAI";
     return "Anthropic";
   }
   if (stepKey === "3") {
-    const tts = String(model.tts || "").toLowerCase();
+    const tts = String(model.tts || estimatedModel.tts || "").toLowerCase();
     if (tts.includes("openai")) return "OpenAI";
     return "ElevenLabs";
   }
   if (stepKey === "4") {
-    const image = String(model.image || "").toLowerCase();
+    const image = String(model.image || estimatedModel.image || "").toLowerCase();
     if (image.includes("comfy")) return "ComfyUI";
     if (image.includes("openai")) return "OpenAI";
     if (image.includes("grok")) return "xAI";
@@ -79,7 +81,7 @@ export function stepApiName(stepKey: string, task?: OneClickTask | null) {
     return "ComfyUI";
   }
   if (stepKey === "5") {
-    const video = String(model.video || "").toLowerCase();
+    const video = String(model.video || estimatedModel.video || "").toLowerCase();
     if (video.includes("ffmpeg")) return "FFmpeg";
     if (video.includes("comfy")) return "ComfyUI";
     if (video.includes("fal")) return "fal.ai";
@@ -91,13 +93,15 @@ export function stepApiName(stepKey: string, task?: OneClickTask | null) {
 
 export function stepModelName(stepKey: string, task?: OneClickTask | null) {
   const model = task?.models || {};
+  const estimatedModel: Partial<NonNullable<OneClickTask["estimate"]>["models_used"]> =
+    task?.estimate?.models_used || {};
   if (stepKey === "2") {
-    const script = String(model.script || "").trim();
-    return script.replace(/^Claude\s+/i, "").replace(/^Anthropic\s*\|\s*/i, "") || "Sonnet 4.6";
+    const script = String(model.script || estimatedModel.script || "").trim();
+    return script.replace(/^Claude\s+/i, "").replace(/^Anthropic\s*\|\s*/i, "");
   }
-  if (stepKey === "3") return model.tts_voice || "Harry Kim - Conversational";
+  if (stepKey === "3") return model.tts_voice || model.tts || estimatedModel.tts || "";
   if (stepKey === "4") {
-    const image = String(model.image || "").trim();
+    const image = String(model.image || estimatedModel.image || "").trim();
     const names: Record<string, string> = {
       "comfyui-dreamshaper-xl": "SDXL Lightning",
       "comfyui-dreamshaper-xl-longtube": "SDXL 로컬모델 v1",
@@ -107,16 +111,16 @@ export function stepModelName(stepKey: string, task?: OneClickTask | null) {
       "nano-banana-2": "Nano Banana 2",
       "nano-banana-pro": "Nano Banana Pro",
     };
-    return names[image] || image.replace(/^DreamShaper XL/i, "SDXL") || "SDXL 로컬모델 v1";
+    return names[image] || image.replace(/^DreamShaper XL/i, "SDXL");
   }
   if (stepKey === "5") {
-    const video = String(model.video || "").trim();
+    const video = String(model.video || estimatedModel.video || "").trim();
     const names: Record<string, string> = {
       "ffmpeg-static": "FFmpeg Static (no motion)",
       "ffmpeg-safe-motion": "숏츠",
       "seedance-lite": "Seedance 1.0 Lite",
     };
-    return names[video] || video || "FFmpeg Static (no motion)";
+    return names[video] || video;
   }
   return "";
 }

@@ -1,8 +1,6 @@
 """Claude (Anthropic) LLM service"""
-import asyncio
 from datetime import datetime, timedelta, timezone
 import json
-from pathlib import Path
 import re
 import anthropic
 from app.services.llm.base import BaseLLMService
@@ -72,38 +70,22 @@ class ClaudeService(BaseLLMService):
         else:
             target_duration = self._safe_int(config.get("target_duration"), 300)
             estimated_cuts = max(1, target_duration // 5)
-        if estimated_cuts >= 40:
-            return await self._generate_script_chunked(topic, config, model, estimated_cuts)
         dynamic_max = max(8192, estimated_cuts * 220 + 2048)
         # Claude Sonnet 4.6 상한 안전치
         dynamic_max = min(dynamic_max, 64000)
-        default_timeout = 300.0 if estimated_cuts >= 100 else 180.0
-        try:
-            request_timeout = float(config.get("script_generation_timeout_sec", default_timeout) or default_timeout)
-        except (TypeError, ValueError):
-            request_timeout = default_timeout
-        request_timeout = max(30.0, min(300.0, request_timeout))
-
         raise_if_cancelled("claude generate_script")
         self._enforce_daily_budget()
         async with self._client() as client:
-            try:
-                response = await asyncio.wait_for(
-                    client.messages.create(
-                        model=model,
-                        max_tokens=dynamic_max,
-                        system=self._get_system_prompt(config),
-                        messages=[{
-                            "role": "user",
-                            "content": self._build_user_prompt(topic, config),
-                        }],
-                    ),
-                    timeout=request_timeout,
-                )
-            except asyncio.TimeoutError as exc:
-                raise TimeoutError(
-                    f"script generation timed out after {request_timeout:.0f}s"
-                ) from exc
+            response = await client.messages.create(
+                model=model,
+                max_tokens=dynamic_max,
+                system=self._get_system_prompt(config),
+                messages=[{
+                    "role": "user",
+                    "content": self._build_user_prompt(topic, config),
+                }],
+                timeout=None,
+            )
 
         raise_if_cancelled("claude generate_script")
         self._record_usage(response, "script", config.get("__project_id"))
@@ -117,201 +99,6 @@ class ClaudeService(BaseLLMService):
         parsed = self.strengthen_visual_context(parsed, config)
         self.assert_script_timing(parsed, config)
         return parsed
-
-    @staticmethod
-    def _save_partial_script(
-        project_id: str | None,
-        config_data: dict,
-        topic: str,
-        chunks: list[dict],
-        cuts: list[dict],
-        expected_cuts: int,
-    ) -> None:
-        if not project_id or not cuts:
-            return
-        try:
-            project_dir = config.resolve_project_dir(str(project_id), config=config_data, create=True)
-            project_dir.mkdir(parents=True, exist_ok=True)
-            first = chunks[0] if chunks else {}
-            payload = {
-                "title": first.get("title") or str(topic),
-                "description": first.get("description") or "",
-                "tags": first.get("tags") or [],
-                "thumbnail_prompt": first.get("thumbnail_prompt") or "",
-                "thumbnail_hook": first.get("thumbnail_hook") or "",
-                "cuts": cuts,
-                "_partial": len(cuts) < expected_cuts,
-                "_partial_cuts": len(cuts),
-                "_expected_cuts": expected_cuts,
-            }
-            tmp = project_dir / "script.partial.json.tmp"
-            partial_path = project_dir / "script.partial.json"
-            script_path = project_dir / "script.json"
-            tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-            tmp.replace(partial_path)
-            tmp = project_dir / "script.json.tmp"
-            tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-            tmp.replace(script_path)
-        except Exception:
-            pass
-
-    async def _generate_script_chunked(
-        self,
-        topic: str,
-        config: dict,
-        model: str,
-        estimated_cuts: int,
-    ) -> dict:
-        """Generate large scripts in bounded chunks.
-
-        A single 100+ cut Claude call can sit for minutes and fail without a
-        saved script. Chunking gives visible progress and avoids one huge paid
-        request becoming an all-or-nothing loss.
-        """
-        chunk_size = self._safe_int(config.get("__script_chunk_size"), 40)
-        chunk_size = max(10, min(50, chunk_size))
-        chunks: list[dict] = []
-        all_cuts: list[dict] = []
-        project_id = config.get("__project_id")
-        chunk_total = max(1, (estimated_cuts + chunk_size - 1) // chunk_size)
-        default_timeout = 300.0
-        try:
-            request_timeout = float(config.get("script_generation_timeout_sec", default_timeout) or default_timeout)
-        except (TypeError, ValueError):
-            request_timeout = default_timeout
-        request_timeout = max(30.0, min(300.0, request_timeout))
-
-        base_prompt = self._build_user_prompt(topic, config)
-        system_prompt = self._get_system_prompt(config)
-        previous_tail = ""
-
-        async with self._client() as client:
-            for chunk_index, start in enumerate(range(1, estimated_cuts + 1, chunk_size), 1):
-                raise_if_cancelled("claude generate_script chunk")
-                self._enforce_daily_budget()
-                end = min(estimated_cuts, start + chunk_size - 1)
-                chunk_count = end - start + 1
-                prompt = (
-                    f"{base_prompt}\n\n"
-                    f"CHUNKED GENERATION MODE:\n"
-                    f"- For this API call only, this chunk range overrides the earlier full-script cut count.\n"
-                    f"- Generate ONLY cuts {start} through {end}.\n"
-                    f"- Output exactly {chunk_count} cuts.\n"
-                    f"- cut_number must start at {start} and end at {end}.\n"
-                    f"- Do not include cuts outside this range.\n"
-                    f"- ABSOLUTE TIMING RULE: every narration must be written as a spoken 5-second cut.\n"
-                    f"- No narration may exceed 5 seconds. If a sentence risks exceeding 5 seconds, shorten it before output.\n"
-                    f"- Put only one core idea in each narration and set duration_estimate to 5.0.\n"
-                    f"- Keep continuity with this previous tail: {previous_tail or '(none)'}\n"
-                    f"- Still return one valid JSON object with title, description, tags, "
-                    f"thumbnail_prompt, and cuts.\n"
-                )
-                max_tokens = self._safe_int(config.get("__script_max_tokens"), 64000)
-                max_tokens = max(24000, min(max_tokens, 64000))
-                if project_id:
-                    try:
-                        from app.services.oneclick_service import append_task_log, update_task_sub_status
-                        update_task_sub_status(
-                            str(project_id),
-                            f"대본 청크 {chunk_index}/{chunk_total} 생성 중 ({start}-{end})",
-                        )
-                        append_task_log(
-                            str(project_id),
-                            f"대본 청크 {chunk_index}/{chunk_total} 요청 ({start}-{end})",
-                            "info",
-                        )
-                    except Exception:
-                        pass
-                try:
-                    response = await asyncio.wait_for(
-                        client.messages.create(
-                            model=model,
-                            max_tokens=max_tokens,
-                            system=system_prompt,
-                            messages=[{"role": "user", "content": prompt}],
-                        ),
-                        timeout=request_timeout,
-                    )
-                except asyncio.TimeoutError as exc:
-                    raise TimeoutError(
-                        f"script chunk {chunk_index}/{chunk_total} timed out "
-                        f"after {request_timeout:.0f}s for cuts {start}-{end}"
-                    ) from exc
-
-                raise_if_cancelled("claude generate_script chunk")
-                self._record_usage(
-                    response,
-                    f"script_chunk {chunk_index}/{chunk_total} cuts {start}-{end}",
-                    str(project_id) if project_id else None,
-                )
-                parsed = self._parse_json(response.content[0].text if response.content else "")
-                cuts = parsed.get("cuts") or []
-                if len(cuts) != chunk_count:
-                    raise ValueError(
-                        f"script chunk {chunk_index}/{chunk_total} returned "
-                        f"{len(cuts)} cuts, expected {chunk_count}"
-                    )
-                numbers = [int(c.get("cut_number") or 0) for c in cuts]
-                if numbers != list(range(start, end + 1)):
-                    raise ValueError(
-                        f"script chunk {chunk_index}/{chunk_total} cut numbers invalid: "
-                        f"{numbers[:3]}...{numbers[-3:]}"
-                )
-                chunks.append(parsed)
-                all_cuts.extend(cuts)
-                self._save_partial_script(
-                    str(project_id) if project_id else None,
-                    config,
-                    topic,
-                    chunks,
-                    all_cuts,
-                    estimated_cuts,
-                )
-                previous_tail = " / ".join(
-                    str(c.get("narration") or "").strip()
-                    for c in cuts[-3:]
-                    if str(c.get("narration") or "").strip()
-                )
-                if project_id:
-                    try:
-                        from app.services.oneclick_service import append_task_log, update_task_sub_status
-                        update_task_sub_status(
-                            str(project_id),
-                            f"대본 청크 {chunk_index}/{chunk_total} 완료 ({start}-{end})",
-                        )
-                        append_task_log(
-                            str(project_id),
-                            f"대본 청크 {chunk_index}/{chunk_total} 완료 ({start}-{end})",
-                            "info",
-                        )
-                        from app.services.task_manager import update_task
-                        update_task(str(project_id), "script", chunk_index)
-                    except Exception:
-                        pass
-
-        first = chunks[0] if chunks else {}
-        combined = self.strengthen_visual_context({
-            "title": first.get("title") or str(topic),
-            "description": first.get("description") or "",
-            "tags": first.get("tags") or [],
-            "thumbnail_prompt": first.get("thumbnail_prompt") or "",
-            "thumbnail_hook": first.get("thumbnail_hook") or "",
-            "cuts": all_cuts,
-        }, config)
-        if project_id:
-            try:
-                from app.services.oneclick_service import update_task_sub_status
-                update_task_sub_status(str(project_id), "대본 검증 중")
-            except Exception:
-                pass
-        self.assert_script_timing(combined, config)
-        if project_id:
-            try:
-                from app.services.oneclick_service import update_task_sub_status
-                update_task_sub_status(str(project_id), None)
-            except Exception:
-                pass
-        return combined
 
     @staticmethod
     def _safe_int(value, default: int) -> int:

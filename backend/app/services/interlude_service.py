@@ -13,7 +13,7 @@ v2 프리셋 라우터(프리셋 범위) 가 모두 이 모듈을 호출한다.
       (500MB cap, 확장자 검증, 원자적 실패 복구).
 
 v1 라우터와의 차이:
-    - v1 은 ``DATA_DIR / {project_id} / interlude`` 고정이었지만, v2 는
+    - v1 은 프로젝트 디렉토리의 ``interlude`` 고정이었지만, v2 는
       ``DATA_DIR / presets / {preset_id} / interlude`` 로 쓴다. 즉 "어느
       디렉토리냐" 만 다르고 나머지는 완전히 동일.
 """

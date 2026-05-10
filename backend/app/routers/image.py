@@ -9,7 +9,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.models.database import get_db
 from app.models.project import Project
 from app.models.cut import Cut
-from app.config import DATA_DIR, BASE_DIR as _BASE_DIR_FOR_LOG
+from app.config import BASE_DIR as _BASE_DIR_FOR_LOG, resolve_project_dir
 from app.services.image.factory import IMAGE_REGISTRY, get_image_service, resolve_image_model
 from app.services.image.base import get_size
 from app.services.image.prompt_builder import append_prompt_specific_negative_prompt
@@ -35,6 +35,19 @@ def _ilog(msg: str) -> None:
             fh.write(f"[{ts}] {msg}\n")
     except Exception:
         pass
+
+
+def _attach_oneclick_progress_hooks(project_id: str, image_service) -> None:
+    try:
+        from app.services.oneclick_service import append_task_log, update_task_sub_status
+    except Exception:
+        return
+
+    def _progress_log(msg: str, level: str = "info") -> None:
+        append_task_log(project_id, msg, level)
+
+    image_service.progress_log = _progress_log
+    image_service.progress_status = lambda text: update_task_sub_status(project_id, text)
 
 
 # v1.1.59: ComfyUI VRAM 수동 해제 엔드포인트.
@@ -260,9 +273,9 @@ def _apply_historical_negative_prompt(image_service, config: dict, *context_valu
     return True
 
 
-def _to_relative(project_id: str, abs_path: str) -> str:
+def _to_relative(project_id: str, abs_path: str, config: dict | None = None) -> str:
     """Convert absolute path to relative path from project dir for DB storage."""
-    project_dir = str(DATA_DIR / project_id)
+    project_dir = str(resolve_project_dir(project_id, config, create=False))
     p = str(abs_path).replace("\\", "/")
     pd = project_dir.replace("\\", "/")
     if p.startswith(pd):
@@ -275,7 +288,7 @@ def _to_relative(project_id: str, abs_path: str) -> str:
 def _collect_reference_images(project_id: str, config: dict) -> list[str]:
     """Collect absolute paths of reference images (style only) for this project."""
     ref_imgs = config.get("reference_images", [])
-    project_dir = DATA_DIR / project_id
+    project_dir = resolve_project_dir(project_id, config, create=False)
 
     paths = []
     for rel in ref_imgs:
@@ -289,7 +302,7 @@ def _collect_reference_images(project_id: str, config: dict) -> list[str]:
 def _collect_character_images(project_id: str, config: dict) -> list[str]:
     """Collect absolute paths of character images for this project."""
     char_imgs = config.get("character_images", [])
-    project_dir = DATA_DIR / project_id
+    project_dir = resolve_project_dir(project_id, config, create=False)
 
     paths = []
     for rel in char_imgs:
@@ -303,7 +316,7 @@ def _collect_character_images(project_id: str, config: dict) -> list[str]:
 def _collect_logo_images(project_id: str, config: dict) -> list[str]:
     """Collect absolute paths of logo images for this project."""
     logo_imgs = config.get("logo_images", [])
-    project_dir = DATA_DIR / project_id
+    project_dir = resolve_project_dir(project_id, config, create=False)
 
     paths = []
     for rel in logo_imgs:
@@ -380,6 +393,7 @@ async def generate_all_images(project_id: str, db: Session = Depends(get_db)):
     aspect_ratio = project.config.get("aspect_ratio", "16:9")
 
     image_service = get_image_service(image_model)
+    _attach_oneclick_progress_hooks(project_id, image_service)
     try:
         image_service.negative_prompt = (project.config.get("image_negative_prompt") or "").strip()
     except Exception:
@@ -411,9 +425,14 @@ async def generate_all_images(project_id: str, db: Session = Depends(get_db)):
             continue
 
         try:
-            image_dir = DATA_DIR / project_id / "images"
+            image_dir = resolve_project_dir(project_id, project.config, create=True) / "images"
             image_dir.mkdir(parents=True, exist_ok=True)
             image_path = str(image_dir / f"cut_{cut.cut_number}.png")
+            if is_comfyui_model:
+                image_service.progress_context = {
+                    "cut_number": cut.cut_number,
+                    "total_cuts": len(cuts),
+                }
 
             # v1.1.26: 3컷마다 1장 캐릭터 슬롯 (1, 4, 7, ...)
             is_character_cut = cut_has_character(cut.cut_number) and (bool(char_images) or bool(character_description))
@@ -459,7 +478,7 @@ async def generate_all_images(project_id: str, db: Session = Depends(get_db)):
             )
             image_service.negative_prompt = base_negative_prompt
 
-            cut.image_path = _to_relative(project_id, result_path)
+            cut.image_path = _to_relative(project_id, result_path, project.config)
             cut.image_model = image_model
             cut.status = "completed"
             db.commit()
@@ -541,6 +560,7 @@ async def generate_all_images_async(project_id: str, db: Session = Depends(get_d
                 CONCURRENT_IMAGES = 1
 
             image_service = get_image_service(image_model)
+            _attach_oneclick_progress_hooks(project_id, image_service)
             try:
                 image_service.negative_prompt = (proj.config.get("image_negative_prompt") or "").strip()
             except Exception:
@@ -567,7 +587,7 @@ async def generate_all_images_async(project_id: str, db: Session = Depends(get_d
                     continue
                 cut_specs.append(cut)
 
-            image_dir = DATA_DIR / project_id / "images"
+            image_dir = resolve_project_dir(project_id, proj.config, create=True) / "images"
             image_dir.mkdir(parents=True, exist_ok=True)
 
             semaphore = asyncio.Semaphore(CONCURRENT_IMAGES)
@@ -585,6 +605,11 @@ async def generate_all_images_async(project_id: str, db: Session = Depends(get_d
                         _ilog(f"_gen_one cut={cut.cut_number} exit_after_sem status={state.status}")
                         return
                     image_path = str(image_dir / f"cut_{cut.cut_number}.png")
+                    if is_comfyui_model:
+                        image_service.progress_context = {
+                            "cut_number": cut.cut_number,
+                            "total_cuts": len(cuts),
+                        }
                     is_character_cut = cut_has_character(cut.cut_number) and (bool(char_images) or bool(character_description))
                     prompt = _build_image_prompt(
                         normalize_cut_image_prompt(
@@ -625,7 +650,7 @@ async def generate_all_images_async(project_id: str, db: Session = Depends(get_d
                         )
                         image_service.negative_prompt = base_negative_prompt
                         _ilog(f"_gen_one cut={cut.cut_number} SUCCESS in {_t.time()-_s:.1f}s → {result_path}")
-                        cut.image_path = _to_relative(project_id, result_path)
+                        cut.image_path = _to_relative(project_id, result_path, proj.config)
                         cut.image_model = image_model
                         cut.status = "completed"
                         # v1.1.55-fix: 스튜디오 이미지 생성 비용 기록
@@ -656,7 +681,7 @@ async def generate_all_images_async(project_id: str, db: Session = Depends(get_d
 
             # v1.1.55-fix: 실제 생성된 이미지 수 검증 — 0개면 failed 처리
             import os as _os
-            _img_dir = DATA_DIR / project_id / "images"
+            _img_dir = resolve_project_dir(project_id, proj.config, create=False) / "images"
             missing_nums = []
             for cut in cut_specs:
                 plain = _img_dir / f"cut_{cut.cut_number}.png"
@@ -735,7 +760,7 @@ async def resume_images_async(project_id: str, db: Session = Depends(get_db)):
         return {"status": "already_running", "step": "image"}
 
     cuts = db.query(Cut).filter(Cut.project_id == project_id).order_by(Cut.cut_number).all()
-    project_dir = DATA_DIR / project_id
+    project_dir = resolve_project_dir(project_id, project.config, create=False)
     image_model = resolve_image_model(project.config.get("image_model"))
     global_style = project.config.get("image_global_prompt", "")
     ref_images = _collect_reference_images(project_id, project.config)
@@ -807,6 +832,7 @@ async def resume_images_async(project_id: str, db: Session = Depends(get_db)):
                 CONCURRENT_IMAGES = 1
 
             image_service = get_image_service(image_model)
+            _attach_oneclick_progress_hooks(project_id, image_service)
             _ilog(f"resume _run service={type(image_service).__name__} model={image_model} aspect={aspect_ratio}")
             try:
                 image_service.negative_prompt = (proj.config.get("image_negative_prompt") or "").strip()
@@ -826,7 +852,7 @@ async def resume_images_async(project_id: str, db: Session = Depends(get_db)):
             _apply_historical_negative_prompt(image_service, proj.config, project_id, proj.title, proj.topic)
             base_negative_prompt = (getattr(image_service, "negative_prompt", "") or "").strip()
 
-            image_dir = DATA_DIR / project_id / "images"
+            image_dir = resolve_project_dir(project_id, proj.config, create=True) / "images"
             image_dir.mkdir(parents=True, exist_ok=True)
 
             db_cuts = local_db.query(Cut).filter(Cut.project_id == project_id).order_by(Cut.cut_number).all()
@@ -834,7 +860,7 @@ async def resume_images_async(project_id: str, db: Session = Depends(get_db)):
             for c in db_cuts:
                 if not c.image_prompt:
                     continue
-                existing = find_existing_cut_image(DATA_DIR / project_id, c.cut_number)
+                existing = find_existing_cut_image(resolve_project_dir(project_id, proj.config, create=False), c.cut_number)
                 if not c.image_path or not existing:
                     pending.append(c)
                     continue
@@ -877,6 +903,11 @@ async def resume_images_async(project_id: str, db: Session = Depends(get_db)):
                         _ilog(f"resume _gen_one cut={cut.cut_number} exit_after_sem status={state.status}")
                         return
                     image_path = str(image_dir / f"cut_{cut.cut_number}.png")
+                    if is_comfyui_model:
+                        image_service.progress_context = {
+                            "cut_number": cut.cut_number,
+                            "total_cuts": len(db_cuts),
+                        }
                     is_character_cut = cut_has_character(cut.cut_number) and (bool(char_images) or bool(character_description))
                     prompt = _build_image_prompt(
                         normalize_cut_image_prompt(
@@ -917,7 +948,7 @@ async def resume_images_async(project_id: str, db: Session = Depends(get_db)):
                         )
                         image_service.negative_prompt = base_negative_prompt
                         _ilog(f"resume _gen_one cut={cut.cut_number} SUCCESS in {_t.time()-_s:.1f}s → {result_path}")
-                        cut.image_path = _to_relative(project_id, result_path)
+                        cut.image_path = _to_relative(project_id, result_path, proj.config)
                         cut.image_model = image_model
                         cut.status = "completed"
                     except Exception as e:
@@ -932,6 +963,29 @@ async def resume_images_async(project_id: str, db: Session = Depends(get_db)):
 
             tasks = [asyncio.create_task(_gen_one(c)) for c in pending]
             await asyncio.gather(*tasks, return_exceptions=True)
+
+            image_root = resolve_project_dir(project_id, proj.config, create=False)
+            missing_nums = []
+            for cut in db_cuts:
+                if not cut.image_prompt:
+                    continue
+                existing = find_existing_cut_image(image_root, cut.cut_number)
+                if not existing:
+                    missing_nums.append(cut.cut_number)
+            if missing_nums:
+                msg = (
+                    f"이미지 생성 누락: {len(db_cuts) - len(missing_nums)}/{len(db_cuts)}컷 완료, "
+                    f"누락 컷: {', '.join(str(n) for n in missing_nums[:20])}"
+                )
+                _ilog(f"resume incomplete project={project_id} {msg}")
+                proj = local_db.query(Project).filter(Project.id == project_id).first()
+                if proj:
+                    ss = dict(proj.step_states or {})
+                    ss["4"] = "failed"
+                    proj.step_states = ss
+                    local_db.commit()
+                fail_task(project_id, "image", msg)
+                return
 
             proj = local_db.query(Project).filter(Project.id == project_id).first()
             ss = dict(proj.step_states or {})
@@ -994,6 +1048,7 @@ async def generate_one_image(
     aspect_ratio = project.config.get("aspect_ratio", "16:9")
 
     image_service = get_image_service(image_model)
+    _attach_oneclick_progress_hooks(project_id, image_service)
     try:
         image_service.negative_prompt = (project.config.get("image_negative_prompt") or "").strip()
     except Exception:
@@ -1014,9 +1069,14 @@ async def generate_one_image(
     char_images = _collect_character_images(project_id, project.config)
 
     try:
-        image_dir = DATA_DIR / project_id / "images"
+        image_dir = resolve_project_dir(project_id, project.config, create=True) / "images"
         image_dir.mkdir(parents=True, exist_ok=True)
         image_path = str(image_dir / f"cut_{cut_number}.png")
+        if is_comfyui_model:
+            image_service.progress_context = {
+                "cut_number": cut_number,
+                "total_cuts": db.query(Cut).filter(Cut.project_id == project_id).count(),
+            }
 
         is_character_cut = cut_has_character(cut_number) and (bool(char_images) or bool(character_description))
         prompt = _build_image_prompt(
@@ -1059,7 +1119,7 @@ async def generate_one_image(
         )
         image_service.negative_prompt = base_negative_prompt
 
-        cut.image_path = _to_relative(project_id, result_path)
+        cut.image_path = _to_relative(project_id, result_path, project.config)
         cut.image_model = image_model
         cut.status = "completed"
         # v1.1.55-fix: 단건 이미지 생성 비용 기록
@@ -1099,7 +1159,8 @@ async def upload_reference_image(
         raise HTTPException(404, "Project not found")
 
     try:
-        ref_dir = DATA_DIR / project_id / "references"
+        project_dir = resolve_project_dir(project_id, project.config or {}, create=True)
+        ref_dir = project_dir / "references"
         ref_dir.mkdir(parents=True, exist_ok=True)
 
         ref_path = ref_dir / f"reference_{file.filename}"
@@ -1138,7 +1199,8 @@ async def upload_character_image(
         raise HTTPException(404, "Project not found")
 
     try:
-        char_dir = DATA_DIR / project_id / "characters"
+        project_dir = resolve_project_dir(project_id, project.config or {}, create=True)
+        char_dir = project_dir / "characters"
         char_dir.mkdir(parents=True, exist_ok=True)
 
         char_path = char_dir / f"char_{file.filename}"
@@ -1176,7 +1238,7 @@ async def delete_reference_image(project_id: str, filename: str, db: Session = D
     db.commit()
     # Delete file
     try:
-        (DATA_DIR / project_id / target).unlink(missing_ok=True)
+        (resolve_project_dir(project_id, project.config or {}, create=False) / target).unlink(missing_ok=True)
     except:
         pass
     return {"status": "deleted"}
@@ -1194,7 +1256,8 @@ async def upload_logo_image(
         raise HTTPException(404, "Project not found")
 
     try:
-        logo_dir = DATA_DIR / project_id / "logos"
+        project_dir = resolve_project_dir(project_id, project.config or {}, create=True)
+        logo_dir = project_dir / "logos"
         logo_dir.mkdir(parents=True, exist_ok=True)
 
         logo_path = logo_dir / f"logo_{file.filename}"
@@ -1231,7 +1294,7 @@ async def delete_logo_image(project_id: str, filename: str, db: Session = Depend
     flag_modified(project, "config")
     db.commit()
     try:
-        (DATA_DIR / project_id / target).unlink(missing_ok=True)
+        (resolve_project_dir(project_id, project.config or {}, create=False) / target).unlink(missing_ok=True)
     except:
         pass
     return {"status": "deleted"}
@@ -1277,11 +1340,12 @@ def list_project_assets(project_id: str, db: Session = Depends(get_db)):
     if not project:
         raise HTTPException(404, "Project not found")
     cfg = project.config or {}
+    project_dir = resolve_project_dir(project_id, cfg, create=False)
 
     def _present(rel_list: list[str]) -> list[dict]:
         out = []
         for rel in rel_list or []:
-            abs_p = DATA_DIR / project_id / rel
+            abs_p = project_dir / rel
             out.append({
                 "path": rel,
                 "filename": Path(rel).name,
@@ -1311,7 +1375,7 @@ async def delete_character_image(project_id: str, filename: str, db: Session = D
     flag_modified(project, "config")
     db.commit()
     try:
-        (DATA_DIR / project_id / target).unlink(missing_ok=True)
+        (resolve_project_dir(project_id, project.config or {}, create=False) / target).unlink(missing_ok=True)
     except:
         pass
     return {"status": "deleted"}
@@ -1338,7 +1402,7 @@ async def upload_custom_image(
         raise HTTPException(404, f"Cut {cut_number} not found")
 
     try:
-        image_dir = DATA_DIR / project_id / "images"
+        image_dir = resolve_project_dir(project_id, project.config, create=True) / "images"
         image_dir.mkdir(parents=True, exist_ok=True)
 
         # Save uploaded file
@@ -1347,7 +1411,7 @@ async def upload_custom_image(
         with open(image_path, "wb") as f:
             f.write(content)
 
-        cut.image_path = _to_relative(project_id, str(image_path))
+        cut.image_path = _to_relative(project_id, str(image_path), project.config)
         cut.is_custom_image = True
         cut.status = "completed"
         db.commit()

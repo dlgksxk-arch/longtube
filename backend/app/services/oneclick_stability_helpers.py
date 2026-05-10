@@ -9,6 +9,25 @@ from typing import Any, Optional
 
 DEFAULT_CHANNELS = [1, 2, 3, 4]
 QUEUE_EPISODE_FALLBACK = 10**9
+QUEUE_ACTIVE_STATUSES = {"running", "uploading", "queued", "prepared"}
+QUEUE_TERMINAL_STATUSES = {"completed", "failed", "cancelled", "paused"}
+
+
+def normalized_queue_status(value: Any) -> str:
+    status = str(value or "pending").strip().lower()
+    if status in QUEUE_ACTIVE_STATUSES:
+        return "running"
+    if status in QUEUE_TERMINAL_STATUSES:
+        return status
+    return "pending"
+
+
+def is_active_queue_status(value: Any) -> bool:
+    return normalized_queue_status(value) == "running"
+
+
+def is_terminal_queue_status(value: Any) -> bool:
+    return normalized_queue_status(value) in QUEUE_TERMINAL_STATUSES
 
 
 def task_rank_for_project_dedupe(task: dict[str, Any]) -> tuple[int, str]:
@@ -128,10 +147,16 @@ def sort_queue_items_for_execution(
 ) -> list[dict[str, Any]]:
     """Sort queue rows into the same order the scheduler should consume them."""
     valid_channels = channels or DEFAULT_CHANNELS
+    running: list[dict[str, Any]] = []
     immediate: list[dict[str, Any]] = []
     normal: list[dict[str, Any]] = []
     for item in items:
-        if is_immediate_queue_item(item):
+        status = normalized_queue_status(item.get("status"))
+        if status == "running":
+            running.append(item)
+        elif status in QUEUE_TERMINAL_STATUSES:
+            continue
+        elif is_immediate_queue_item(item):
             immediate.append(item)
         else:
             normal.append(item)
@@ -161,4 +186,11 @@ def sort_queue_items_for_execution(
             if group:
                 merged.append(group.pop(0))
 
-    return immediate + merged
+    running.sort(
+        key=lambda item: (
+            str(item.get("started_at") or ""),
+            str(item.get("queued_at") or ""),
+            str(item.get("id") or ""),
+        )
+    )
+    return running + immediate + merged

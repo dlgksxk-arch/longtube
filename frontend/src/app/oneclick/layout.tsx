@@ -124,27 +124,23 @@ export default function OneClickLayout({
   // 큐 + 활성 태스크 로드
   const load = useCallback(async () => {
     try {
-      const [q, runningResult, listResult] = await Promise.all([
+      const [q, runningResult] = await Promise.all([
         oneclickApi.getQueue(),
         oneclickApi.getRunning(),
-        oneclickApi.list(),
       ]);
       setQueue(q);
-      const listedActive = (listResult?.tasks || []).filter(
-        (item) => item.status === "running" && (item.current_step != null || item.sub_status),
-      );
       const running = runningResult?.running;
       if (!running?.task_id) {
         setTask(null);
-        setActiveTasks(listedActive);
+        setActiveTasks([]);
         return;
       }
       const active = await oneclickApi.get(running.task_id);
       setTask(active || null);
       setActiveTasks(
         active?.status === "running" && (active.current_step != null || active.sub_status)
-          ? [active, ...listedActive.filter((item) => item.task_id !== active.task_id)]
-          : listedActive,
+          ? [active]
+          : [],
       );
     } catch {
       /* silent */
@@ -158,12 +154,13 @@ export default function OneClickLayout({
   // 사이드바 상태/호출 모델 실시간 폴링
   useEffect(() => {
     pollRef.current = setInterval(() => {
+      if (typeof document !== "undefined" && document.hidden) return;
       void load();
-    }, 3000);
+    }, pathname === "/oneclick/live" ? 15000 : 10000);
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
-  }, [load]);
+  }, [load, pathname]);
 
   const isRunning =
     task &&

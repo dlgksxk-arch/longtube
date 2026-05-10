@@ -13,7 +13,7 @@ v1.1.55: 모든 이미지 생성(컷, 썸네일, 재생성) 경로에서 동일�
 """
 import re
 from pathlib import Path
-from app.config import DATA_DIR, resolve_project_dir
+from app.config import resolve_project_dir
 
 
 # ── 레퍼런스 스타일 락 (모든 이미지 생성 경로 공용) ──
@@ -860,7 +860,7 @@ def cut_has_character(cut_number: int) -> bool:
 def collect_reference_images(project_id: str, config: dict) -> list[str]:
     """config 의 reference_images 에서 절대 경로 목록을 반환."""
     ref_imgs = config.get("reference_images", [])
-    project_dir = resolve_project_dir(project_id)
+    project_dir = resolve_project_dir(project_id, config, create=False)
     paths = []
     for rel in ref_imgs:
         p = Path(rel)
@@ -873,7 +873,7 @@ def collect_reference_images(project_id: str, config: dict) -> list[str]:
 def collect_character_images(project_id: str, config: dict) -> list[str]:
     """config 의 character_images 에서 절대 경로 목록을 반환."""
     char_imgs = config.get("character_images", [])
-    project_dir = resolve_project_dir(project_id)
+    project_dir = resolve_project_dir(project_id, config, create=False)
     paths = []
     for rel in char_imgs:
         p = Path(rel)

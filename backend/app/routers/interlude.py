@@ -26,7 +26,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
-from app.config import DATA_DIR, CUT_VIDEO_DURATION
+from app.config import CUT_VIDEO_DURATION, resolve_project_dir
 from app.models.cut import Cut
 from app.models.database import get_db
 from app.models.project import Project
@@ -49,19 +49,19 @@ FIRST_INTERMISSION_AFTER_CUTS = 3
 
 
 def _interlude_dir(project_id: str) -> Path:
-    d = DATA_DIR / project_id / "interlude"
+    d = resolve_project_dir(project_id, create=True) / "interlude"
     d.mkdir(parents=True, exist_ok=True)
     return d
 
 
 def _output_dir(project_id: str) -> Path:
-    d = DATA_DIR / project_id / "output"
+    d = resolve_project_dir(project_id, create=True) / "output"
     d.mkdir(parents=True, exist_ok=True)
     return d
 
 
 def _to_rel(project_id: str, abs_path: str) -> str:
-    project_dir = str(DATA_DIR / project_id).replace("\\", "/")
+    project_dir = str(resolve_project_dir(project_id, create=False)).replace("\\", "/")
     p = str(abs_path).replace("\\", "/")
     if p.startswith(project_dir):
         return p[len(project_dir):].lstrip("/")
@@ -72,7 +72,7 @@ def _resolve_under_project(project_id: str, rel_or_abs: str) -> Path:
     p = Path(rel_or_abs)
     if p.is_absolute():
         return p
-    return DATA_DIR / project_id / rel_or_abs
+    return resolve_project_dir(project_id, create=False) / rel_or_abs
 
 
 def _get_interlude_config(project: Project) -> dict:

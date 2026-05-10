@@ -4,10 +4,11 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+import anyio
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.models.database import get_db
+from app.models.database import SessionLocal, get_db
 from app.models.user import User
 from app.security.auth import (
     SESSION_COOKIE_NAME,
@@ -77,14 +78,27 @@ def _set_session_cookie(response: Response, user: User) -> None:
     )
 
 
-def get_optional_user(request: Request, db: Session = Depends(get_db)) -> User | None:
-    payload = parse_session_token(request.cookies.get(SESSION_COOKIE_NAME))
+def get_optional_user(request: Request) -> User | None:
+    """Return the current approved user if session cookie is valid.
+
+    Important: avoid opening a DB session when there is no cookie at all.
+    This endpoint is called on every page load; a slow/locked DB should not
+    make the whole UI feel "down" for logged-out users.
+    """
+    token = request.cookies.get(SESSION_COOKIE_NAME)
+    if not token:
+        return None
+    payload = parse_session_token(token)
     if not payload:
         return None
-    user = db.query(User).filter(User.id == payload.get("sub")).first()
-    if not user or user.status != "approved":
-        return None
-    return user
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.id == payload.get("sub")).first()
+        if not user or user.status != "approved":
+            return None
+        return user
+    finally:
+        db.close()
 
 
 def require_user(user: User | None = Depends(get_optional_user)) -> User:
@@ -144,7 +158,29 @@ def logout(response: Response):
 
 
 @router.get("/me", response_model=AuthMeOut)
-def me(user: User | None = Depends(get_optional_user)):
+async def me(request: Request):
+    # Fast path: no cookie → return immediately without consuming the sync threadpool.
+    token = request.cookies.get(SESSION_COOKIE_NAME)
+    if not token:
+        return AuthMeOut(authenticated=False, user=None)
+
+    payload = parse_session_token(token)
+    if not payload:
+        return AuthMeOut(authenticated=False, user=None)
+
+    user_id = payload.get("sub")
+
+    def _load_user() -> User | None:
+        db = SessionLocal()
+        try:
+            user = db.query(User).filter(User.id == user_id).first()
+            if not user or user.status != "approved":
+                return None
+            return user
+        finally:
+            db.close()
+
+    user = await anyio.to_thread.run_sync(_load_user)
     return AuthMeOut(authenticated=bool(user), user=_user_out(user) if user else None)
 
 

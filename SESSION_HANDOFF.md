@@ -1,212 +1,214 @@
-# LongTube Session Handoff
+# 새 세션 인계 메모 - 2026-05-09 21:50 KST
 
-Saved at: 2026-05-08 00:22 +09:00
-Workspace: `C:\Users\Ai_M9\Desktop\longtube`
+## 작업 원칙
 
-## 최상위 절대 지킴
+- 추측으로 수정하지 말 것. 실제 파일, 실제 API, 실제 브라우저 상태 기준으로만 판단.
+- 생성 결과물 직접 수정 금지. 결과물 문제는 로직 수정으로 다음 생성물에 반영.
+- 실행 중 작업이 있으면 백엔드/ComfyUI 재시작은 사용자 허락 없이 하지 말 것.
+- 현재 워킹트리에 이전 세션 변경이 다수 섞여 있음. 이번 큐 정리와 무관한 변경은 되돌리지 말 것.
 
-- 채널 증가, 채널 수, 프리셋 수와 무관하게 대본 생성 프롬프트 소스는 단 1개 파일만 사용합니다.
-- 전역 대본 생성은 반드시 `backend/app/services/llm/base.py`만 사용합니다.
-- 추가 대본 생성 프롬프트 파일, 채널별 대본 생성 프롬프트, 프리셋별 대본 생성 프롬프트를 절대 만들지 않습니다.
-- 대본 생성 기본 프롬프트 수정은 `backend/app/services/llm/base.py` 안에서만 허용합니다.
+## 이번 세션 핵심 목표
 
-## Start Rule
+사용자가 지적한 문제:
+- 전체 작업큐에서 실제 진행 중인 에피소드가 최상단 고정되지 않음.
+- 진행 중 작업인데 `1번 지정`, 이동, 삭제 버튼이 살아 있음.
+- 완료/실패/취소/중단 상태가 큐에 섞여 다음 실행 순서와 작업대 표시가 틀어짐.
+- 프론트가 자체 정렬을 하면서 백엔드 실제 순서와 화면 순서가 어긋날 수 있음.
 
-- 새 세션 시작 순서:
-  1. `docs/SESSION_PROTOCOL.md`
-  2. `SESSION_HANDOFF.md`
-  3. `SESSION_QA_V3_2026-05-08.md` 전체 원문
-  4. `CONTEXT.md`
-  5. 현재 요청과 직접 관련된 코드 파일
-- `SESSION_QA_V3_2026-05-08.md`는 요약으로 대체하지 않고 처음부터 끝까지 읽습니다.
-- `SESSION_QA_V3_2026-05-08.md`는 1,097줄 파일입니다. 한 번 출력이 잘리면 줄 범위를 나눠 EOF까지 읽습니다. 출력 제한으로 일부만 읽은 상태에서 작업을 시작하지 않습니다.
-- 날짜별 `SESSION_HANDOFF_YYYY-MM-DD.md` 파일은 보관본입니다.
-- `docs/ARCHITECTURE.md`는 초기 설계 기록이며 현재 구현 판단 기준이 아닙니다.
+정한 동작 규칙:
+1. 백엔드가 제작큐의 단일 기준이다.
+2. 작업큐에는 `pending`과 `running`만 남긴다.
+3. `completed / failed / cancelled / paused`는 작업큐에서 제거한다.
+4. `running / queued / prepared / uploading`은 작업큐 표시상 `running`으로 취급한다.
+5. 실행 중 작업은 항상 최상단에 고정한다.
+6. 실행 중 작업의 선택, `1번 지정`, 위/아래 이동, 삭제는 비활성화한다.
+7. 실행 순서는 `running` -> 작업대 수동 1번 지정 -> 일반 자동 큐 순서다.
+8. 일반 자동 큐는 채널 실행 시간 순, 같은 채널 내부는 EP 오름차순이다.
+9. 프론트는 서버가 내려준 큐 순서를 그대로 표시한다.
+10. 프론트가 PUT으로 실행 중 항목을 빼거나 바꿔 보내도 백엔드가 실행 중 항목을 보존한다.
 
-## V3 Naming
+## 이번 세션 수정 파일
 
-- 앞으로의 버전 명명은 사용자 지시대로 V3를 사용합니다.
-- V3 작업대/스튜디오 문답 원문 파일:
-  - `SESSION_QA_V3_2026-05-08.md`
+### `backend/app/services/oneclick_stability_helpers.py`
 
-## V3 Workbench Current Facts
+추가/수정:
+- `QUEUE_ACTIVE_STATUSES = {"running", "uploading", "queued", "prepared"}`
+- `QUEUE_TERMINAL_STATUSES = {"completed", "failed", "cancelled", "paused"}`
+- `normalized_queue_status(value)`
+- `is_active_queue_status(value)`
+- `is_terminal_queue_status(value)`
+- `sort_queue_items_for_execution()`에서 terminal 상태 항목은 실행 정렬 결과에서 제외.
+- active 상태는 모두 `running` 그룹으로 정렬.
 
-- 작업대 새 실행 프로젝트 ID는 `V3_CH{channel}_EP{episode}_{unique}` 형식입니다.
-- 실제 결과 폴더는 `D:\long_result\CH{channel}\EP.{episode}.{unique}`입니다.
-- `backend/app/config.py`의 `resolve_project_dir()`가 V3 프로젝트 ID를 위 폴더로 직접 매핑합니다.
-- 작업대 `prepare_task()`는 채널에 연결된 Studio 프로젝트를 원본으로 새 V3 실행 프로젝트를 만듭니다.
-- 큐 아이템별 `template_project_id`보다 채널 `channel_presets` 연결 Studio가 실행 원본입니다.
-- V3 실행 Step 2~6은 `pipeline_tasks._step_*` 직접 호출이 아니라 Studio 개별 탭 라우터를 호출합니다:
-  - script: `app.routers.script.generate_script_async`
-  - voice: `app.routers.voice.generate_all_voices_async`
-  - image: `app.routers.image.generate_all_images_async`
-  - video: `app.routers.video.generate_all_videos_async`
-  - render: `app.routers.subtitle.render_video_async`
-- 각 단계 시작 직전에 연결 Studio의 현재 config를 다시 읽고 V3 실행 프로젝트에 반영합니다.
-- Step 7 업로드는 기존 작업대 업로드 경로를 유지하되, `template_project_id/source_project_id`를 연결 Studio로 둬서 Studio OAuth를 우선 사용합니다.
-- 단계 삭제는 산출물과 DB Cut 필드를 같이 정리합니다.
+의도:
+- 큐 정렬 기준을 순수 헬퍼에 고정.
+- 서비스/테스트가 같은 상태 해석을 쓰게 함.
 
-## User Rules
+### `backend/app/services/oneclick_service.py`
 
-- 추론하지 않습니다. 실제 파일, 로그, DB, API 응답 기준으로 답합니다.
-- 추측성 변경을 하지 않습니다. 정확히 필요한 것만 합니다.
-- 설명은 짧게 합니다.
-- 한국어 존댓말, 자비스 말투를 사용합니다.
-- 생성 결과물에 문제가 있으면 결과물을 직접 수정하지 않습니다. 로직을 고쳐 다음 생성물에 적용합니다.
+주요 추가/수정 지점:
+- `_sync_queue_items_from_tasks_for_save(save: bool = True)`
+  - 큐 행과 `_TASKS` 상태를 동기화.
+  - linked task가 terminal이면 큐에서 제거.
+  - linked task가 active이면 큐 행을 `running`으로 보정.
+  - 큐 행이 `running`인데 linked task가 없으면 `pending`으로 내리고 task 관련 필드 제거.
+  - 실행 중 task가 있는데 큐 행이 없으면 `running` 큐 행을 새로 생성.
+  - `_STATE_LOADED` 전이고 실제 큐 파일이 존재하는 경우, task 저장 시 빈 `_QUEUE`가 실제 큐를 덮어쓰지 않도록 early return 추가.
 
-## Current Verified Runtime State
+- `_queue_item_identity_values(item)`
+  - `id`, `task_id`, `project_id`, `result_dir`, `(channel, episode_number, topic)` 기반 identity 생성.
 
-- Backend health checked on 2026-05-08:
-  - `GET http://127.0.0.1:8000/api/health`
-  - expected response after restart: `status=ok`, `version=V3`, `comfyui_base_url=http://127.0.0.1:8188`
-- Frontend is listening on `0.0.0.0:3000`.
-- Backend is listening on `0.0.0.0:8000`.
-- ComfyUI is listening on `0.0.0.0:8188`.
-- `GET /api/oneclick/safety` without login cookie returns `401`. This matches the current auth middleware in `backend/app/main.py`.
-- In-app browser was checked at `http://127.0.0.1:3000/oneclick/live` on 2026-05-08 00:19 +09:00.
-- Browser-visible workbench state:
-  - version badge: `vV3`
-  - queue: `553건 대기`
-  - current work target: `CH3 EP.06 히미코는 정말 일본 첫 여왕이었을까`
-  - current target status: `대기`, progress `0.0%`
-  - visible log: `[시스템] 현재 진행 중인 태스크가 없습니다.`
-  - visible safety warning: `[안전장치] 실행 중인 OneClick 작업이 없는데 API 비용 기록이 발생했습니다. 자동제작을 30분간 중지했습니다.`
-  - queue counts: `CH1 29`, `CH2 45`, `CH3 195`, `CH4 284`
-  - first visible queue items:
-    1. `CH3 EP.06 히미코는 정말 일본 첫 여왕이었을까` - 실패 재시도
-    2. `CH1 EP.37 500년을 버티고도 통일되지 못한 나라` - 실패 재시도
-    3. `CH2 EP.16 The Tea Bag: Invented Because Someone Was Cheap` - 실패 재시도
-    4. `CH3 EP.07 야마타이국은 어디에 있었을까` - 엑셀 등록
-    5. `CH4 EP.17 마우리아 제국` - 미완성 복구
+- `_queue_item_matches_identity(item, identities)`
+  - 프론트 PUT 입력에서 실행 중 행 중복/삭제 방지에 사용.
 
-## Current Source Of Truth
+- `_normalize_queue_runtime_state(save: bool = True)`
+  - get/save/scheduler/fire 전에 큐를 동기화, dedupe, 정렬.
 
-- Backend version:
-  - `backend/app/main.py`: `V3`
-  - `/api/health`: `V3`
-- Frontend version:
-  - `frontend/package.json`: `3.0.0`
-  - `frontend/src/lib/version.ts`: `V3`
-- Actual workspace path:
-  - `C:\Users\Ai_M9\Desktop\longtube`
-- Current data root in code:
-  - default `data/outputs`
-  - `CHANNELS_ROOT = DATA_DIR / "channels"`
-  - `SYSTEM_PROJECTS_ROOT = DATA_DIR / "_system" / "projects"`
-  - archive root default `D:\long_result`
+- `get_queue()`
+  - 반환 전에 `_normalize_queue_runtime_state()` 실행.
 
-## Core Code Map
+- `set_queue(new_state)`
+  - 기존 active/running 항목을 먼저 캡처.
+  - 프론트가 보내온 항목 중 active identity와 겹치는 항목 제거.
+  - active 항목을 맨 앞에 합쳐 저장.
+  - `last_run_dates`는 기존 값 유지.
 
-- App entry/auth/router mount:
-  - `backend/app/main.py`
-- Config/path resolution:
-  - `backend/app/config.py`
-- Pipeline steps:
-  - `backend/app/tasks/pipeline_tasks.py`
-- One-click queue/task runner:
-  - `backend/app/services/oneclick_service.py`
-  - `backend/app/routers/oneclick.py`
-- Shorts selection/rendering:
-  - `backend/app/services/shorts_service.py`
-  - `backend/app/routers/subtitle.py`
-- Script prompt rules:
-  - `backend/app/services/llm/base.py`
-- Image prompt rules:
-  - `backend/app/services/image/prompt_builder.py`
-- Live status UI:
-  - `frontend/src/app/oneclick/live/page.tsx`
-- One-click queue UI:
-  - `frontend/src/app/oneclick/page.tsx`
-- Frontend API client:
-  - `frontend/src/lib/api.ts`
+- `_fire_queue_for_channel()`
+  - 실행 전 runtime normalize.
+  - `pending`이 아닌 큐 행은 실행 대상으로 삼지 않음.
 
-## Current Pipeline Facts
+- `_queue_loop()`
+  - 매 iteration에서 runtime normalize 후 head 확인.
 
-- One-click backend flow in `oneclick_service.py`:
-  - Step 2: script
-  - Step 3 and Step 4: voice + image run in parallel
-  - Step 5: video
-  - Step 6 render and Step 7 upload are handled after the sync pipeline path
-- Shorts constants currently in `shorts_service.py`:
-  - `SHORTS_CUT_COUNT = 12`
-  - `SHORTS_EXCLUDE_EDGE_CUTS = 5`
-  - `SHORTS_PLAYBACK_SPEED = 1.1`
-  - canvas `1080x1920`
-- TTS duration constants currently in `config.py`:
-  - `TTS_TARGET_DURATION = 4.5`
-  - `TTS_MIN_DURATION = 4.3`
-  - `TTS_MAX_DURATION = 4.8`
+- `run_queue_top_now()`
+  - 실행 전 runtime normalize.
 
-## Recent Verified Fix Areas
+- `_dispatch_next_persisted_queue_item()`
+  - 즉시 실행 dispatch 전 runtime normalize.
 
-### 2026-05-07 — ComfyUI 로컬모델 v1 프롬프트 분리/정리
+주의:
+- 이 파일에는 이번 세션 이전부터 많은 변경이 이미 들어가 있었음.
+- 이번 큐 수정 외 기존 V3 재시작 복구/스토리지 관련 변경을 되돌리지 말 것.
 
-- 대상:
-  - `backend/app/services/image/comfyui_service.py`
-  - `backend/app/services/image/asset_guard.py`
-  - `backend/app/routers/image.py`
-  - `backend/app/tasks/pipeline_tasks.py`
-  - `backend/tests/test_oneclick_stability.py`
-- 핵심 문제:
-  - `CH3 딸깍폼-일본역사` 스튜디오 컷 1 미소국 프롬프트가 2020년대 현대 일본 식탁인데, ComfyUI 결과가 성/바다/번개/외부 풍경으로 이탈함.
-  - 원인은 양성 프롬프트에 금지형 문장과 장면 단어가 들어가고, `SDXL LIGHTNING` 같은 모델/스타일 문구가 실제 번개 토큰으로 작동한 점.
-- 최종 반영:
-  - 로컬모델 v1 양성 마스터 프롬프트에서 `Do not`, `ABSOLUTELY NO`, `SDXL LIGHTNING`, 텍스트/지도 금지 문장 제거.
-  - 로컬모델 v1 양성 프롬프트는 보여줄 장면/스타일만 남김.
-  - 공통 양성 금지 지시(`HARD HISTORICAL...`, `ABSOLUTELY NO TEXT/MAPS`, `BOOK RENDERING LOCK`)는 로컬 v1 최종 양성 입력 전에 제거.
-  - 현대 일본 주방/식탁/미소국 컷은 양성에 `Present-day modern setting`, `Ordinary modern Japanese home kitchen`, `The main subject is a bowl of miso soup` 보강.
-  - 네거티브에는 장면 단어 자동 삽입을 하지 않음. `lightning`, `storm`, `temple`, `castle`, `ocean`, `road`, `building`, `fire`, `boat`, `mountain` 등을 네거티브에 자동 추가하지 않음.
-  - 네거티브는 기본 품질/텍스트/지도/워터마크/로고 중심만 유지.
-  - `.prompt.json`에 실제 ComfyUI 입력값 `comfyui_positive_prompt`, `comfyui_negative_prompt` 저장.
-- 직접 검증:
-  - 미소국 테스트 프롬프트로 `ComfyUIImageService("comfyui-dreamshaper-xl-longtube")` 직접 호출.
-  - 생성 테스트 파일:
-    - `C:\Users\Ai_M9\Desktop\longsult\_system\diagnostics\miso_local_v1_test.png`
-    - `C:\Users\Ai_M9\Desktop\longsult\_system\diagnostics\miso_local_v1_test_after_fix.png`
-  - 최종 조립 검증:
-    - 양성에 `lightning/storm/temple/castle/ocean/fire/armor/battle/map/text/ABSOLUTELY NO/Do not` 없음.
-    - 네거티브에 `lightning/storm/temple/castle/ocean/road/building/fire/boat/mountain` 없음.
-    - 네거티브에 `map/text/watermark/logo` 있음.
-- 검증 명령:
-  - `python -m py_compile backend\app\services\image\comfyui_service.py`
-  - `python -m unittest backend.tests.test_oneclick_stability.HistoricalImagePromptStabilityTests -q`
-- 백엔드:
-  - `GET http://127.0.0.1:8000/api/health` 정상.
-  - 응답 기준: `status=ok`, `version=V3`, `comfyui_base_url=http://127.0.0.1:8188`
-- 관련 커밋:
-  - `47b8c58 fix: prioritize cut prompt for local v1 images`
-  - `1b9d838 fix: split local v1 positive and negative prompts`
-  - `ab4e710 fix: keep scene terms out of local v1 negatives`
+### `frontend/src/app/oneclick/live/page.tsx`
 
-- CH3 actual YouTube channel name verified by API in prior work:
-  - `闇解き日本史`
-  - channel id: `UCSmk_wHxkZLf23gJN0c5NVQ`
-- Wrong CH3 fallback name `Whisper Hour` was fixed in:
-  - `backend/app/services/shorts_service.py`
-  - `backend/app/routers/subtitle.py`
-- Japanese/non-English shorts fallback safeguards were added in `shorts_service.py`.
-- Shorts image reuse issue was fixed in `backend/app/tasks/pipeline_tasks.py`:
-  - deterministic shorts-selected cuts disable grouped image reuse.
-  - stale cut videos regenerate when the image is newer than the video.
+수정:
+- `sortQueueItemsForWorkbench` import 제거.
+- `refreshLiveSnapshot()`에서 `queueState.items || []`를 그대로 사용.
+- 자동 tick에서도 `queueState.items || []`를 그대로 사용.
+- `moveQueueItem`, `sortQueueItems`, `deleteQueueItem`, `deleteQueueItems`, `promoteQueueItemsToNext`에서 서버 응답 `updated.items || []` 그대로 반영.
+- 실행 중 항목은 기존 `isQueueItemLocked()` 기준으로 선택/이동/삭제/1번 지정 비활성화.
 
-## Worktree Notes
+의도:
+- 프론트 자체 정렬 제거.
+- 화면 순서와 백엔드 순서를 일치시킴.
 
-- The worktree contained many stabilization changes from earlier sessions.
-- Generated/runtime artifacts are ignored by `.gitignore`:
-  - `data/`
-  - `*.db`
-  - `token*.json`
-  - `client_secret*.json`
-  - `backend/logs/`
-  - `*.log`
-  - `*.tsbuildinfo`
-  - `tmp/`, `tmp_*`
-- Do not commit OAuth/token/runtime output files.
-- Do not use `git reset --hard` or broad checkout to discard work.
+### `frontend/src/app/oneclick/live/queueHelpers.ts`
 
-## Next Checks Before More Work
+현재 상태:
+- `sortQueueItemsForWorkbench()` 함수는 남아 있으나 `page.tsx`에서는 더 이상 사용하지 않음.
+- 필요 시 다음 세션에서 완전 제거 가능. 현재 `tsc` 통과.
 
-1. `git status --short`
-2. `Invoke-RestMethod -Uri http://127.0.0.1:8000/api/health`
-3. If checking authenticated endpoints, use browser/session context or login first.
-4. For UI truth, verify in browser rather than assuming from code.
+### `backend/tests/test_oneclick_stability.py`
+
+추가/수정:
+- `test_sort_queue_keeps_running_first_and_removes_terminal_rows`
+  - running 최상단, terminal 제거 검증.
+- `test_queue_task_sync_prunes_terminal_rows_and_marks_active_as_running`
+  - linked terminal 큐 제거, active task 큐 running 보정 검증.
+- `test_queue_task_sync_keeps_active_task_visible_when_queue_row_is_missing`
+  - active task가 있는데 큐 행이 없어도 running 큐 행이 생성되는지 검증.
+- 기존 `test_queue_normalize_preserves_schema_and_rejects_bad_items`
+  - 입력 순서 보존 전제를 제거하고 topic 기준 검증으로 수정. 현재 큐는 저장 시 실행 순서로 정렬하는 것이 맞음.
+
+## 실제 큐 파일 확인 결과
+
+기준 파일:
+- `C:\Users\Ai_M9\Desktop\longsult\_system\oneclick_queue.json`
+- `C:\Users\Ai_M9\Desktop\longsult\_system\oneclick_tasks.json`
+
+마지막 확인:
+- 시각: `2026-05-09 21:50 KST`
+- queue_count: `537`
+- terminal_count: `0`
+- 큐 상태 카운트: `pending 537`
+
+큐 상단 6건:
+1. `pending` CH3 EP10 `야요이인은 무엇을 바꿨을까` / note: `작업대에서 실행순 1번 지정`
+2. `pending` CH1 EP41 `신생국이 대국을 먼저 공격한 날` / note: `실패/중단 태스크 복구`
+3. `pending` CH2 EP22 `The # Symbol: Why Americans Call It 'Pound' and Brits Call It 'Hash'` / note: `실패/중단 태스크 복구`
+4. `pending` CH3 EP11 `벼농사는 왜 일본 역사를 갈라놨을까` / note: `엑셀 업로드`
+5. `pending` CH4 EP19 `칼링가 전쟁` / note: `실패/중단 태스크 복구`
+6. `pending` CH1 EP42 `고구려보다 큰 나라가 만주에 있었다` / note: `실패/중단 태스크 복구`
+
+중요:
+- 확인 시점에는 실행 중 task가 없었음.
+- 그래서 큐 최상단 running 검증은 실제 화면이 아니라 단위 테스트와 로컬 service normalize 시뮬레이션으로 검증함.
+
+## 검증 완료
+
+성공:
+- `python -m py_compile backend/app/services/oneclick_service.py backend/app/services/oneclick_stability_helpers.py`
+- `python -m unittest backend.tests.test_oneclick_stability.OneClickQueueStabilityTests`
+  - `7 tests OK`
+- `npx tsc --noEmit`
+  - frontend 통과
+
+전체 안정성 테스트:
+- `python -m unittest backend.tests.test_oneclick_stability`
+  - 실패 2건 있음.
+  - 이번 큐 수정과 직접 관련 없는 기존 기대값 불일치.
+  - 실패 1: `test_script_prompt_uses_single_global_base_file`
+    - `backend/app/services/llm/base.py`의 프롬프트 문구가 테스트 기대 문구와 다름.
+  - 실패 2: `test_default_subtitle_size_is_ten_points_larger`
+    - 테스트는 `CUT_SUBTITLE_MARKER_VERSION == 3` 기대, 실제는 `4`.
+
+## 브라우저/API 확인 결과
+
+브라우저로 접속:
+- URL: `http://192.168.0.221:3000/oneclick/live`
+- 페이지 title: `LongTube`
+
+브라우저 콘솔 실제 오류:
+- `GET http://192.168.0.221:8000/api/oneclick/queue Failed to fetch`
+- `GET http://192.168.0.221:8000/api/oneclick/running Failed to fetch`
+- `GET http://192.168.0.221:8000/api/oneclick/queue/auto-production Failed to fetch`
+- 화면에는 `0건 대기`, `실행 상태 로드 실패`가 표시됨.
+
+쉘 직접 확인:
+- `Invoke-WebRequest http://192.168.0.221:8000/api/oneclick/queue`
+- 결과: `401 Unauthorized`
+- `127.0.0.1:8000`도 `401 Unauthorized`
+
+판단 가능한 사실:
+- 백엔드는 포트 8000에서 응답함.
+- 쉘에서는 인증 없어서 401.
+- 브라우저 세션에서는 fetch가 실패로 떨어져 큐 화면 검증을 완료하지 못함.
+- 다음 세션에서 브라우저 인증/CORS/쿠키 상태부터 확인 필요.
+
+## 다음 세션 우선순위
+
+1. 브라우저에서 `http://192.168.0.221:3000/oneclick/live` API fetch 실패 원인 확인.
+   - 인증 쿠키 누락인지, CORS인지, 프론트 API base 문제인지 실제 콘솔/네트워크 기준으로 확인.
+2. 백엔드가 새 코드로 재로드됐는지 확인.
+   - 실행 중 작업이 있으면 재시작하지 말 것.
+3. 실행 중 task가 실제로 생긴 상태에서 작업큐 모달 확인.
+   - running 행이 최상단인지.
+   - `진행중` 표시가 붙는지.
+   - checkbox, `1번 지정`, 위/아래/삭제 버튼이 disabled인지.
+4. API `GET /api/oneclick/queue` 응답에서 terminal status가 섞이지 않는지 확인.
+5. `frontend/src/app/oneclick/live/queueHelpers.ts`의 미사용 `sortQueueItemsForWorkbench()` 제거 여부 판단.
+6. 전체 안정성 테스트 실패 2건은 큐 수정과 별개. 필요 시 별도 지시 받고 수정.
+
+## 변경 파일 현황
+
+`git status --short` 기준 수정 파일이 많음. 이번 세션에서 직접 건드린 핵심 파일:
+- `SESSION_HANDOFF.md`
+- `backend/app/services/oneclick_service.py`
+- `backend/app/services/oneclick_stability_helpers.py`
+- `backend/tests/test_oneclick_stability.py`
+- `frontend/src/app/oneclick/live/page.tsx`
+
+주의:
+- 워킹트리에는 위 외에도 다수 파일 변경이 이미 존재함.
+- 이번 작업과 무관한 파일은 다음 세션에서도 되돌리지 말 것.

@@ -12,7 +12,7 @@ from app.services.estimation_service import estimate_project
 from app.services.image.factory import DEFAULT_IMAGE_MODEL, DEFAULT_THUMBNAIL_MODEL
 from app.services.subtitle_service import DEFAULT_SUBTITLE_STYLE
 from app.services.video.factory import DEFAULT_VIDEO_MODEL
-from app.config import resolve_project_dir
+from app.config import CHANNELS_ROOT, RESULT_ARCHIVE_DIR, SYSTEM_PROJECTS_ROOT, resolve_project_dir
 import os
 
 router = APIRouter()
@@ -65,7 +65,7 @@ DEFAULT_CONFIG = {
     "auto_pause_after_step": True,
     # v1.1.55: YouTube 공개 범위 — 프리셋 설정에서 관리
     "youtube_privacy": "private",
-    # v2.1.3: 최종 렌더 BGM. bgm_path 는 DATA_DIR/{project_id} 기준 상대 경로.
+    # v2.1.3: 최종 렌더 BGM. bgm_path 는 프로젝트 디렉토리 기준 상대 경로.
     "bgm_enabled": True,
     "bgm_path": "",
     "bgm_style_prompt": "subtle cinematic documentary background music, instrumental only, no vocals, no lyrics, soft percussion, low tension, supports narration",
@@ -231,7 +231,7 @@ def diagnose_by_title(title: str, db: Session = Depends(get_db)):
 
     project_id 를 모르는 상황에서 "딸깍폼-제리스아케오" 같은 제목 일부만으로
     어떤 프로젝트가 매칭되는지, 각 프로젝트의 config 에 적힌 자산 파일이
-    실제 디스크에 있는지, 그리고 누락된 파일이 DATA_DIR 의 다른 폴더에
+    실제 디스크에 있는지, 그리고 누락된 파일이 현재 프로젝트 저장 루트의 다른 폴더에
     살아남아 있는지(고아 자산)까지 한 번에 보고한다.
     """
     from pathlib import Path as _P
@@ -248,19 +248,22 @@ def diagnose_by_title(title: str, db: Session = Depends(get_db)):
         .all()
     )
 
-    # 2) DATA_DIR 전체에서 파일명 → 절대경로 인덱스 (고아 자산 탐색용)
+    # 2) 현재 프로젝트 저장 루트 전체에서 파일명 → 절대경로 인덱스 (고아 자산 탐색용)
     name_index: dict[str, list[str]] = {}
     try:
-        for f in _P(DATA_DIR).rglob("*"):
-            if f.is_file():
-                name_index.setdefault(f.name, []).append(str(f))
+        for root in (RESULT_ARCHIVE_DIR, CHANNELS_ROOT, SYSTEM_PROJECTS_ROOT):
+            if not _P(root).exists():
+                continue
+            for f in _P(root).rglob("*"):
+                if f.is_file():
+                    name_index.setdefault(f.name, []).append(str(f))
     except Exception as e:
-        print(f"[diagnose] DATA_DIR scan 실패: {e}")
+        print(f"[diagnose] project storage scan 실패: {e}")
 
-    def _check(rel_list, pid):
+    def _check(rel_list, proj_dir):
         out = []
         for rel in rel_list or []:
-            abs_p = _P(DATA_DIR) / pid / rel
+            abs_p = _P(proj_dir) / rel
             entry = {
                 "rel": rel,
                 "abs": str(abs_p),
@@ -270,7 +273,7 @@ def diagnose_by_title(title: str, db: Session = Depends(get_db)):
                 fname = _P(rel).name
                 hits = name_index.get(fname, [])
                 # 자기 폴더 외에서 발견된 고아 후보
-                entry["orphans"] = [h for h in hits if str(_P(DATA_DIR) / pid) not in h]
+                entry["orphans"] = [h for h in hits if str(_P(proj_dir)) not in h]
             out.append(entry)
         return out
 
@@ -278,7 +281,7 @@ def diagnose_by_title(title: str, db: Session = Depends(get_db)):
     for p in rows:
         cfg = p.config or {}
         pid = p.id
-        proj_dir = _P(DATA_DIR) / pid
+        proj_dir = resolve_project_dir(pid, cfg, create=False)
         inter_cfg = (cfg.get("interlude") or {})
         inter_report = {}
         for kind in ("opening", "intermission", "ending"):
@@ -302,14 +305,14 @@ def diagnose_by_title(title: str, db: Session = Depends(get_db)):
             "is_oneclick_marker": bool(cfg.get("__oneclick__")),
             "project_dir": str(proj_dir),
             "project_dir_exists": proj_dir.exists(),
-            "reference_images": _check(cfg.get("reference_images", []), pid),
-            "character_images": _check(cfg.get("character_images", []), pid),
-            "logo_images": _check(cfg.get("logo_images", []), pid),
+            "reference_images": _check(cfg.get("reference_images", []), proj_dir),
+            "character_images": _check(cfg.get("character_images", []), proj_dir),
+            "logo_images": _check(cfg.get("logo_images", []), proj_dir),
             "interlude": inter_report,
         })
 
     return {
-        "data_dir": str(DATA_DIR),
+        "storage_roots": [str(RESULT_ARCHIVE_DIR), str(CHANNELS_ROOT), str(SYSTEM_PROJECTS_ROOT)],
         "query": q,
         "match_count": len(results),
         "projects": results,

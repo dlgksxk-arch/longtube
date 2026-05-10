@@ -6,7 +6,7 @@ import time
 import asyncio
 import redis as redis_lib
 from celery import Celery
-from app.config import REDIS_URL, DATA_DIR, CUT_VIDEO_DURATION, resolve_project_dir
+from app.config import REDIS_URL, CUT_VIDEO_DURATION, resolve_project_dir
 from app.models.database import SessionLocal
 from app.models.project import Project
 from app.models.cut import Cut
@@ -160,8 +160,8 @@ def update_step_state(project_id: str, step: int, state: str):
         db.close()
 
 
-def load_script(project_id: str) -> dict:
-    path = resolve_project_dir(project_id) / "script.json"
+def load_script(project_id: str, config: dict | None = None) -> dict:
+    path = resolve_project_dir(project_id, config or {}, create=False) / "script.json"
     # v1.1.37 bugfix: encoding 미지정 시 Windows 에선 기본이 cp949 로 떨어져
     # "UnicodeDecodeError: 'cp949' codec can't decode byte 0xe2 ..." 발생.
     # save_script 가 utf-8 + ensure_ascii=False 로 저장하므로 읽기도 동일하게 맞춘다.
@@ -248,7 +248,7 @@ def _validate_prepared_script(script: dict, source_path) -> None:
 
 
 def _load_prepared_script(project_id: str, config: dict, topic: str) -> tuple[dict, str] | None:
-    project_dir = resolve_project_dir(project_id)
+    project_dir = resolve_project_dir(project_id, config, create=False)
     try:
         target_episode = int(config.get("episode_number") or 0)
     except (TypeError, ValueError):
@@ -337,6 +337,22 @@ def run_pipeline(self, project_id: str, start_step: int = 2, end_step: int = 5):
                 if _redis_get(f"pipeline:cancel:{project_id}"):
                     raise PipelineCancelled("Cancelled while paused")
 
+    thumbnail_checked_after_voice = False
+
+    def _ensure_thumbnail_after_voice_once():
+        nonlocal thumbnail_checked_after_voice
+        if thumbnail_checked_after_voice:
+            return
+        thumbnail_checked_after_voice = True
+        try:
+            script = load_script(project_id)
+            if script:
+                _generate_thumbnail_sync(project_id, config, script)
+            else:
+                _redis_set(f"thumbnail:status:{project_id}", "failed:script.json 없음")
+        except Exception as e:
+            _redis_set(f"thumbnail:status:{project_id}", f"failed:{type(e).__name__}: {str(e)[:250]}")
+
     # v1.1.53: 실행 순서 결정 — step 3+4 는 병렬
     serial_order = []
     for s in range(start_step, end_step + 1):
@@ -369,6 +385,7 @@ def run_pipeline(self, project_id: str, start_step: int = 2, end_step: int = 5):
                     first_step = min(errors.keys())
                     update_project(project_id, status="failed")
                     raise errors[first_step]
+                _ensure_thumbnail_after_voice_once()
             except PipelineCancelled:
                 # 둘 다 cancelled 로 마킹
                 for s in parallel_steps:
@@ -389,6 +406,8 @@ def run_pipeline(self, project_id: str, start_step: int = 2, end_step: int = 5):
         # ── 일반 순차 실행 ──
         try:
             _run_single(step_num)
+            if step_num == 3:
+                _ensure_thumbnail_after_voice_once()
             _wait_if_auto_pause(step_num)
         except PipelineCancelled:
             update_step_state(project_id, step_num, "cancelled")
@@ -519,9 +538,6 @@ def _step_script(project_id: str, config: dict):
     project.total_cuts = len(script.get("cuts", []))
     db.commit()
     db.close()
-
-    # v1.1.53: 대본 완성 직후 썸네일 생성 — 이미지 단계 전에 미리 만들어 UI에 표시
-    _generate_thumbnail_sync(project_id, config, script)
 
     # v1.2.25: cancel 키 해제 — 다음 step 에서 같은 스레드가 재사용될 때
     # 이전 project 의 플래그를 오인하지 않도록.
@@ -726,7 +742,7 @@ def build_thumbnail_prompt(script: dict) -> str:
 
 
 def _generate_thumbnail_sync(project_id: str, config: dict, script: dict):
-    """v1.1.55: 대본 생성 직후 썸네일을 동기적으로 생성한다.
+    """썸네일을 동기적으로 생성한다.
 
     스튜디오의 YouTube 썸네일 생성(ai_overlay)과 **완전 동일한 시퀀스**:
     1. thumbnail_prompt → AI 이미지 모델로 1280x720 배경 생성
@@ -758,7 +774,7 @@ def _generate_thumbnail_sync(project_id: str, config: dict, script: dict):
     )
     _set_cancel_key(project_id)
 
-    thumb_path = DATA_DIR / project_id / "output" / "thumbnail.png"
+    thumb_path = resolve_project_dir(project_id, config, create=True) / "output" / "thumbnail.png"
     if thumb_path.exists() and thumb_path.stat().st_size > 100:
         print(f"[Thumbnail] 이미 존재 — 건너뜀")
         _redis_set(f"thumbnail:status:{project_id}", "done")
@@ -878,6 +894,7 @@ def _generate_thumbnail_sync(project_id: str, config: dict, script: dict):
             output_path=str(thumb_path),
             reference_images=combined_refs or None,
             enable_historical_guard=enable_historical_guard,
+            config=config,
         ))
         # v1.1.55: 썸네일 이미지 1장 지출 기록
         try:
@@ -1727,7 +1744,7 @@ def _step_upload(project_id: str, config: dict):
     from app.services.youtube_service import YouTubeUploader
 
     script = load_script(project_id)
-    project_dir = DATA_DIR / project_id
+    project_dir = resolve_project_dir(project_id, config, create=False)
 
     # 업로드 OAuth 우선순위:
     # 1) 프리셋 프로젝트 토큰

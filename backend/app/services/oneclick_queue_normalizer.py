@@ -113,7 +113,11 @@ def normalize_queue_state(
         if queued_source not in ("manual", "import", "requeue", "orphan", "schedule", "system"):
             queued_source = "manual"
 
-        clean.append({
+        status = str(it.get("status") or "pending").strip().lower()
+        if status not in ("pending", "running", "completed", "failed", "cancelled", "paused"):
+            status = "pending"
+
+        clean_item = {
             "id": str(it.get("id") or uuid.uuid4().hex[:8]),
             "topic": topic,
             "template_project_id": (it.get("template_project_id") or None),
@@ -130,7 +134,21 @@ def normalize_queue_state(
             "queued_note": str(it.get("queued_note") or "").strip(),
             "requeued_from_task_id": str(it.get("requeued_from_task_id") or "").strip(),
             "restored_from_project_id": str(it.get("restored_from_project_id") or "").strip(),
-        })
+            "status": status,
+        }
+        for key in (
+            "task_id",
+            "project_id",
+            "source_project_id",
+            "result_dir",
+            "title",
+            "started_at",
+            "finished_at",
+        ):
+            value = it.get(key)
+            if value is not None and str(value).strip():
+                clean_item[key] = str(value)
+        clean.append(clean_item)
 
     out["items"] = clean
     return out

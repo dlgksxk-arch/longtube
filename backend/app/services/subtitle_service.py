@@ -10,7 +10,7 @@ from app.config import CUT_VIDEO_DURATION
 
 CUT_SUBTITLE_START_SEC = 0.2
 CUT_SUBTITLE_END_SEC = 4.8
-CUT_SUBTITLE_MARKER_VERSION = 3
+CUT_SUBTITLE_MARKER_VERSION = 4
 LEGACY_SUBTITLE_SIZE_MAP = {
     49: 59,
     53: 63,
@@ -162,25 +162,47 @@ def _srt_escape(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "").replace("\r", " ").replace("\n", " ")).strip()
 
 
+def _split_text_for_subtitle(text: str, max_lines: int) -> list[str]:
+    max_lines = max(1, int(max_lines or 1))
+    if not text:
+        return []
+    if max_lines == 1:
+        return [text]
+
+    target = max(1, round(len(text) / max_lines))
+    lines: list[str] = []
+    remaining = text
+    while remaining and len(lines) < max_lines - 1:
+        candidates = [m.start() for m in re.finditer(r"\s+", remaining)]
+        if candidates:
+            split_at = min(candidates, key=lambda idx: abs(idx - target))
+            first = remaining[:split_at].strip()
+            rest = remaining[split_at:].strip()
+        else:
+            split_at = min(max(1, target), max(1, len(remaining) - 1))
+            first = remaining[:split_at].strip()
+            rest = remaining[split_at:].strip()
+        if not first or not rest:
+            break
+        lines.append(first)
+        remaining = rest
+        target = max(1, round(len(remaining) / (max_lines - len(lines))))
+    if remaining:
+        lines.append(remaining.strip())
+    return [line for line in lines if line]
+
+
 def _wrap_two_lines(text: str, aspect_ratio: str = "16:9") -> str:
     text = re.sub(r"\s+", " ", _ass_escape(text))
     if not text:
         return ""
-    max_chars = 18 if aspect_ratio == "9:16" else 34
+    max_chars = 13 if aspect_ratio == "9:16" else 22
     if len(text) <= max_chars:
         return text
 
-    target = len(text) // 2
-    candidates = [m.start() for m in re.finditer(r"\s+", text)]
-    if candidates:
-        split_at = min(candidates, key=lambda idx: abs(idx - target))
-        first = text[:split_at].strip()
-        second = text[split_at:].strip()
-    else:
-        split_at = min(max_chars, max(1, target))
-        first = text[:split_at].strip()
-        second = text[split_at:].strip()
-    return first if not second else f"{first}\\N{second}"
+    max_lines = 3 if len(text) > max_chars * 2 else 2
+    lines = _split_text_for_subtitle(text, max_lines)
+    return "\\N".join(lines)
 
 
 def _hex_to_ass_color(hex_color: str, alpha: int = 0) -> str:

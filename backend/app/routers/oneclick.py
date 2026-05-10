@@ -393,7 +393,7 @@ async def regenerate_thumbnail(task_id: str, body: ThumbnailRegenRequest = Thumb
     image_model = resolve_image_model(
         config.get("thumbnail_model") or DEFAULT_THUMBNAIL_MODEL
     )
-    thumb_path = resolve_project_dir(project_id) / "output" / "thumbnail.png"
+    thumb_path = resolve_project_dir(project_id, config, create=True) / "output" / "thumbnail.png"
     thumb_path.parent.mkdir(parents=True, exist_ok=True)
 
     # 기존 썸네일 삭제
@@ -472,6 +472,7 @@ async def regenerate_thumbnail(task_id: str, body: ThumbnailRegenRequest = Thumb
             output_path=str(thumb_path),
             reference_images=combined_refs or None,
             enable_historical_guard=enable_historical_guard,
+            config=config,
         )
         _redis_set(f"thumbnail:status:{project_id}", "done")
         return {"ok": True, "path": result["path"], "model": image_model, "overlay": result["overlay_applied"]}
@@ -589,6 +590,15 @@ class QueueItemModel(BaseModel):
     queued_note: Optional[str] = None
     requeued_from_task_id: Optional[str] = None
     restored_from_project_id: Optional[str] = None
+    # 실행 중 큐 항목은 작업대 task 와 연결된 상태로 큐에 남는다.
+    status: Optional[str] = None
+    task_id: Optional[str] = None
+    project_id: Optional[str] = None
+    source_project_id: Optional[str] = None
+    result_dir: Optional[str] = None
+    title: Optional[str] = None
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
 
 
 class QueueStateModel(BaseModel):

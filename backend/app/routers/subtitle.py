@@ -14,7 +14,6 @@ from app.models.cut import Cut
 from app.config import (
     CUT_VIDEO_DURATION,
     CHANNELS_ROOT,
-    DATA_DIR,
     FIRST_CUT_FADE_IN_SECONDS,
     NARRATION_VOLUME_GAIN,
     SYSTEM_DIR,
@@ -156,7 +155,7 @@ async def _prepare_interlude_timeline_clip(
 
 def _load_script(project_id: str) -> dict:
     """Load script.json from disk"""
-    script_path = DATA_DIR / project_id / "script.json"
+    script_path = resolve_project_dir(project_id, create=False) / "script.json"
     if not script_path.exists():
         return {"cuts": []}
     with open(script_path, "r", encoding="utf-8") as f:
@@ -194,7 +193,7 @@ def _build_and_write_ass(project_id: str, project: Project, db: Session) -> tupl
 
     ass_content = generate_ass(cuts_data, style_config, aspect_ratio)
 
-    subtitle_dir = DATA_DIR / project_id / "subtitles"
+    subtitle_dir = resolve_project_dir(project_id, project.config or {}, create=True) / "subtitles"
     subtitle_dir.mkdir(parents=True, exist_ok=True)
     subtitle_path = subtitle_dir / "subtitles.ass"
 
@@ -224,7 +223,7 @@ def generate_subtitles(project_id: str, db: Session = Depends(get_db)):
         return {
             "status": "generated",
             "path": subtitle_path,
-            "srt_path": str(DATA_DIR / project_id / "subtitles" / "subtitles.srt"),
+            "srt_path": str(resolve_project_dir(project_id, project.config or {}, create=False) / "subtitles" / "subtitles.srt"),
             "cuts": count,
         }
     except HTTPException:
@@ -241,7 +240,7 @@ def _abs_cut_path(project_id: str, rel_path: str) -> str:
     p = _P(rel_path)
     if p.is_absolute():
         return str(p)
-    return str(DATA_DIR / project_id / rel_path)
+    return str(resolve_project_dir(project_id, create=False) / rel_path)
 
 
 def _safe_audio_ext(filename: str) -> str:
@@ -901,11 +900,12 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
     if not project:
         raise HTTPException(404, "Project not found")
 
-    video_dir = DATA_DIR / project_id / "videos"
-    subtitle_dir = DATA_DIR / project_id / "subtitles"
-    output_dir = DATA_DIR / project_id / "output"
+    project_dir = resolve_project_dir(project_id, project.config or {}, create=True)
+    video_dir = project_dir / "videos"
+    subtitle_dir = project_dir / "subtitles"
+    output_dir = project_dir / "output"
     output_dir.mkdir(parents=True, exist_ok=True)
-    tmp_dir = DATA_DIR / project_id / "tmp_render"
+    tmp_dir = project_dir / "tmp_render"
     tmp_dir.mkdir(parents=True, exist_ok=True)
 
     subtitle_file = subtitle_dir / "subtitles.ass"
@@ -980,7 +980,7 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
     }
     subtitle_style_cfg = (project.config or {}).get("subtitle_style") or {}
     clip_paths: list[str] = []
-    video_dir_path = DATA_DIR / project_id / "videos"
+    video_dir_path = project_dir / "videos"
     for c in cuts:
         # v1.1.55: DB video_path 우선, 없으면 디스크 파일 폴백
         ap = ""
@@ -1275,7 +1275,7 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
     try:
         shorts_enabled = bool((project.config or {}).get("shorts_enabled", True))
         if shorts_enabled:
-            script_for_shorts = load_shorts_script(DATA_DIR / project_id)
+            script_for_shorts = load_shorts_script(project_dir)
             shorts_segments = select_shorts_segments(script_for_shorts, count=1)
             cfg = project.config or {}
             if isinstance(script_for_shorts, dict) and not script_for_shorts.get("language"):

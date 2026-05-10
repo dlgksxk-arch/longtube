@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 from app.models.database import get_db
 from app.models.project import Project
 from app.models.cut import Cut
-from app.config import DATA_DIR, resolve_project_dir
+from app.config import resolve_project_dir
 from app.services.youtube_service import (
     YouTubeUploader,
     YouTubeAuthError,
@@ -145,7 +145,11 @@ class ThumbnailGenerateRequest(BaseModel):
 # ---------- 경로 헬퍼 ----------
 
 
-def _final_video_path(project_id: str) -> Optional[Path]:
+def _project_dir(project_id: str, config: Optional[dict] = None) -> Path:
+    return resolve_project_dir(project_id, config or {}, create=False)
+
+
+def _final_video_path(project_id: str, config: Optional[dict] = None) -> Optional[Path]:
     """업로드 소스 결정.
 
     우선순위:
@@ -153,25 +157,26 @@ def _final_video_path(project_id: str) -> Optional[Path]:
       2. 자막 번인 영상 (`final_with_subtitles.mp4`)
       3. 컷 병합 영상 (`merged.mp4`)
     """
-    output_dir = resolve_project_dir(project_id) / "output"
+    project_dir = _project_dir(project_id, config)
+    output_dir = project_dir / "output"
     with_interludes = output_dir / "final_with_interludes.mp4"
     if with_interludes.exists():
         return with_interludes
     with_subs = output_dir / "final_with_subtitles.mp4"
     if with_subs.exists():
         return with_subs
-    merged = resolve_project_dir(project_id) / "videos" / "merged.mp4"
+    merged = project_dir / "videos" / "merged.mp4"
     if merged.exists():
         return merged
     return None
 
 
-def _thumbnail_path(project_id: str) -> Path:
-    return resolve_project_dir(project_id) / "output" / "thumbnail.png"
+def _thumbnail_path(project_id: str, config: Optional[dict] = None) -> Path:
+    return _project_dir(project_id, config) / "output" / "thumbnail.png"
 
 
-def _caption_path(project_id: str) -> Path:
-    return resolve_project_dir(project_id) / "subtitles" / "subtitles.srt"
+def _caption_path(project_id: str, config: Optional[dict] = None) -> Path:
+    return _project_dir(project_id, config) / "subtitles" / "subtitles.srt"
 
 
 def _should_upload_caption(config: Optional[dict]) -> bool:
@@ -203,36 +208,36 @@ def _extract_video_id(url_or_id: Optional[str]) -> Optional[str]:
     return None
 
 
-def _resolve_cut_image(project_id: str, image_path: Optional[str]) -> Optional[str]:
+def _resolve_cut_image(project_id: str, image_path: Optional[str], config: Optional[dict] = None) -> Optional[str]:
     """DB 에 저장된 image_path 를 절대 경로로 해석.
 
     - None/빈 문자열이면 None
     - 이미 절대 경로면 그대로
-    - 상대 경로면 DATA_DIR/{project_id}/{image_path} 로 해석
+    - 상대 경로면 프로젝트 디렉토리 기준으로 해석
     - 파일이 실제로 존재하는 경우에만 반환, 아니면 None
     """
     if not image_path:
         return None
     p = Path(image_path)
     if not p.is_absolute():
-        p = resolve_project_dir(project_id) / image_path
+        p = _project_dir(project_id, config) / image_path
     if p.exists():
         return str(p)
     return None
 
 
-def _pick_base_cut(project_id: str, db: Session, cut_number: Optional[int]) -> Optional[str]:
+def _pick_base_cut(project_id: str, db: Session, cut_number: Optional[int], config: Optional[dict] = None) -> Optional[str]:
     """썸네일 베이스로 쓸 컷 이미지 경로를 결정. 항상 절대 경로 반환."""
     q = db.query(Cut).filter(Cut.project_id == project_id)
     if cut_number is not None:
         cut = q.filter(Cut.cut_number == cut_number).first()
         if cut:
-            resolved = _resolve_cut_image(project_id, cut.image_path)
+            resolved = _resolve_cut_image(project_id, cut.image_path, config)
             if resolved:
                 return resolved
     # 자동 선택: image_path 가 있고 파일이 실제 존재하는 가장 이른 컷
     for cut in q.order_by(Cut.cut_number.asc()).all():
-        resolved = _resolve_cut_image(project_id, cut.image_path)
+        resolved = _resolve_cut_image(project_id, cut.image_path, config)
         if resolved:
             return resolved
     return None
@@ -423,7 +428,7 @@ def project_auth_status(project_id: str, db: Session = Depends(get_db)):
 async def project_start_oauth_flow(project_id: str, db: Session = Depends(get_db)):
     """프로젝트별 OAuth 로컬 서버 플로우.
 
-    `DATA_DIR/{project_id}/youtube_token.json` 에 토큰을 저장합니다.
+    프로젝트 디렉토리의 `youtube_token.json` 에 토큰을 저장합니다.
     프로젝트마다 다른 YouTube 계정을 연결할 수 있습니다.
     """
     project = db.query(Project).filter(Project.id == project_id).first()
@@ -512,7 +517,7 @@ async def create_thumbnail(
     config = project.config or {}
     script = {}
     try:
-        script_path = resolve_project_dir(project_id) / "script.json"
+        script_path = _project_dir(project_id, config) / "script.json"
         if script_path.exists():
             import json
             script = json.loads(script_path.read_text(encoding="utf-8"))
@@ -526,7 +531,7 @@ async def create_thumbnail(
 
     # ─── 모드 1: cut_overlay (AI 호출 없음) ───
     if body.mode == "cut_overlay":
-        base_image = _pick_base_cut(project_id, db, body.cut_number)
+        base_image = _pick_base_cut(project_id, db, body.cut_number, config)
         try:
             saved = generate_thumbnail(
                 project_id=project_id,
@@ -595,7 +600,7 @@ async def create_thumbnail(
     # 레퍼런스 + 캐릭터 이미지 경로 수집 — 이미지 모델이 스타일을 따라가도록
     # 프로젝트 설정에 등록된 레퍼런스 이미지를 썸네일 생성에도 그대로 넘김.
     # 캐릭터 이미지를 우선으로 (메인 주인공) 넣고, 그 뒤에 스타일 레퍼런스.
-    project_dir = resolve_project_dir(project_id)
+    project_dir = _project_dir(project_id, config)
 
     def _resolve_asset_list(rels) -> list[str]:
         out: list[str] = []
@@ -679,6 +684,7 @@ async def create_thumbnail(
             overlay_episode_label=episode_label if body.mode == "ai_overlay" else None,
             reference_images=combined_refs or None,
             enable_historical_guard=enable_historical_guard,
+            config=config,
         )
     except ThumbnailError as e:
         raise HTTPException(500, f"AI 썸네일 생성 실패: {e}")
@@ -1045,7 +1051,7 @@ async def upload_to_youtube(
     if not project:
         raise HTTPException(404, "Project not found")
 
-    final_video = _final_video_path(project_id)
+    final_video = _final_video_path(project_id, project.config or {})
     if final_video is None:
         raise HTTPException(
             400,
@@ -1066,7 +1072,7 @@ async def upload_to_youtube(
     if not body.description and not _cfg_desc:
         try:
             import json
-            _script_path = resolve_project_dir(project_id) / "script.json"
+            _script_path = _project_dir(project_id, project.config or {}) / "script.json"
             if _script_path.exists():
                 with open(_script_path, "r", encoding="utf-8") as _sf:
                     _script_data = json.load(_sf)
@@ -1095,7 +1101,7 @@ async def upload_to_youtube(
     # 썸네일 경로 결정
     thumb_path: Optional[str] = None
     if body.use_generated_thumbnail:
-        tp = _thumbnail_path(project_id)
+        tp = _thumbnail_path(project_id, project.config or {})
         if not tp.exists():
             try:
                 from app.tasks.pipeline_tasks import load_script
@@ -1133,11 +1139,13 @@ async def upload_to_youtube(
             None,  # progress_callback (아직 프론트로 연결 안 함)
         )
         verified = await asyncio.to_thread(
-            uploader.confirm_upload_visible_in_studio,
+            uploader.confirm_upload_processed_in_studio,
             video_id=result.get("video_id"),
             title=title,
+            timeout_seconds=1200,
+            interval_seconds=20,
         )
-        result = {**result, "studio_verified": True, "studio_record": verified}
+        result = {**result, "studio_verified": True, "processing_verified": True, "studio_record": verified}
         if thumb_path and result.get("video_id"):
             try:
                 thumb_result = await asyncio.to_thread(
@@ -1170,7 +1178,7 @@ async def upload_to_youtube(
     # DB 에 YouTube URL 저장
     caption_result = None
     caption_error = None
-    caption_file = _caption_path(project_id)
+    caption_file = _caption_path(project_id, project.config or {})
     if result.get("video_id") and _should_upload_caption(project.config or {}) and caption_file.exists():
         try:
             caption_result = await upload_multilingual_captions(

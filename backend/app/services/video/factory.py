@@ -5,6 +5,7 @@ from app.services.video.ffmpeg_service import (
     FFmpegStaticService,
 )
 from app.services.video.fal_service import FalVideoService
+from app.services.video.comfyui_service import ComfyUIVideoService
 
 DEFAULT_VIDEO_MODEL = "ffmpeg-static"
 WAN22_TI2V_5B_MODEL = "comfyui-wan22-ti2v-5b"
@@ -34,6 +35,12 @@ VIDEO_REGISTRY: dict[str, dict] = {
     },
     "seedance-lite":    {"name": "Seedance 1.0 Lite",     "provider": "fal",
                          "cost_per_unit": "$0.18/5s clip", "cost_value": 0.18},
+    "comfyui-ltx23-v2": {
+        "name": "LTX 2.3 Local V2",
+        "provider": "comfyui",
+        "cost_per_unit": "Free (local)",
+        "cost_value": 0,
+    },
 }
 
 
@@ -63,6 +70,8 @@ def get_video_service(model_id: str) -> BaseVideoService:
         return FFmpegSafeMotionService()
     elif provider == "fal":
         return FalVideoService(model_id)
+    elif provider == "comfyui":
+        return ComfyUIVideoService(model_id)
     else:
         print(f"[video-factory] Provider '{provider}' not implemented, falling back to ffmpeg-static")
         return FFmpegStaticService()

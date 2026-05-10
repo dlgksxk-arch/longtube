@@ -36,7 +36,7 @@ from typing import Optional
 from sqlalchemy import and_, or_, func as sqlfunc
 from sqlalchemy.orm import Session
 
-from app.config import DATA_DIR, resolve_project_dir
+from app.config import resolve_project_dir
 from app.models.database import SessionLocal
 from app.models.project import Project
 from app.models.scheduled_episode import ScheduledEpisode
@@ -318,12 +318,13 @@ async def _run_episode(episode: ScheduledEpisode) -> None:
 
     # 5) YouTube 업로드
     # 우선순위: 간지 포함 > 자막 번인 > 컷 병합. 어느 것도 없으면 실패.
-    output_dir = resolve_project_dir(project_id) / "output"
+    project_dir = resolve_project_dir(project_id, config, create=False)
+    output_dir = project_dir / "output"
     candidates = [
         output_dir / "final_with_interludes.mp4",
         output_dir / "final_with_subtitles.mp4",
         output_dir / "final.mp4",
-        resolve_project_dir(project_id) / "videos" / "merged.mp4",
+        project_dir / "videos" / "merged.mp4",
     ]
     final_video: Optional[Path] = None
     for cand in candidates:
@@ -364,11 +365,13 @@ async def _run_episode(episode: ScheduledEpisode) -> None:
             None,        # progress_callback
         )
         verified = await asyncio.to_thread(
-            uploader.confirm_upload_visible_in_studio,
+            uploader.confirm_upload_processed_in_studio,
             video_id=result.get("video_id"),
             title=final_title,
+            timeout_seconds=1200,
+            interval_seconds=20,
         )
-        result = {**result, "studio_verified": True, "studio_record": verified}
+        result = {**result, "studio_verified": True, "processing_verified": True, "studio_record": verified}
         if thumb_path and result.get("video_id") and Path(str(thumb_path)).exists():
             try:
                 thumb_result = await asyncio.to_thread(
@@ -407,7 +410,7 @@ async def _run_episode(episode: ScheduledEpisode) -> None:
         return
 
     video_url = result.get("url") or ""
-    caption_path = resolve_project_dir(project_id) / "subtitles" / "subtitles.srt"
+    caption_path = project_dir / "subtitles" / "subtitles.srt"
     if result.get("video_id") and caption_path.exists() and should_upload_youtube_captions(config):
         try:
             caption_result = await upload_multilingual_captions(
@@ -606,6 +609,7 @@ async def _generate_thumbnail_for_episode(
         overlay_title_text=overlay_title,
         overlay_subtitle=None,
         overlay_episode_label=f"EP. {episode_number}",
+        config=config,
     )
     return result["path"]
 

@@ -21,11 +21,13 @@ from app.services import comfyui_client
 _WORKFLOW_FILES = {
     "comfyui-hunyuan15-480p": "hunyuan15_480p_i2v.json",
     "comfyui-wan22-ti2v-5b": "wan22_ti2v_5b_track_control.json",
+    "comfyui-ltx23-v2": "ltx23_v2_i2v.json",
 }
 
 _DISPLAY_NAMES = {
     "comfyui-hunyuan15-480p": "ComfyUI HunyuanVideo 1.5 480p (local)",
     "comfyui-wan22-ti2v-5b": "ComfyUI Wan2.2 TI2V-5B (local)",
+    "comfyui-ltx23-v2": "LTX 2.3 Local V2 (ComfyUI)",
 }
 
 # 모델별 기본 FPS. Wan 5B는 24fps 네이티브보다 16fps가 RTX 3090에서
@@ -33,18 +35,21 @@ _DISPLAY_NAMES = {
 _FPS_BY_MODEL = {
     "comfyui-hunyuan15-480p": 16,
     "comfyui-wan22-ti2v-5b": 16,
+    "comfyui-ltx23-v2": 16,
 }
 
 # 해상도 배수 요구사항 (width/height 가 이 값의 배수여야 함).
 _DIM_MULTIPLE = {
     "comfyui-hunyuan15-480p": 16,
     "comfyui-wan22-ti2v-5b": 32,
+    "comfyui-ltx23-v2": 32,
 }
 
 # WAN/Hunyuan 계열은 프레임 수가 4n+1 형태.
 _FRAME_QUANTIZE = {
     "comfyui-hunyuan15-480p": 4,
     "comfyui-wan22-ti2v-5b": 4,
+    "comfyui-ltx23-v2": 4,
 }
 
 

@@ -27,7 +27,17 @@ import {
   Power,
   Pencil,
 } from "lucide-react";
-import { oneclickApi, modelsApi, voiceApi, assetUrl, type OneClickTask, type OneClickQueueItem, type OrphanProject } from "@/lib/api";
+import {
+  oneclickApi,
+  modelsApi,
+  voiceApi,
+  projectsApi,
+  assetUrl,
+  type OneClickTask,
+  type OneClickQueueItem,
+  type OrphanProject,
+  type ProjectConfig,
+} from "@/lib/api";
 import { formatKrw } from "@/lib/format";
 import { APP_VERSION } from "@/lib/version";
 import {
@@ -245,21 +255,29 @@ function ActivityPanel({
           const state = getStepState(liveTask, s.key);
           const stepNum = Number(s.key);
           const cuts = Number(completedByStep[s.key] || 0);
+          const estimatedModels = liveTask?.estimate?.models_used || {};
+          const rawStepModel =
+            s.modelKey && s.modelKey !== "tts"
+              ? (liveTask.models?.[s.modelKey] ||
+                  estimatedModels[s.modelKey as keyof typeof estimatedModels] ||
+                  "")
+              : "";
+          const rawTtsModel = liveTask.models?.tts || estimatedModels.tts || "";
           const modelName =
-            s.modelKey && liveTask?.models
+            s.modelKey
               ? s.modelKey === "tts"
                 ? [
-                    liveTask.models.tts
-                      ? modelNameMap[liveTask.models.tts] || liveTask.models.tts
+                    rawTtsModel
+                      ? modelNameMap[rawTtsModel] || rawTtsModel
                       : "",
-                    liveTask.models.tts_voice
+                    liveTask.models?.tts_voice
                       ? voiceNameMap[liveTask.models.tts_voice] || liveTask.models.tts_voice
                       : "",
                   ]
                     .filter(Boolean)
                     .join(" / ")
-                : liveTask.models[s.modelKey]
-                  ? modelNameMap[liveTask.models[s.modelKey] as string] || liveTask.models[s.modelKey] || ""
+                : rawStepModel
+                  ? modelNameMap[rawStepModel] || rawStepModel
                   : ""
               : "";
           // 컷 단위 진행이 의미 있는 단계
@@ -456,6 +474,7 @@ export default function LivePage() {
   // 이 여러 개 쌓일 수 있다. 기존 .find() 1건 표시로는 가려지던 상태.
   const [activeTasks, setActiveTasks] = useState<OneClickTask[]>([]);
   const [pendingQueueItems, setPendingQueueItems] = useState<OneClickQueueItem[]>([]);
+  const [previewModelConfig, setPreviewModelConfig] = useState<Partial<ProjectConfig> | null>(null);
   const [queueChannelTimes, setQueueChannelTimes] = useState<Record<string, string | null>>(
     DEFAULT_QUEUE_CHANNEL_TIMES,
   );
@@ -490,8 +509,8 @@ export default function LivePage() {
   const [thumbnailPromptSaving, setThumbnailPromptSaving] = useState(false);
   const [thumbnailRegenerating, setThumbnailRegenerating] = useState(false);
   const [thumbnailRefreshKey, setThumbnailRefreshKey] = useState(0);
-  const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const logEndRef = useRef<HTMLDivElement | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const logScrollRef = useRef<HTMLDivElement | null>(null);
   // 멈춤 감지: 진행률이 일정 시간 변하지 않으면 경고
   const lastPctChangeRef = useRef<number>(Date.now());
   const lastPctValueRef = useRef<string>("");
@@ -658,26 +677,86 @@ export default function LivePage() {
 
   const maybeReloadOnAutoTaskSwitch = useCallback(
     (runningTaskId: string | undefined | null) => {
-      const currentTaskId = task?.task_id;
-      if (!currentTaskId || !runningTaskId || runningTaskId === currentTaskId) return;
-      if (typeof window === "undefined") return;
+      const currentTask = taskRef.current;
+      const currentTaskId = currentTask?.task_id;
+      if (!currentTask || !currentTaskId || !runningTaskId || runningTaskId === currentTaskId) return false;
+      const states = currentTask.step_states || {};
+      const episodeDone =
+        currentTask.status === "completed" ||
+        ["2", "3", "4", "5", "6", "7"].every((key) => states[key] === "completed");
+      if (!episodeDone) return false;
+      if (typeof window === "undefined") return false;
 
       const reloadKey = `oneclick-auto-task-switch:${currentTaskId}->${runningTaskId}`;
-      if (window.sessionStorage.getItem(reloadKey)) return;
+      if (window.sessionStorage.getItem(reloadKey)) return true;
       window.sessionStorage.setItem(reloadKey, "1");
       window.setTimeout(() => window.location.reload(), 250);
+      return true;
     },
-    [task?.task_id],
+    [],
+  );
+
+  const activeQueueTaskId = useCallback(() => {
+    const currentTask = taskRef.current;
+    if (!currentTask || !["prepared", "queued", "running"].includes(currentTask.status)) return null;
+    return currentTask.task_id;
+  }, []);
+
+  const isQueueItemLocked = useCallback(
+    (item: OneClickQueueItem) => {
+      const activeTaskId = activeQueueTaskId();
+      return (
+        String(item.status || "").toLowerCase() === "running" ||
+        Boolean(activeTaskId && item.task_id === activeTaskId)
+      );
+    },
+    [activeQueueTaskId],
   );
 
   useEffect(() => {
     setSelectedQueueIds((prev) => {
       if (prev.size === 0) return prev;
-      const visible = new Set(pendingQueueItems.map((item, index) => queueItemKey(item, index)));
+      const visible = new Set(
+        pendingQueueItems.flatMap((item, index) =>
+          isQueueItemLocked(item) ? [] : [queueItemKey(item, index)],
+        ),
+      );
       const next = new Set(Array.from(prev).filter((id) => visible.has(id)));
       return next.size === prev.size ? prev : next;
     });
-  }, [pendingQueueItems]);
+  }, [isQueueItemLocked, pendingQueueItems]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const topItem = pendingQueueItems[0] || null;
+    const sourceProjectId =
+      topItem?.template_project_id ||
+      topItem?.source_project_id ||
+      topItem?.project_id ||
+      null;
+
+    if (!sourceProjectId) {
+      setPreviewModelConfig(null);
+      return;
+    }
+
+    projectsApi
+      .get(sourceProjectId)
+      .then((project) => {
+        if (!cancelled) setPreviewModelConfig(project.config || null);
+      })
+      .catch(() => {
+        if (!cancelled) setPreviewModelConfig(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    pendingQueueItems[0]?.template_project_id,
+    pendingQueueItems[0]?.source_project_id,
+    pendingQueueItems[0]?.project_id,
+  ]);
 
   const resolveLiveTask = useCallback(
     async (candidate: OneClickTask): Promise<OneClickTask> => {
@@ -724,7 +803,8 @@ export default function LivePage() {
       ]);
       void syncSafetyState().catch(() => {});
       markServerSync();
-      setPendingQueueItems(queueState.items || []);
+      const queueItems = queueState.items || [];
+      setPendingQueueItems(queueItems);
       setQueueChannelTimes(normalizeQueueChannelTimes(queueState.channel_times));
 
       const running = runningState.running;
@@ -734,7 +814,7 @@ export default function LivePage() {
         if (selectedTask && ["failed", "cancelled", "paused", "prepared", "queued"].includes(selectedTask.status)) {
           return selectedTask;
         }
-        const topQueueItem = (queueState.items || [])[0] || null;
+        const topQueueItem = queueItems[0] || null;
         if (topQueueItem?.id) {
           try {
             const recovered = await oneclickApi.recoverExistingQueueItem(topQueueItem.id);
@@ -785,6 +865,9 @@ export default function LivePage() {
 
       const active = await oneclickApi.get(running.task_id);
       markServerSync();
+      if (maybeReloadOnAutoTaskSwitch(active.task_id)) {
+        return active;
+      }
       setActiveTasks([active]);
       setTask(active);
       replaceLogsFromTask(active, [
@@ -803,7 +886,7 @@ export default function LivePage() {
       setStalled(false);
       return active;
     },
-    [addLog, markServerSync, replaceLogsFromTask, syncSafetyState],
+    [activeQueueTaskId, addLog, markServerSync, maybeReloadOnAutoTaskSwitch, replaceLogsFromTask, syncSafetyState],
   );
 
   // ─── 초기 로드: 페이지 열 때 (또는 다시 돌아올 때) 실행 중 태스크 자동 복구 ───
@@ -824,6 +907,41 @@ export default function LivePage() {
       cancelled = true;
     };
   }, [addLog, refreshLiveSnapshot]);
+
+  useEffect(() => {
+    const current = task;
+    if (!current) return;
+    const states = current.step_states || {};
+    const episodeDone =
+      current.status === "completed" ||
+      ["2", "3", "4", "5", "6", "7"].every((key) => states[key] === "completed");
+    if (!episodeDone) return;
+
+    let cancelled = false;
+    const watchNextTask = async () => {
+      try {
+        const runningState = await oneclickApi.getRunning();
+        if (cancelled) return;
+        if (runningState.running?.task_id && runningState.running.task_id !== current.task_id) {
+          maybeReloadOnAutoTaskSwitch(runningState.running.task_id);
+        }
+      } catch {
+        // 단일 태스크 폴링에서 네트워크 상태를 이미 표시한다.
+      }
+    };
+    void watchNextTask();
+    const id = setInterval(watchNextTask, 2000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [
+    task?.task_id,
+    task?.status,
+    task?.finished_at,
+    task?.step_states,
+    maybeReloadOnAutoTaskSwitch,
+  ]);
 
   // ─── 폴링 + 로그 자동 생성 + 멈춤/에러 감지 ─────────────────────
   const prevStepRef = useRef<string | null>(null);
@@ -855,7 +973,10 @@ export default function LivePage() {
       }
       return;
     }
-    pollRef.current = setTimeout(async () => {
+    let inFlight = false;
+    pollRef.current = setInterval(async () => {
+      if (inFlight) return;
+      inFlight = true;
       try {
         const fresh = await resolveLiveTask(task);
         markServerSync();
@@ -987,16 +1108,19 @@ export default function LivePage() {
           }
           return next;
         });
+      } finally {
+        inFlight = false;
       }
     }, 2000);
     return () => {
-      if (pollRef.current) clearTimeout(pollRef.current);
+      if (pollRef.current) clearInterval(pollRef.current);
     };
   }, [task, addLog, stalled, markServerSync, syncLogsFromTask, resolveLiveTask, maybeReloadAfterVerifiedUpload, syncSafetyState]);
 
   // 로그 자동 스크롤
   useEffect(() => {
-    logEndRef.current?.scrollIntoView({ behavior: "auto" });
+    const el = logScrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
   }, [logs, task?.sub_status, task?.current_step_completed, task?.progress_pct]);
 
   const handleCancel = async () => {
@@ -1154,10 +1278,15 @@ export default function LivePage() {
       const items = [...(queueState.items || [])];
       const index = items.findIndex((item) => item.id === itemId);
       if (index < 0) return;
+      if (isQueueItemLocked(items[index])) {
+        addLog("[시스템] 진행 중인 작업은 순서를 변경할 수 없습니다.", "warn");
+        return;
+      }
+      const lockedCount = items.filter((item) => isQueueItemLocked(item)).length;
       let targetIndex = index;
-      if (direction === "up") targetIndex = Math.max(0, index - 1);
+      if (direction === "up") targetIndex = Math.max(lockedCount, index - 1);
       if (direction === "down") targetIndex = Math.min(items.length - 1, index + 1);
-      if (direction === "top") targetIndex = 0;
+      if (direction === "top") targetIndex = lockedCount;
       if (targetIndex === index) return;
 
       const [moved] = items.splice(index, 1);
@@ -1182,11 +1311,13 @@ export default function LivePage() {
     setQueueBatchRunning(true);
     try {
       const queueState = await oneclickApi.getQueue();
-      const items = [...(queueState.items || [])];
+      const items = queueState.items || [];
       const now = new Date();
       const nowMinutes = now.getHours() * 60 + now.getMinutes();
       const channelSeen = new Map<number, number>();
+      const lockedItems = items.filter((item) => isQueueItemLocked(item));
       const sorted = items
+        .filter((item) => !isQueueItemLocked(item))
         .map((item, index) => {
           const channel = Number(item.channel || 1);
           const channelOrder = channelSeen.get(channel) || 0;
@@ -1203,7 +1334,7 @@ export default function LivePage() {
       const updated = await oneclickApi.setQueue({
         channel_times: queueState.channel_times,
         channel_presets: queueState.channel_presets,
-        items: sorted,
+        items: [...lockedItems, ...sorted],
       });
       setPendingQueueItems(updated.items || []);
       setQueueChannelTimes(normalizeQueueChannelTimes(updated.channel_times));
@@ -1223,10 +1354,17 @@ export default function LivePage() {
     setMovingQueueId(itemId || rowKey);
     try {
       const queueState = await oneclickApi.getQueue();
+      let removed = false;
       const items = (queueState.items || []).filter((item, index) => {
-        if (itemId && item.id === itemId) return false;
-        return queueItemKey(item, index) !== rowKey;
+        if (isQueueItemLocked(item)) return true;
+        const remove = Boolean((itemId && item.id === itemId) || queueItemKey(item, index) === rowKey);
+        if (remove) removed = true;
+        return !remove;
       });
+      if (!removed) {
+        addLog("[시스템] 진행 중인 작업은 삭제할 수 없습니다.", "warn");
+        return;
+      }
       const updated = await oneclickApi.setQueue({
         channel_times: queueState.channel_times,
         channel_presets: queueState.channel_presets,
@@ -1259,6 +1397,7 @@ export default function LivePage() {
       const currentItems = queueState.items || [];
       const removedTitles: string[] = [];
       const items = currentItems.filter((item, index) => {
+        if (isQueueItemLocked(item)) return true;
         const key = queueItemKey(item, index);
         const remove = keySet.has(key);
         if (remove) removedTitles.push(queueTitle(item));
@@ -1298,9 +1437,11 @@ export default function LivePage() {
       markServerSync();
       const currentItems = queueState.items || [];
       const keyToOrder = new Map(keys.map((key, index) => [key, index]));
+      const lockedItems = currentItems.filter((item) => isQueueItemLocked(item));
       const selected: OneClickQueueItem[] = [];
       const remaining: OneClickQueueItem[] = [];
       currentItems.forEach((item, index) => {
+        if (isQueueItemLocked(item)) return;
         const key = queueItemKey(item, index);
         if (keyToOrder.has(key)) selected.push(item);
         else remaining.push(item);
@@ -1336,7 +1477,7 @@ export default function LivePage() {
         const updated = await oneclickApi.setQueue({
           channel_times: queueState.channel_times,
           channel_presets: queueState.channel_presets,
-          items: [...stillLiveNext, cancelled, ...normalRemaining],
+          items: [...lockedItems, ...stillLiveNext, cancelled, ...normalRemaining],
         });
         setPendingQueueItems(updated.items || []);
         setQueueChannelTimes(normalizeQueueChannelTimes(updated.channel_times));
@@ -1367,7 +1508,7 @@ export default function LivePage() {
       const updated = await oneclickApi.setQueue({
         channel_times: queueState.channel_times,
         channel_presets: queueState.channel_presets,
-        items: [...promoted, ...existingLiveNext, ...normalRemaining],
+        items: [...lockedItems, ...promoted, ...existingLiveNext, ...normalRemaining],
       });
       setPendingQueueItems(updated.items || []);
       setQueueChannelTimes(normalizeQueueChannelTimes(updated.channel_times));
@@ -1593,6 +1734,7 @@ export default function LivePage() {
   useEffect(() => {
     let cancelled = false;
     const tick = async () => {
+      if (typeof document !== "undefined" && document.hidden) return;
       try {
         const [queueState, runningState] = await Promise.all([
           oneclickApi.getQueue(),
@@ -1603,13 +1745,21 @@ export default function LivePage() {
         setPendingQueueItems(queueState.items || []);
         setQueueChannelTimes(normalizeQueueChannelTimes(queueState.channel_times));
         if (runningState.running?.task_id) {
-          maybeReloadOnAutoTaskSwitch(runningState.running.task_id);
-          setActiveTasks((prev) => {
-            const current = task?.task_id === runningState.running?.task_id ? task : null;
-            if (current) return [current];
-            const existing = prev.find((item) => item.task_id === runningState.running?.task_id);
-            return existing ? [existing] : prev;
-          });
+          const activeRunningTaskId = runningState.running.task_id;
+          if (task?.task_id !== activeRunningTaskId) {
+            if (maybeReloadOnAutoTaskSwitch(activeRunningTaskId)) return;
+            const active = await oneclickApi.get(activeRunningTaskId);
+            if (cancelled) return;
+            setTask(active);
+            setActiveTasks([active]);
+            syncLogsFromTask(active);
+            lastPctValueRef.current = taskProgressHeartbeat(active);
+            lastPctChangeRef.current = Date.now();
+            setStalled(false);
+            autoResetFiredRef.current = false;
+          } else {
+            setActiveTasks([task]);
+          }
         } else {
           setActiveTasks([]);
         }
@@ -1617,12 +1767,12 @@ export default function LivePage() {
         // 네트워크 실패는 단일-task 폴링 쪽에서 이미 감지/로그. 여기선 조용히 무시.
       }
     };
-    const id = setInterval(tick, 5000);
+    const id = setInterval(tick, 15000);
     return () => {
       cancelled = true;
       clearInterval(id);
     };
-  }, [markServerSync, maybeReloadOnAutoTaskSwitch, task]);
+  }, [activeQueueTaskId, markServerSync, syncLogsFromTask, task, maybeReloadOnAutoTaskSwitch]);
 
   const isRunning =
     task && ["prepared", "queued", "running"].includes(task.status);
@@ -1677,7 +1827,8 @@ export default function LivePage() {
       setUploadingStep(false);
     }
   };
-  const displayTask = getEffectiveTask(task);
+  const runningDisplayTask = activeTasks.find((item) => item.status === "running") || null;
+  const displayTask = getEffectiveTask(runningDisplayTask || task);
   const isCompleted = displayTask?.status === "completed";
   const pct = isCompleted ? 100 : Math.round(displayTask?.progress_pct || 0);
   const activeStepKey = displayTask?.current_step ? String(displayTask.current_step) : inferLiveStepKey(displayTask);
@@ -1711,32 +1862,83 @@ export default function LivePage() {
     failureLogEntry && !logs.some((log) => log.msg.includes(String(task?.error || "")))
       ? [...logs, failureLogEntry]
       : logs
-  ).filter((log) => !isConsoleProgressLog(log)).slice(-10);
+  ).filter((log) => !isConsoleProgressLog(log));
+  const previewQueueItem = pendingQueueItems[0] || null;
+  const previewStageModels = {
+    script: previewModelConfig?.script_model || "",
+    tts: previewModelConfig?.tts_model || "",
+    tts_voice: previewModelConfig?.tts_voice_id || "",
+    image: previewModelConfig?.image_model || "",
+    video: previewModelConfig?.video_model || "",
+    thumbnail: previewModelConfig?.thumbnail_model || "",
+  };
+  const mergedStageModels = {
+    script: displayTask?.models?.script || previewStageModels.script,
+    tts: displayTask?.models?.tts || previewStageModels.tts,
+    tts_voice: displayTask?.models?.tts_voice || previewStageModels.tts_voice,
+    image: displayTask?.models?.image || previewStageModels.image,
+    video: displayTask?.models?.video || previewStageModels.video,
+    thumbnail: displayTask?.models?.thumbnail || previewStageModels.thumbnail,
+  };
+  const stageModelTask = (displayTask
+    ? {
+        ...displayTask,
+        models: mergedStageModels,
+        estimate: {
+          ...displayTask.estimate,
+          models_used: {
+            ...(displayTask.estimate?.models_used || {}),
+            script: displayTask.estimate?.models_used?.script || mergedStageModels.script,
+            tts: displayTask.estimate?.models_used?.tts || mergedStageModels.tts,
+            image: displayTask.estimate?.models_used?.image || mergedStageModels.image,
+            video: displayTask.estimate?.models_used?.video || mergedStageModels.video,
+            thumbnail: displayTask.estimate?.models_used?.thumbnail || mergedStageModels.thumbnail,
+          },
+        },
+      }
+    : previewQueueItem
+      ? ({
+          models: mergedStageModels,
+          estimate: { models_used: mergedStageModels },
+        } as unknown as OneClickTask)
+      : null) as OneClickTask | null;
   const compactStageRows = STEPS.filter((step) => ["2", "3", "4", "5", "6", "7"].includes(step.key)).map((step) => {
     const state = getStepState(displayTask, step.key);
     const isActive = activeStepKey === step.key && displayTask?.status === "running";
     const total = Math.max(1, Number(displayTask?.total_cuts || displayTask?.current_step_total || 120));
     const done = Number(displayTask?.completed_cuts_by_step?.[step.key] || 0);
+    const activeCutPct =
+      isActive && ["3", "4", "5"].includes(step.key)
+        ? Math.max(0, Math.min(100, Number(displayTask?.current_step_cut_progress_pct || 0)))
+        : 0;
+    const activeCutContribution =
+      isActive && activeCutPct > 0
+        ? activeCutPct / Math.max(1, total)
+        : 0;
     const progress =
       state === "done"
         ? 100
         : ["3", "4", "5"].includes(step.key)
-          ? Math.min(100, Math.round((done / total) * 100))
+          ? Math.min(100, Math.round(((done / total) * 100) + activeCutContribution))
           : isActive
             ? 34
             : 0;
+    const liveText =
+      isActive
+        ? String(displayTask?.current_step_progress_text || displayTask?.sub_status || "").trim()
+        : "";
     return {
       ...step,
       state,
       isActive,
-      api: stepApiName(step.key, displayTask),
-      model: stepModelName(step.key, displayTask),
+      api: stepApiName(step.key, stageModelTask),
+      model: stepModelName(step.key, stageModelTask),
       target: stepTargetText(step.key, displayTask),
       seconds: isActive ? compactSeconds(activeStartedSec) : "00:00:00",
       progress,
+      liveText,
     };
   });
-  const previewQueueItem = pendingQueueItems[0] || null;
   const hasCurrentPanelItem = Boolean(displayTask || previewQueueItem);
   const currentPanelChannel = displayTask?.channel || previewQueueItem?.channel || 1;
   const currentPanelEpisode = displayTask?.episode_number || previewQueueItem?.episode_number || null;
@@ -1904,21 +2106,31 @@ export default function LivePage() {
           }
         : null;
   const comfyProgress = (() => {
-    const text = `${displayTask?.current_step_progress_text || ""} ${displayTask?.sub_status || ""}`;
-    const match = text.match(/KSampler\s+(\d+)\s*\/\s*(\d+)\s*\((\d+(?:\.\d+)?)%\)/i);
-    if (!match) return null;
-    const current = Number(match[1]);
-    const total = Number(match[2]);
-    const pct = Math.max(0, Math.min(100, Number(match[3])));
-    if (!Number.isFinite(current) || !Number.isFinite(total) || total <= 0) return null;
-    const cutMatch = text.match(/컷\s+(\d+)\s*\/\s*(\d+)/);
-    return {
-      current,
-      total,
-      pct,
-      cut: cutMatch ? Number(cutMatch[1]) : null,
-      cutTotal: cutMatch ? Number(cutMatch[2]) : null,
+    if (!displayTask || activeStepKey !== "4") return null;
+    const parse = (text: string) => {
+      const match = text.match(/KSampler\s+(\d+)\s*\/\s*(\d+)\s*\((\d+(?:\.\d+)?)%\)/i);
+      if (!match) return null;
+      const current = Number(match[1]);
+      const total = Number(match[2]);
+      const pct = Math.max(0, Math.min(100, Number(match[3])));
+      if (!Number.isFinite(current) || !Number.isFinite(total) || total <= 0) return null;
+      const cutMatch = text.match(/컷\s+(\d+)\s*\/\s*(\d+)/);
+      return {
+        current,
+        total,
+        pct,
+        cut: cutMatch ? Number(cutMatch[1]) : null,
+        cutTotal: cutMatch ? Number(cutMatch[2]) : null,
+      };
     };
+    const liveText = `${displayTask?.current_step_progress_text || ""} ${displayTask?.sub_status || ""}`;
+    const live = parse(liveText);
+    if (live) return live;
+    for (const log of [...(displayTask?.logs || [])].reverse()) {
+      const parsed = parse(String(log?.msg || ""));
+      if (parsed) return parsed;
+    }
+    return null;
   })();
   const comfyAverage = (() => {
     const samples = (displayTask?.logs || [])
@@ -2021,7 +2233,9 @@ export default function LivePage() {
     (t) => t.status === "queued" || t.status === "prepared",
   );
   const activeDisplayTasks =
-    task && ["prepared", "queued", "running"].includes(task.status)
+    runningDisplayTask
+      ? [runningDisplayTask]
+      : task && ["prepared", "queued", "running"].includes(task.status)
       ? activeTasks.some((item) => item.task_id === task.task_id)
         ? activeTasks
         : [task, ...activeTasks]
@@ -2178,7 +2392,9 @@ export default function LivePage() {
           queueEditChannel == null
             ? []
             : allQueueEntries.filter(({ item }) => Number(item.channel || 1) === queueEditChannel);
-        const visibleQueueKeys = visibleQueueEntries.map(({ item, index }) => queueItemKey(item, index));
+        const visibleQueueKeys = visibleQueueEntries
+          .filter(({ item }) => !isQueueItemLocked(item))
+          .map(({ item, index }) => queueItemKey(item, index));
         const selectedVisibleCount = visibleQueueKeys.filter((key) => selectedQueueIds.has(key)).length;
         const allVisibleSelected = visibleQueueKeys.length > 0 && selectedVisibleCount === visibleQueueKeys.length;
         const renderQueueRow = (item: OneClickQueueItem, index: number) => {
@@ -2187,6 +2403,9 @@ export default function LivePage() {
           const rowKey = queueItemKey(item, index);
           const checked = selectedQueueIds.has(rowKey);
           const displayTitle = queueTitle(item);
+          const isRunningQueueItem = isQueueItemLocked(item);
+          const isWorkbenchQueueItem = !isRunningQueueItem && Boolean(item.task_id);
+          const actionDisabled = queueBatchRunning || isRunningQueueItem;
           const liveNextRank =
             isLiveNextQueueItem(item) &&
             pendingQueueItems.slice(0, index).every((prev) => isLiveNextQueueItem(prev))
@@ -2216,7 +2435,9 @@ export default function LivePage() {
               <input
                 type="checkbox"
                 checked={checked}
+                disabled={isRunningQueueItem}
                 onChange={(e) => {
+                  if (isRunningQueueItem) return;
                   setSelectedQueueIds((prev) => {
                     const next = new Set(prev);
                     if (e.target.checked) next.add(rowKey);
@@ -2224,8 +2445,8 @@ export default function LivePage() {
                     return next;
                   });
                 }}
-                className="h-5 w-5 shrink-0 accent-accent-primary"
-                title="실행순 지정 선택"
+                className="h-5 w-5 shrink-0 accent-accent-primary disabled:cursor-not-allowed disabled:opacity-30"
+                title={isRunningQueueItem ? "진행 중인 작업은 선택할 수 없습니다" : "실행순 지정 선택"}
               />
               <span className="w-14 shrink-0 rounded bg-blue-400/15 px-2 py-1 text-center text-sm font-bold text-blue-200">
                 #{index + 1}
@@ -2245,6 +2466,16 @@ export default function LivePage() {
                   <span className="rounded border border-emerald-400/25 bg-emerald-400/10 px-2 py-1 font-semibold text-emerald-200">
                     {meta.scheduleLabel}
                   </span>
+                  {isRunningQueueItem && (
+                    <span className="rounded border border-red-300/40 bg-red-300/15 px-2 py-1 font-bold text-red-100">
+                      진행중
+                    </span>
+                  )}
+                  {isWorkbenchQueueItem && (
+                    <span className="rounded border border-blue-300/40 bg-blue-300/15 px-2 py-1 font-bold text-blue-100">
+                      작업대
+                    </span>
+                  )}
                   <span className="text-gray-500">{meta.queuedAt}</span>
                   {isPromotedNext && (
                     <span className="rounded border border-amber-300/40 bg-amber-300/15 px-2 py-1 font-bold text-amber-200">
@@ -2257,22 +2488,32 @@ export default function LivePage() {
               <div className="flex shrink-0 items-center gap-1">
                 <button
                   type="button"
-                  onClick={() => void promoteQueueItemsToNext([rowKey])}
-                  disabled={queueBatchRunning}
+                  onClick={() => {
+                    if (!isRunningQueueItem) void promoteQueueItemsToNext([rowKey]);
+                  }}
+                  disabled={actionDisabled}
                   className={`inline-flex min-w-16 items-center justify-center gap-1.5 rounded border px-3 py-1.5 text-sm font-bold disabled:opacity-40 ${
-                    isPromotedNext
+                    isRunningQueueItem
+                      ? "cursor-not-allowed border-red-300/40 bg-red-300/15 text-red-100"
+                      : isPromotedNext
                       ? "border-amber-300/50 bg-amber-300/15 text-amber-200 hover:bg-amber-300/25"
                       : "border-accent-success/40 bg-accent-success/10 text-accent-success hover:bg-accent-success/20"
                   }`}
-                  title={isPromotedNext ? "실행순 지정 취소" : "이 작업을 실행순 1번으로 지정"}
+                  title={
+                    isRunningQueueItem
+                      ? "진행 중인 작업은 순서를 변경할 수 없습니다"
+                      : isPromotedNext
+                        ? "실행순 지정 취소"
+                        : "이 작업을 실행순 1번으로 지정"
+                  }
                 >
-                  <PlayCircle size={14} />
-                  {isPromotedNext ? "취소" : "1번 지정"}
+                  {isRunningQueueItem ? <Loader2 size={14} className="animate-spin" /> : <PlayCircle size={14} />}
+                  {isRunningQueueItem ? "진행중" : isPromotedNext ? "취소" : "1번 지정"}
                 </button>
                 <button
                   type="button"
                   onClick={() => void moveQueueItem(item.id, "top")}
-                  disabled={isMoving || index === 0}
+                  disabled={isRunningQueueItem || isMoving || index === 0}
                   className="rounded border border-border bg-bg-secondary px-2.5 py-1.5 text-sm font-semibold text-gray-300 hover:text-gray-100 disabled:opacity-30"
                   title="맨 위로"
                 >
@@ -2281,7 +2522,7 @@ export default function LivePage() {
                 <button
                   type="button"
                   onClick={() => void moveQueueItem(item.id, "up")}
-                  disabled={isMoving || index === 0}
+                  disabled={isRunningQueueItem || isMoving || index === 0}
                   className="rounded border border-border bg-bg-secondary px-2.5 py-1.5 text-sm font-semibold text-gray-300 hover:text-gray-100 disabled:opacity-30"
                   title="한 칸 위"
                 >
@@ -2290,7 +2531,7 @@ export default function LivePage() {
                 <button
                   type="button"
                   onClick={() => void moveQueueItem(item.id, "down")}
-                  disabled={isMoving || index >= pendingQueueItems.length - 1}
+                  disabled={isRunningQueueItem || isMoving || index >= pendingQueueItems.length - 1}
                   className="rounded border border-border bg-bg-secondary px-2.5 py-1.5 text-sm font-semibold text-gray-300 hover:text-gray-100 disabled:opacity-30"
                   title="한 칸 아래"
                 >
@@ -2299,7 +2540,7 @@ export default function LivePage() {
                 <button
                   type="button"
                   onClick={() => void deleteQueueItem(item.id, rowKey, displayTitle)}
-                  disabled={isMoving || queueBatchRunning}
+                  disabled={isRunningQueueItem || isMoving || queueBatchRunning}
                   className="inline-flex items-center justify-center rounded border border-red-400/30 bg-red-400/10 px-2.5 py-1.5 text-sm font-semibold text-red-300 hover:bg-red-400/20 disabled:opacity-30"
                   title="대기열에서 삭제"
                 >
@@ -2349,6 +2590,10 @@ export default function LivePage() {
             <div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-2">
               {nextQueueItems.slice(0, 5).map((item, index) => {
                 const meta = formatQueueWaitingMeta(item, queueChannelTimes);
+                const isRunningQueueItem =
+                  String(item.status || "pending").toLowerCase() === "running" ||
+                  Boolean(item.task_id && task?.task_id === item.task_id && task.status === "running");
+                const isWorkbenchQueueItem = !isRunningQueueItem && Boolean(item.task_id);
                 return (
                   <div
                     key={`next-queue-${item.id || index}`}
@@ -2356,7 +2601,7 @@ export default function LivePage() {
                     title={`${item.topic} · ${meta.sourceLabel} · ${meta.scheduleLabel}`}
                   >
                     <span className="shrink-0 rounded bg-blue-400/15 px-1.5 py-0.5 text-[10px] font-black text-blue-100">
-                      다음 {index + 1}
+                      {isRunningQueueItem ? "진행중" : isWorkbenchQueueItem ? "작업대" : `다음 ${index + 1}`}
                     </span>
                     <button
                       type="button"
@@ -2803,7 +3048,7 @@ export default function LivePage() {
       })()}
 
       <div className="order-2 flex-1 min-h-0 overflow-y-auto pr-1">
-        <div className="grid grid-cols-1 gap-3 2xl:gap-4">
+        <div className="flex min-h-full flex-col gap-3 2xl:gap-4">
           <section className="rounded-lg border border-border bg-bg-secondary p-3">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <div className="flex min-w-0 items-center gap-2">
@@ -2917,6 +3162,40 @@ export default function LivePage() {
                     </div>
                   </div>
 
+                  <div className="flex min-h-[116px] flex-1 flex-col justify-center rounded-lg border border-border/70 bg-bg-primary/35 px-4 py-3">
+                    {comfyProgress ? (
+                      <div className="space-y-2.5">
+                        <div className="flex items-center justify-between gap-3 text-xs font-black">
+                          <span className="truncate text-purple-100">
+                            {comfyProgress.cut
+                              ? `COMFYUI cut ${comfyProgress.cut}/${comfyProgress.cutTotal || displayTask?.total_cuts || "-"}`
+                              : "COMFYUI KSampler"}
+                          </span>
+                          <span className="shrink-0 font-mono text-purple-200">
+                            {comfyProgress.current}/{comfyProgress.total} ({Math.round(comfyProgress.pct)}%)
+                          </span>
+                        </div>
+                        <div className="h-3 overflow-hidden rounded-full bg-purple-950/80">
+                          <div
+                            className="h-full rounded-full bg-purple-400 transition-[width] duration-300"
+                            style={{ width: `${comfyProgress.pct}%` }}
+                          />
+                        </div>
+                        {comfyAverage && (
+                          <div className="flex items-center justify-between gap-3 text-[11px] font-bold text-purple-100/85">
+                            <span>평균 {compactSeconds(comfyAverage.seconds)}/건</span>
+                            <span className="text-purple-200/70">최근 {comfyAverage.count}건</span>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-between gap-3 text-xs font-bold text-gray-500">
+                        <span>COMFYUI 진행 수신 대기</span>
+                        <span className="font-mono">0/0 (0%)</span>
+                      </div>
+                    )}
+                  </div>
+
                   <div className="mt-auto">
                     <button
                       onClick={handleToggleAutoProduction}
@@ -2944,32 +3223,6 @@ export default function LivePage() {
                     <div className="absolute left-2 top-2 z-10 rounded border border-border/80 bg-black/55 px-2 py-1 text-xs font-bold text-gray-200">
                       {latestGeneratedAsset?.label || "생성 결과 대기"}
                     </div>
-                    {comfyProgress && (
-                      <div className="absolute left-2 right-2 top-10 z-10 rounded-lg border border-purple-400/40 bg-black/70 px-2.5 py-2 shadow-lg">
-                        <div className="mb-1.5 flex items-center justify-between gap-2 text-[11px] font-black text-purple-100">
-                          <span className="truncate">
-                            {comfyProgress.cut
-                              ? `ComfyUI cut ${comfyProgress.cut}/${comfyProgress.cutTotal || displayTask?.total_cuts || "-"}`
-                              : "ComfyUI KSampler"}
-                          </span>
-                          <span className="font-mono text-purple-200">
-                            {comfyProgress.current}/{comfyProgress.total} ({Math.round(comfyProgress.pct)}%)
-                          </span>
-                        </div>
-                        <div className="h-2 overflow-hidden rounded-full bg-purple-950/80">
-                          <div
-                            className="h-full rounded-full bg-purple-400 transition-[width] duration-300"
-                            style={{ width: `${comfyProgress.pct}%` }}
-                          />
-                        </div>
-                        {comfyAverage && (
-                          <div className="mt-1.5 flex items-center justify-between gap-2 text-[10px] font-bold text-purple-100/90">
-                            <span>평균 {compactSeconds(comfyAverage.seconds)}/건</span>
-                            <span className="text-purple-200/70">최근 {comfyAverage.count}건</span>
-                          </div>
-                        )}
-                      </div>
-                    )}
                     {latestGeneratedAsset?.kind === "video" ? (
                       <video
                         key={latestGeneratedAsset.src}
@@ -3012,8 +3265,8 @@ export default function LivePage() {
             )}
           </section>
 
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(360px,50%)_minmax(360px,1fr)] 2xl:grid-cols-[minmax(420px,50%)_minmax(420px,1fr)]">
-            <section className="rounded-lg border border-border bg-bg-secondary p-2.5">
+          <div className="grid h-[430px] grid-cols-1 items-stretch gap-3 md:grid-cols-[minmax(360px,50%)_minmax(360px,1fr)] 2xl:grid-cols-[minmax(420px,50%)_minmax(420px,1fr)]">
+            <section className="h-full overflow-hidden rounded-lg border border-border bg-bg-secondary p-2.5">
               <div className="mb-3 flex items-center justify-between gap-2">
                 <h2 className="text-base font-bold text-gray-100">단계별 실제 진행</h2>
                 <span className="text-xs text-gray-500">실시간</span>
@@ -3037,8 +3290,8 @@ export default function LivePage() {
                       <div className={`truncate text-xs font-bold ${row.isActive ? "text-accent-primary" : "text-gray-500"}`}>
                           {row.isActive ? "진행" : row.state === "done" ? "완료" : row.state === "failed" ? "실패" : "대기"}
                       </div>
-                      <div className="truncate text-sm font-semibold text-gray-200" title={row.model || row.api}>
-                        {row.model || row.api}
+                      <div className="truncate text-sm font-semibold text-gray-200" title={row.model || ""}>
+                        {row.model || "-"}
                       </div>
                       <div className="font-mono text-xs font-bold text-amber-200" title={row.seconds}>{row.seconds}</div>
                       <button
@@ -3076,18 +3329,23 @@ export default function LivePage() {
                         style={{ width: `${row.progress}%` }}
                       />
                     </div>
+                    {row.isActive && row.liveText && (
+                      <div className="mt-1.5 truncate text-[11px] font-semibold text-accent-primary" title={row.liveText}>
+                        {row.liveText}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
             </section>
 
-            <aside className="grid min-h-0 grid-cols-1 gap-3.5">
-              <section className="rounded-lg border border-border bg-[#08080e] p-3">
+            <aside className="grid h-full min-h-0 grid-cols-1 gap-3.5">
+              <section className="flex h-full min-h-0 flex-col overflow-hidden rounded-lg border border-border bg-[#08080e] p-3">
                 <div className="mb-3 flex items-center justify-between gap-2">
                   <h2 className="text-base font-bold text-gray-100">제작 로그</h2>
                   <span className="text-xs text-gray-600">{compactLogRows.length}줄</span>
                 </div>
-                <div className="max-h-[272px] overflow-y-auto pr-1 font-mono text-xs leading-5">
+                <div ref={logScrollRef} className="min-h-0 flex-1 overflow-y-auto pr-1 font-mono text-xs leading-5">
                   {compactLogRows.length ? (
                     <>
                       {compactLogRows.map((log, i) => (
@@ -3096,7 +3354,6 @@ export default function LivePage() {
                           <span className={`min-w-0 truncate ${logColor(log.level)}`} title={log.msg}>{log.msg}</span>
                         </div>
                       ))}
-                      <div ref={logEndRef} />
                     </>
                   ) : (
                     <div className="py-8 text-center text-sm text-gray-600">로그 없음</div>

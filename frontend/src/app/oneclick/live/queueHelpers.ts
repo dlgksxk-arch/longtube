@@ -153,6 +153,20 @@ export function isLiveNextQueueItem(item: OneClickQueueItem) {
   );
 }
 
+export function sortQueueItemsForWorkbench(items: OneClickQueueItem[], activeTaskId?: string | null) {
+  return [...(items || [])].sort((a, b) => {
+    const aRunning =
+      String(a.status || "").toLowerCase() === "running" || Boolean(activeTaskId && a.task_id === activeTaskId)
+        ? 0
+        : 1;
+    const bRunning =
+      String(b.status || "").toLowerCase() === "running" || Boolean(activeTaskId && b.task_id === activeTaskId)
+        ? 0
+        : 1;
+    return aRunning - bRunning;
+  });
+}
+
 export function queueItemKey(item: OneClickQueueItem, index: number) {
   return item.id || `${index}:${item.channel || 1}:${item.topic}`;
 }

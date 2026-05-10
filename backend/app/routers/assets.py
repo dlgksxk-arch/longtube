@@ -1,8 +1,9 @@
 """Project asset serving helpers.
 
-The raw /assets mount exposes DATA_DIR, but new projects live under
-_system/projects/{id} or channels/CHn/projects/{id}. This API route resolves
-the real project folder first so frontend previews can use stable project IDs.
+The raw /assets mount exposes DATA_DIR, but project outputs can live under
+V3 archive folders, _system/projects/{id}, or channels/CHn/projects/{id}.
+This API route resolves the real project folder first so frontend previews can
+use stable project IDs.
 """
 import mimetypes
 from pathlib import Path

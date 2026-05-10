@@ -1,5 +1,4 @@
 """Script generation router"""
-import math
 import json
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException
@@ -10,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.models.database import get_db
 from app.models.project import Project
 from app.models.cut import Cut
-from app.config import DATA_DIR
+from app.config import resolve_project_dir
 from app.services.llm.factory import get_llm_service
 from app.services.llm.visual_policy import (
     apply_script_visual_policy,
@@ -35,7 +34,7 @@ def _normalize_path(project_id: str, asset_path: str) -> str:
     """Convert absolute path to relative path from project dir. Fix legacy data."""
     if not asset_path:
         return asset_path
-    project_dir = str(DATA_DIR / project_id)
+    project_dir = str(resolve_project_dir(project_id, create=False))
     p = str(asset_path).replace("\\", "/")
     pd = project_dir.replace("\\", "/")
     if p.startswith(pd):
@@ -62,7 +61,7 @@ class CutReorder(BaseModel):
 
 def _load_script(project_id: str) -> dict:
     """Load script.json from disk"""
-    script_path = DATA_DIR / project_id / "script.json"
+    script_path = resolve_project_dir(project_id, create=False) / "script.json"
     if not script_path.exists():
         return {"cuts": []}
     with open(script_path, "r", encoding="utf-8") as f:
@@ -80,7 +79,7 @@ def _strip_script_motion_prompts(script: dict) -> dict:
 def _save_script(project_id: str, script: dict, language: str = "ko"):
     """Save script.json to disk"""
     script = _strip_script_motion_prompts(script)
-    script_path = DATA_DIR / project_id / "script.json"
+    script_path = resolve_project_dir(project_id, create=True) / "script.json"
     script_path.parent.mkdir(parents=True, exist_ok=True)
     with open(script_path, "w", encoding="utf-8") as f:
         json.dump(script, f, ensure_ascii=False, indent=2)
@@ -207,21 +206,8 @@ async def generate_script_async(project_id: str, db: Session = Depends(get_db)):
     if provider == "openai" and not app_config.OPENAI_API_KEY:
         raise HTTPException(400, "OPENAI_API_KEY not set. Add it to backend/.env file.")
 
-    # 대형 대본은 LLM 서비스가 조각 생성한다. 진행률도 조각 단위로 표시한다.
     est_seconds = float((project.config or {}).get("estimate", {}).get("time_breakdown", {}).get("llm_script", 60))
-    try:
-        expected_cuts = max(1, int((project.config or {}).get("target_cuts") or 0))
-    except (TypeError, ValueError):
-        expected_cuts = 0
-    if expected_cuts <= 0:
-        try:
-            duration_int = max(5, int((project.config or {}).get("target_duration", 600)))
-        except (TypeError, ValueError):
-            duration_int = 600
-        expected_cuts = max(1, math.ceil(duration_int / 5))
-    chunk_size = 40
-    script_task_total = max(1, math.ceil(expected_cuts / chunk_size)) if expected_cuts >= 40 else 1
-    state = start_task(project_id, "script", script_task_total, estimated_total_seconds=est_seconds)
+    state = start_task(project_id, "script", 1, estimated_total_seconds=est_seconds)
 
     # step_states 를 running 으로 갱신
     step_states = dict(project.step_states or {})
@@ -234,8 +220,6 @@ async def generate_script_async(project_id: str, db: Session = Depends(get_db)):
     project_title = project.title
     config = dict(project.config or {})
     config["__project_id"] = project_id
-    config["__script_chunk_size"] = chunk_size
-    config["__script_chunk_total"] = script_task_total
 
     async def _run():
         from app.models.database import SessionLocal
@@ -335,7 +319,7 @@ def list_cuts(project_id: str, db: Session = Depends(get_db)):
 
     # Normalize absolute paths to relative + validate file existence
     dirty = False
-    project_dir = DATA_DIR / project_id
+    project_dir = resolve_project_dir(project_id, project.config or {}, create=False)
     for c in cuts:
         # Normalize absolute paths to relative (fix legacy data)
         if c.audio_path:
@@ -514,7 +498,7 @@ def edit_cut(
         cut.video_path = None
         cut.video_model = None
         cut.status = "pending"
-        project_dir = DATA_DIR / project_id
+        project_dir = resolve_project_dir(project_id, project.config or {}, create=False)
         for rel in (
             Path("audio") / f"cut_{cut_number}.mp3",
             Path("audio") / f"cut_{cut_number}.wav",
@@ -597,7 +581,7 @@ def clear_step_results(project_id: str, step: str, db: Session = Depends(get_db)
         raise HTTPException(404, "Project not found")
 
     cuts = db.query(Cut).filter(Cut.project_id == project_id).all()
-    project_dir = DATA_DIR / project_id
+    project_dir = resolve_project_dir(project_id, project.config or {}, create=False)
 
     def _safe_unlink(path: Path):
         try:

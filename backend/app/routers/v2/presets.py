@@ -46,7 +46,7 @@ def _preset_interlude_dir(preset_id: int) -> Path:
 
     ``{DATA_DIR}/presets/{preset_id}/interlude/`` 아래에 ``opening.mp4`` /
     ``intermission.mov`` / ``ending.mkv`` 같은 식으로 저장된다. v1 의
-    ``{DATA_DIR}/{project_id}/interlude/`` 와 구조만 한 단계 다르다.
+    프로젝트 디렉토리의 ``interlude/`` 와 구조만 한 단계 다르다.
     """
     d = DATA_DIR / "presets" / str(preset_id) / "interlude"
     d.mkdir(parents=True, exist_ok=True)

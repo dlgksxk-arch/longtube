@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 from app.models.database import get_db
 from app.models.project import Project
 from app.models.cut import Cut
-from app.config import DATA_DIR, CUT_VIDEO_DURATION
+from app.config import CHANNELS_ROOT, CUT_VIDEO_DURATION, RESULT_ARCHIVE_DIR, SYSTEM_PROJECTS_ROOT, resolve_project_dir
 from app.services.video.factory import DEFAULT_VIDEO_MODEL, get_video_service, resolve_video_model
 from app.services.video.ffmpeg_service import FFmpegService
 from app.services.subtitle_service import burn_cut_subtitle_file
@@ -34,7 +34,7 @@ router = APIRouter()
 
 def _to_relative(project_id: str, abs_path: str) -> str:
     """Convert absolute path to relative path from project dir for DB storage."""
-    project_dir = str(DATA_DIR / project_id)
+    project_dir = str(resolve_project_dir(project_id, create=False))
     p = str(abs_path).replace("\\", "/")
     pd = project_dir.replace("\\", "/")
     if p.startswith(pd):
@@ -48,11 +48,11 @@ def _to_absolute(project_id: str, rel_path: str) -> str:
     p = Path(rel_path)
     if p.is_absolute():
         return rel_path
-    return str(DATA_DIR / project_id / rel_path)
+    return str(resolve_project_dir(project_id, create=False) / rel_path)
 
 
 def _load_script_cut_map(project_id: str) -> dict[int, dict]:
-    script_path = DATA_DIR / project_id / "script.json"
+    script_path = resolve_project_dir(project_id, create=False) / "script.json"
     if not script_path.exists():
         return {}
     try:
@@ -532,10 +532,12 @@ async def diagnose_comfyui(model_id: str = "comfyui-hunyuan15-480p"):
     # 2) 아무 이미지나 하나 픽 → upload
     try:
         result["stage"] = "find_image"
-        from app.config import DATA_DIR as _DD
-        candidates = list(_P(_DD).glob("*/images/cut_*.png"))
+        candidates = []
+        for root in (RESULT_ARCHIVE_DIR, CHANNELS_ROOT, SYSTEM_PROJECTS_ROOT):
+            if _P(root).exists():
+                candidates.extend(_P(root).glob("**/images/cut_*.png"))
         if not candidates:
-            result["error"] = "테스트용 이미지 파일이 없음 (DATA_DIR/*/images/cut_*.png)"
+            result["error"] = "테스트용 이미지 파일이 없음"
             return result
         test_img = str(candidates[0])
         result["test_image"] = test_img
@@ -680,7 +682,7 @@ async def generate_all_videos(project_id: str, db: Session = Depends(get_db)):
         if video_model == "ffmpeg-safe-motion"
         else get_video_service("ffmpeg-safe-motion")
     )
-    video_dir = DATA_DIR / project_id / "videos"
+    video_dir = resolve_project_dir(project_id, project.config or {}, create=True) / "videos"
     video_dir.mkdir(parents=True, exist_ok=True)
 
     results = []
@@ -922,7 +924,7 @@ async def generate_all_videos_async(project_id: str, db: Session = Depends(get_d
                 if video_model == "ffmpeg-safe-motion"
                 else get_video_service("ffmpeg-safe-motion")
             )
-            v_dir = DATA_DIR / project_id / "videos"
+            v_dir = resolve_project_dir(project_id, proj.config if proj else {}, create=True) / "videos"
             v_dir.mkdir(parents=True, exist_ok=True)
 
             cuts = local_db.query(Cut).filter(Cut.project_id == project_id).order_by(Cut.cut_number).all()
@@ -1212,7 +1214,7 @@ async def generate_all_videos_async(project_id: str, db: Session = Depends(get_d
                         )
 
                 # v2.1.1: 영상 생성 완료 후 자동 렌더링 (자막 번인 포함)
-                _auto_render_log = str(DATA_DIR / project_id / "auto_render.log")
+                _auto_render_log = str(resolve_project_dir(project_id, proj.config if proj else {}, create=True) / "auto_render.log")
                 try:
                     from app.routers.subtitle import render_video_with_subtitles
                     from app.models.database import SessionLocal
@@ -1351,7 +1353,7 @@ async def resume_videos_async(project_id: str, db: Session = Depends(get_db)):
                 if video_model == "ffmpeg-safe-motion"
                 else get_video_service("ffmpeg-safe-motion")
             )
-            v_dir = DATA_DIR / project_id / "videos"
+            v_dir = resolve_project_dir(project_id, proj.config if proj else {}, create=True) / "videos"
             v_dir.mkdir(parents=True, exist_ok=True)
 
             db_cuts = local_db.query(Cut).filter(Cut.project_id == project_id).order_by(Cut.cut_number).all()
@@ -1612,7 +1614,7 @@ async def resume_videos_async(project_id: str, db: Session = Depends(get_db)):
                     )
 
                 # v2.1.1: 영상 생성 완료 후 자동 렌더링 (자막 번인 포함)
-                _auto_render_log = str(DATA_DIR / project_id / "auto_render.log")
+                _auto_render_log = str(resolve_project_dir(project_id, proj.config if proj else {}, create=True) / "auto_render.log")
                 try:
                     from app.routers.subtitle import render_video_with_subtitles
                     from app.models.database import SessionLocal

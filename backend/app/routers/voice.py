@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.models.database import get_db
 from app.models.project import Project
 from app.models.cut import Cut
-from app.config import DATA_DIR
+from app.config import resolve_project_dir
 from app.services.tts.factory import get_tts_service
 from app.services.tts.narration_fit import (
     ensure_audio_duration_window,
@@ -27,7 +27,7 @@ router = APIRouter()
 
 def _load_script(project_id: str) -> dict:
     """Load script.json from disk"""
-    script_path = DATA_DIR / project_id / "script.json"
+    script_path = resolve_project_dir(project_id, create=False) / "script.json"
     if not script_path.exists():
         return {"cuts": []}
     with open(script_path, "r", encoding="utf-8") as f:
@@ -35,7 +35,7 @@ def _load_script(project_id: str) -> dict:
 
 
 def _save_script(project_id: str, script: dict):
-    script_path = DATA_DIR / project_id / "script.json"
+    script_path = resolve_project_dir(project_id, create=True) / "script.json"
     script_path.parent.mkdir(parents=True, exist_ok=True)
     with open(script_path, "w", encoding="utf-8") as f:
         json.dump(script, f, ensure_ascii=False, indent=2)
@@ -46,7 +46,7 @@ def _audio_file_exists(project_id: str, audio_path: str | None) -> bool:
         return False
     path = Path(audio_path)
     if not path.is_absolute():
-        path = DATA_DIR / project_id / audio_path
+        path = resolve_project_dir(project_id, create=False) / audio_path
     try:
         return path.exists() and path.stat().st_size > 100
     except OSError:
@@ -58,13 +58,13 @@ def _resolve_audio_path(project_id: str, audio_path: str | None) -> Path | None:
         return None
     path = Path(audio_path)
     if not path.is_absolute():
-        path = DATA_DIR / project_id / audio_path
+        path = resolve_project_dir(project_id, create=False) / audio_path
     return path
 
 
 def _relative_audio_path(project_id: str, path: Path) -> str:
     try:
-        return path.relative_to(DATA_DIR / project_id).as_posix()
+        return path.relative_to(resolve_project_dir(project_id, create=False)).as_posix()
     except ValueError:
         return path.as_posix()
 
@@ -179,7 +179,7 @@ def _sync_cut_narration_after_fit(project_id: str, cut: Cut, cut_data: dict, nar
         Path("videos") / f"cut_{cut.cut_number}.mp4",
     ):
         try:
-            (DATA_DIR / project_id / rel).unlink(missing_ok=True)
+            (resolve_project_dir(project_id, create=False) / rel).unlink(missing_ok=True)
         except OSError:
             pass
     return True
@@ -231,7 +231,7 @@ async def generate_all_voices(project_id: str, db: Session = Depends(get_db)):
 
         try:
             voice_id = project.config.get("tts_voice_id", "")
-            audio_dir = DATA_DIR / project_id / "audio"
+            audio_dir = resolve_project_dir(project_id, project.config or {}, create=True) / "audio"
             audio_dir.mkdir(parents=True, exist_ok=True)
             audio_path = str(audio_dir / f"cut_{cut_number}.wav")
             result = _fit_existing_audio_without_api(
@@ -415,7 +415,7 @@ async def generate_all_voices_async(project_id: str, db: Session = Depends(get_d
                     continue
 
                 try:
-                    audio_dir = DATA_DIR / project_id / "audio"
+                    audio_dir = resolve_project_dir(project_id, proj.config if proj else {}, create=True) / "audio"
                     audio_dir.mkdir(parents=True, exist_ok=True)
                     audio_path = str(audio_dir / f"cut_{cut_number}.mp3")
                     result = _fit_existing_audio_without_api(
@@ -641,7 +641,7 @@ async def resume_voices_async(project_id: str, db: Session = Depends(get_db)):
                     continue
 
                 try:
-                    audio_dir = DATA_DIR / project_id / "audio"
+                    audio_dir = resolve_project_dir(project_id, proj.config if proj else {}, create=True) / "audio"
                     audio_dir.mkdir(parents=True, exist_ok=True)
                     audio_path = str(audio_dir / f"cut_{cut_number}.mp3")
                     result = _fit_existing_audio_without_api(
@@ -793,7 +793,7 @@ async def generate_one_voice(
 
     try:
         voice_id = project.config.get("tts_voice_id", "")
-        audio_dir = DATA_DIR / project_id / "audio"
+        audio_dir = resolve_project_dir(project_id, project.config or {}, create=True) / "audio"
         audio_dir.mkdir(parents=True, exist_ok=True)
         audio_path = str(audio_dir / f"cut_{cut_number}.wav")
 
@@ -998,7 +998,7 @@ async def preview_voice(
             voice_settings = {"stability": 0.7, "similarity_boost": 0.85}
 
     try:
-        preview_dir = DATA_DIR / project_id / "audio"
+        preview_dir = resolve_project_dir(project_id, project.config or {}, create=True) / "audio"
         preview_dir.mkdir(parents=True, exist_ok=True)
         preview_path = str(preview_dir / "voice_preview.mp3")
 
