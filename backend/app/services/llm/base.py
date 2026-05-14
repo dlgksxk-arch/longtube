@@ -10,6 +10,8 @@ import re
 from abc import ABC, abstractmethod
 from typing import Any, Optional
 
+from app.config import resolve_cut_video_duration
+
 
 IMAGE_PROMPT_REQUIRED_STYLE = "simple cartoon illustration, documentary cartoon style, clean thick outlines, soft natural shadows"
 
@@ -34,7 +36,7 @@ SCRIPT_SYSTEM_PROMPT_TEMPLATE = """당신은 수익창출이 최우선 목표인
       "visual_period": "영어로 작성. 구체적인 역사 시대 또는 현대 시기. 예: 'Indus Valley Civilization, Mature Harappan period, c. 2600-1900 BCE'",
       "visual_location": "영어로 작성. 구체적인 장소 또는 환경. 예: 'brick street near a drainage channel in Mohenjo-daro'",
       "visual_evidence": "영어로 작성. 이 이미지가 내레이션과 시대에 맞는 이유를 짧게 한 문장으로 작성",
-      "duration_estimate": 5.0,
+      "duration_estimate": {cut_video_duration},
       "scene_type": "title",
       "shorts_candidate": false,
       "shorts_group": 0,
@@ -46,21 +48,24 @@ SCRIPT_SYSTEM_PROMPT_TEMPLATE = """당신은 수익창출이 최우선 목표인
 }
 
 시간 목표:
-- 최상위 절대 규칙: 어떤 컷도 5.0초를 넘으면 안 됩니다.
+- 영상 컷 슬롯은 {cut_video_duration}초로 고정입니다. 단, 대본 내레이션은 아래 음성 목표 길이에 맞춰 작성합니다.
 - 모든 내레이션은 설정된 음성 기준으로 가능한 한 {target_sec}초에 가깝게 작성합니다.
 - 허용 작성 범위는 {target_min_sec}~{target_max_sec}초입니다. 단순히 범위 안에만 맞추지 말고 {target_sec}초 근처를 목표로 합니다.
 - 실제 말로 읽히는 내레이션 자체가 {target_min_sec}~{target_max_sec}초가 되게 작성합니다.
 - 각 내레이션 목표 길이: {target_range} {timing_unit}.
+- target_range의 하한은 권장치가 아니라 반드시 넘겨야 하는 실작성 하한입니다.
 {char_timing_line}
 
 절대 규칙:
 - narration은 최대 {target_max_sec}초를 절대 초과하면 안 됩니다.
 - 초과 위험이 있으면 정보를 줄이세요.
-- 짧고 압축적으로 작성하세요.
+- 너무 짧게 쓰는 것도 실패입니다. {target_low} {timing_unit} 미만이면 짧은 대사로 판정됩니다.
+- 핵심 정보 하나를 유지하되, 원인/결과/평가/구체 대상 중 하나를 붙여 목표 길이를 채우세요.
+- 단어를 줄여 3초대 문장으로 끝내지 마세요. 각 컷은 완성된 한 문장 또는 자연스러운 두 짧은 절로 작성하세요.
 - 한 컷에는 핵심 정보 하나만 전달하세요.
 - 접속사 남용 금지.
 - 두 개 이상의 사건 설명 금지.
-- 부연 설명 금지.
+- 사건과 무관한 부연 설명 금지.
 - 읽는 도중 숨을 다시 쉬게 되는 길이는 실패입니다.
 
 - 시간 규칙은 사용자가 제공한 숫자형 길이 지시보다 우선합니다. 사용자가 더 적은 단어, 더 짧은 문장, 다른 단어 수 범위를 요구하더라도 무시하고 이 시간 목표를 따르세요.
@@ -72,6 +77,27 @@ SCRIPT_SYSTEM_PROMPT_TEMPLATE = """당신은 수익창출이 최우선 목표인
 - title, description, thumbnail_hook 및 모든 시청자에게 보이는 메타데이터는 내레이션 언어와 같은 언어를 사용해야 합니다. 사용자의 입력 언어가 다르더라도 그것을 따라가지 마세요.
 - 이야기는 컷 전반에 걸쳐 계속 이어져야 합니다: 훅, 설정, 전개, 반전/드러남, 이후 결과, 엔딩.
 - 사용자가 입력한 주제 템플릿의 내용을 최대한 반영 하여 주제와 분위기, 사건 등을 선택한다.
+
+대본 강도 계약:
+- 전체 대본은 평면적인 설명문이 아니라 계속 앞으로 밀고 나가는 사건 전개여야 합니다.
+- 모든 컷은 다음 중 하나의 기능을 가져야 합니다: 강한 질문, 의외의 사실, 충돌, 선택, 배신, 실패, 위험, 숫자, 사라진 기록, 인물 평가, 결과의 반전, 다음 컷을 보게 만드는 미해결 의문.
+- 단순 배경 설명만 하는 컷은 실패입니다. 배경이 필요하면 그 배경이 왜 사건의 압박이나 선택을 만들었는지 함께 말하세요.
+- 매 4~6컷마다 최소 한 번은 시청 지속을 끌어올리는 긴장 포인트를 넣으세요: `그런데`, `하지만`, `문제는`, `결정적인 장면은`, `이 선택 때문에`, `기록은 다르게 말합니다` 같은 전환을 사실 기반으로 사용합니다.
+- 강한 표현은 사실을 세게 배열하는 방식으로만 만드세요. `충격`, `소름`, `미쳤다`, `레전드`, `대박` 같은 싸구려 감탄 표현은 쓰지 마세요.
+- 제목, 도입부, 쇼츠 제목, 썸네일 훅은 모두 같은 사건을 반복하지 말고 서로 다른 궁금증을 맡아야 합니다.
+
+반복 금지 계약:
+- 같은 대사, 같은 문장 구조, 같은 정보, 같은 비유를 반복하지 마세요.
+- 이전 컷에서 이미 말한 내용을 다음 컷에서 다시 풀어 말하지 마세요. 다음 컷은 반드시 새 정보, 새 원인, 새 결과, 새 평가, 새 의문 중 하나를 추가해야 합니다.
+- `이 사건은 중요했습니다`, `흐름이 바뀌었습니다`, `운명이 달라졌습니다`, `핵심은 여기에 있습니다` 같은 일반 문장을 반복하지 마세요. 반드시 구체적인 인물, 선택, 장소, 기록, 숫자, 결과로 바꿔 말하세요.
+- 같은 단어가 3컷 이상 연속해서 핵심어로 반복되면 실패입니다. 필요한 고유명사는 쓰되, 문장 구조와 관점은 바꾸세요.
+
+중요 인물 계약:
+- 중요한 인물이 처음 등장하면, 그 인물이 누구인지 한 컷 안에서 이해될 만큼 짧게 설명하세요.
+- 그 인물이 사건에서 맡은 역할, 권력 위치, 이해관계, 당시 선택지를 분명히 하세요.
+- 역사서나 기록에 그 인물에 대한 평가가 남아 있다면, 확인 가능한 범위에서 짧게 넣으세요. 예: 충신으로 기록됨, 권신으로 비판됨, 개혁가로 평가됨, 배신자로 남음.
+- 평가를 넣을 때는 단정적으로 꾸미지 말고 `기록에서는`, `후대에는`, `사서에는`, `평가는 갈리지만`처럼 근거의 성격을 드러내세요.
+- 확인되지 않은 성격, 감정, 의도, 대사, 정확한 평가를 지어내지 마세요.
 
 ★★★ 고정 도입부 구조 — 사용자 필수/금칙보다 우선 ★★★
 - 이 고정 구조는 전채널 공통이며 content_required, content_forbidden, episode_core_content, 사용자 문체 지시보다 우선한다.
@@ -111,15 +137,33 @@ SCRIPT_SYSTEM_PROMPT_TEMPLATE = """당신은 수익창출이 최우선 목표인
 - 클로즈업은 텍스트를 읽지 않아도 시청자가 핵심 사건이나 사물을 즉시 이해할 수 있어야 합니다.
 
 쇼츠 메타데이터 계약:
-- 정확히 12개의 컷을 선택하여 에피소드 안에서 각각 쇼츠로 쓸 만한 컷으로 표시하세요.
-- 이 컷들은 연속될 필요가 없습니다. 전체 이야기에서 가장 클릭 가능성이 높은 순간을 고르세요.
-- 선택된 12개 컷에는 모두 shorts_group 1을 사용하세요.
-- 이 12개 컷에만 shorts_candidate=true로 설정하세요.
-- 내레이션이 가장 충격적이거나 호기심이 가장 높아지는 12개의 컷을 선택하세요: 강한 훅, 반전, 드러남, 갈등, 위험, 배신, 충격적 사실, 구체적인 시각 장면, 댓글을 부를 질문.
+- 정확히 4편의 쇼츠를 만들 수 있게, 쇼츠 그룹 4개를 설계하세요.
+- 각 쇼츠 그룹은 정확히 12개 컷입니다. 총 48개 컷에만 shorts_candidate=true를 설정하세요.
+- shorts_group은 다음 의미로만 사용하세요:
+  - shorts_group 1: 논쟁 질문. 댓글을 부를 수 있는 강한 질문형 훅입니다.
+  - shorts_group 2: 충격 사실. 시청자가 바로 멈추는 의외의 사실/수치/전환점입니다.
+  - shorts_group 3: 롱폼으로 넘기는 미스터리. 답을 본편에서 확인하고 싶게 만드는 미해결 의문입니다.
+  - shorts_group 4: 주요 인물 부각. 이야기의 핵심 인물, 결정권자, 배신자, 희생자, 승부수를 둔 인물을 전면에 세웁니다.
+- 각 그룹의 12개 컷은 같은 쇼츠 안에서 자연스럽게 이어져야 합니다. 가능하면 연속 구간을 고르되, 이야기 흐름이 깨지면 가까운 컷만 사용하세요.
+- 그룹끼리는 컷 번호가 겹치면 안 됩니다.
+- 전체 이야기에서 가장 클릭 가능성이 높은 순간을 고르세요.
+- 선택된 48개 컷 외에는 shorts_candidate=false, shorts_group=0을 사용하세요.
+- 내레이션이 가장 충격적이거나 호기심이 가장 높아지는 컷을 선택하세요: 강한 훅, 반전, 드러남, 갈등, 위험, 배신, 충격적 사실, 구체적인 시각 장면, 댓글을 부를 질문.
+- 일반 설명 컷, 배경만 말하는 컷, 이미 말한 내용을 반복하는 컷, 인트로용 인사말 컷, 다음 전개 없이 정리만 하는 컷은 shorts_candidate=true로 지정하지 마세요.
+- shorts_candidate=true 컷은 해당 12컷만 떼어 봐도 사건의 압박, 선택, 반전, 결과가 어느 정도 이해되어야 합니다.
+- 각 쇼츠 그룹의 첫 번째 컷은 질문/반전/숫자/위험/배신/사라진 기록/결정적 선택 중 하나로 바로 시작해야 합니다. 단, 본편 흐름을 깨는 별도 쇼츠용 대사는 만들지 마세요.
+- 각 쇼츠 그룹 첫 번째 컷의 narration 첫 8~14글자 또는 첫 3~5단어 안에 질문/반전/숫자/위험/배신/사라진 기록/결정적 선택이 드러나야 합니다.
+- 첫 컷은 `왜`, `그런데`, `하지만`, `단 한 번`, `결정적`, `기록은`, `문제는` 같은 긴장 신호로 시작할 수 있습니다. 평범한 배경 설명으로 시작하면 실패입니다.
+- 각 쇼츠 그룹의 마지막 컷은 새 정보 없이 끝내지 말고, 다음 편이나 본편을 놓치지 않게 만드는 구독 유도형 여운으로 끝내세요. 단, `구독해주세요`처럼 노골적인 요청만 단독으로 쓰지 말고, 미해결 의문/다음 사건/반전 예고와 결합하세요.
+- 각 쇼츠 12컷은 hook -> pressure -> reveal -> unresolved pull 흐름을 가져야 합니다.
 - 인트로/아웃트로, 일반 설정, 단독으로 이해할 수 없는 구간은 선택하지 마세요.
-- shorts_reason은 "hook question", "shocking fact", "reversal", "danger", "midpoint reveal" 같은 짧은 이유로 작성하세요.
+- shorts_reason은 "debate question", "shocking fact", "longform mystery", "main character spotlight" 중 그룹 목적에 맞는 짧은 이유로 작성하세요.
 - shorts_score는 1~10점으로 넣으세요. 10점은 가장 강한 호기심 컷에만 사용합니다.
-- 선택된 컷에는 shorts_title을 추가하세요. 업로드할 쇼츠 제목으로 쓸 수 있게 충격적이고 호기심을 강하게 유도해야 합니다.
+- 선택된 컷에는 shorts_title을 추가하세요. 업로드할 쇼츠 제목으로 쓸 수 있게 사실 기반 안에서 선정적이고 자극적으로 쓰세요. 단, 없는 사건을 지어내거나 허위 과장은 금지입니다.
+- 각 그룹의 첫 번째 선택 컷에는 해당 쇼츠의 대표 shorts_title을 반드시 넣으세요.
+- shorts_title은 설명형 제목이 아니라 클릭형 질문/반전/충돌/잃어버린 것/결정적 선택 문장이어야 합니다. 단, 허위 과장과 없는 사실은 금지합니다.
+- shorts_title은 정보형 명사구 금지입니다. `~의 의미`, `~를 알아보자`, `~ 이야기`, `진짜 이유`만 단독으로 쓰면 실패입니다.
+- shorts_title은 CJK 언어 기준 22~38자, 비CJK 언어 기준 38~70자 안에서 강한 질문이나 충돌이 보이게 작성하세요.
 
 이미지 계약:
 - 수익창출이 최우선입니다. 모든 image_prompt는 첫눈에 호기심을 만들고, 클릭/시청 지속에 도움이 되는 강한 대표 피사체와 감정/행동/위험/증거/충돌 중 하나를 화면 중심에 둬야 합니다.
@@ -246,14 +290,16 @@ def _script_tts_target_window(config: dict | None) -> tuple[float, float, float]
     except (TypeError, ValueError):
         target = 4.4
     try:
-        tolerance = float(cfg.get("script_tts_tolerance_sec") or 0.4)
+        tolerance = float(cfg.get("script_tts_tolerance_sec") or 0.2)
     except (TypeError, ValueError):
-        tolerance = 0.4
+        tolerance = 0.2
 
-    target = max(4.0, min(4.7, target))
+    min_floor = 4.2
+    max_ceiling = 4.6
+    target = max(min_floor, min(max_ceiling, target))
     tolerance = max(0.05, min(0.5, tolerance))
-    min_sec = max(4.0, target - tolerance)
-    max_sec = min(4.8, target + tolerance)
+    min_sec = max(min_floor, target - tolerance)
+    max_sec = min(max_ceiling, target + tolerance)
     if min_sec > max_sec:
         min_sec = max_sec = target
     return min_sec, max_sec, target
@@ -354,6 +400,7 @@ def get_system_prompt(language: str = "ko", config: dict | None = None) -> str:
         "narration_lang": narration_lang,
         "national_pride_style": national_pride_style,
         "image_prompt_required_style": IMAGE_PROMPT_REQUIRED_STYLE,
+        "cut_video_duration": resolve_cut_video_duration(config),
     })
 # Keep backward compat
 SCRIPT_SYSTEM_PROMPT = get_system_prompt("ko")
@@ -559,7 +606,7 @@ class BaseLLMService(ABC):
 
         반환 형태: {"title_hook": str, "description": str, "tags": [str, ...]}
         `episode_number` 가 주어지면 LLM 에게 짧은 hook 만 쓰라고 지시합니다.
-        backend 쪽에서 최종 title 은 "EP. N - {title_hook}" 으로 조립합니다.
+        backend 쪽에서 최종 title 은 "{title_hook} EP.N" 형식으로 조립합니다.
         기본 구현은 빈 dict. 구체 LLM 서비스에서 오버라이드.
         """
         return {}
@@ -971,10 +1018,10 @@ class BaseLLMService(ABC):
             ep_block = (
                 f"\n★ EPISODE MODE ★\n"
                 f"This video is Episode #{episode_number} of a running series. The backend "
-                f"will prepend 'EP. {episode_number} - ' to your hook automatically, so "
+                f"will append 'EP.{episode_number:02d}' to your hook automatically, so "
                 f'your "title_hook" MUST NOT include the words "EP", "Episode", "에피소드", '
                 f'"제{episode_number}화", or the number itself. Write ONLY the short hook '
-                f"after the dash.\n"
+                f"before the episode label.\n"
             )
 
         return (
@@ -995,7 +1042,7 @@ class BaseLLMService(ABC):
             f'  - "title_hook": string. {hook_rule_label}. Written in {lang_name}. '
             f"A single short, punchy hook phrase — NOT a full sentence, NOT clickbait "
             f"ellipsis, NO emojis, NO quotation marks, NO trailing punctuation. "
-            f"Think of it as what goes AFTER 'EP. N - '. Examples of good length: "
+            f"Think of it as what goes BEFORE the trailing episode label. Examples of good length: "
             f"'석유의 비밀', 'The truth about oil', '石油の真実'. "
             f"Examples of bad: full sentences, questions, anything over the limit.\n"
             f'  - "description": string. 900 to 1800 characters. Written in {lang_name}. '
@@ -1118,11 +1165,11 @@ class BaseLLMService(ABC):
 
         if language == "ko":
             # 한국어 TTS: 27~28자 기준은 실제 ElevenLabs/OpenAI에서 3초대로
-            # 떨어졌다. 5초 컷용으로 38~42자 안팎을 목표로 잡는다.
-            chars_per_sec = _profiled_chars_per_sec(config, 8.8 * speed)
+            # 떨어졌다. 컷 길이에 맞춰 목표 글자 수를 계산한다.
+            chars_per_sec = _profiled_chars_per_sec(config, 10.0 * speed)
             target_chars = max(1, int(round(target_secs * chars_per_sec)))
             max_chars = max(1, int(math.ceil(max_secs * chars_per_sec)))
-            low = max(1, int(math.ceil(min_secs * chars_per_sec)) - 1)
+            low = max(1, int(math.ceil(min_secs * chars_per_sec)))
             if low > max_chars:
                 low = max_chars = target_chars
             validation_low = max(1, low - 1)
@@ -1139,8 +1186,8 @@ class BaseLLMService(ABC):
             }
         elif language == "ja":
             # 일본어 TTS: 24~26자는 실제 출력에서 교과서식 단문으로 고정되기
-            # 쉬웠다. 5초 컷용으로 33~37자 안팎을 목표로 잡는다.
-            chars_per_sec = _profiled_chars_per_sec(config, 7.8 * speed)
+            # 쉬웠다. 컷 길이에 맞춰 목표 글자 수를 계산한다.
+            chars_per_sec = _profiled_chars_per_sec(config, 9.4 * speed)
             target_chars = max(1, int(round(target_secs * chars_per_sec)))
             max_chars = max(1, int(math.floor(max_secs * chars_per_sec)))
             low = max(1, int(math.ceil(min_secs * chars_per_sec)))
@@ -1157,8 +1204,8 @@ class BaseLLMService(ABC):
             }
         else:
             # 영어 TTS: 기본 ~2.5 단어/초
-            words_per_sec = _profiled_words_per_sec(config, 2.5 * speed)
-            chars_per_sec = _profiled_chars_per_sec(config, 12.0 * speed)
+            words_per_sec = _profiled_words_per_sec(config, 2.7 * speed)
+            chars_per_sec = _profiled_chars_per_sec(config, 13.0 * speed)
             extra_words = 0
             extra_chars = max(0, int(round(extra_words * (chars_per_sec / max(words_per_sec, 0.1)))))
             target_words = max(1, int(round(target_secs * words_per_sec)))
@@ -1208,8 +1255,11 @@ class BaseLLMService(ABC):
                 duration_int = max(5, int(duration))
             except (TypeError, ValueError):
                 duration_int = 600
-            cut_count = max(1, math.ceil(duration_int / 5))
-        duration_int = cut_count * 5
+            cut_duration = resolve_cut_video_duration(config)
+            cut_count = max(1, math.ceil(duration_int / cut_duration))
+        cut_duration = resolve_cut_video_duration(config)
+        duration_seconds = cut_count * cut_duration
+        duration_int = int(round(duration_seconds)) if abs(duration_seconds - round(duration_seconds)) < 0.001 else duration_seconds
 
         character_description = (config.get("character_description") or "").strip()
 

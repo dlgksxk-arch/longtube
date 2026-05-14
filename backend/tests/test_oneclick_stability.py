@@ -14,6 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.services import oneclick_service as svc  # noqa: E402
+from app.services.tts import narration_fit  # noqa: E402
 from app.services import shorts_service  # noqa: E402
 from app.services import subtitle_service  # noqa: E402
 from app.services.image import prompt_builder  # noqa: E402
@@ -31,6 +32,19 @@ from app.services.interlude_service import DEFAULT_INTERMISSION_EVERY  # noqa: E
 
 
 class OneClickQueueStabilityTests(unittest.TestCase):
+    def test_oneclick_main_length_is_150_four_second_cuts(self):
+        cfg = {}
+        svc._force_oneclick_main_length(cfg)
+
+        self.assertEqual(svc.ONECLICK_MAIN_CUT_COUNT, 150)
+        self.assertEqual(svc.ONECLICK_SECONDS_PER_CUT, 4.0)
+        self.assertEqual(svc.ONECLICK_MAIN_TARGET_DURATION, 600)
+        self.assertEqual(cfg["cut_video_duration"], 4.0)
+        self.assertEqual(cfg["target_cuts"], 150)
+        self.assertEqual(cfg["target_duration"], 600)
+        self.assertEqual(cfg["script_tts_target_sec"], 4.4)
+        self.assertEqual(cfg["script_tts_tolerance_sec"], 0.2)
+
     def test_sort_queue_keeps_running_first_and_removes_terminal_rows(self):
         state = {
             "channel_times": {"1": "01:00", "2": "03:00", "3": "06:00", "4": "09:00"},
@@ -221,6 +235,12 @@ class OneClickQueueStabilityTests(unittest.TestCase):
         old_queue = copy.deepcopy(svc._QUEUE)
         old_saver = svc._save_queue_to_disk
         old_loaded = svc._STATE_LOADED
+        old_active_runs = dict(svc._ACTIVE_RUNS)
+
+        class _LiveRunner:
+            def done(self):
+                return False
+
         try:
             svc._save_queue_to_disk = lambda: None
             svc._STATE_LOADED = True
@@ -239,6 +259,8 @@ class OneClickQueueStabilityTests(unittest.TestCase):
                     },
                 }
             )
+            svc._ACTIVE_RUNS.clear()
+            svc._ACTIVE_RUNS["active"] = _LiveRunner()
             svc._QUEUE.clear()
             svc._QUEUE.update(
                 {
@@ -263,9 +285,106 @@ class OneClickQueueStabilityTests(unittest.TestCase):
             svc._QUEUE.update(old_queue)
             svc._save_queue_to_disk = old_saver
             svc._STATE_LOADED = old_loaded
+            svc._ACTIVE_RUNS.clear()
+            svc._ACTIVE_RUNS.update(old_active_runs)
+
+    def test_uploading_task_keeps_queue_row_active_without_live_runner(self):
+        old_tasks = copy.deepcopy(svc._TASKS)
+        old_queue = copy.deepcopy(svc._QUEUE)
+        old_saver = svc._save_queue_to_disk
+        old_loaded = svc._STATE_LOADED
+        try:
+            svc._save_queue_to_disk = lambda: None
+            svc._STATE_LOADED = True
+            svc._TASKS.clear()
+            svc._TASKS.update(
+                {
+                    "uploading": {
+                        "task_id": "uploading",
+                        "project_id": "project-uploading",
+                        "status": "uploading",
+                        "topic": "Uploading episode",
+                        "title": "Uploading episode",
+                        "channel": 1,
+                        "episode_number": 48,
+                        "started_at": "2026-05-11T17:56:09Z",
+                    },
+                }
+            )
+            svc._QUEUE.clear()
+            svc._QUEUE.update(
+                {
+                    "channel_times": {"1": "01:00", "2": "03:00", "3": "06:00", "4": "09:00"},
+                    "last_run_dates": {},
+                    "channel_presets": {"1": None, "2": None, "3": None, "4": None},
+                    "items": [
+                        {
+                            "id": "uploading",
+                            "topic": "Uploading episode",
+                            "channel": 1,
+                            "episode_number": 48,
+                            "status": "pending",
+                            "task_id": "uploading",
+                        },
+                    ],
+                }
+            )
+
+            changed = svc._sync_queue_items_from_tasks_for_save()
+
+            self.assertTrue(changed)
+            self.assertTrue(svc._has_inflight_task())
+            self.assertEqual(svc._QUEUE["items"][0]["status"], "running")
+            self.assertEqual(svc._QUEUE["items"][0]["queued_note"], "실행 중")
+        finally:
+            svc._TASKS.clear()
+            svc._TASKS.update(old_tasks)
+            svc._QUEUE.clear()
+            svc._QUEUE.update(old_queue)
+            svc._save_queue_to_disk = old_saver
+            svc._STATE_LOADED = old_loaded
 
 
 class OneClickSafetyStabilityTests(unittest.TestCase):
+    def test_uploading_task_does_not_replace_running_workbench_task(self):
+        old_tasks = copy.deepcopy(svc._TASKS)
+        old_loaded = svc._STATE_LOADED
+        old_saver = svc._save_tasks_to_disk
+        try:
+            svc._STATE_LOADED = True
+            svc._save_tasks_to_disk = lambda: None
+            svc._TASKS.clear()
+            svc._TASKS.update(
+                {
+                    "uploading": {
+                        "task_id": "uploading",
+                        "project_id": "project-uploading",
+                        "status": "uploading",
+                        "topic": "Manual upload retry",
+                        "progress_pct": 99.0,
+                        "started_at": "2026-05-12T01:00:00Z",
+                    },
+                    "running": {
+                        "task_id": "running",
+                        "project_id": "project-running",
+                        "status": "running",
+                        "topic": "Workbench job",
+                        "progress_pct": 31.0,
+                        "started_at": "2026-05-12T02:00:00Z",
+                    },
+                }
+            )
+
+            current = svc.get_running_task_info()
+
+            self.assertIsNotNone(current)
+            self.assertEqual(current["task_id"], "running")
+        finally:
+            svc._TASKS.clear()
+            svc._TASKS.update(old_tasks)
+            svc._STATE_LOADED = old_loaded
+            svc._save_tasks_to_disk = old_saver
+
     def test_progress_signature_is_stable_and_changes_on_real_progress(self):
         task = {
             "status": "running",
@@ -379,18 +498,64 @@ class InterludeStabilityTests(unittest.TestCase):
         self.assertIn("def get_system_prompt", prompt_source)
         self.assertIn("def _build_user_prompt", prompt_source)
         self.assertIn("SCRIPT_SYSTEM_PROMPT_TEMPLATE", prompt_source)
-        self.assertIn("수익이 중요한 유튜브 자동화 파이프라인용 대본 생성기", prompt_source)
+        self.assertIn("수익창출이 최우선 목표인 유튜브 자동화 파이프라인용 대본 생성기", prompt_source)
         self.assertIn("고정 도입부 구조", prompt_source)
+        self.assertIn("대본 강도 계약", prompt_source)
+        self.assertIn("반복 금지 계약", prompt_source)
+        self.assertIn("중요 인물 계약", prompt_source)
+        self.assertIn("너무 짧게 쓰는 것도 실패", prompt_source)
         self.assertNotIn("SOURCE STORY / ANALOGY CONTEXT", prompt_source)
         self.assertNotIn("anthropomorphic grasshopper character", prompt_source)
         self.assertNotIn("SCRIPT_SYSTEM_PROMPT_KO", prompt_source)
         self.assertNotIn("SCRIPT_SYSTEM_PROMPT_EN", prompt_source)
         self.assertNotIn("SCRIPT_SYSTEM_PROMPT_JA", prompt_source)
         self.assertIn("thumbnail_prompt는 가장 중요한 인물", prompt_source)
-        self.assertIn("정확히 12개의 컷", prompt_source)
+        self.assertIn("정확히 4편의 쇼츠", prompt_source)
+        self.assertIn("shorts_group 1: 논쟁 질문", prompt_source)
+        self.assertIn("shorts_group 2: 충격 사실", prompt_source)
+        self.assertIn("shorts_group 3: 롱폼으로 넘기는 미스터리", prompt_source)
+        self.assertIn("shorts_group 4: 주요 인물 부각", prompt_source)
+        self.assertIn("일반 설명 컷, 배경만 말하는 컷", prompt_source)
+        self.assertIn("본편 흐름을 깨는 별도 쇼츠용 대사는 만들지 마세요", prompt_source)
+        self.assertIn("첫 8~14글자", prompt_source)
+        self.assertIn("구독 유도형 여운", prompt_source)
+        self.assertIn("정보형 명사구 금지", prompt_source)
         self.assertIn("shorts_title", prompt_source)
         self.assertIn("visual_year", prompt_source)
-        self.assertIn("Year/period: ...; Exact place: ...; Scene: ...", prompt_source)
+        self.assertIn("Year/period: c. 1590-1591; Exact place: a specific visible place", prompt_source)
+
+    def test_four_second_video_keeps_script_tts_window_at_4_2_to_4_6(self):
+        limits = BaseLLMService._calc_narration_limits({
+            "language": "ko",
+            "tts_model": "elevenlabs",
+            "tts_speed": 1.0,
+            "cut_video_duration": 4.0,
+        })
+
+        self.assertEqual(limits["target_min_sec"], 4.2)
+        self.assertEqual(limits["target_sec"], 4.4)
+        self.assertEqual(limits["target_max_sec"], 4.6)
+        self.assertEqual(limits["target_range"], "42~46")
+
+        ja_limits = BaseLLMService._calc_narration_limits({
+            "language": "ja",
+            "tts_model": "elevenlabs",
+            "tts_speed": 1.0,
+            "cut_video_duration": 4.0,
+        })
+
+        self.assertEqual(ja_limits["target_min_sec"], 4.2)
+        self.assertEqual(ja_limits["target_sec"], 4.4)
+        self.assertEqual(ja_limits["target_max_sec"], 4.6)
+        self.assertEqual(ja_limits["target_range"], "40~43")
+
+    def test_tts_duration_status_treats_over_slot_audio_as_long(self):
+        cfg = {"cut_video_duration": 4.0}
+
+        self.assertEqual(narration_fit._duration_status(4.0, cfg), "slot_fit")
+        self.assertEqual(narration_fit._duration_status(4.2, cfg), "long")
+        self.assertEqual(narration_fit._duration_status(4.6, cfg), "long")
+        self.assertEqual(narration_fit._duration_status(4.61, cfg), "too_long")
 
 
 class ShortsStabilityTests(unittest.TestCase):
@@ -428,31 +593,43 @@ class ShortsStabilityTests(unittest.TestCase):
         self.assertTrue(line2)
         self.assertNotIn("Watch what happens", line2)
 
-    def test_annotate_script_shorts_keeps_exactly_twelve_marked_cuts(self):
+    def test_annotate_script_shorts_keeps_four_twelve_cut_groups(self):
         script = {
             "cuts": [
                 {
                     "cut_number": i,
                     "narration": f"Cut {i}",
                     "shorts_candidate": True,
-                    "shorts_group": 1,
+                    "shorts_group": ((i - 1) // shorts_service.SHORTS_CUT_COUNT) + 1,
                     "shorts_score": i % 10,
                 }
-                for i in range(1, 16)
+                for i in range(1, shorts_service.SHORTS_TOTAL_CANDIDATE_CUT_COUNT + 8)
             ]
         }
 
         annotated = shorts_service.annotate_script_shorts(script)
         marked = [c for c in annotated["cuts"] if c.get("shorts_candidate") is True]
 
-        self.assertEqual(len(marked), shorts_service.SHORTS_CUT_COUNT)
-        self.assertTrue(all(c.get("shorts_group") == 1 for c in marked))
+        self.assertEqual(len(marked), shorts_service.SHORTS_TOTAL_CANDIDATE_CUT_COUNT)
+        for group in range(1, shorts_service.SHORTS_SEGMENT_COUNT + 1):
+            self.assertEqual(
+                sum(1 for c in marked if c.get("shorts_group") == group),
+                shorts_service.SHORTS_CUT_COUNT,
+            )
+
+    def test_shorts_renderer_does_not_slice_segments_to_one(self):
+        source = (Path(__file__).resolve().parent.parent / "app" / "services" / "shorts_service.py").read_text(
+            encoding="utf-8-sig",
+        )
+
+        self.assertNotIn("segments[:1]", source)
+        self.assertIn("segments[:SHORTS_SEGMENT_COUNT]", source)
 
 
 class SubtitleStyleStabilityTests(unittest.TestCase):
     def test_default_subtitle_size_is_ten_points_larger(self):
         self.assertEqual(subtitle_service.DEFAULT_SUBTITLE_STYLE["size"], 68)
-        self.assertEqual(subtitle_service.CUT_SUBTITLE_MARKER_VERSION, 3)
+        self.assertEqual(subtitle_service.CUT_SUBTITLE_MARKER_VERSION, 4)
 
     def test_saved_subtitle_size_is_bumped_by_ten_on_render(self):
         normalized = subtitle_service.normalize_subtitle_style({"preset": "current", "size": 58})
