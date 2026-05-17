@@ -82,9 +82,12 @@ KOREAN_FONT_CANDIDATES = [
 
 THUMBNAIL_CLICK_FOCUS_PROMPT = (
     " YouTube thumbnail background, not a calm illustration. "
-    "One large unmistakable foreground subject must occupy 45-65 percent of the frame: "
-    "a close-up human face, ruler, queen, warrior, artifact, ritual object, map fragment, "
-    "gold mirror, crown, seal, weapon, or burning evidence directly tied to the story. "
+    "One large unmistakable foreground subject must occupy 45-65 percent of the frame. "
+    "If the story contains any person, ruler, queen, warrior, envoy, mythic figure, "
+    "or human-like character, that character's face must be the hero subject. "
+    "Use a story-critical artifact, ritual object, map fragment, gold mirror, crown, "
+    "seal, weapon, or burning evidence only when the topic has no usable person or "
+    "human-like character. "
     "Use a low-angle or close-up composition with strong silhouette, sharp readable shape, "
     "hard rim light, saturated red/gold/cyan accents, dramatic contrast, visible emotion "
     "or conflict, and a simple darker background reserved for text overlay. "
@@ -92,11 +95,22 @@ THUMBNAIL_CLICK_FOCUS_PROMPT = (
     "No gray washed-out palette. No tiny subject. No decorative landscape."
 )
 
+THUMBNAIL_FACE_VISIBILITY_PROMPT = (
+    " THUMBNAIL FACE VISIBILITY LOCK: when a person or human-like character is present, "
+    "show the full face clearly in frame, front-facing or three-quarter view, head and "
+    "shoulders visible, eyes nose and mouth visible, eyes sharp, expression readable. "
+    "Do not use torso-only framing, body-only framing, cropped head, cropped face, "
+    "back view, hidden face, faceless silhouette, blank face, or featureless face. "
+    "This face rule overrides any earlier scenery, object, or full-body main subject."
+)
+
 THUMBNAIL_WEAK_IMAGE_NEGATIVE = (
     "distant castle, distant building, tiny subject, empty landscape, scenic background, "
     "wide establishing shot, foggy scenery, mist, haze, gray washed out image, low contrast, "
     "flat lighting, calm postcard, generic ruins, decorative background, tiny silhouettes, "
-    "unreadable subject, blurry background-only image, text, letters, words, numbers, watermark"
+    "unreadable subject, blurry background-only image, torso-only framing, body-only framing, "
+    "cropped head, cropped face, back view, hidden face, face out of frame, tiny face, "
+    "faceless silhouette, blank face, featureless face, text, letters, words, numbers, watermark"
 )
 
 _THUMBNAIL_WEAK_POSITIVE_RE = re.compile(
@@ -117,10 +131,12 @@ def _thumbnail_click_focus_prompt(prompt: str) -> str:
     base = _THUMBNAIL_WEAK_POSITIVE_RE.sub("", base)
     base = re.sub(r"\s+", " ", base).strip(" ,.;")
     if not base:
-        return THUMBNAIL_CLICK_FOCUS_PROMPT.strip()
-    if "One large unmistakable foreground subject" in base:
+        return f"{THUMBNAIL_CLICK_FOCUS_PROMPT}{THUMBNAIL_FACE_VISIBILITY_PROMPT}".strip()
+    if "THUMBNAIL FACE VISIBILITY LOCK" in base:
         return base
-    return f"{base.rstrip()} {THUMBNAIL_CLICK_FOCUS_PROMPT}"
+    if "One large unmistakable foreground subject" in base:
+        return f"{base.rstrip()} {THUMBNAIL_FACE_VISIBILITY_PROMPT}"
+    return f"{base.rstrip()} {THUMBNAIL_CLICK_FOCUS_PROMPT}{THUMBNAIL_FACE_VISIBILITY_PROMPT}"
 
 
 def build_standard_thumbnail_prompt(script: Optional[dict] = None, title: Optional[str] = None) -> str:
@@ -133,12 +149,13 @@ def build_standard_thumbnail_prompt(script: Optional[dict] = None, title: Option
     topic_hint = (script.get("topic") or clean_title).strip()
     return _thumbnail_click_focus_prompt(
         f"A high-tension YouTube thumbnail about this topic: {topic_hint}. "
-        f"Create an extreme close-up of the most important person, incident, object, "
-        f"artifact, evidence, or decisive moment from the story. Show the single most "
+        f"Create an extreme close-up of the most important person or human-like character "
+        f"from the story when one exists. Use an object, artifact, evidence, or decisive "
+        f"moment only when there is no usable person. Show the single most "
         f"dramatic conflict, secret, betrayal, danger, or impossible-looking evidence. "
         f"One dominant close-up subject only: "
-        f"a shocked face, a threatening ruler, a forbidden object, a burning map, "
-        f"a broken crown, or a dangerous historical scene. The subject must feel "
+        f"a shocked face, a threatening ruler, a queen, a warrior, an envoy, a mythic "
+        f"figure, or a dangerous historical character. The subject must feel "
         f"urgent and clickable, not calm, wide, distant, generic, or decorative. "
         f"Cinematic lighting, hard "
         f"rim light, deep black shadows, high contrast, saturated red/yellow accent "

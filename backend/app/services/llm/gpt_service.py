@@ -1,7 +1,10 @@
 """OpenAI GPT LLM service"""
 import json
+import math
 from openai import AsyncOpenAI
+from app.config import resolve_cut_video_duration
 from app.services.llm.base import BaseLLMService
+from app.services.llm.script_quality import assert_script_quality
 from app.services.cancel_ctx import OperationCancelled, raise_if_cancelled
 from app import config
 
@@ -125,7 +128,7 @@ class GPTService(BaseLLMService):
             pass
 
     async def generate_script(self, topic: str, config: dict) -> dict:
-        # v1.1.32: target_duration 기반 동적 max_tokens (600초=120컷 truncation 방지)
+        # v1.1.32: target_duration 기반 동적 max_tokens (롱폼 truncation 방지)
         try:
             estimated_cuts = int(config.get("target_cuts") or 0)
         except (TypeError, ValueError):
@@ -135,7 +138,7 @@ class GPTService(BaseLLMService):
                 target_duration = int(config.get("target_duration") or 300)
             except (TypeError, ValueError):
                 target_duration = 300
-            estimated_cuts = max(1, target_duration // 5)
+            estimated_cuts = max(1, math.ceil(target_duration / resolve_cut_video_duration(config)))
         dynamic_max = max(8192, estimated_cuts * 220 + 2048)
         dynamic_max = min(dynamic_max, 128000)
         if self._is_latest_gpt():
@@ -177,6 +180,7 @@ class GPTService(BaseLLMService):
                 f"script generation returned {len(cuts)} cuts, expected {estimated_cuts}"
             )
         parsed = self.strengthen_visual_context(parsed, config)
+        assert_script_quality(parsed, topic)
         self.assert_script_timing(parsed, config)
         return parsed
 

@@ -91,6 +91,10 @@ SCRIPT_SYSTEM_PROMPT_TEMPLATE = """당신은 수익창출이 최우선 목표인
 - 이전 컷에서 이미 말한 내용을 다음 컷에서 다시 풀어 말하지 마세요. 다음 컷은 반드시 새 정보, 새 원인, 새 결과, 새 평가, 새 의문 중 하나를 추가해야 합니다.
 - `이 사건은 중요했습니다`, `흐름이 바뀌었습니다`, `운명이 달라졌습니다`, `핵심은 여기에 있습니다` 같은 일반 문장을 반복하지 마세요. 반드시 구체적인 인물, 선택, 장소, 기록, 숫자, 결과로 바꿔 말하세요.
 - 같은 단어가 3컷 이상 연속해서 핵심어로 반복되면 실패입니다. 필요한 고유명사는 쓰되, 문장 구조와 관점은 바꾸세요.
+- 주제어를 각 문장 앞에 반복해서 붙이지 마세요. 처음에는 주제 인물이나 사건을 소개하고, 이후에는 사건, 원인, 결과, 기록, 해석 중심으로 문장을 이어가세요.
+- 150컷 기준 핵심 인물명 반복은 10~15회 이하를 목표로 하세요. 필요할 때만 이름을 쓰고, 나머지는 사건 중심 문장이나 자연스러운 생략을 사용하세요.
+- 다음 추상 템플릿 문장은 금지입니다: `압력이 다가옵니다`, `선택이 좁혀집니다`, `사건의 온도가 높아집니다`, `결말의 그림자가 드리웁니다`, `기록의 빈칸이 말합니다`, `다음 장면을 차갑게 만듭니다`, `권위의 출처를 묻습니다`, `흐름을 남깁니다`.
+- 이런 빈 문장 대신 실제 역사 내용으로 쓰세요. 예: `연나라는 동쪽으로 세력을 넓혔습니다`, `고조선은 서쪽 변경에서 압박을 받았습니다`, `전투의 세부 과정은 기록만으로 단정하기 어렵습니다`.
 
 중요 인물 계약:
 - 중요한 인물이 처음 등장하면, 그 인물이 누구인지 한 컷 안에서 이해될 만큼 짧게 설명하세요.
@@ -121,7 +125,21 @@ SCRIPT_SYSTEM_PROMPT_TEMPLATE = """당신은 수익창출이 최우선 목표인
 - 좋은 예: `수나라는 엄청난 병력을 밀어 넣었는데요, 고구려는 그 숫자 싸움에 그대로 말려들지 않았죠.`
 
 역사 및 시각적 연속성 계약:
+- 대본은 질문형 훅 -> 기록 설명 -> 핵심 개념 분리 -> 논쟁과 해석 -> 결론 -> 다음 편 연결 순서로 진행하세요.
+- 150컷 구성 역할을 지키세요: 1~10컷 강한 질문과 문제 제기, 11~30컷 기록에 남은 최소 사실, 31~60컷 배경과 원인, 61~90컷 사건 진행과 변화, 91~120컷 결과와 역사적 의미, 121~140컷 기록의 한계와 해석, 141~150컷 다음 편 연결.
+- 각 회차마다 핵심 질문 3~5개를 정하고 대본 안에서 직접 답하세요. 분위기만 만들고 답하지 않는 문장은 실패입니다.
+- 기록에 남은 내용, 그 기록으로 조심스럽게 볼 수 있는 흐름, 단정할 수 없는 부분을 분리해서 말하세요.
+- `OO는 선택은`, `OO는 전개은`, `OO는 단서는`, `OO는 사람들은`, `OO와 압박가`처럼 주제어를 앞에 붙이고 기존 문장을 이어 붙인 비문은 절대 만들지 마세요.
 - image_prompt는 다음 필드를 포함해야 합니다: visual_year + visual_period + visual_location + 시대/장소에 맞는 사물 + 정확히 내레이션된 행동.
+- image_prompt에는 narration 원문, spoken cue, dialogue, voiceover, transcript, quote, 대사 문장, 원고 문장을 절대 넣지 마세요.
+- image_prompt에는 `spoken cue:`, `narration:`, `dialogue:`, `voiceover:`, `line:` 같은 원고 라벨을 쓰지 마세요.
+- image_prompt의 Main subject는 컷 내용에 맞게 매 컷 다시 정하세요. 전체 컷에 같은 인물이나 장소를 고정하지 마세요.
+- Main subject는 해당 컷의 실제 중심 대상이어야 합니다: 인물, 장소, 유물, 공동체, 의식, 전투, 외교 장면 중 내레이션과 가장 직접 연결되는 하나를 고르세요.
+- Visual focus, camera, mood, detail은 컷 내용과 직접 맞을 때만 쓰세요. 랜덤 소품, 랜덤 카메라, 랜덤 분위기 조합은 실패입니다.
+- image_prompt는 장면, 인물, 배경, 소품, 시대 분위기만 묘사하세요. 내레이션 문장을 설명하거나 복사하지 마세요.
+- image_prompt는 대본 문장 변환이 아닙니다. 컷의 핵심 장면을 별도로 시각화하세요.
+- 매 회차마다 허용 소재와 금지 소재를 내부적으로 먼저 확정하고, 다른 회차 인물, 다른 시대 사건, 이전 파일의 이미지 프롬프트 잔재, 엉뚱한 지명, 엉뚱한 왕 이름, 엉뚱한 성문/피난/방어전 장면을 섞지 마세요.
+- 이미지도 구간별로 달라야 합니다: 1~10컷 핵심 인물 또는 사건 첫 이미지, 11~30컷 기록과 배경, 31~60컷 장소와 압박, 61~90컷 변화와 충돌, 91~120컷 결과와 후대 해석, 121~150컷 다음 편으로 이어지는 시각적 연결.
 - 반복 등장 인물이 나오면 image_prompt에 안정적인 캐릭터 세부정보를 포함하세요: 종/인물 정체성, 체형, 얼굴/더듬이 또는 실루엣, 의상/소품이 있다면 그것, 자세, 표정, 행동.
 - 같은 캐릭터 디자인 세부정보를 컷 전체에서 유지하세요. 자세/행동/구도는 바꾸되 캐릭터 정체성은 바꾸지 마세요.
 - DNA 나선, 빛나는 뇌, 추상 지도, 아무 사원 벽, 일반 학자, 일반 궁전, 일반 전장 같은 일반 filler 이미지는 내레이션이 그 대상을 직접 다루지 않는 한 사용하지 마세요.
@@ -131,6 +149,10 @@ SCRIPT_SYSTEM_PROMPT_TEMPLATE = """당신은 수익창출이 최우선 목표인
 
 썸네일 계약:
 - thumbnail_prompt는 가장 중요한 인물, 사건, 사건의 사물, 유물, 증거, 또는 결정적 순간의 클로즈업이어야 합니다.
+- 회차에 인물, 왕, 장수, 사신, 신화적 존재, 사람처럼 그려야 하는 캐릭터가 있으면 thumbnail_prompt의 Main subject는 그 인물의 얼굴이어야 합니다.
+- 얼굴은 화면 안에 완전히 보여야 합니다. 정면 또는 3/4 각도, 머리와 어깨, 눈과 코와 입, 표정이 보여야 합니다.
+- 몸통만 보이는 구도, 머리 잘림, 얼굴 잘림, 뒷모습, 얼굴을 가린 장면, 얼굴 없는 실루엣은 썸네일 실패입니다.
+- 인물이 전혀 없는 주제일 때만 유물, 장소, 증거 사물을 썸네일 주제로 선택하세요.
 - thumbnail_prompt는 더 자극적이고 클릭을 유도해야 합니다: 이야기에서 가장 충격적인 장면, 가장 긴장감 있는 표정, 위험한 물건, 결정적 증거, 배신의 신호, 되돌릴 수 없는 전환점의 사물을 선택하세요.
 - 썸네일 이미지는 급박하고 극적이며 호기심을 강하게 자극해야 하지만, 반드시 사실 기반이어야 하며 유혈, 가짜 텍스트, 가짜 상징, 이야기 속에 없는 사건을 지어내면 안 됩니다.
 - 하나의 지배적인 클로즈업 대상을 사용하세요. 넓은 설명 장면, 콜라주, 일반 분위기, 먼 풍경은 피하세요.
@@ -138,24 +160,24 @@ SCRIPT_SYSTEM_PROMPT_TEMPLATE = """당신은 수익창출이 최우선 목표인
 
 쇼츠 메타데이터 계약:
 - 정확히 4편의 쇼츠를 만들 수 있게, 쇼츠 그룹 4개를 설계하세요.
-- 각 쇼츠 그룹은 정확히 12개 컷입니다. 총 48개 컷에만 shorts_candidate=true를 설정하세요.
+- 각 쇼츠 그룹은 정확히 15개 컷입니다. 총 60개 컷에만 shorts_candidate=true를 설정하세요.
 - shorts_group은 다음 의미로만 사용하세요:
   - shorts_group 1: 논쟁 질문. 댓글을 부를 수 있는 강한 질문형 훅입니다.
   - shorts_group 2: 충격 사실. 시청자가 바로 멈추는 의외의 사실/수치/전환점입니다.
   - shorts_group 3: 롱폼으로 넘기는 미스터리. 답을 본편에서 확인하고 싶게 만드는 미해결 의문입니다.
   - shorts_group 4: 주요 인물 부각. 이야기의 핵심 인물, 결정권자, 배신자, 희생자, 승부수를 둔 인물을 전면에 세웁니다.
-- 각 그룹의 12개 컷은 같은 쇼츠 안에서 자연스럽게 이어져야 합니다. 가능하면 연속 구간을 고르되, 이야기 흐름이 깨지면 가까운 컷만 사용하세요.
+- 각 그룹의 15개 컷은 같은 쇼츠 안에서 자연스럽게 이어져야 합니다. 가능하면 연속 구간을 고르되, 이야기 흐름이 깨지면 가까운 컷만 사용하세요.
 - 그룹끼리는 컷 번호가 겹치면 안 됩니다.
 - 전체 이야기에서 가장 클릭 가능성이 높은 순간을 고르세요.
-- 선택된 48개 컷 외에는 shorts_candidate=false, shorts_group=0을 사용하세요.
+- 선택된 60개 컷 외에는 shorts_candidate=false, shorts_group=0을 사용하세요.
 - 내레이션이 가장 충격적이거나 호기심이 가장 높아지는 컷을 선택하세요: 강한 훅, 반전, 드러남, 갈등, 위험, 배신, 충격적 사실, 구체적인 시각 장면, 댓글을 부를 질문.
 - 일반 설명 컷, 배경만 말하는 컷, 이미 말한 내용을 반복하는 컷, 인트로용 인사말 컷, 다음 전개 없이 정리만 하는 컷은 shorts_candidate=true로 지정하지 마세요.
-- shorts_candidate=true 컷은 해당 12컷만 떼어 봐도 사건의 압박, 선택, 반전, 결과가 어느 정도 이해되어야 합니다.
+- shorts_candidate=true 컷은 해당 15컷만 떼어 봐도 사건의 압박, 선택, 반전, 결과가 어느 정도 이해되어야 합니다.
 - 각 쇼츠 그룹의 첫 번째 컷은 질문/반전/숫자/위험/배신/사라진 기록/결정적 선택 중 하나로 바로 시작해야 합니다. 단, 본편 흐름을 깨는 별도 쇼츠용 대사는 만들지 마세요.
 - 각 쇼츠 그룹 첫 번째 컷의 narration 첫 8~14글자 또는 첫 3~5단어 안에 질문/반전/숫자/위험/배신/사라진 기록/결정적 선택이 드러나야 합니다.
 - 첫 컷은 `왜`, `그런데`, `하지만`, `단 한 번`, `결정적`, `기록은`, `문제는` 같은 긴장 신호로 시작할 수 있습니다. 평범한 배경 설명으로 시작하면 실패입니다.
 - 각 쇼츠 그룹의 마지막 컷은 새 정보 없이 끝내지 말고, 다음 편이나 본편을 놓치지 않게 만드는 구독 유도형 여운으로 끝내세요. 단, `구독해주세요`처럼 노골적인 요청만 단독으로 쓰지 말고, 미해결 의문/다음 사건/반전 예고와 결합하세요.
-- 각 쇼츠 12컷은 hook -> pressure -> reveal -> unresolved pull 흐름을 가져야 합니다.
+- 각 쇼츠 15컷은 hook -> pressure -> reveal -> unresolved pull 흐름을 가져야 합니다.
 - 인트로/아웃트로, 일반 설정, 단독으로 이해할 수 없는 구간은 선택하지 마세요.
 - shorts_reason은 "debate question", "shocking fact", "longform mystery", "main character spotlight" 중 그룹 목적에 맞는 짧은 이유로 작성하세요.
 - shorts_score는 1~10점으로 넣으세요. 10점은 가장 강한 호기심 컷에만 사용합니다.
@@ -190,6 +212,7 @@ SCRIPT_SYSTEM_PROMPT_TEMPLATE = """당신은 수익창출이 최우선 목표인
 - image_prompt는 캐릭터나 행동보다 먼저 보이는 연도/날짜 범위, 정확한 공간, 스타일로 시작해야 합니다.
 - image_prompt 필드 값 안에는 따옴표를 넣지 마세요. 형식은 다음 순서를 따릅니다: Year/period: ...; Exact place: ...; Scene evidence: ...; Style: {image_prompt_required_style}; Scene: ...
 - 역사 컷에서는 image_prompt에 보이는 시대 증거를 적어야 합니다: 시대에 맞는 의복, 머리모양 또는 머리장식, 도구, 무기, 갑옷, 장신구, 가구, 건물, 차량, 선박, 의식 물건, 일상 사물, 재료 등.
+- 신화와 전승 컷에서는 확정 고증처럼 보이는 성벽, 병사, 궁전, 철기, 수레, 깃발을 자동으로 넣지 마세요. 내레이션이 직접 요구하지 않으면 신단수, 동굴, 제의 공간, 소박한 청동기풍 의례 소품처럼 보수적인 장면을 쓰세요.
 - 시대, 공간, 장소에 맞지 않는 깃발 이미지는 사용하지 마세요.
 - 시대, 공간, 장소에 맞는 의복, 차량, 사물, 무기, 갑옷, 생활양식, 건물만 사용하세요.
 - 시대나 문화를 섞지 마세요.
@@ -771,7 +794,9 @@ class BaseLLMService(ABC):
         if char:
             subject_clause = (
                 f"THE hero subject MUST be this character, unmistakable and center of "
-                f"attention: {char}. Render as an extreme close-up, face filling 35-55% "
+                f"attention: {char}. Render as an extreme close-up, full face clearly "
+                f"visible, front-facing or three-quarter view, head and shoulders in "
+                f"frame, eyes nose and mouth visible, face filling 35-55% "
                 f"of the frame, offset to the left or right third so the opposite side "
                 f"has clean negative space for text overlay later. The character's "
                 f"facial expression must be EXAGGERATED and emotionally loud — pick ONE "
@@ -782,13 +807,15 @@ class BaseLLMService(ABC):
             )
         else:
             subject_clause = (
-                f"ONE dominant hero subject — the most important person, incident, "
-                f"event object, artifact, evidence, or decisive moment from the story. "
-                f"Render it as an extreme close-up, either a human face with an "
-                f"exaggerated emotion or one single story-critical object with dramatic "
-                f"scale. Fills 35-55% of the frame, offset to the left or right third, "
-                f"leaving clean negative space on the opposite side for later text "
-                f"overlay. Razor sharp focus on the eyes or the key edge of the object. "
+                f"ONE dominant hero subject — choose the most important person or "
+                f"human-like character from the story when one exists. Render that "
+                f"subject as an extreme face close-up with full face clearly visible, "
+                f"front-facing or three-quarter view, head and shoulders in frame, eyes "
+                f"nose and mouth visible, and exaggerated emotion. Use one single "
+                f"story-critical object only when the topic has no usable person. "
+                f"Fills 35-55% of the frame, offset to the left or right third, leaving "
+                f"clean negative space on the opposite side for later text overlay. "
+                f"Razor sharp focus on the eyes or the key edge of the object. "
             )
         return (
             f'A scroll-stopping, click-bait YouTube thumbnail for a video titled "{t}". '
@@ -815,7 +842,9 @@ class BaseLLMService(ABC):
             f"HARD NEGATIVE — nothing of the following may appear in the image: "
             f"text, words, letters, numbers, captions, logos, watermarks, typography, "
             f"subtitles, signs, UI chrome, blurry faces, low resolution, flat lighting, "
-            f"cluttered backgrounds, generic stock-photo vibes, extra limbs, warped hands."
+            f"cluttered backgrounds, generic stock-photo vibes, extra limbs, warped hands, "
+            f"torso-only framing, body-only framing, cropped head, cropped face, back view, "
+            f"hidden face, faceless silhouette, blank face, featureless face."
         )
 
     @classmethod
@@ -841,7 +870,10 @@ class BaseLLMService(ABC):
                 f"\n★★★ MANDATORY CHARACTER — the thumbnail MUST contain this character "
                 f"as the primary focal subject:\n{char}\n"
                 f"The character must be clearly visible, centered, and unmistakable. "
-                f"Describe the character's appearance (clothing, face, expression, pose, "
+                f"The full face must be visible in frame: front-facing or three-quarter "
+                f"view, head and shoulders visible, eyes nose and mouth visible, sharp "
+                f"eyes, readable expression. Describe the character's appearance "
+                f"(clothing, face, expression, pose, "
                 f"colors) directly inside the image prompt you write. Without an explicit "
                 f"character description in the prompt, the image model will NOT render "
                 f"the character. Keep the art style consistent with the rest of the video.\n"
@@ -872,38 +904,47 @@ class BaseLLMService(ABC):
             f"\n"
             f"★ CORE COMPOSITION RULES the generated image MUST satisfy:\n"
             f"1. ONE unmistakable hero subject (the mandatory character above if given, "
-            f"otherwise the key person, incident, event object, artifact, evidence, or "
-            f"decisive moment). It must be a close-up. No crowds, no group shots, no "
+            f"otherwise the key person or human-like character if the story has one; "
+            f"use an event object, artifact, evidence, or decisive moment only when "
+            f"there is no usable person). It must be a close-up. No crowds, no group shots, no "
             f"wide scene, no distant subject, no split attention.\n"
             f"2. The hero fills 35-55% of the frame and is offset to the LEFT or RIGHT "
             f"third — leave deliberate clean negative space on the opposite side so "
             f"text can be composited later. Describe this negative space explicitly.\n"
-            f"3. EMOTIONAL HOOK (most important): if a human/character face is the hero, "
+            f"3. FACE VISIBILITY: if the story contains a person or human-like character, "
+            f"the thumbnail hero must be that character's full visible face, front-facing "
+            f"or three-quarter view, head and shoulders in frame, eyes nose and mouth "
+            f"visible. Never use torso-only, body-only, cropped head, cropped face, back "
+            f"view, hidden face, faceless silhouette, blank face, or featureless face.\n"
+            f"4. EMOTIONAL HOOK (most important): if a human/character face is the hero, "
             f"describe ONE exaggerated loud emotion — wide-eyed shock, jaw-drop awe, "
             f"intense glare with furrowed brow, explosive laugh, cinematic tears, "
             f"gritted-teeth rage — whichever best matches the narration tone. Neutral "
             f"faces do NOT click.\n"
-            f"4. Razor sharp focus on the subject's eyes (or the object's key edge). "
+            f"5. Razor sharp focus on the subject's eyes (or the object's key edge). "
             f"Creamy bokeh background. Shallow depth of field.\n"
-            f"5. Lighting: dramatic three-point, strong rim light, warm key / cool fill, "
+            f"6. Lighting: dramatic three-point, strong rim light, warm key / cool fill, "
             f"high contrast, genuinely black shadows. No flat even lighting.\n"
-            f"6. Colors: ultra-saturated, phone-screen-friendly — push punchy reds, "
+            f"7. Colors: ultra-saturated, phone-screen-friendly — push punchy reds, "
             f"electric blues, acid yellows, deep teals. Avoid washed-out pastels unless "
             f"the reference image explicitly requires them.\n"
-            f"7. Single scroll-stopping hook (mystery, awe, tension, fear, triumph, "
+            f"8. Single scroll-stopping hook (mystery, awe, tension, fear, triumph, "
             f"disgust, humor). Pick ONE that best fits the narration — do not hedge.\n"
-            f"8. Rendering style: default photoreal 4k editorial quality, BUT if the "
+            f"9. Rendering style: default photoreal 4k editorial quality, BUT if the "
             f"reference images show an illustration/anime/3D style, mirror that style "
             f"exactly.\n"
-            f"9. 16:9 landscape framing. Never portrait, never square.\n"
-            f"10. Optional high-impact visual props — impossible scale, juxtaposition, "
+            f"10. 16:9 landscape framing. Never portrait, never square.\n"
+            f"11. Optional high-impact visual props — impossible scale, juxtaposition, "
             f"floating elements, a single shocking contrast — if they match the topic.\n"
             f"\n"
             f"★ HARD NEGATIVES — include this clause verbatim in your output prompt:\n"
             f'"no text, no words, no letters, no numbers, no captions, no logos, no '
             f'watermarks, no typography, no subtitles, no signs, no UI chrome, no '
             f'blurry face, no warped hands, no extra limbs, no low resolution, no flat '
-            f'lighting, no cluttered background, no generic stock photo look". '
+            f'lighting, no cluttered background, no generic stock photo look, no '
+            f'torso-only framing, no body-only framing, no cropped head, no cropped face, '
+            f'no back view, no hidden face, no faceless silhouette, no blank face, no '
+            f'featureless face". '
             f"Text will be composited later by Pillow — the image itself must be "
             f"completely text-free.\n"
             f"\n"

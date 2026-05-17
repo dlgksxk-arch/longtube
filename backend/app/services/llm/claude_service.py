@@ -1,9 +1,12 @@
 """Claude (Anthropic) LLM service"""
 from datetime import datetime, timedelta, timezone
 import json
+import math
 import re
 import anthropic
+from app.config import resolve_cut_video_duration
 from app.services.llm.base import BaseLLMService
+from app.services.llm.script_quality import assert_script_quality
 from app.services.cancel_ctx import OperationCancelled, raise_if_cancelled
 from app import config
 
@@ -62,14 +65,14 @@ class ClaudeService(BaseLLMService):
         model = self._model_map.get(self.model_id, self.model_id)
 
         # v1.1.32: target_duration 기반 동적 max_tokens.
-        # 5초당 1컷, 컷당 ~180 토큰 (나레이션+image_prompt+메타) + title/description/tags 여유
-        # 고정 8192 는 600초(120컷) 대본에서 mid-JSON truncation → 파싱 실패 유발
+        # 컷당 ~180 토큰 (나레이션+image_prompt+메타) + title/description/tags 여유
+        # 고정 8192 는 600초 롱폼 대본에서 mid-JSON truncation → 파싱 실패 유발
         target_cuts = self._safe_int(config.get("target_cuts"), 0)
         if target_cuts > 0:
             estimated_cuts = target_cuts
         else:
             target_duration = self._safe_int(config.get("target_duration"), 300)
-            estimated_cuts = max(1, target_duration // 5)
+            estimated_cuts = max(1, math.ceil(target_duration / resolve_cut_video_duration(config)))
         dynamic_max = max(8192, estimated_cuts * 220 + 2048)
         # Claude Sonnet 4.6 상한 안전치
         dynamic_max = min(dynamic_max, 64000)
@@ -97,6 +100,7 @@ class ClaudeService(BaseLLMService):
                 f"script generation returned {len(cuts)} cuts, expected {estimated_cuts}"
             )
         parsed = self.strengthen_visual_context(parsed, config)
+        assert_script_quality(parsed, topic)
         self.assert_script_timing(parsed, config)
         return parsed
 

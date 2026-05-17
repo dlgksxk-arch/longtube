@@ -6,12 +6,13 @@ import time
 import asyncio
 import redis as redis_lib
 from celery import Celery
-from app.config import REDIS_URL, CUT_VIDEO_DURATION, resolve_project_dir
+from app.config import REDIS_URL, resolve_cut_video_duration, resolve_project_dir
 from app.models.database import SessionLocal
 from app.models.project import Project
 from app.models.cut import Cut
 from app.services.title_utils import script_title_for_language, with_episode_prefix, without_episode_prefix
 from app.services.llm.visual_policy import apply_script_visual_policy, normalize_cut_image_prompt, normalize_image_prompt
+from app.services.llm.script_quality import assert_script_quality
 from app.services.shorts_service import annotate_script_shorts
 from app.services.youtube_metadata import expand_tags, format_description
 from app.services.multilingual_caption_service import should_upload_youtube_captions, upload_multilingual_captions
@@ -245,6 +246,7 @@ def _validate_prepared_script(script: dict, source_path) -> None:
             raise RuntimeError(
                 f"사전작성 대본 형식 오류: cut {idx} 필수값 누락 {missing} ({source_path})"
             )
+    assert_script_quality(script, str(source_path))
 
 
 def _load_prepared_script(project_id: str, config: dict, topic: str) -> tuple[dict, str] | None:
@@ -264,7 +266,6 @@ def _load_prepared_script(project_id: str, config: dict, topic: str) -> tuple[di
                 script = json.loads(path.read_text(encoding="utf-8"))
             except Exception as exc:
                 raise RuntimeError(f"사전작성 대본 읽기 실패: {path} ({type(exc).__name__}: {exc})") from exc
-            _validate_prepared_script(script, path)
             episode = _prepared_episode_number(script, path)
             script_topic = _compact_match_key(script.get("topic") or script.get("title"))
             stem_key = _compact_match_key(path.stem)
@@ -280,7 +281,14 @@ def _load_prepared_script(project_id: str, config: dict, topic: str) -> tuple[di
     if not candidates:
         return None
     candidates.sort(key=lambda item: item[0], reverse=True)
-    return candidates[0][1], candidates[0][2]
+    validation_errors: list[str] = []
+    for _score, script, source_path in candidates:
+        try:
+            _validate_prepared_script(script, source_path)
+            return script, source_path
+        except Exception as exc:
+            validation_errors.append(f"{source_path}: {type(exc).__name__}: {exc}")
+    raise RuntimeError("사전작성 대본 후보 검수 실패: " + " | ".join(validation_errors[:3]))
 
 
 def run_async(coro):
@@ -1045,10 +1053,11 @@ def _step_image(project_id: str, config: dict):
                     pass
     except Exception as _e:
         print(f"[Image] shorts cut reuse guard skipped: {_e}")
+    cut_duration = resolve_cut_video_duration(config)
     reuse_seconds = _resolve_image_reuse_seconds(config, db)
     reuse_group_cuts = 0
     if reuse_seconds > 0:
-        reuse_group_cuts = max(1, round(reuse_seconds / float(CUT_VIDEO_DURATION)))
+        reuse_group_cuts = max(1, round(reuse_seconds / float(cut_duration)))
     image_reuse_pairs: list[tuple[int, int]] = []
 
     # 커스텀 이미지는 유지하되, 일반 이미지는 현재 프롬프트와 맞을 때만 건너뛴다.
@@ -1373,7 +1382,7 @@ async def _burn_cut_subtitle(
             narration=narration,
             aspect_ratio=aspect_ratio,
             style_config=style_config or {},
-            duration=float(CUT_VIDEO_DURATION),
+            duration=float(duration),
         )
     except Exception as _e:
         import traceback
@@ -1443,6 +1452,7 @@ def _step_video(project_id: str, config: dict):
     db = SessionLocal()
     all_cuts = script.get("cuts", [])
     total_cuts = len(all_cuts)
+    cut_duration = resolve_cut_video_duration(config)
     video_paths = []
 
     # v1.1.55 hotfix: 이미지 파일 사전 검증 — 이미지가 없으면 영상 생성 불가
@@ -1493,7 +1503,7 @@ def _step_video(project_id: str, config: dict):
                     narration = (cut_data.get("narration") or "").strip()
                     if narration:
                         ok = run_async(_burn_cut_subtitle(
-                            str(existing), narration, float(CUT_VIDEO_DURATION),
+                            str(existing), narration, float(cut_duration),
                             subtitle_style_cfg, aspect_ratio,
                         ))
                         if ok:
@@ -1562,7 +1572,7 @@ def _step_video(project_id: str, config: dict):
                     await svc.generate(
                         image_path=img,
                         audio_path=aud,
-                        duration=float(CUT_VIDEO_DURATION),
+                        duration=float(cut_duration),
                         output_path=out,
                         aspect_ratio=aspect_ratio,
                         prompt=motion_prompt,
@@ -1846,6 +1856,28 @@ def _step_upload(project_id: str, config: dict):
                 result["thumbnail_error"] = str(exc)
                 print(f"[upload] thumbnail upload failed: {exc}")
         print(f"[upload] Studio verified: {verified.get('url') or result.get('url')}")
+
+    main_playlist_id = str(
+        config.get("youtube_playlist_id")
+        or ((config.get("upload") or {}).get("playlist_id") if isinstance(config.get("upload"), dict) else "")
+        or ""
+    ).strip()
+    if main_playlist_id and result.get("video_id"):
+        try:
+            playlist_result = uploader.add_to_playlist_if_missing(
+                main_playlist_id,
+                str(result.get("video_id")),
+            )
+            result["playlist_id"] = main_playlist_id
+            result["playlist_item_id"] = playlist_result.get("item_id")
+            result["playlist_already_present"] = bool(playlist_result.get("already_present"))
+            print(
+                "[upload] main playlist linked: "
+                f"{main_playlist_id} already={result['playlist_already_present']}"
+            )
+        except Exception as exc:
+            result["playlist_error"] = str(exc)
+            print(f"[upload] main playlist link failed: {exc}")
     caption_path = project_dir / "subtitles" / "subtitles.srt"
     caption_upload = None
     caption_error = None
@@ -1870,12 +1902,31 @@ def _step_upload(project_id: str, config: dict):
     shorts_results = []
     if bool(config.get("shorts_upload_enabled", True)):
         shorts_dir = _output_dir / "shorts"
-        shorts_files = [shorts_dir / "short_1.mp4"]
+        shorts_files = sorted(shorts_dir.glob("short_*.mp4")) if shorts_dir.exists() else []
+        shorts_meta_by_file: dict[str, dict] = {}
+        shorts_meta_path = shorts_dir / "shorts.json"
+        if shorts_meta_path.exists():
+            try:
+                shorts_meta = json.loads(shorts_meta_path.read_text(encoding="utf-8"))
+                for entry in shorts_meta.get("results") or []:
+                    if not isinstance(entry, dict):
+                        continue
+                    path_name = Path(str(entry.get("path") or "")).name
+                    if path_name:
+                        shorts_meta_by_file[path_name] = entry
+            except Exception as exc:
+                print(f"[upload] shorts metadata load skipped: {exc}")
         for idx, shorts_path in enumerate(shorts_files, start=1):
             if not shorts_path.exists() or shorts_path.stat().st_size <= 0:
                 continue
-            shorts_base_title = without_episode_prefix(script.get("title", "Untitled")) or "Untitled"
-            shorts_title = f"{shorts_base_title[:92]} #Shorts"
+            shorts_meta = shorts_meta_by_file.get(shorts_path.name) or {}
+            shorts_base_title = (
+                str(shorts_meta.get("title") or "").replace("\n", " ").strip()
+                or without_episode_prefix(script.get("title", "Untitled"))
+                or "Untitled"
+            )
+            suffix = " #Shorts" if len(shorts_files) == 1 else f" #{idx} #Shorts"
+            shorts_title = f"{shorts_base_title[:max(1, 100 - len(suffix))].rstrip()}{suffix}"
             shorts_description = format_description(
                 upload_description,
                 title=shorts_title,
@@ -1934,6 +1985,27 @@ def _step_upload(project_id: str, config: dict):
                     "video_id": shorts_upload.get("video_id"),
                     "already_uploaded": bool(shorts_upload.get("already_uploaded")),
                 })
+                shorts_playlist_id = str(
+                    config.get("youtube_shorts_playlist_id")
+                    or config.get("shorts_playlist_id")
+                    or ""
+                ).strip()
+                if shorts_playlist_id and shorts_upload.get("video_id"):
+                    try:
+                        shorts_playlist_result = uploader.add_to_playlist_if_missing(
+                            shorts_playlist_id,
+                            str(shorts_upload.get("video_id")),
+                        )
+                        shorts_results[-1]["playlist_id"] = shorts_playlist_id
+                        shorts_results[-1]["playlist_item_id"] = shorts_playlist_result.get("item_id")
+                        shorts_results[-1]["playlist_already_present"] = bool(shorts_playlist_result.get("already_present"))
+                        print(
+                            "[upload] shorts playlist linked: "
+                            f"{shorts_playlist_id} already={shorts_results[-1]['playlist_already_present']}"
+                        )
+                    except Exception as exc:
+                        shorts_results[-1]["playlist_error"] = str(exc)
+                        print(f"[upload] shorts playlist link failed: {exc}")
                 print(f"[upload] shorts {idx} uploaded: {shorts_upload.get('url')}")
             except Exception as exc:
                 print(f"[upload] shorts {idx} upload failed: {exc}")

@@ -4,7 +4,9 @@ These tests lock down small pure helpers before splitting the large
 oneclick_service module further. They do not call external APIs or start jobs.
 """
 import copy
+import json
 import sys
+import tempfile
 import unittest
 from datetime import datetime
 from types import SimpleNamespace
@@ -15,9 +17,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.services import oneclick_service as svc  # noqa: E402
 from app.services.tts import narration_fit  # noqa: E402
+from app.services.tts.pronunciation_normalizer import prepare_spoken_narration_for_tts  # noqa: E402
 from app.services import shorts_service  # noqa: E402
 from app.services import subtitle_service  # noqa: E402
 from app.services.image import prompt_builder  # noqa: E402
+from app.services.thumbnail_service import build_standard_thumbnail_prompt  # noqa: E402
 from app.services.image.comfyui_service import (  # noqa: E402
     apply_longtube_local_v1_master_prompt,
     build_longtube_local_v1_negative_prompt,
@@ -25,10 +29,12 @@ from app.services.image.comfyui_service import (  # noqa: E402
     _strip_local_v1_positive_only_prompt,
 )
 from app.services.llm.base import BaseLLMService  # noqa: E402
-from app.services.llm.visual_policy import apply_script_visual_policy  # noqa: E402
+from app.services.llm.visual_policy import apply_script_visual_policy, normalize_cut_image_prompt  # noqa: E402
+from app.services.llm.script_quality import inspect_script_quality  # noqa: E402
 from app.routers import interlude as interlude_router  # noqa: E402
 from app.routers import subtitle as subtitle_router  # noqa: E402
 from app.services.interlude_service import DEFAULT_INTERMISSION_EVERY  # noqa: E402
+from app.tasks import pipeline_tasks  # noqa: E402
 
 
 class OneClickQueueStabilityTests(unittest.TestCase):
@@ -510,7 +516,12 @@ class InterludeStabilityTests(unittest.TestCase):
         self.assertNotIn("SCRIPT_SYSTEM_PROMPT_EN", prompt_source)
         self.assertNotIn("SCRIPT_SYSTEM_PROMPT_JA", prompt_source)
         self.assertIn("thumbnail_prompt는 가장 중요한 인물", prompt_source)
+        self.assertIn("얼굴은 화면 안에 완전히 보여야 합니다", prompt_source)
+        self.assertIn("몸통만 보이는 구도", prompt_source)
+        self.assertIn("인물이 전혀 없는 주제일 때만 유물", prompt_source)
         self.assertIn("정확히 4편의 쇼츠", prompt_source)
+        self.assertIn("각 쇼츠 그룹은 정확히 15개 컷", prompt_source)
+        self.assertIn("총 60개 컷", prompt_source)
         self.assertIn("shorts_group 1: 논쟁 질문", prompt_source)
         self.assertIn("shorts_group 2: 충격 사실", prompt_source)
         self.assertIn("shorts_group 3: 롱폼으로 넘기는 미스터리", prompt_source)
@@ -523,6 +534,94 @@ class InterludeStabilityTests(unittest.TestCase):
         self.assertIn("shorts_title", prompt_source)
         self.assertIn("visual_year", prompt_source)
         self.assertIn("Year/period: c. 1590-1591; Exact place: a specific visible place", prompt_source)
+
+    def test_prepared_script_loader_ignores_non_matching_invalid_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            script_dir = root / "대본"
+            script_dir.mkdir()
+            (script_dir / "EP_001_bad.json").write_text(
+                json.dumps({
+                    "episode_number": 1,
+                    "topic": "Other topic",
+                    "cuts": [],
+                }),
+                encoding="utf-8",
+            )
+            valid_cut = {
+                "cut_number": 1,
+                "narration": "The target event begins.",
+                "image_prompt": (
+                    "Year/period: test period; Exact place: test place; "
+                    "Scene evidence: clay cup; Style: simple; Scene: visible person face; "
+                    "Main subject: visible person face"
+                ),
+                "visual_year": "test period",
+                "visual_period": "test period",
+                "visual_location": "test place",
+                "visual_evidence": "clay cup",
+            }
+            (script_dir / "EP_002_good.json").write_text(
+                json.dumps({
+                    "episode_number": 2,
+                    "topic": "Target topic",
+                    "title": "Target title",
+                    "cuts": [valid_cut],
+                }),
+                encoding="utf-8",
+            )
+
+            original_resolver = pipeline_tasks.resolve_project_dir
+            pipeline_tasks.resolve_project_dir = lambda *args, **kwargs: root
+            try:
+                selected, source_path = pipeline_tasks._load_prepared_script(
+                    "unit-project",
+                    {"episode_number": 2},
+                    "Target topic",
+                )
+            finally:
+                pipeline_tasks.resolve_project_dir = original_resolver
+
+        self.assertEqual(selected["episode_number"], 2)
+        self.assertTrue(source_path.endswith("EP_002_good.json"))
+
+    def test_thumbnail_prompt_forces_visible_character_face(self):
+        prompt = build_standard_thumbnail_prompt({
+            "topic": "곰이 사람이 됐다는 말, 사실은 왕권 이야기였다",
+            "thumbnail_prompt": (
+                "Year/period: Mythic Gojoseon foundation tradition; "
+                "Scene: sacred mountain under a pale sky, sacred tree in the foreground; "
+                "Main subject: sacred mountain and tree"
+            ),
+        })
+
+        self.assertIn("THUMBNAIL FACE VISIBILITY LOCK", prompt)
+        self.assertIn("show the full face clearly in frame", prompt)
+        self.assertIn("torso-only framing", prompt)
+        self.assertIn("cropped head", prompt)
+        self.assertIn("back view", prompt)
+        self.assertIn("This face rule overrides any earlier scenery", prompt)
+
+    def test_thumbnail_fallback_and_request_reject_body_only_faces(self):
+        fallback = BaseLLMService._fallback_thumbnail_prompt(
+            title="왕권 이야기",
+            topic="단군신화",
+            language="ko",
+            character_description="Ungnyeo in simple ancient clothing",
+        )
+        request = BaseLLMService._build_thumbnail_prompt_request(
+            title="왕권 이야기",
+            topic="단군신화",
+            narration="웅녀와 단군왕검을 설명한다.",
+            language="ko",
+            character_description="Ungnyeo in simple ancient clothing",
+        )
+
+        self.assertIn("full face clearly visible", fallback)
+        self.assertIn("torso-only framing", fallback)
+        self.assertIn("full visible face", request)
+        self.assertIn("torso-only", request)
+        self.assertIn("faceless silhouette", request)
 
     def test_four_second_video_keeps_script_tts_window_at_4_2_to_4_6(self):
         limits = BaseLLMService._calc_narration_limits({
@@ -593,7 +692,18 @@ class ShortsStabilityTests(unittest.TestCase):
         self.assertTrue(line2)
         self.assertNotIn("Watch what happens", line2)
 
-    def test_annotate_script_shorts_keeps_four_twelve_cut_groups(self):
+    def test_shorts_title_allows_three_render_lines(self):
+        title = shorts_service._short_title(
+            {"title": "테스트"},
+            {"title": "이 결정적 선택은 왜 왕국의 운명을 완전히 바꿨나"},
+            shorts_service._shorts_labels("ko"),
+        )
+
+        lines = title.splitlines()
+        self.assertEqual(len(lines), 3)
+        self.assertTrue(all(lines))
+
+    def test_annotate_script_shorts_keeps_four_fifteen_cut_groups(self):
         script = {
             "cuts": [
                 {
@@ -624,6 +734,42 @@ class ShortsStabilityTests(unittest.TestCase):
 
         self.assertNotIn("segments[:1]", source)
         self.assertIn("segments[:SHORTS_SEGMENT_COUNT]", source)
+
+
+class TTSPronunciationStabilityTests(unittest.TestCase):
+    def test_japanese_tts_uses_reading_only_for_spoken_input(self):
+        original = "古事記と日本書紀では、卑弥呼と倭国、藤原不比等の扱いが変わります。"
+
+        spoken = prepare_spoken_narration_for_tts(original, "ja")
+
+        self.assertEqual(original, "古事記と日本書紀では、卑弥呼と倭国、藤原不比等の扱いが変わります。")
+        self.assertIn("こじき", spoken)
+        self.assertIn("にほんしょき", spoken)
+        self.assertIn("ひみこ", spoken)
+        self.assertIn("わこく", spoken)
+        self.assertIn("ふじわらのふひと", spoken)
+        self.assertNotIn("古事記", spoken)
+        self.assertNotIn("日本書紀", spoken)
+
+    def test_japanese_tts_expanded_history_readings(self):
+        original = "聖徳太子、大化の改新、壬申の乱、関ヶ原の戦い、明治維新を扱います。"
+
+        spoken = prepare_spoken_narration_for_tts(original, "ja")
+
+        self.assertIn("しょうとくたいし", spoken)
+        self.assertIn("たいかのかいしん", spoken)
+        self.assertIn("じんしんのらん", spoken)
+        self.assertIn("せきがはらのたたかい", spoken)
+        self.assertIn("めいじいしん", spoken)
+
+    def test_japanese_reading_does_not_apply_to_korean_tts(self):
+        text = "古事記와 日本書紀"
+
+        spoken = prepare_spoken_narration_for_tts(text, "ko")
+
+        self.assertIn("古事記", spoken)
+        self.assertIn("日本書紀", spoken)
+        self.assertNotIn("こじき", spoken)
 
 
 class SubtitleStyleStabilityTests(unittest.TestCase):
@@ -772,6 +918,47 @@ class HistoricalImagePromptStabilityTests(unittest.TestCase):
         self.assertIn("가짜 문자, 가짜 한자, 가짜 서예", prompt_source)
         self.assertIn("visual_year는 정확한 보이는 연도", prompt_source)
         self.assertIn("visual_location은 일반 배경이 아니라 구체적인 공간", prompt_source)
+        self.assertIn("spoken cue", prompt_source)
+        self.assertIn("Main subject는 컷 내용에 맞게", prompt_source)
+
+    def test_cut_image_prompt_strips_spoken_cue_and_narration_text(self):
+        narration = "곰이 사람이 됐다는 이야기는 이상하게 들립니다."
+        prompt = (
+            "Year/period: mythic tradition; Scene: cave entrance with bear and tiger; "
+            "spoken cue: 곰이 사람이 됐다는 이야기는 이상하게 들립니다.; "
+            "Main subject: Hwanung"
+        )
+
+        normalized = normalize_cut_image_prompt(prompt, narration)
+
+        self.assertNotIn("spoken cue", normalized.lower())
+        self.assertNotIn(narration, normalized)
+        self.assertIn("cave entrance with bear and tiger", normalized)
+
+    def test_script_quality_flags_template_phrases_and_prompt_leaks(self):
+        script = {
+            "title": "진개",
+            "cuts": [
+                {
+                    "narration": "압력이 다가옵니다.",
+                    "image_prompt": "Scene: border; spoken cue: 압력이 다가옵니다.",
+                },
+                {
+                    "narration": "연나라는 왜 동쪽으로 움직였나는 두 번째 단서와 연결됩니다.",
+                    "image_prompt": "Scene: border envoy near a frontier road; Main subject: frontier envoy",
+                },
+                {
+                    "narration": "사기 조선열전에는 기록에는 항복을 말한 대신들이 등장합니다.",
+                    "image_prompt": "Scene: officials in a fortress council; Main subject: divided officials",
+                }
+            ],
+        }
+
+        issues = inspect_script_quality(script, "진개")
+
+        self.assertTrue(any("forbidden template phrase" in issue for issue in issues))
+        self.assertTrue(any("narration label leaked" in issue for issue in issues))
+        self.assertTrue(any("bad grammar pattern" in issue for issue in issues))
 
     def test_visual_context_injects_year_and_exact_place_into_image_prompt(self):
         script = {
