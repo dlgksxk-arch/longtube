@@ -1,3 +1,126 @@
+# 새 세션 인계 메모 - 2026-05-20 12:27 KST
+
+## 작업 원칙
+
+- `AGENTS.md` 지시 준수: 추측 금지, 실제 파일/로그/응답 기준으로만 판단.
+- 생성 결과물 직접 수정 금지. 결과물 문제는 로직 수정으로 다음 생성물에 반영.
+- 중요 수정 또는 기능 수정은 사용자 허락 후 진행.
+- 기능 저장 커밋 기준: `1ce89fe Save LongTube automation updates`.
+
+## 현재 확인 상태
+
+- 작업트리는 이 메모 작성 직전 clean 상태였다.
+- `/api/oneclick/running`, `/api/oneclick/tasks` 직접 호출은 401 Unauthorized였다.
+- 실제 작업 상태는 `C:\Users\Ai_M9\Desktop\longsult\_system\oneclick_tasks.json` 기준으로 확인했다.
+- 실행 중 작업:
+  - task_id: `5da7e3db`
+  - project_id: `V3_CH1_EP3_260520010025dc8282`
+  - result_dir: `D:\long_result\CH1\EP.3.260520010025dc8282`
+  - title: `비파형 동검의 주인, 이름 없는 권력자들 EP.03`
+  - status: `running`
+  - current_step: `4`
+  - progress_pct: `45.6`
+  - started_at: `2026-05-19T16:00:28Z`
+- `C:\Users\Ai_M9\Desktop\longsult\_system\oneclick_queue.json` 첫 항목도 위 CH1 EP3 running 상태다.
+- CH1 EP4는 큐에 pending으로 있다.
+
+## 이번 세션 주요 변경
+
+### 1. Windows Update 자동 재부팅 차단
+
+- 재부팅 사유 확인:
+  - 마지막 부팅: `2026-05-20 01:31:59`
+  - Event 1074: `MoUsoCoreWorker.exe`, `TrustedInstaller.exe`의 planned update/upgrade 재시작
+  - Setup 로그: `KB5087051`, `KB5089549` 설치
+  - 확인 구간에서 `Kernel-Power 41`, `6008` 없음
+- 적용 스크립트:
+  - `C:\Users\Ai_M9\Desktop\longsult\_system\disable_windows_update_20260520_121530.ps1`
+  - 로그: `C:\Users\Ai_M9\Desktop\longsult\_system\disable_windows_update_20260520_121530.log`
+- 확인된 적용 상태:
+  - `wuauserv`: `Stopped / Disabled`
+  - `UsoSvc`: `Stopped / Disabled`
+  - `WaaSMedicSvc`: `Stopped`, registry `Start=4`
+  - `NoAutoUpdate=1`, `AUOptions=2`, `NoAutoRebootWithLoggedOnUsers=1`, `SetDisableUXWUAccess=1`
+  - `\Microsoft\Windows\WindowsUpdate\Scheduled Start`: `Disabled`
+- 일부 보호된 UpdateOrchestrator 작업은 Access denied 또는 경로 없음으로 처리되지 않았다.
+
+### 2. 썸네일 문자 오버레이 70% 축소
+
+- 수정 파일:
+  - `backend/app/services/thumbnail_service.py`
+  - `backend/tests/test_oneclick_stability.py`
+- 변경:
+  - `THUMBNAIL_TEXT_OVERLAY_SCALE = 0.70` 추가
+  - Pillow 폰트 후보, subtitle threshold, EP badge, Devanagari browser CSS 경로 모두 70% 스케일 적용
+- 검증:
+  - `python -m py_compile backend/app/services/thumbnail_service.py backend/tests/test_oneclick_stability.py`
+  - `python -m unittest backend.tests.test_oneclick_stability.InterludeStabilityTests.test_thumbnail_overlay_font_candidates_are_scaled_to_seventy_percent backend.tests.test_oneclick_stability.InterludeStabilityTests.test_thumbnail_prompt_forces_visible_character_face`
+  - `python -m unittest backend.tests.test_oneclick_stability` -> 78 tests OK
+  - 샘플 생성 확인: scale `0.7`, candidates `(140, 126, 29)`, 출력 파일 생성됨
+- 주의:
+  - CH1 EP3 작업이 실행 중이라 이 변경 직후 백엔드 재시작은 하지 않았다.
+  - 다음 세션에서 실행 작업이 없을 때 백엔드 재시작해야 런타임에 즉시 반영된다.
+
+### 3. CH1 EP2 중복 폴더/재생성 방지 로직
+
+- 실제 원인:
+  - `prepare_task()`가 V3 Studio-linked 경로에서 기존 프로젝트 재사용 로직을 우회했다.
+  - 큐 실행 `_fire_queue_for_channel()`이 인메모리 task만 보고 DB/결과 폴더를 먼저 복구하지 않았다.
+  - 빈 retry 폴더가 기존 완료 폴더보다 우선 선택될 수 있었다.
+- 수정 파일:
+  - `backend/app/services/oneclick_service.py`
+  - `backend/tests/test_oneclick_stability.py`
+- 추가/수정 로직:
+  - `D:\long_result\CHn\EP.n.*` orphan 결과 폴더 복구
+  - 빈 retry 폴더 skip
+  - `prepare_task()`, `_fire_queue_for_channel()`, `start_task()`, `resume_task()`에서 기존 episode 결과를 먼저 연결
+  - `_inspect_backup_progress()`가 `script.json` cut 수를 먼저 읽어 EP2를 150컷으로 판단
+- 검증:
+  - `test_orphan_v3_result_lookup_skips_empty_retry_folders`
+  - `test_fire_queue_recovers_existing_project_before_preparing_new_v3_run`
+  - `test_empty_v3_retry_task_redirects_to_existing_episode_outputs`
+  - 이후 full `backend.tests.test_oneclick_stability` 통과
+- 처리 이력:
+  - 백엔드 재시작 후 자동 복구된 CH1 EP2 업로드 task `63b6a541`은 의도치 않은 재업로드라 취소했다.
+
+### 4. YouTube Studio 기능 삭제 및 채널운영 추가
+
+- YouTube Studio 메뉴/라우트는 삭제했다. 복구 예정 없음.
+- 작업대 아래 `채널운영` 메뉴 추가.
+- 댓글 기능 구현:
+  - 사용자가 `댓글 불러오기`를 눌러야 조회
+  - 댓글 있는 영상들을 대상으로 조회
+  - 개별 답변 / 전체 답변
+  - GPT 5.5 답변 생성
+  - 댓글 언어와 같은 언어로 답변
+  - 비한국어 댓글 번역 표시
+  - 채널 이동 후 불러온 댓글 상태 유지
+- 주의:
+  - 화면에서 403/OAuth scope 관련 오류가 보였던 부분은 다음 세션에서 실제 채널 불러오기 재검증 필요.
+
+### 5. 제목/볼륨/TTS 로직
+
+- Shorts 제목에서 `#1`, `#2`, `#3`, `#4` 형식 제거.
+- Shorts와 본영상 모두:
+  - BGM 볼륨 30% 감소
+  - 나레이션 볼륨 30% 증가
+- 일본어 TTS 독음 사전 추가:
+  - `backend/app/services/tts/japanese_reading_dictionary.py`
+  - `pykakasi==2.3.0`
+  - `data/_system/japanese_readings.json`
+  - `data/_system/japanese_readings.generated.json`
+  - 미해결 로그: `C:\Users\Ai_M9\Desktop\longsult\_system\japanese_reading_missing.jsonl`
+- 한자/한글 누수 용어를 일본어 독음으로 치환하도록 로직 수정.
+
+## 다음 세션 우선 확인
+
+1. CH1 EP3 running 작업이 끝났는지 먼저 확인.
+2. 작업이 없으면 백엔드 재시작해서 썸네일 70% 변경을 런타임 반영.
+3. 채널운영 댓글 불러오기 403/OAuth scope 문제를 실제 인증 상태로 재확인.
+4. CH1 EP2/EP3/EP4를 다시 시작할 때 새 폴더 생성 없이 기존 결과/큐 연결이 되는지 확인.
+
+---
+
 # 새 세션 인계 메모 - 2026-05-12 12:52 KST
 
 ## 작업 원칙
