@@ -93,6 +93,8 @@ async function request(
 
 export const api = {
   get: (path: string, signal?: AbortSignal) => request("GET", path, undefined, false, signal),
+  getWithTimeout: (path: string, timeoutMs: number, signal?: AbortSignal) =>
+    request("GET", path, undefined, false, signal, timeoutMs),
   post: (path: string, body?: any, signal?: AbortSignal) =>
     request("POST", path, body, false, signal),
   postWithTimeout: (path: string, body: any, timeoutMs: number, signal?: AbortSignal) =>
@@ -158,6 +160,7 @@ export const modelsApi = {
 export interface ProjectConfig {
   aspect_ratio: string;
   target_duration: number;
+  cut_video_duration?: number;
   cut_transition: string;
   style: string;
   script_model: string;
@@ -962,404 +965,6 @@ export const apiBalancesApi = {
 // ScheduleItemInput / SchedulePrivacy / ScheduleStatus 전부 제거됨.
 // 사용자 요구: "자동화 스케쥴 삭제하고 그자리에 버튼 넣어".
 
-// ─── YouTube Studio (v1.1.31) ───
-//
-// LongTube 파이프라인과 독립된 전역 Studio. /api/youtube-studio/* 엔드포인트를
-// 호출해 채널 단위로 영상/재생목록/댓글을 조작합니다. project_id 파라미터는
-// 선택 — 생략하면 전역 토큰을 씁니다.
-
-export interface StudioAuthStatus {
-  authenticated: boolean;
-  project_id?: string | null;
-  channel_no?: number | null;
-  channel_id?: string | null;
-  channel_title?: string | null;
-}
-
-export interface StudioVideoListItem {
-  video_id: string;
-  title: string;
-  description?: string;
-  published_at?: string;
-  thumbnail?: string | null;
-  channel_title?: string;
-  privacy_status?: "private" | "unlisted" | "public" | null;
-  publish_at?: string | null;
-  made_for_kids?: boolean | null;
-  view_count?: number | null;
-  like_count?: number | null;
-  comment_count?: number | null;
-  duration?: string | null; // ISO 8601 (PT#M#S)
-  longtube?: {
-    project_id: string;
-    project_title: string;
-    uploaded_at: string | null;
-    source: "oneclick" | "preset";
-  } | null;
-}
-
-export interface StudioVideoListResponse {
-  items: StudioVideoListItem[];
-  next_page_token?: string | null;
-  prev_page_token?: string | null;
-  total_results?: number | null;
-}
-
-export interface GeneratedVideoArtifact {
-  id: string;
-  project_id: string;
-  project_title: string;
-  topic: string;
-  channel?: number | null;
-  kind: "main" | "shorts" | "other";
-  label: string;
-  relative_path: string;
-  filename: string;
-  size: number;
-  updated_at?: number | null;
-  created_at?: string | null;
-  uploaded: boolean;
-  upload_status?: "local" | "uploaded" | "processing" | "failed";
-  youtube_url?: string | null;
-  video_id?: string | null;
-  uploaded_at?: string | null;
-}
-
-export interface StudioVideoDetail {
-  video_id: string;
-  title: string;
-  description: string;
-  tags: string[];
-  category_id?: string | null;
-  default_language?: string | null;
-  default_audio_language?: string | null;
-  channel_id?: string | null;
-  channel_title?: string | null;
-  published_at?: string | null;
-  thumbnail?: string | null;
-  privacy_status?: "private" | "unlisted" | "public" | null;
-  publish_at?: string | null;
-  made_for_kids?: boolean | null;
-  self_declared_made_for_kids?: boolean | null;
-  embeddable?: boolean | null;
-  license?: string | null;
-  public_stats_viewable?: boolean | null;
-  view_count?: number | null;
-  like_count?: number | null;
-  comment_count?: number | null;
-  duration?: string | null;
-  definition?: string | null;
-}
-
-export interface StudioVideoUpdateBody {
-  title?: string;
-  description?: string;
-  tags?: string[];
-  category_id?: string;
-  default_language?: string;
-  privacy_status?: "private" | "unlisted" | "public";
-  /** RFC3339. 빈 문자열을 보내면 예약 해제. */
-  publish_at?: string;
-  made_for_kids?: boolean;
-  embeddable?: boolean;
-  public_stats_viewable?: boolean;
-}
-
-export interface StudioPlaylist {
-  playlist_id: string;
-  title: string;
-  description?: string;
-  thumbnail?: string | null;
-  item_count?: number | null;
-  privacy_status?: "private" | "unlisted" | "public" | null;
-  published_at?: string | null;
-}
-
-export interface StudioPlaylistItem {
-  item_id: string;
-  video_id: string;
-  position?: number | null;
-  title: string;
-  thumbnail?: string | null;
-  published_at?: string | null;
-}
-
-export interface StudioCommentReply {
-  comment_id: string;
-  author: string;
-  author_channel_id?: string | null;
-  text: string;
-  like_count?: number | null;
-  published_at?: string | null;
-  updated_at?: string | null;
-}
-
-export interface StudioCommentThread {
-  thread_id: string;
-  top_comment_id: string;
-  author: string;
-  author_channel_id?: string | null;
-  text: string;
-  like_count?: number | null;
-  published_at?: string | null;
-  updated_at?: string | null;
-  total_reply_count: number;
-  can_reply?: boolean | null;
-  replies: StudioCommentReply[];
-}
-
-export interface StudioCategory {
-  category_id: string;
-  title: string;
-}
-
-export const STUDIO_CHANNELS = [1, 2, 3, 4] as const;
-export type StudioChannelNo = (typeof STUDIO_CHANNELS)[number];
-
-export function parseStudioChannel(value?: string | null): StudioChannelNo {
-  const num = Number(value);
-  return STUDIO_CHANNELS.includes(num as StudioChannelNo)
-    ? (num as StudioChannelNo)
-    : 1;
-}
-
-function qs(params: Record<string, string | number | boolean | undefined | null>): string {
-  const parts: string[] = [];
-  for (const [k, v] of Object.entries(params)) {
-    if (v === undefined || v === null || v === "") continue;
-    parts.push(`${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`);
-  }
-  return parts.length ? `?${parts.join("&")}` : "";
-}
-
-export const youtubeStudioApi = {
-  authStatus: (projectId?: string, channelId?: number): Promise<StudioAuthStatus> =>
-    api.get(`/youtube-studio/auth/status${qs({ project_id: projectId, channel_id: channelId })}`),
-
-  // Videos
-  listVideos: (opts: {
-    query?: string;
-    pageToken?: string;
-    maxResults?: number;
-    projectId?: string;
-    channelId?: number;
-  } = {}): Promise<StudioVideoListResponse> =>
-    api.get(
-      `/youtube-studio/videos${qs({
-        query: opts.query,
-        page_token: opts.pageToken,
-        max_results: opts.maxResults ?? 25,
-        project_id: opts.projectId,
-        channel_id: opts.channelId,
-      })}`,
-    ),
-  getVideo: (videoId: string, projectId?: string, channelId?: number): Promise<StudioVideoDetail> =>
-    api.get(`/youtube-studio/videos/${encodeURIComponent(videoId)}${qs({ project_id: projectId, channel_id: channelId })}`),
-  updateVideo: (
-    videoId: string,
-    body: StudioVideoUpdateBody,
-    projectId?: string,
-    channelId?: number,
-  ): Promise<{ video_id: string; snippet: any; status: any }> =>
-    request(
-      "PATCH",
-      `/youtube-studio/videos/${encodeURIComponent(videoId)}${qs({ project_id: projectId, channel_id: channelId })}`,
-      body,
-      false,
-    ),
-  setThumbnail: (
-    videoId: string,
-    file: File,
-    projectId?: string,
-    channelId?: number,
-  ): Promise<{ video_id: string; thumbnail_path: string }> => {
-    const fd = new FormData();
-    fd.append("file", file);
-    return api.upload(
-      `/youtube-studio/videos/${encodeURIComponent(videoId)}/thumbnail${qs({ project_id: projectId, channel_id: channelId })}`,
-      fd,
-    );
-  },
-  deleteVideo: (videoId: string, projectId?: string, channelId?: number): Promise<{ status: string; video_id: string }> =>
-    api.delete(
-      `/youtube-studio/videos/${encodeURIComponent(videoId)}${qs({ confirm: true, project_id: projectId, channel_id: channelId })}`,
-    ),
-
-  listGeneratedVideos: (
-    opts: { projectId?: string; channelId?: number } = {},
-  ): Promise<{ items: GeneratedVideoArtifact[]; count: number; uploaded_count?: number; local_count?: number }> =>
-    api.get(
-      `/youtube-studio/generated-videos${qs({
-        project_id: opts.projectId,
-        channel_id: opts.channelId,
-      })}`,
-    ),
-  uploadGeneratedVideo: (
-    body: {
-      project_id: string;
-      relative_path: string;
-      title?: string;
-      description?: string;
-      tags?: string[];
-      privacy_status?: "private" | "unlisted" | "public";
-      category_id?: string;
-      default_language?: string;
-      made_for_kids?: boolean;
-    },
-    opts: { projectId?: string; channelId?: number } = {},
-  ): Promise<{ video_id: string; url: string; project_id: string; relative_path: string; kind: string }> =>
-    api.postWithTimeout(
-      `/youtube-studio/generated-videos/upload${qs({
-        project_id: opts.projectId,
-        channel_id: opts.channelId,
-      })}`,
-      body,
-      30 * 60_000,
-    ),
-  openGeneratedVideoFolder: (
-    body: { project_id: string; relative_path: string },
-  ): Promise<{ status: string; project_id: string; relative_path: string }> =>
-    api.post(`/youtube-studio/generated-videos/open-folder`, body),
-  deleteGeneratedVideo: (
-    body: { project_id: string; relative_path: string; delete_project?: boolean },
-  ): Promise<{ status: string; project_id: string; relative_path: string }> =>
-    api.post(`/youtube-studio/generated-videos/delete`, body),
-
-  // Direct upload
-  directUpload: (
-    params: {
-      file: File;
-      title: string;
-      description?: string;
-      tags?: string[];
-      privacyStatus?: "private" | "unlisted" | "public";
-      categoryId?: string;
-      defaultLanguage?: string;
-      madeForKids?: boolean;
-      publishAt?: string;
-      thumbnail?: File | null;
-      projectId?: string;
-      channelId?: number;
-    },
-    signal?: AbortSignal,
-  ): Promise<{ video_id: string; url: string; publish_at?: string; publish_at_error?: string; thumbnail_error?: string }> => {
-    const fd = new FormData();
-    fd.append("file", params.file);
-    fd.append("title", params.title);
-    fd.append("description", params.description ?? "");
-    fd.append("tags", (params.tags ?? []).join(","));
-    fd.append("privacy_status", params.privacyStatus ?? "private");
-    if (params.categoryId) fd.append("category_id", params.categoryId);
-    if (params.defaultLanguage) fd.append("default_language", params.defaultLanguage);
-    fd.append("made_for_kids", String(Boolean(params.madeForKids)));
-    if (params.publishAt) fd.append("publish_at", params.publishAt);
-    if (params.thumbnail) fd.append("thumbnail", params.thumbnail);
-    return api.upload(
-      `/youtube-studio/upload${qs({ project_id: params.projectId, channel_id: params.channelId })}`,
-      fd,
-      signal,
-    );
-  },
-
-  // Playlists
-  listPlaylists: (projectId?: string, channelId?: number): Promise<{ items: StudioPlaylist[] }> =>
-    api.get(`/youtube-studio/playlists${qs({ project_id: projectId, channel_id: channelId })}`),
-  createPlaylist: (
-    body: { title: string; description?: string; privacy_status?: "private" | "unlisted" | "public" },
-    projectId?: string,
-    channelId?: number,
-  ): Promise<{ playlist_id: string; title: string }> =>
-    api.post(`/youtube-studio/playlists${qs({ project_id: projectId, channel_id: channelId })}`, body),
-  updatePlaylist: (
-    playlistId: string,
-    body: { title?: string; description?: string; privacy_status?: "private" | "unlisted" | "public" },
-    projectId?: string,
-    channelId?: number,
-  ): Promise<{ playlist_id: string; snippet: any }> =>
-    request(
-      "PATCH",
-      `/youtube-studio/playlists/${encodeURIComponent(playlistId)}${qs({ project_id: projectId, channel_id: channelId })}`,
-      body,
-      false,
-    ),
-  deletePlaylist: (playlistId: string, projectId?: string, channelId?: number): Promise<{ status: string; playlist_id: string }> =>
-    api.delete(
-      `/youtube-studio/playlists/${encodeURIComponent(playlistId)}${qs({ confirm: true, project_id: projectId, channel_id: channelId })}`,
-    ),
-  listPlaylistItems: (
-    playlistId: string,
-    opts: { pageToken?: string; maxResults?: number; projectId?: string; channelId?: number } = {},
-  ): Promise<{ items: StudioPlaylistItem[]; next_page_token?: string | null; total_results?: number | null }> =>
-    api.get(
-      `/youtube-studio/playlists/${encodeURIComponent(playlistId)}/items${qs({
-        page_token: opts.pageToken,
-        max_results: opts.maxResults ?? 50,
-        project_id: opts.projectId,
-        channel_id: opts.channelId,
-      })}`,
-    ),
-  addPlaylistItem: (
-    playlistId: string,
-    videoId: string,
-    projectId?: string,
-    channelId?: number,
-  ): Promise<{ item_id: string; playlist_id: string; video_id: string }> =>
-    api.post(
-      `/youtube-studio/playlists/${encodeURIComponent(playlistId)}/items${qs({ project_id: projectId, channel_id: channelId })}`,
-      { video_id: videoId },
-    ),
-  removePlaylistItem: (
-    playlistId: string,
-    itemId: string,
-    projectId?: string,
-    channelId?: number,
-  ): Promise<{ status: string; item_id: string }> =>
-    api.delete(
-      `/youtube-studio/playlists/${encodeURIComponent(playlistId)}/items/${encodeURIComponent(itemId)}${qs({
-        project_id: projectId,
-        channel_id: channelId,
-      })}`,
-    ),
-
-  // Comments
-  listComments: (
-    videoId: string,
-    opts: { order?: "time" | "relevance"; pageToken?: string; maxResults?: number; projectId?: string; channelId?: number } = {},
-  ): Promise<{ items: StudioCommentThread[]; next_page_token?: string | null; total_results?: number | null }> =>
-    api.get(
-      `/youtube-studio/videos/${encodeURIComponent(videoId)}/comments${qs({
-        order: opts.order ?? "time",
-        page_token: opts.pageToken,
-        max_results: opts.maxResults ?? 50,
-        project_id: opts.projectId,
-        channel_id: opts.channelId,
-      })}`,
-    ),
-  replyComment: (parentId: string, text: string, projectId?: string, channelId?: number): Promise<StudioCommentReply> =>
-    api.post(`/youtube-studio/comments/${encodeURIComponent(parentId)}/reply${qs({ project_id: projectId, channel_id: channelId })}`, {
-      text,
-    }),
-  moderateComment: (
-    commentId: string,
-    status: "heldForReview" | "published" | "rejected",
-    banAuthor: boolean,
-    projectId?: string,
-    channelId?: number,
-  ): Promise<{ status: string; comment_id: string; moderation: string }> =>
-    api.post(
-      `/youtube-studio/comments/${encodeURIComponent(commentId)}/moderation${qs({ project_id: projectId, channel_id: channelId })}`,
-      { status, ban_author: banAuthor },
-    ),
-  markCommentSpam: (commentId: string, projectId?: string, channelId?: number): Promise<{ status: string; comment_id: string }> =>
-    api.post(`/youtube-studio/comments/${encodeURIComponent(commentId)}/spam${qs({ project_id: projectId, channel_id: channelId })}`),
-  deleteComment: (commentId: string, projectId?: string, channelId?: number): Promise<{ status: string; comment_id: string }> =>
-    api.delete(`/youtube-studio/comments/${encodeURIComponent(commentId)}${qs({ project_id: projectId, channel_id: channelId })}`),
-
-  // Categories
-  listCategories: (regionCode = "KR", projectId?: string, channelId?: number): Promise<{ items: StudioCategory[]; region_code: string }> =>
-    api.get(`/youtube-studio/categories${qs({ region_code: regionCode, project_id: projectId, channel_id: channelId })}`),
-};
-
 // ─── OneClick (v1.1.34 딸깍 제작) ───
 export interface OneClickTask {
   task_id: string;
@@ -1557,7 +1162,7 @@ export const oneclickApi = {
   // v1.1.54: 완성작 관리
   getTaskDetail: (taskId: string): Promise<TaskDetail> =>
     api.get(`/oneclick/tasks/${taskId}/detail`),
-  manualUpload: (taskId: string): Promise<{ ok: boolean; pending?: boolean; message?: string; youtube_url: string | null }> =>
+  manualUpload: (taskId: string): Promise<{ ok: boolean; status?: string; pending?: boolean; message?: string; youtube_url: string | null }> =>
     api.postWithTimeout(`/oneclick/tasks/${taskId}/upload`, undefined, 30 * 60_000),
   bulkDelete: (taskIds: string[]): Promise<{ ok: boolean; deleted: number; freed_mb: number; skipped: string[] }> =>
     api.post(`/oneclick/tasks/bulk-delete`, { task_ids: taskIds }),
@@ -1694,6 +1299,126 @@ export interface OrphanProject {
   created_at: string;
 }
 
+export interface ChannelOpsReply {
+  comment_id?: string | null;
+  text?: string | null;
+  author?: string | null;
+  author_channel_id?: string | null;
+  like_count?: number | null;
+  published_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface ChannelOpsComment {
+  channel_id: number;
+  own_channel_id?: string | null;
+  video_id: string;
+  video_title: string;
+  video_url: string;
+  video_thumbnail?: string | null;
+  thread_id?: string | null;
+  parent_comment_id: string;
+  author: string;
+  author_channel_id?: string | null;
+  text: string;
+  translated_text?: string | null;
+  translation_error?: string | null;
+  like_count?: number | null;
+  published_at?: string | null;
+  updated_at?: string | null;
+  total_reply_count: number;
+  can_reply: boolean;
+  has_channel_reply: boolean;
+  is_own_comment: boolean;
+  replies: ChannelOpsReply[];
+  reply_text?: string | null;
+  reply_comment_id?: string | null;
+  reply_error?: string | null;
+}
+
+export interface ChannelOpsCommentsResponse {
+  ok: boolean;
+  channel_id: number;
+  channel_youtube_id?: string | null;
+  max_videos: number;
+  max_comments: number;
+  videos_scanned: number;
+  videos_with_comments?: number;
+  videos_skipped_no_comments?: number;
+  comments: ChannelOpsComment[];
+  errors: { video_id?: string; video_title?: string; error: string }[];
+  fetched_at: string;
+}
+
+export interface ChannelOpsReplyRequest {
+  channel_id: number;
+  parent_comment_id: string;
+  comment_text: string;
+  author?: string | null;
+  video_title?: string | null;
+  video_id?: string | null;
+  can_reply?: boolean;
+  has_channel_reply?: boolean;
+  is_own_comment?: boolean;
+}
+
+export interface ChannelOpsReplyResponse {
+  ok: boolean;
+  channel_id: number;
+  parent_comment_id: string;
+  reply_text: string;
+  posted?: {
+    comment_id?: string | null;
+    text?: string | null;
+    author?: string | null;
+    published_at?: string | null;
+  };
+}
+
+export interface ChannelOpsReplyAllResponse {
+  ok: boolean;
+  channel_id: number;
+  total: number;
+  succeeded: number;
+  failed: number;
+  capped: boolean;
+  results: Array<{
+    ok: boolean;
+    parent_comment_id: string;
+    reply_text?: string;
+    skipped?: boolean;
+    error?: string;
+    posted?: {
+      comment_id?: string | null;
+      text?: string | null;
+      author?: string | null;
+      published_at?: string | null;
+    };
+  }>;
+}
+
+export const channelOpsApi = {
+  listComments: (
+    channelId: number,
+    options: { maxVideos?: number; maxComments?: number } = {},
+  ): Promise<ChannelOpsCommentsResponse> => {
+    const params = new URLSearchParams({
+      channel_id: String(channelId),
+      max_videos: String(options.maxVideos ?? 50),
+      max_comments: String(options.maxComments ?? 25),
+    });
+    return api.getWithTimeout(`/channel-ops/comments?${params.toString()}`, 180_000);
+  },
+  replyComment: (body: ChannelOpsReplyRequest): Promise<ChannelOpsReplyResponse> =>
+    api.postWithTimeout(`/channel-ops/comments/reply`, body, 120_000),
+  replyAll: (channelId: number, comments: ChannelOpsReplyRequest[]): Promise<ChannelOpsReplyAllResponse> =>
+    api.postWithTimeout(
+      `/channel-ops/comments/reply-all`,
+      { channel_id: channelId, comments },
+      10 * 60_000,
+    ),
+};
+
 // ─── Asset URL helper ───
 // v2.0.74: 정적 에셋(/assets/<id>/...) 도 env > window host > localhost 규칙.
 export const ASSET_BASE = _deriveAssetBase();
@@ -1725,3 +1450,4 @@ export const resolveAssetUrl = (pathOrUrl: string): string => {
   if (pathOrUrl.startsWith("/")) return `${ASSET_BASE}${pathOrUrl}`;
   return `${ASSET_BASE}/${pathOrUrl}`;
 };
+

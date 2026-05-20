@@ -11,7 +11,6 @@ from app.services.video.base import BaseVideoService
 from app.services.video.subprocess_helper import run_subprocess, find_ffmpeg
 from app.services.cancel_ctx import raise_if_cancelled  # v1.2.25 cancel 방어
 from app import config as cfg
-from app.config import CUT_VIDEO_DURATION
 
 
 def _get_fal_key() -> str:
@@ -256,10 +255,10 @@ class FalVideoService(BaseVideoService):
 
             # Submit to queue
             submit_url = f"{FAL_QUEUE_URL}/{self._fal_model}"
-            # v1.1.45: CUT_VIDEO_DURATION 와 sync. fal.ai 는 정수 초만 받는 모델이
+            # v1.1.45: requested cut duration sync. fal.ai 는 정수 초만 받는 모델이
             # 대부분이라 str(int(...)) 로 내려보낸다. 후처리 mux 단계에서 정확한
             # 길이로 한 번 더 trim 되기 때문에 여기서는 정수 근사로 충분하다.
-            fal_duration = str(int(round(CUT_VIDEO_DURATION)))
+            fal_duration = str(int(round(duration)))
             payload = {
                 "image_url": image_url,
                 "prompt": prompt or "smooth cinematic camera motion",
@@ -371,9 +370,9 @@ class FalVideoService(BaseVideoService):
                         if not ffmpeg_bin:
                             mux_rc, mux_err = -1, b"ffmpeg not found"
                         else:
-                            # v1.1.45: fal.ai 는 5초 클립을 반환한다. 음성이 더 짧아도
+                            # v1.1.45: fal.ai 는 고정 길이 클립을 반환한다. 음성이 더 짧아도
                             # `-shortest` 로 영상을 줄이지 않고, 음성을 `apad` 로 무음 패딩
-                            # 한 뒤 `-t CUT_VIDEO_DURATION` 으로 고정 길이로 잘라낸다.
+                            # 한 뒤 `-t duration` 으로 고정 길이로 잘라낸다.
                             cmd = [
                                 ffmpeg_bin, "-y",
                                 "-i", temp_path,
@@ -381,7 +380,7 @@ class FalVideoService(BaseVideoService):
                                 "-map", "0:v", "-map", "1:a",
                                 "-af", "apad",
                                 "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
-                                "-t", str(CUT_VIDEO_DURATION),
+                                "-t", str(duration),
                                 output_path,
                             ]
                             try:

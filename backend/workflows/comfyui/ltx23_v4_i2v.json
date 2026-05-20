@@ -1,0 +1,356 @@
+{
+  "_meta": {
+    "name": "LTX 2.3 Local V4 I2V",
+    "mode": "image-to-video",
+    "notes": "Single-image LTX 2.3 I2V workflow based on the tested ComfyUI LTX2.3 reference graph. Uses one uploaded image, 24fps, source-locked motion, distilled LoRA, transition LoRA, NAG, and VHS MP4 output."
+  },
+  "3940": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": {
+      "ckpt_name": "ltx-2.3-22b-dev-fp8.safetensors"
+    }
+  },
+  "4982": {
+    "class_type": "LTXAVTextEncoderLoader",
+    "inputs": {
+      "text_encoder": "gemma_3_12B_it_fp8_scaled.safetensors",
+      "ckpt_name": "ltx-2.3-22b-dev-fp8.safetensors",
+      "device": "default"
+    }
+  },
+  "4010": {
+    "class_type": "LTXVAudioVAELoader",
+    "inputs": {
+      "ckpt_name": "ltx-2.3-22b-dev-fp8.safetensors"
+    }
+  },
+  "3059": {
+    "class_type": "EmptyLTXVLatentVideo",
+    "inputs": {
+      "width": "${WIDTH}",
+      "height": "${HEIGHT}",
+      "length": "${LENGTH}",
+      "batch_size": 1
+    }
+  },
+  "5218": {
+    "class_type": "MultiImageLoader",
+    "inputs": {
+      "image_paths": "${INPUT_IMAGE_NAME}",
+      "width": "${WIDTH}",
+      "height": "${HEIGHT}",
+      "interpolation": "lanczos",
+      "resize_method": "crop",
+      "multiple_of": 32,
+      "img_compression": 0
+    }
+  },
+  "4990": {
+    "class_type": "ResizeImageMaskNode",
+    "inputs": {
+      "resize_type": "scale longer dimension",
+      "resize_type.longer_size": 1536,
+      "scale_method": "nearest-exact",
+      "input": [
+        "5218",
+        0
+      ]
+    }
+  },
+  "2483": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "${PROMPT}",
+      "clip": [
+        "4982",
+        0
+      ]
+    }
+  },
+  "2612": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "${NEGATIVE}",
+      "clip": [
+        "4982",
+        0
+      ]
+    }
+  },
+  "1241": {
+    "class_type": "LTXVConditioning",
+    "inputs": {
+      "frame_rate": "${FPS}",
+      "positive": [
+        "2483",
+        0
+      ],
+      "negative": [
+        "2612",
+        0
+      ]
+    }
+  },
+  "5245": {
+    "class_type": "LTXVPreprocess",
+    "inputs": {
+      "img_compression": 25,
+      "image": [
+        "4990",
+        0
+      ]
+    }
+  },
+  "5217": {
+    "class_type": "LTXSequencer",
+    "inputs": {
+      "num_images_separator": "",
+      "num_images": 1,
+      "insert_mode": "frames",
+      "frame_rate": "${FPS}",
+      "header_1": "Image #1",
+      "insert_frame_1": 0,
+      "insert_second_1": 0.0,
+      "strength_1": "${I2V_STRENGTH}",
+      "header_2": "Image #2",
+      "insert_frame_2": 125,
+      "insert_second_2": 0.0,
+      "strength_2": "${I2V_STRENGTH}",
+      "positive": [
+        "1241",
+        0
+      ],
+      "negative": [
+        "1241",
+        1
+      ],
+      "vae": [
+        "3940",
+        2
+      ],
+      "latent": [
+        "3059",
+        0
+      ],
+      "multi_input": [
+        "5245",
+        0
+      ]
+    }
+  },
+  "3980": {
+    "class_type": "LTXVEmptyLatentAudio",
+    "inputs": {
+      "frames_number": "${LENGTH}",
+      "frame_rate": "${FPS}",
+      "batch_size": 1,
+      "audio_vae": [
+        "4010",
+        0
+      ]
+    }
+  },
+  "4528": {
+    "class_type": "LTXVConcatAVLatent",
+    "inputs": {
+      "video_latent": [
+        "5217",
+        2
+      ],
+      "audio_latent": [
+        "3980",
+        0
+      ]
+    }
+  },
+  "5006": {
+    "class_type": "Power Lora Loader (rgthree)",
+    "inputs": {
+      "PowerLoraLoaderHeaderWidget": {
+        "type": "PowerLoraLoaderHeaderWidget"
+      },
+      "lora_1": {
+        "on": true,
+        "lora": "ltx-2.3-22b-distilled-lora-384.safetensors",
+        "strength": 0.48
+      },
+      "lora_2": {
+        "on": true,
+        "lora": "ltx2.3-transition.safetensors",
+        "strength": 0.85
+      },
+      "➕ Add Lora": "",
+      "model": [
+        "3940",
+        0
+      ]
+    }
+  },
+  "5004": {
+    "class_type": "LTX2_NAG",
+    "inputs": {
+      "nag_scale": 15.0,
+      "nag_alpha": 0.5,
+      "nag_tau": 2.5,
+      "inplace": false,
+      "model": [
+        "5006",
+        0
+      ],
+      "nag_cond_video": [
+        "1241",
+        1
+      ],
+      "nag_cond_audio": [
+        "1241",
+        1
+      ]
+    }
+  },
+  "5201": {
+    "class_type": "LTX2AudioLatentNormalizingSampling",
+    "inputs": {
+      "audio_normalization_factors": "1,1,1,1,1,1",
+      "model": [
+        "5004",
+        0
+      ]
+    }
+  },
+  "4828": {
+    "class_type": "CFGGuider",
+    "inputs": {
+      "cfg": 1.0,
+      "model": [
+        "5201",
+        0
+      ],
+      "positive": [
+        "5217",
+        0
+      ],
+      "negative": [
+        "5217",
+        1
+      ]
+    }
+  },
+  "4831": {
+    "class_type": "KSamplerSelect",
+    "inputs": {
+      "sampler_name": "lcm"
+    }
+  },
+  "4994": {
+    "class_type": "ManualSigmas",
+    "inputs": {
+      "sigmas": "1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725"
+    }
+  },
+  "4832": {
+    "class_type": "RandomNoise",
+    "inputs": {
+      "noise_seed": "${SEED}"
+    }
+  },
+  "4829": {
+    "class_type": "SamplerCustomAdvanced",
+    "inputs": {
+      "noise": [
+        "4832",
+        0
+      ],
+      "guider": [
+        "4828",
+        0
+      ],
+      "sampler": [
+        "4831",
+        0
+      ],
+      "sigmas": [
+        "4994",
+        0
+      ],
+      "latent_image": [
+        "4528",
+        0
+      ]
+    }
+  },
+  "4845": {
+    "class_type": "LTXVSeparateAVLatent",
+    "inputs": {
+      "av_latent": [
+        "4829",
+        1
+      ]
+    }
+  },
+  "5236": {
+    "class_type": "LTXVCropGuides",
+    "inputs": {
+      "positive": [
+        "5217",
+        0
+      ],
+      "negative": [
+        "5217",
+        1
+      ],
+      "latent": [
+        "4845",
+        0
+      ]
+    }
+  },
+  "5211": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "5236",
+        2
+      ],
+      "vae": [
+        "3940",
+        2
+      ]
+    }
+  },
+  "4992": {
+    "class_type": "LTXVAudioVAEDecode",
+    "inputs": {
+      "samples": [
+        "4845",
+        1
+      ],
+      "audio_vae": [
+        "4010",
+        0
+      ]
+    }
+  },
+  "4991": {
+    "class_type": "VHS_VideoCombine",
+    "inputs": {
+      "images": [
+        "5211",
+        0
+      ],
+      "audio": [
+        "4992",
+        0
+      ],
+      "frame_rate": "${FPS}",
+      "loop_count": 0,
+      "filename_prefix": "${PREFIX}",
+      "format": "video/h264-mp4",
+      "pingpong": false,
+      "save_output": true,
+      "pix_fmt": "yuv420p",
+      "crf": 19,
+      "save_metadata": false,
+      "trim_to_audio": false
+    }
+  }
+}

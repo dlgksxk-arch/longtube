@@ -46,6 +46,7 @@ _WORKFLOW_FILES = {
     "comfyui-meinamix": "meinamix_v12_text2img.json",
     "comfyui-dreamshaper-xl": "dreamshaper_xl_lightning_text2img.json",
     "comfyui-dreamshaper-xl-longtube": "dreamshaper_xl_longtube_text2img.json",
+    "comfyui-dreamshaper-xl-longtube-v15": "dreamshaper_xl_longtube_v15_text2img.json",
 }
 
 # v1.1.61: 레퍼런스 이미지가 있을 때 사용할 전용 워크플로.
@@ -70,10 +71,15 @@ _DISPLAY_NAMES = {
     "comfyui-meinamix": "ComfyUI MeinaMix v12 (local, anime)",
     "comfyui-dreamshaper-xl": "ComfyUI SDXL Lightning (local)",
     "comfyui-dreamshaper-xl-longtube": "ComfyUI SDXL 로컬모델 v1",
+    "comfyui-dreamshaper-xl-longtube-v15": "ComfyUI SDXL 로컬모델 v1.5 실사",
 }
 
 # SDXL 계열 (1024 훈련) — 해상도 강제 매핑 대상
-_SDXL_FAMILY = {"comfyui-dreamshaper-xl", "comfyui-dreamshaper-xl-longtube"}
+_SDXL_FAMILY = {
+    "comfyui-dreamshaper-xl",
+    "comfyui-dreamshaper-xl-longtube",
+    "comfyui-dreamshaper-xl-longtube-v15",
+}
 
 _SDXL_DIMS = {
     "16:9": (1344, 768),
@@ -219,6 +225,88 @@ LONGTUBE_LOCAL_V1_BASE_NEGATIVE_PROMPT = (
 )
 
 
+LONGTUBE_LOCAL_V15_MASTER_PROMPT = """CUT IMAGE PROMPT — SOURCE OF TRUTH
+{CUT_IMAGE_PROMPT}
+
+The cut image prompt above is the only source for visible subject, place, era, objects, action, weather, and composition.
+
+[MASTER PROMPT — PHOTOREALISTIC DOCUMENTARY CINEMA]
+
+ultra high quality photorealistic documentary still,
+realistic cinematic photography,
+natural human skin texture,
+clear readable natural faces,
+accurate eyes, nose, mouth, and facial structure,
+high-end historical documentary production still,
+realistic fabric, clay, soil, wood, stone, metal, and natural materials,
+natural light,
+cinematic depth of field,
+high dynamic range,
+sharp subject focus,
+detailed foreground,
+clean background separation,
+lifelike anatomy,
+realistic body proportions,
+realistic period clothing,
+serious non-fantasy documentary mood,
+
+|| CUT PROMPT LOCK — ABSOLUTE PRIORITY
+
+The scene MUST strictly match the exact era, season, region, location type, architecture, clothing, hairstyle, visible objects, furniture, transportation, landscape, materials, and social atmosphere described in the prompt.
+
+All visible objects must be era-accurate and period-correct.
+
+If era details are uncertain, use conservative realistic period-plausible details.
+
+The image must depict a concrete cinematic moment from the narration, not an abstract metaphor.
+
+Do not turn people into faceless mascots, dolls, mannequins, clay figures, anime characters, cartoon characters, chibi characters, or simplified round-head characters.
+
+If real people appear, they must have simple but clear natural facial features and believable facial expressions.
+
+If haniwa, statues, masks, artifacts, or clay figures appear, keep them visibly clay/artifact objects and do not treat them as living human faces.
+
+|| CINEMATIC STYLE RULE
+
+Use drama and atmosphere as lighting and camera language only, not as new scene content.
+
+Avoid empty backgrounds.
+Avoid generic portrait poses.
+Avoid static museum-style composition.
+
+Every image should feel like a paused frame from a serious live-action documentary film.
+
+|| VISUAL QUALITY TARGET
+
+high realism,
+high visual clarity,
+natural color grading,
+realistic shadows,
+realistic facial readability,
+sharp silhouette readability,
+balanced framing,
+cinematic depth,
+documentary realism,
+optimized for YouTube documentary visuals,
+optimized for motion-video editing.
+
+|| OUTPUT STYLE
+
+One strong photorealistic cinematic moment.
+One main emotional focus.
+Must feel immersive, serious, realistic, and historically believable."""
+
+
+LONGTUBE_LOCAL_V15_BASE_NEGATIVE_PROMPT = (
+    "cartoon, anime, manga, webtoon, illustration, drawing, painting, cel shading, "
+    "flat colors, thick outlines, mascot, chibi, doll, toy, plastic skin, wax figure, "
+    "mannequin, faceless person, featureless face, blank face, round head mascot, "
+    "simplified character, low quality, blurry, soft focus, distorted face, melted face, "
+    "deformed eyes, asymmetrical eyes, bad teeth, bad anatomy, extra fingers, extra limbs, "
+    "mutated hands, fused limbs, over-smoothed skin, uncanny face, fantasy costume, cosplay"
+)
+
+
 _LOCAL_V1_SCENE_NEGATIVE_GROUPS = (
 )
 
@@ -297,6 +385,16 @@ def build_longtube_local_v1_negative_prompt(base_negative: str, prompt: str) -> 
         if not _prompt_mentions_any(cut_prompt, triggers):
             negative = _append_unique_negative(negative, extra)
     return negative
+
+
+def apply_longtube_local_v15_master_prompt(prompt: str) -> str:
+    cut_prompt = (prompt or "").strip() or "an image"
+    return LONGTUBE_LOCAL_V15_MASTER_PROMPT.replace("{CUT_IMAGE_PROMPT}", cut_prompt)
+
+
+def build_longtube_local_v15_negative_prompt(base_negative: str, prompt: str) -> str:
+    negative = _append_unique_negative(base_negative, LONGTUBE_LOCAL_V1_BASE_NEGATIVE_PROMPT)
+    return _append_unique_negative(negative, LONGTUBE_LOCAL_V15_BASE_NEGATIVE_PROMPT)
 
 
 class ComfyUIImageService(BaseImageService):
@@ -557,8 +655,14 @@ class ComfyUIImageService(BaseImageService):
         # 스타일은 global_style/프롬프트 텍스트로 유도.
         final_prompt_text = (prompt or "").strip() or "an image"
 
+        # 로컬모델 v1.5 실사 전용 마스터 프롬프트 적용.
+        if self.model_id == "comfyui-dreamshaper-xl-longtube-v15":
+            final_prompt_text = _strip_local_v1_positive_only_prompt(final_prompt_text)
+            final_prompt_text = _enrich_local_v1_positive_prompt(final_prompt_text)
+            neg = build_longtube_local_v15_negative_prompt(neg, final_prompt_text)
+            final_prompt_text = apply_longtube_local_v15_master_prompt(final_prompt_text)
         # 로컬모델 v1 전용 마스터 프롬프트 적용.
-        if self.model_id.startswith("comfyui-dreamshaper-xl-longtube"):
+        elif self.model_id.startswith("comfyui-dreamshaper-xl-longtube"):
             final_prompt_text = _strip_local_v1_positive_only_prompt(final_prompt_text)
             final_prompt_text = _enrich_local_v1_positive_prompt(final_prompt_text)
             neg = build_longtube_local_v1_negative_prompt(neg, final_prompt_text)

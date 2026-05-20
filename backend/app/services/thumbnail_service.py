@@ -34,6 +34,7 @@ from app.config import resolve_project_dir
 # YouTube 권장 썸네일 해상도
 THUMB_W = 1280
 THUMB_H = 720
+THUMBNAIL_TEXT_OVERLAY_SCALE = 0.70
 
 # 폰트 탐색 후보 (OS 별)
 FONT_CANDIDATES = [
@@ -427,17 +428,27 @@ def _render_devanagari_thumbnail_with_browser(
     subtitle_html = html.escape((subtitle or "").strip())
     badge_block = f'<div class="top">{ep}</div>' if ep else ""
     subtitle_block = f'<div class="subtitle">{subtitle_html}</div>' if subtitle_html else ""
+    badge_font_px = _scale_font_size(38)
+    title_font_px = _scale_font_size(82)
+    subtitle_font_px = _scale_font_size(64)
+    badge_radius_px = _scale_font_size(14)
+    title_stroke_px = max(1, _scale_font_size(4))
+    subtitle_stroke_px = max(1, _scale_font_size(4))
+    title_shadow_y = _scale_font_size(7)
+    title_shadow_spread = _scale_font_size(5)
+    subtitle_shadow_y = _scale_font_size(6)
+    subtitle_shadow_spread = _scale_font_size(5)
     html_doc = f"""<!doctype html>
 <html><head><meta charset="utf-8"><style>
 *{{box-sizing:border-box}}
 body{{margin:0;width:{THUMB_W}px;height:{THUMB_H}px;overflow:hidden;background:#111}}
 .canvas{{position:relative;width:{THUMB_W}px;height:{THUMB_H}px;font-family:"Nirmala UI","Mangal","Arial Unicode MS",sans-serif;background-image:linear-gradient(180deg,rgba(0,0,0,.04) 0%,rgba(0,0,0,.12) 42%,rgba(0,0,0,.64) 100%),linear-gradient(90deg,rgba(0,0,0,.46),rgba(0,0,0,.04) 58%,rgba(0,0,0,.18)),url(data:image/png;base64,{bg_data});background-size:cover;background-position:center}}
-.top{{position:absolute;left:60px;top:40px;padding:8px 16px 9px;border-radius:14px;background:#ffd32a;color:#111;font-weight:900;font-size:38px;line-height:1;box-shadow:0 5px 15px rgba(0,0,0,.35)}}
+.top{{position:absolute;left:60px;top:40px;padding:8px 16px 9px;border-radius:{badge_radius_px}px;background:#ffd32a;color:#111;font-weight:900;font-size:{badge_font_px}px;line-height:1;box-shadow:0 5px 15px rgba(0,0,0,.35)}}
 .copy{{position:absolute;left:64px;right:76px;bottom:104px}}
-.title{{font-weight:900;font-size:82px;line-height:1.06;letter-spacing:0;text-wrap:balance;-webkit-text-stroke:4px #050505;text-shadow:0 7px 0 rgba(0,0,0,.86),0 0 22px rgba(0,0,0,.90),5px 0 0 #050505,-5px 0 0 #050505,0 5px 0 #050505,0 -5px 0 #050505,4px 4px 0 #050505,-4px 4px 0 #050505,4px -4px 0 #050505,-4px -4px 0 #050505}}
+.title{{font-weight:900;font-size:{title_font_px}px;line-height:1.06;letter-spacing:0;text-wrap:balance;-webkit-text-stroke:{title_stroke_px}px #050505;text-shadow:0 {title_shadow_y}px 0 rgba(0,0,0,.86),0 0 22px rgba(0,0,0,.90),{title_shadow_spread}px 0 0 #050505,-{title_shadow_spread}px 0 0 #050505,0 {title_shadow_spread}px 0 #050505,0 -{title_shadow_spread}px 0 #050505,{title_stroke_px}px {title_stroke_px}px 0 #050505,-{title_stroke_px}px {title_stroke_px}px 0 #050505,{title_stroke_px}px -{title_stroke_px}px 0 #050505,-{title_stroke_px}px -{title_stroke_px}px 0 #050505}}
 .title-main{{display:block;color:#fff}}
 .title-impact{{display:block;color:#ffe736}}
-.subtitle{{margin-top:10px;color:#ffe736;font-weight:900;font-size:64px;line-height:1.04;letter-spacing:0;-webkit-text-stroke:4px #050505;text-shadow:0 6px 0 rgba(0,0,0,.86),0 0 20px rgba(0,0,0,.86),5px 0 0 #050505,-5px 0 0 #050505,0 5px 0 #050505,0 -5px 0 #050505;text-wrap:balance}}
+.subtitle{{margin-top:10px;color:#ffe736;font-weight:900;font-size:{subtitle_font_px}px;line-height:1.04;letter-spacing:0;-webkit-text-stroke:{subtitle_stroke_px}px #050505;text-shadow:0 {subtitle_shadow_y}px 0 rgba(0,0,0,.86),0 0 20px rgba(0,0,0,.86),{subtitle_shadow_spread}px 0 0 #050505,-{subtitle_shadow_spread}px 0 0 #050505,0 {subtitle_shadow_spread}px 0 #050505,0 -{subtitle_shadow_spread}px 0 #050505;text-wrap:balance}}
 </style></head><body><div class="canvas">{badge_block}<div class="copy"><div class="title">{title_html}</div>{subtitle_block}</div></div></body></html>"""
 
     try:
@@ -623,6 +634,19 @@ def _fit_font(
     return _find_font(candidates[-1], text)
 
 
+def _scale_font_size(size: int) -> int:
+    return max(1, int(round(size * THUMBNAIL_TEXT_OVERLAY_SCALE)))
+
+
+def _scale_font_candidates(candidates: tuple[int, ...]) -> tuple[int, ...]:
+    scaled: list[int] = []
+    for size in candidates:
+        next_size = _scale_font_size(size)
+        if not scaled or scaled[-1] != next_size:
+            scaled.append(next_size)
+    return tuple(scaled)
+
+
 def _draw_rounded_box(
     draw: ImageDraw.ImageDraw,
     xy: tuple[int, int, int, int],
@@ -754,7 +778,7 @@ def generate_thumbnail(
     # 박스 없이 크게 — 박스가 먹던 공간이 없으므로 폰트를 확 키움.
     # 후보 사이즈를 높은 것부터 내려가며 전체 문장이 잘리지 않도록 줄바꿈/축소한다.
     # v2.1.2: 폰트 크기 상향 — 제목이 짧아졌으므로 더 크게 표시
-    candidates = (200, 180, 160, 140, 124, 108, 96, 86, 76, 68, 60, 54, 48, 42, 36, 32, 28, 24)
+    candidates = _scale_font_candidates((200, 180, 160, 140, 124, 108, 96, 86, 76, 68, 60, 54, 48, 42, 36, 32, 28, 24))
     max_title_block_h = int(THUMB_H * 0.62)
 
     def pick_title_font() -> tuple[ImageFont.ImageFont, list[str]]:
@@ -781,10 +805,10 @@ def generate_thumbnail(
     sub_font = None
     sub_stroke_w = 0
     if sub:
-        sub_size = max(44, int(title_size * 0.55))
+        sub_size = max(_scale_font_size(44), int(title_size * 0.55))
         sub_font = _find_font(sub_size, sub)
         # 너무 길면 쪼개지 않고 폰트만 낮춤
-        while _text_size(draw, sub, sub_font)[0] > max_text_w and sub_size > 32:
+        while _text_size(draw, sub, sub_font)[0] > max_text_w and sub_size > _scale_font_size(32):
             sub_size -= 4
             sub_font = _find_font(sub_size, sub)
         sub_stroke_w = max(4, min(10, sub_size // 10))
@@ -877,7 +901,7 @@ def generate_thumbnail(
     if episode_label:
         ep = normalize_episode_label(episode_label) or episode_label.strip()
         # EP 배지는 작고 또렷하게만 보이면 된다.
-        ep_font = _fit_font(draw, ep, 150, 42, (42, 36, 32, 28, 24))
+        ep_font = _fit_font(draw, ep, 150, 42, _scale_font_candidates((42, 36, 32, 28, 24)))
         bbox = _text_bbox(draw, ep, ep_font)
         tw = bbox[2] - bbox[0]
         th = bbox[3] - bbox[1]

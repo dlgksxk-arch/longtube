@@ -42,7 +42,7 @@ from app.models.database import init_db
 # v1.1.43: oneclick_service 에 "주제 큐 + 매일 HH:MM" 형태의 새 스케줄러가
 # 다시 붙었다 (구 17 행 그리드 와는 완전히 다른 모델). startup/shutdown 에서
 # `start_queue_scheduler` / `stop_queue_scheduler` 를 호출한다.
-from app.routers import projects, pipeline, script, voice, image, video, subtitle, interlude, youtube, youtube_studio, downloads, models, api_status, api_keys, api_balances, tasks, oneclick, assets, auth
+from app.routers import projects, pipeline, script, voice, image, video, subtitle, interlude, youtube, downloads, models, api_status, api_keys, api_balances, tasks, oneclick, assets, auth, channel_ops
 # v2.1.0 병렬 라우터. 구 라우터와 독립적으로 /api/v2/* 에 마운트된다.
 from app.routers.v2 import (
     keys as v2_keys,
@@ -224,7 +224,6 @@ app.include_router(video.router, prefix="/api/video", tags=["video"])
 app.include_router(subtitle.router, prefix="/api/subtitle", tags=["subtitle"])
 app.include_router(interlude.router, prefix="/api/interlude", tags=["interlude"])
 app.include_router(youtube.router, prefix="/api/youtube", tags=["youtube"])
-app.include_router(youtube_studio.router, prefix="/api/youtube-studio", tags=["youtube-studio"])
 app.include_router(downloads.router, prefix="/api/downloads", tags=["downloads"])
 app.include_router(assets.router, prefix="/api/assets", tags=["assets"])
 app.include_router(models.router, prefix="/api/models", tags=["models"])
@@ -234,6 +233,7 @@ app.include_router(api_balances.router, prefix="/api/api-balances", tags=["api-b
 app.include_router(tasks.router, prefix="/api/tasks", tags=["tasks"])
 # v1.1.43: /api/schedule 라우터 비활성화 (자동화 스케줄 기능 삭제)
 app.include_router(oneclick.router, prefix="/api/oneclick", tags=["oneclick"])
+app.include_router(channel_ops.router, prefix="/api/channel-ops", tags=["channel-ops"])
 
 # v2.1.0 병렬 라우터 — 구 라우터와 독립. /api/v2/* 에 마운트.
 app.include_router(v2_keys.router, prefix="/api/v2/keys", tags=["v2-keys"])

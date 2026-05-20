@@ -22,6 +22,12 @@ IMAGE_REGISTRY: dict[str, dict] = {
         "cost_per_unit": "Free (local GPU, ~7GB)",
         "cost_value": 0.0,
     },
+    "comfyui-dreamshaper-xl-longtube-v15": {
+        "name": "SDXL 로컬모델 v1.5 실사",
+        "provider": "comfyui",
+        "cost_per_unit": "Free (local GPU, ~7GB)",
+        "cost_value": 0.0,
+    },
     "openai-image-1": {
         "name": "GPT Image 1 (gpt-image-1)",
         "provider": "openai",

@@ -41,6 +41,8 @@ _EP_MARKER_RE = re.compile(
 _WHITESPACE_RE = re.compile(r"\s+")
 _HANGUL_RE = re.compile(r"[\uac00-\ud7a3]")
 _JAPANESE_RE = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]")
+_SHORTS_NUMBER_HASHTAG_RE = re.compile(r"\s+#\d+\b")
+_SHORTS_HASHTAG_RE = re.compile(r"\s+#Shorts\b", re.IGNORECASE)
 
 
 def _first_title_variant(text: str) -> str:
@@ -82,7 +84,7 @@ def with_episode_prefix(title: Any, episode_number: Any) -> str:
         text = _EP_TAIL_RE.sub("", text).strip()
         text = _EP_MARKER_RE.sub(" ", text).strip()
     text = _WHITESPACE_RE.sub(" ", text).strip(" |/-–—:·")
-    return f"{prefix} {text}".strip()
+    return f"{text} {prefix}".strip()
 
 
 def without_episode_prefix(title: Any) -> str:
@@ -98,6 +100,25 @@ def without_episode_prefix(title: Any) -> str:
         text = _EP_TAIL_RE.sub("", text).strip()
         text = _EP_MARKER_RE.sub(" ", text).strip()
     return _WHITESPACE_RE.sub(" ", text).strip(" |/-–—:·")
+
+
+def shorts_upload_title(base_title: Any, *, index: Any = None, total: Any = None, max_len: int = 100) -> str:
+    """Build a YouTube Shorts title without numeric hashtags like #1/#2."""
+    text = without_episode_prefix(base_title) or "Shorts"
+    text = _SHORTS_NUMBER_HASHTAG_RE.sub("", text)
+    text = _SHORTS_HASHTAG_RE.sub("", text)
+    text = _WHITESPACE_RE.sub(" ", text).strip(" |/-–—:·")
+    part = ""
+    try:
+        idx = int(index)
+        count = int(total)
+        if count > 1 and idx > 0:
+            part = f" · Part {idx}"
+    except (TypeError, ValueError):
+        part = ""
+    suffix = f"{part} #Shorts"
+    max_base_len = max(1, int(max_len or 100) - len(suffix))
+    return f"{text[:max_base_len].rstrip()}{suffix}".strip()
 
 
 def script_title_for_language(

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Plus, Play, Trash2, ExternalLink, RefreshCw, CheckCircle, XCircle, AlertCircle, MinusCircle, Key, Youtube as YoutubeIcon, Clock, DollarSign, LayoutDashboard, Zap, Info, ListTodo, Activity, Film, Upload } from "lucide-react";
+import { Plus, Play, Trash2, ExternalLink, RefreshCw, CheckCircle, XCircle, AlertCircle, MinusCircle, Key, Clock, DollarSign, LayoutDashboard, Zap, Info, ListTodo, Activity, Film, Upload, MessageSquare } from "lucide-react";
 import { api, apiStatusApi, type ApiStatusInfo, type ProjectEstimate } from "@/lib/api";
 import { APP_VERSION } from "@/lib/version";
 import { formatDurationKo, formatKrw, costTierClasses } from "@/lib/format";
@@ -12,11 +12,10 @@ import LocalServiceStatus from "@/components/common/LocalServiceStatus";
 import OneClickWidget from "@/components/studio/OneClickWidget";
 
 // v1.2.1: 좌측 사이드바 네비게이션 — 메인 대시보드에만 붙임.
-// /oneclick, /youtube 는 이미 자체 사이드바가 있으므로 중복 회피.
+// /oneclick 은 이미 자체 사이드바가 있으므로 중복 회피.
 const SIDEBAR_NAV = [
   { href: "/", label: "대시보드", icon: LayoutDashboard, active: true },
   { href: "/oneclick", label: "딸깍 대시보드", icon: Zap, active: false },
-  { href: "/youtube", label: "YouTube Studio", icon: YoutubeIcon, active: false },
   { href: "/settings", label: "API 설정", icon: Key, active: false },
 ] as const;
 
@@ -24,6 +23,7 @@ const ONECLICK_SUBNAV = [
   { href: "/oneclick", label: "제작 큐", icon: ListTodo },
   { href: "/oneclick/upload-pending", label: "업로드 대기", icon: Upload },
   { href: "/oneclick/live", label: "작업대", icon: Activity },
+  { href: "/oneclick/channel-ops", label: "채널운영", icon: MessageSquare },
   { href: "/oneclick/library", label: "완성작 관리", icon: Film },
 ] as const;
 

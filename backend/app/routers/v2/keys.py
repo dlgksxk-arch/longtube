@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import os
 from datetime import datetime
 from typing import Optional
 
@@ -20,6 +21,7 @@ from sqlalchemy.orm import Session
 from app.models.database import get_db
 from app.models.api_key_vault import ApiKeyVault
 from app.security.crypto import encrypt, decrypt, is_ciphertext
+from app.services import openai_cost_sync
 
 
 router = APIRouter()
@@ -37,6 +39,7 @@ class VaultItemOut(BaseModel):
     last_ping_at: Optional[datetime] = None
     balance_usd: Optional[str] = None
     enabled: bool
+    official_cost_sync: Optional[dict] = None
 
 
 class KeyUpdateBody(BaseModel):
@@ -47,6 +50,7 @@ class KeyUpdateBody(BaseModel):
 class BalanceUpdateBody(BaseModel):
     provider: str = Field(min_length=1, max_length=64)
     balance_usd: str = Field(min_length=0, max_length=32)
+    official_baseline_at: Optional[str] = None
 
 
 # --- 헬퍼 ------------------------------------------------------------------
@@ -76,7 +80,31 @@ def _to_out(row: ApiKeyVault) -> VaultItemOut:
         last_ping_at=row.last_ping_at,
         balance_usd=row.balance_usd,
         enabled=bool(row.enabled),
+        official_cost_sync=(
+            openai_cost_sync.get_openai_cost_sync_state()
+            if row.provider == "OpenAI"
+            else None
+        ),
     )
+
+
+def _get_openai_admin_key(db: Session) -> tuple[str, Optional[str]]:
+    env_key = os.environ.get("OPENAI_ADMIN_KEY", "").strip()
+    if env_key:
+        return env_key, "env:OPENAI_ADMIN_KEY"
+    row = (
+        db.query(ApiKeyVault)
+        .filter(ApiKeyVault.provider == "OpenAI Admin")
+        .first()
+    )
+    if row and row.ciphertext:
+        try:
+            plain = decrypt(row.ciphertext).strip()
+            if plain:
+                return plain, "vault:OpenAI Admin"
+        except Exception:
+            return "", None
+    return "", None
 
 
 # --- 엔드포인트 ------------------------------------------------------------
@@ -116,9 +144,41 @@ def update_balance(body: BalanceUpdateBody, db: Session = Depends(get_db)):
     if row is None:
         raise HTTPException(404, f"provider '{body.provider}' not registered")
     row.balance_usd = body.balance_usd
+    if body.provider == "OpenAI":
+        amount = openai_cost_sync.parse_usd_amount(body.balance_usd)
+        try:
+            if amount is None:
+                openai_cost_sync.clear_openai_baseline()
+            else:
+                openai_cost_sync.set_openai_baseline(
+                    amount,
+                    baseline_at=body.official_baseline_at,
+                )
+        except Exception as exc:
+            raise HTTPException(400, f"OpenAI official sync baseline invalid: {exc}")
     db.commit()
     db.refresh(row)
     return _to_out(row)
+
+
+@router.get("/openai-cost-sync")
+def get_openai_cost_sync():
+    return openai_cost_sync.get_openai_cost_sync_state()
+
+
+@router.post("/openai-cost-sync/sync")
+async def sync_openai_costs(db: Session = Depends(get_db)):
+    admin_key, source = _get_openai_admin_key(db)
+    org_id = (
+        os.environ.get("OPENAI_ORGANIZATION", "").strip()
+        or os.environ.get("OPENAI_ORG_ID", "").strip()
+        or None
+    )
+    return await openai_cost_sync.sync_openai_costs(
+        admin_key=admin_key,
+        credential_source=source or "",
+        organization_id=org_id,
+    )
 
 
 @router.post("/ping/{provider}")

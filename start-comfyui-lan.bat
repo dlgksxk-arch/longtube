@@ -1,8 +1,13 @@
 @echo off
 setlocal EnableExtensions
+chcp 65001 >nul
 title ComfyUI-LAN-8188
 color 0B
 
+set "PYTHONUTF8=1"
+set "PYTHONIOENCODING=utf-8"
+set "PYTHONLEGACYWINDOWSSTDIO=0"
+set "PYTHONUNBUFFERED=1"
 set "COMFY_ROOT=%LOCALAPPDATA%\Programs\ComfyUI\resources\ComfyUI"
 set "COMFY_DATA=%APPDATA%\ComfyUI-Data"
 set "COMFY_PY=%COMFY_DATA%\.venv\Scripts\python.exe"
@@ -18,28 +23,36 @@ echo ====================================
 echo   ComfyUI LAN server - port 8188
 echo ====================================
 echo.
-echo [%date% %time%] ComfyUI LAN start requested>>"%LOG_FILE%"
+
+powershell -NoProfile -Command ^
+  "try { $r = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:8188/system_stats' -TimeoutSec 3; if ($r.StatusCode -eq 200) { exit 0 } else { exit 1 } } catch { exit 1 }"
+if "%ERRORLEVEL%"=="0" (
+  echo [OK] ComfyUI already running on 8188.
+  exit /b 0
+)
+
+echo [%date% %time%] ComfyUI LAN start requested>>"%LOG_FILE%" 2>nul
 
 if not exist "%COMFY_ROOT%\main.py" (
   echo [ERROR] ComfyUI main.py not found: %COMFY_ROOT%\main.py
-  echo [%date% %time%] ERROR main.py not found: %COMFY_ROOT%\main.py>>"%LOG_FILE%"
+  echo [%date% %time%] ERROR main.py not found: %COMFY_ROOT%\main.py>>"%LOG_FILE%" 2>nul
   pause
   exit /b 1
 )
 
 if not exist "%COMFY_PY%" (
   echo [ERROR] ComfyUI python not found: %COMFY_PY%
-  echo [%date% %time%] ERROR python not found: %COMFY_PY%>>"%LOG_FILE%"
+  echo [%date% %time%] ERROR python not found: %COMFY_PY%>>"%LOG_FILE%" 2>nul
   pause
   exit /b 1
 )
 
 echo [1/2] Stopping old ComfyUI desktop/server...
-echo [%date% %time%] stopping old ComfyUI processes>>"%LOG_FILE%"
+echo [%date% %time%] stopping old ComfyUI processes>>"%LOG_FILE%" 2>nul
 taskkill /f /im ComfyUI.exe >nul 2>&1
 for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":8188 " ^| findstr LISTENING') do (
   echo       killing PID %%a on port 8188
-  echo [%date% %time%] killing PID %%a on port 8188>>"%LOG_FILE%"
+  echo [%date% %time%] killing PID %%a on port 8188>>"%LOG_FILE%" 2>nul
   taskkill /f /pid %%a >nul 2>&1
 )
 powershell -NoProfile -Command ^
@@ -57,12 +70,12 @@ echo       LAN:     http://192.168.0.221:8188/
 echo       Log:     %LOG_FILE%
 echo       DB:      %COMFY_DB%
 echo.
-echo [%date% %time%] launching ComfyUI python>>"%LOG_FILE%"
+echo [%date% %time%] launching ComfyUI python>>"%LOG_FILE%" 2>nul
 
 cd /d "%COMFY_ROOT%"
 "%COMFY_PY%" main.py --windows-standalone-build --disable-auto-launch --listen 0.0.0.0 --port 8188 --base-directory C:\ --user-directory "%COMFY_DATA%\user" --database-url "sqlite:///%COMFY_DB%" --front-end-root "%COMFY_FRONTEND%" >>"%LOG_FILE%" 2>>&1
 
 echo.
 echo ComfyUI LAN server stopped.
-echo [%date% %time%] ComfyUI LAN server stopped, exitcode=%ERRORLEVEL%>>"%LOG_FILE%"
+echo [%date% %time%] ComfyUI LAN server stopped, exitcode=%ERRORLEVEL%>>"%LOG_FILE%" 2>nul
 pause

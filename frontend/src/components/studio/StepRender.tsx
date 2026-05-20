@@ -67,7 +67,7 @@ export default function StepRender({ project, cuts, onUpdate }: Props) {
         config: {
           bgm_enabled: Boolean(next.bgm_enabled),
           bgm_style_prompt: next.bgm_style_prompt || "",
-          bgm_volume: Number(next.bgm_volume ?? 0.42),
+          bgm_volume: Number(next.bgm_volume ?? 0.21),
         },
       });
       setBgmConfig(next);
@@ -84,7 +84,7 @@ export default function StepRender({ project, cuts, onUpdate }: Props) {
     try {
       await saveBgmConfig({ bgm_enabled: true });
       const res = await subtitleApi.uploadBgm(project.id, file);
-      patchBgmConfig({ bgm_enabled: true, bgm_path: res.path, bgm_volume: bgmConfig.bgm_volume ?? res.volume ?? 0.42 });
+      patchBgmConfig({ bgm_enabled: true, bgm_path: res.path, bgm_volume: bgmConfig.bgm_volume ?? res.volume ?? 0.21 });
       onUpdate();
     } catch (err: any) {
       setError(err?.message || "BGM 업로드 실패");
@@ -103,7 +103,7 @@ export default function StepRender({ project, cuts, onUpdate }: Props) {
         bgm_enabled: true,
         bgm_path: res.path,
         bgm_prompt_used: res.prompt,
-        bgm_volume: bgmConfig.bgm_volume ?? res.volume ?? 0.42,
+        bgm_volume: bgmConfig.bgm_volume ?? res.volume ?? 0.21,
       });
       onUpdate();
     } catch (err: any) {
@@ -382,7 +382,7 @@ export default function StepRender({ project, cuts, onUpdate }: Props) {
             min={0}
             max={0.4}
             step={0.01}
-            value={Number(bgmConfig.bgm_volume ?? 0.42)}
+            value={Number(bgmConfig.bgm_volume ?? 0.21)}
             onChange={(e) => patchBgmConfig({ bgm_volume: Number(e.target.value) })}
             onMouseUp={() => saveBgmConfig()}
             onTouchEnd={() => saveBgmConfig()}
@@ -390,7 +390,7 @@ export default function StepRender({ project, cuts, onUpdate }: Props) {
             disabled={rendering}
           />
           <span className="text-xs font-mono text-gray-400 text-right">
-            {Math.round(Number(bgmConfig.bgm_volume ?? 0.42) * 100)}%
+            {Math.round(Number(bgmConfig.bgm_volume ?? 0.21) * 100)}%
           </span>
         </div>
       </div>

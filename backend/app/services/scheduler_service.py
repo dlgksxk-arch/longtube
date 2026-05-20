@@ -287,7 +287,7 @@ async def _run_episode(episode: ScheduledEpisode) -> None:
             _update_project_status(project_id, "failed")
             return
 
-    # 3) LLM 메타데이터 생성 (title_hook → EP. N - hook)
+    # 3) LLM 메타데이터 생성 (title_hook → hook EP.N)
     try:
         final_title, description, tags, _language = await _generate_metadata(
             project_id=project_id,
@@ -451,10 +451,12 @@ async def _run_episode(episode: ScheduledEpisode) -> None:
 
 
 def _fallback_title(topic: Optional[str], episode_number: int) -> str:
+    from app.services.title_utils import with_episode_prefix
+
     base = (topic or "Untitled").strip()
     if len(base) > 48:
         base = base[:48]
-    return f"EP. {episode_number} - {base}"
+    return with_episode_prefix(base, episode_number)
 
 
 async def _generate_metadata(
@@ -500,12 +502,13 @@ async def _generate_metadata(
         )
 
     hook_raw = (result.get("title_hook") or result.get("title") or "").strip()
-    # 접두어 중복 방지
+    # 에피소드 표기 중복 방지
     from app.routers.youtube import _strip_episode_prefix, _clean_tag_list
+    from app.services.title_utils import with_episode_prefix
 
     hook_clean = _strip_episode_prefix(hook_raw)
     if hook_clean:
-        final_title = f"EP. {episode_number} - {hook_clean}"
+        final_title = with_episode_prefix(hook_clean, episode_number)
     else:
         final_title = _fallback_title(topic, episode_number)
 

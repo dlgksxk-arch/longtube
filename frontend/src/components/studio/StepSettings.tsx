@@ -422,8 +422,8 @@ export default function StepSettings({ project, onUpdate, onNextStep, onDirtyCha
     onNextStep?.();
   };
 
-  // 5초 단위 컷 수 계산 — 설정 저장 시 각 스텝의 총 필요한 칸 수 근거가 됨
-  const expectedCuts = Math.max(1, Math.ceil((config.target_duration || 0) / 5));
+  const cutVideoDuration = Math.max(1, Number(config.cut_video_duration || 5));
+  const expectedCuts = Math.max(1, Math.ceil((config.target_duration || 0) / cutVideoDuration));
 
   const handleAssetUpload = async (kind: AssetKind, file: File | null) => {
     console.log("[settings] handleAssetUpload called", { kind, file });
@@ -589,7 +589,7 @@ export default function StepSettings({ project, onUpdate, onNextStep, onDirtyCha
           <div>
             <label className="block text-xs text-gray-400 mb-1">
               목표 길이 (초) <span className="text-red-500">*</span>{" "}
-              <span className="text-accent-secondary">· 예상 컷 수: {expectedCuts}개 (5초 단위)</span>
+              <span className="text-accent-secondary">· 예상 컷 수: {expectedCuts}개 ({cutVideoDuration}초 단위)</span>
             </label>
             <input
               type="number"
@@ -780,7 +780,7 @@ export default function StepSettings({ project, onUpdate, onNextStep, onDirtyCha
               {(() => {
                 const seconds = config.image_reuse_group_seconds || 0;
                 if (!seconds) return "컷마다 생성";
-                const cuts = Math.max(1, Math.round(seconds / 5));
+                const cuts = Math.max(1, Math.round(seconds / cutVideoDuration));
                 const imageCount = Math.max(1, Math.ceil(expectedCuts / cuts));
                 return `${seconds}초마다 1장 · 총 ${imageCount}장`;
               })()}
@@ -977,7 +977,7 @@ export default function StepSettings({ project, onUpdate, onNextStep, onDirtyCha
           {([
             { value: "private",  label: "비공개 (private)",     desc: "본인만 볼 수 있음. 안전하게 테스트할 때 권장." },
             { value: "unlisted", label: "일부 공개 (unlisted)", desc: "링크가 있는 사람만 볼 수 있음. 검색 노출 안 됨." },
-            { value: "public",   label: "전체 공개 (public)",   desc: "모든 사람이 볼 수 있음. 되돌리려면 YouTube Studio 에서 직접 변경해야 함." },
+            { value: "public",   label: "전체 공개 (public)",   desc: "모든 사람이 볼 수 있음. 되돌리려면 YouTube에서 직접 변경해야 함." },
           ] as const).map((opt) => {
             const selected = (config.youtube_privacy || "private") === opt.value;
             return (

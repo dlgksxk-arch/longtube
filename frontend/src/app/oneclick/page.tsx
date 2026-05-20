@@ -34,7 +34,6 @@ import * as XLSX from "xlsx";
 import {
   oneclickApi,
   projectsApi,
-  youtubeStudioApi,
   type OneClickTask,
   type OneClickQueueItem,
   type OrphanProject,
@@ -353,7 +352,7 @@ function resolveTemplateProject(projects: Project[], templateProjectId?: string 
 function formatEpisodeTitle(topic?: string | null, episodeNumber?: number | null): string {
   const cleanTopic = String(topic || "").trim();
   if (episodeNumber && episodeNumber > 0) {
-    return cleanTopic ? `EP.${episodeNumber} ${cleanTopic}` : `EP.${episodeNumber}`;
+    return cleanTopic ? `${cleanTopic} EP.${episodeNumber}` : `EP.${episodeNumber}`;
   }
   return cleanTopic;
 }
@@ -555,9 +554,6 @@ export default function QueuePage() {
   const [loadingAllOrphans, setLoadingAllOrphans] = useState(false);
   const [showAllFailures, setShowAllFailures] = useState(false);
   const [importingExcel, setImportingExcel] = useState(false);
-  const [studioUploadedTaskIds, setStudioUploadedTaskIds] = useState<Set<string>>(new Set());
-  const [checkingStudioUploads, setCheckingStudioUploads] = useState(false);
-  const [studioLookupMessage, setStudioLookupMessage] = useState("");
   const excelInputRef = useRef<HTMLInputElement | null>(null);
   const [listPages, setListPages] = useState<Record<ChannelListPageKey, number>>({
     queue: 1,
@@ -583,80 +579,6 @@ export default function QueuePage() {
     }
     return cp;
   }, [channelPresets, channelTimes, queue, tasks]);
-
-  const syncUploadedFromStudio = useCallback(async (taskItems: OneClickTask[]) => {
-    const failedOnly = taskItems.filter((t) => ["failed", "cancelled", "paused"].includes(t.status));
-    if (failedOnly.length === 0) {
-      setStudioUploadedTaskIds(new Set());
-      setStudioLookupMessage("대조할 실패/중단 항목이 없습니다.");
-      return 0;
-    }
-
-    const channels = Array.from(
-      new Set(
-        failedOnly
-          .map((task) => Number(task.channel || 1))
-          .filter((channel) => Number.isFinite(channel) && channel > 0),
-      ),
-    ).sort((a, b) => a - b);
-
-    try {
-      let pageToken: string | undefined;
-      const uploadedTitles: string[] = [];
-      for (const channelId of channels) {
-        pageToken = undefined;
-        for (let i = 0; i < 2; i += 1) {
-          const res = await youtubeStudioApi.listVideos({ maxResults: 50, pageToken, channelId });
-          for (const video of res.items || []) {
-            const normalized = normalizeUploadTitle(video.title);
-            if (normalized) uploadedTitles.push(`${channelId}:${normalized}`);
-          }
-          if (!res.next_page_token) break;
-          pageToken = res.next_page_token;
-        }
-      }
-
-      const uploadedCounts = new Map<string, number>();
-      for (const title of uploadedTitles) {
-        uploadedCounts.set(title, (uploadedCounts.get(title) || 0) + 1);
-      }
-
-      const failedCounts = new Map<string, number>();
-      for (const task of failedOnly) {
-        const normalized = normalizeUploadTitle(task.title || task.topic);
-        if (!normalized) continue;
-        const key = `${Number(task.channel || 1)}:${normalized}`;
-        failedCounts.set(key, (failedCounts.get(key) || 0) + 1);
-      }
-
-      const next = new Set<string>();
-      for (const task of failedOnly) {
-        const normalized = normalizeUploadTitle(task.title || task.topic);
-        if (!normalized) continue;
-        const key = `${Number(task.channel || 1)}:${normalized}`;
-        if ((failedCounts.get(key) || 0) !== 1) continue;
-        if ((uploadedCounts.get(key) || 0) !== 1) continue;
-        next.add(task.task_id);
-      }
-      setStudioUploadedTaskIds(next);
-      setStudioLookupMessage(`YouTube 대조 완료: ${next.size}건은 이미 업로드됨으로 표시했습니다.`);
-      return next.size;
-    } catch {
-      setStudioUploadedTaskIds(new Set());
-      setStudioLookupMessage("YouTube 대조 실패: 인증/쿼타 상태를 확인하세요.");
-      return 0;
-    }
-  }, []);
-
-  const handleStudioLookup = useCallback(async () => {
-    setCheckingStudioUploads(true);
-    setStudioLookupMessage("");
-    try {
-      await syncUploadedFromStudio(tasks);
-    } finally {
-      setCheckingStudioUploads(false);
-    }
-  }, [syncUploadedFromStudio, tasks]);
 
   const load = useCallback(async () => {
     try {
@@ -711,12 +633,8 @@ export default function QueuePage() {
       new Date(a.finished_at || a.created_at).getTime(),
     );
   const rawFailedTasksAll = tasks.filter((t) => t.status === "failed" || t.status === "cancelled" || t.status === "paused");
-  const studioCompletedTasks = rawFailedTasksAll.filter((t) => studioUploadedTaskIds.has(t.task_id));
-  const completedTasksAll = [...persistedCompletedTasksAll, ...studioCompletedTasks].sort((a, b) =>
-    new Date(b.finished_at || b.created_at).getTime() -
-    new Date(a.finished_at || a.created_at).getTime(),
-  );
-  const failedTasksAll = rawFailedTasksAll.filter((t) => !studioUploadedTaskIds.has(t.task_id));
+  const completedTasksAll = persistedCompletedTasksAll;
+  const failedTasksAll = rawFailedTasksAll;
   // v1.2.6: 채널 필터 제거 — 각 채널 섹션 내부에서 필터. *All 원본만 사용.
 
   useEffect(() => {
@@ -1330,23 +1248,6 @@ export default function QueuePage() {
 
 
       {/* 채널은 queue/channel_times/tasks 에서 자동 수집. CH 추가 시 자동 표시. */}
-      <div className="flex items-center gap-2">
-        <button
-          onClick={handleStudioLookup}
-          disabled={checkingStudioUploads || rawFailedTasksAll.length === 0}
-          className="flex items-center gap-1.5 text-sm font-semibold bg-blue-500/15 text-blue-300 border border-blue-400/30 rounded-lg px-4 py-2.5 hover:bg-blue-500/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-          title="누를 때만 YouTube Studio를 조회해서 이미 올라간 실패/중단 항목을 완료로 표시합니다."
-        >
-          {checkingStudioUploads ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
-          YouTube 대조
-        </button>
-        {studioLookupMessage && (
-          <span className="text-xs text-blue-200 bg-blue-500/10 border border-blue-400/20 rounded-lg px-3 py-2">
-            {studioLookupMessage}
-          </span>
-        )}
-      </div>
-
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {collectChannelKeys({ queue, tasks, channelTimes, channelPresets }).map((ch) => {
           const n = parseInt(ch);

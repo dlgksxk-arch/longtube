@@ -26,7 +26,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
-from app.config import CUT_VIDEO_DURATION, resolve_project_dir
+from app.config import resolve_cut_video_duration, resolve_project_dir
 from app.models.cut import Cut
 from app.models.database import get_db
 from app.models.project import Project
@@ -83,7 +83,7 @@ def _get_interlude_config(project: Project) -> dict:
         legacy_sec = inter.get("intermission_every_sec")
         if legacy_sec:
             try:
-                inter["intermission_every_cuts"] = max(1, int(round(float(legacy_sec) / float(CUT_VIDEO_DURATION))))
+                inter["intermission_every_cuts"] = max(1, int(round(float(legacy_sec) / resolve_cut_video_duration(cfg))))
             except (TypeError, ValueError):
                 inter["intermission_every_cuts"] = DEFAULT_INTERMISSION_EVERY
         else:
@@ -222,7 +222,7 @@ def update_interlude_config(
     elif body.intermission_every_sec is not None:
         inter["intermission_every_cuts"] = max(
             1,
-            int(round(float(body.intermission_every_sec) / float(CUT_VIDEO_DURATION))),
+            int(round(float(body.intermission_every_sec) / resolve_cut_video_duration(project.config or {}))),
         )
     _save_interlude_config(project, inter, db)
     return {
@@ -350,9 +350,8 @@ async def build_interlude_sequence(
         abs_p = _resolve_under_project(project_id, c.video_path)
         if not abs_p.exists():
             continue
-        # v1.1.45: 모든 컷 영상은 CUT_VIDEO_DURATION 초 고정이므로 여기도 상수 사용.
-        # (legacy 프로젝트나 수동 업로드 컷 대비 ffprobe 폴백은 그대로 유지)
-        dur = float(CUT_VIDEO_DURATION)
+        # 프로젝트별 컷 길이를 우선 사용한다.
+        dur = resolve_cut_video_duration(project.config or {})
         if dur <= 0.0:
             dur = await _ffprobe_duration(str(abs_p))
         if dur <= 0.0:
@@ -366,7 +365,7 @@ async def build_interlude_sequence(
     if override_every_cuts:
         every = max(1, int(override_every_cuts))
     elif override_every_sec:
-        every = max(1, int(round(float(override_every_sec) / float(CUT_VIDEO_DURATION))))
+        every = max(1, int(round(float(override_every_sec) / resolve_cut_video_duration(project.config or {}))))
     else:
         every = int(inter.get("intermission_every_cuts") or DEFAULT_INTERMISSION_EVERY)
 

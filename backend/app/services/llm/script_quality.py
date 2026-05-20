@@ -128,7 +128,11 @@ def _primary_topic_terms(script: dict[str, Any], topic: str = "") -> list[str]:
 
 
 def _extract_prompt_field(prompt: str, label: str) -> str:
-    match = re.search(rf"{re.escape(label)}\s*:\s*([^;]+)", prompt, re.IGNORECASE)
+    match = re.search(
+        rf"(?:^|[;\n])\s*{re.escape(label)}\s*:\s*([^;]+)",
+        prompt,
+        re.IGNORECASE,
+    )
     if not match:
         return ""
     return match.group(1).strip().lower()

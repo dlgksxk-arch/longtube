@@ -12,12 +12,13 @@ from app.models.database import get_db
 from app.models.project import Project
 from app.models.cut import Cut
 from app.config import (
-    CUT_VIDEO_DURATION,
+    BGM_VOLUME_MULTIPLIER,
     CHANNELS_ROOT,
     FIRST_CUT_FADE_IN_SECONDS,
     NARRATION_VOLUME_GAIN,
     SYSTEM_DIR,
     infer_project_channel,
+    resolve_cut_video_duration,
     resolve_project_dir,
 )
 from app.services.subtitle_service import (
@@ -43,9 +44,13 @@ router = APIRouter()
 
 BGM_CHANNEL_LENGTH_MS = 180_000
 FIRST_INTERMISSION_AFTER_CUTS = 3
-DEFAULT_RENDER_BGM_VOLUME = 0.42
+DEFAULT_RENDER_BGM_VOLUME = 0.21
 DEFAULT_RENDER_BGM_DUCKING = "low"
 DEFAULT_RENDER_BGM_START_OFFSET_SEC = 60.0
+
+
+def _effective_bgm_volume(volume: float) -> float:
+    return max(0.0, min(1.0, float(volume) * float(BGM_VOLUME_MULTIPLIER)))
 
 
 def _channel_bgm_cache_path(project_id: str, cfg: dict | None, prompt: str) -> tuple[Path, str, str]:
@@ -76,7 +81,7 @@ def _intermission_every_cuts(project: Project) -> int:
         if inter.get("intermission_every_cuts"):
             every = int(inter.get("intermission_every_cuts"))
         elif inter.get("intermission_every_sec"):
-            every = int(round(float(inter.get("intermission_every_sec")) / float(CUT_VIDEO_DURATION)))
+            every = int(round(float(inter.get("intermission_every_sec")) / resolve_cut_video_duration(project.config or {})))
         else:
             every = DEFAULT_INTERMISSION_EVERY
     except (TypeError, ValueError):
@@ -177,6 +182,7 @@ def _build_and_write_ass(project_id: str, project: Project, db: Session) -> tupl
     if not cuts or not script.get("cuts"):
         raise HTTPException(400, "No cuts or script found")
 
+    cut_duration = resolve_cut_video_duration(project.config or {})
     cuts_data = []
     for cut in cuts:
         cut_script = next((c for c in script.get("cuts", []) if c["cut_number"] == cut.cut_number), {})
@@ -185,7 +191,8 @@ def _build_and_write_ass(project_id: str, project: Project, db: Session) -> tupl
             "cut_number": cut.cut_number,
             "narration": cut.narration or cut_script.get("narration", ""),
             "actual_duration": spoken_duration,
-            "duration_estimate": cut_script.get("duration_estimate", 5.0)
+            "duration_estimate": cut_script.get("duration_estimate", cut_duration),
+            "cut_video_duration": cut_duration,
         })
 
     style_config = project.config.get("subtitle_style", dict(DEFAULT_SUBTITLE_STYLE))
@@ -773,7 +780,7 @@ async def _mix_bgm_into_video(
     fade_out_sec: float = 0.0,
 ) -> str:
     ffmpeg_bin = find_ffmpeg()
-    vol = max(0.0, min(1.0, float(volume)))
+    vol = _effective_bgm_volume(volume)
     narration_gain = max(0.5, min(4.0, float(NARRATION_VOLUME_GAIN)))
     has_audio = await _video_has_audio(ffmpeg_bin, input_path)
     duration = await FFmpegService.probe_duration(input_path)
@@ -885,7 +892,7 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
     파이프라인(v1.1.32 이후):
       1. 자막 ASS 자동 생성 (설정 기반)
       2. 컷 오디오 무음 치유
-      3. 각 컷을 최소 5초로 보정(필요 시 루프)
+      3. 각 컷을 설정된 컷 길이로 보정(필요 시 루프)
       4. 본편 컷 재인코딩 concat → body.mp4
       5. body.mp4 에 자막 번인 → body_sub.mp4
       6. opening/ending 업로드가 있으면 2초 페이드 인/아웃 추가
@@ -966,7 +973,8 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
             print(f"[subtitle/render] ASS REGEN FAILED: {e}\n{traceback.format_exc()}")
             raise HTTPException(500, f"Subtitle regeneration failed: {type(e).__name__}: {e}")
 
-    # ── Step 3: 각 컷 최소 5초 보정 ──
+    # ── Step 3: 각 컷 최소 길이 보정 ──
+    cut_duration = resolve_cut_video_duration(project.config or {})
     cuts = (
         db.query(Cut)
         .filter(Cut.project_id == project_id)
@@ -1008,7 +1016,7 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
                         narration,
                         aspect_ratio=aspect_ratio,
                         style_config=subtitle_style_cfg,
-                        duration=float(CUT_VIDEO_DURATION),
+                        duration=float(cut_duration),
                     )
                 except Exception as e:
                     print(f"[subtitle/render] Cut {c.cut_number}: cut subtitle burn failed: {e}")
@@ -1024,7 +1032,7 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
 
     print(f"[subtitle/render] {len(clip_paths)}/{len(cuts)} 컷 영상 수집 완료")
 
-    MIN_CUT_DURATION = float(CUT_VIDEO_DURATION)
+    MIN_CUT_DURATION = float(cut_duration)
     normalized_cuts: list[str] = []
     preserve_cut_audio = bool(cut_level_subs)
     if preserve_cut_audio:
@@ -1222,6 +1230,7 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
             t_bgm = _t.time()
             bgm_cfg = _read_bgm_config(project.config or {})
             volume = float(bgm_cfg["volume"])
+            effective_volume = _effective_bgm_volume(volume)
             await _mix_bgm_into_video(
                 final_nomusic_path,
                 bgm_path,
@@ -1233,7 +1242,8 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
                 fade_out_sec=float(bgm_cfg.get("fade_out_sec") or 0.0),
             )
             print(
-                f"[subtitle/render] BGM mixed volume={volume:.3f} "
+                f"[subtitle/render] BGM mixed volume={effective_volume:.3f} "
+                f"(base={volume:.3f}, multiplier={BGM_VOLUME_MULTIPLIER:.2f}) "
                 f"narration_gain={NARRATION_VOLUME_GAIN:.2f} "
                 f"ducking={bgm_cfg.get('ducking_strength')} "
                 f"offset={bgm_cfg.get('start_offset_sec')} "
@@ -1276,7 +1286,7 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
         shorts_enabled = bool((project.config or {}).get("shorts_enabled", True))
         if shorts_enabled:
             script_for_shorts = load_shorts_script(project_dir)
-            shorts_segments = select_shorts_segments(script_for_shorts, count=1)
+            shorts_segments = select_shorts_segments(script_for_shorts, count=4)
             cfg = project.config or {}
             if isinstance(script_for_shorts, dict) and not script_for_shorts.get("language"):
                 script_for_shorts["language"] = (

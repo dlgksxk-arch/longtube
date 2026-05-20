@@ -9,6 +9,7 @@ from app.services.video.comfyui_service import ComfyUIVideoService
 
 DEFAULT_VIDEO_MODEL = "ffmpeg-static"
 WAN22_TI2V_5B_MODEL = "comfyui-wan22-ti2v-5b"
+LTX23_V4_I2V_MODEL = "comfyui-ltx23-v4"
 
 # Keep old saved project configs safe: these local test models are no longer
 # exposed in Studio, but if a preset still contains one, run FFmpeg Static instead.
@@ -17,7 +18,6 @@ DEPRECATED_LOCAL_VIDEO_MODEL_ALIASES = {
     "comfyui-ltxv-2b": DEFAULT_VIDEO_MODEL,
     "comfyui-ltxv-13b": DEFAULT_VIDEO_MODEL,
     "comfyui-wan22-i2v-fast": DEFAULT_VIDEO_MODEL,
-    WAN22_TI2V_5B_MODEL: DEFAULT_VIDEO_MODEL,
     "comfyui-wan22-5b": DEFAULT_VIDEO_MODEL,
 }
 
@@ -37,6 +37,24 @@ VIDEO_REGISTRY: dict[str, dict] = {
                          "cost_per_unit": "$0.18/5s clip", "cost_value": 0.18},
     "comfyui-ltx23-v2": {
         "name": "LTX 2.3 Local V2",
+        "provider": "comfyui",
+        "cost_per_unit": "Free (local)",
+        "cost_value": 0,
+    },
+    "comfyui-ltx23-v3": {
+        "name": "로컬모델 V3",
+        "provider": "comfyui",
+        "cost_per_unit": "Free (local)",
+        "cost_value": 0,
+    },
+    LTX23_V4_I2V_MODEL: {
+        "name": "로컬영상모델 V4",
+        "provider": "comfyui",
+        "cost_per_unit": "Free (local)",
+        "cost_value": 0,
+    },
+    WAN22_TI2V_5B_MODEL: {
+        "name": "Wan2.2 로컬 5B",
         "provider": "comfyui",
         "cost_per_unit": "Free (local)",
         "cost_value": 0,

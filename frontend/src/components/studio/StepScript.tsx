@@ -143,8 +143,9 @@ export default function StepScript({ project, onUpdate, onCutsChange }: Props) {
     }
   };
 
-  const totalDuration = cuts.reduce((sum, c) => sum + (c.duration_estimate || 5), 0);
-  const cutCount = cuts.length || Math.floor(project.config.target_duration / 5);
+  const cutVideoDuration = Math.max(1, Number(project.config.cut_video_duration || 5));
+  const totalDuration = cuts.reduce((sum, c) => sum + (c.duration_estimate || cutVideoDuration), 0);
+  const cutCount = cuts.length || Math.ceil(project.config.target_duration / cutVideoDuration);
 
   // LLM cost estimate: ~1K input tokens (prompt) + ~200 output tokens per cut
   const selectedModel = llmModels.find((m) => m.id === project.config.script_model);

@@ -10,8 +10,10 @@ UI 쪽에서 "예상" / "대략" 임을 반드시 표기한다.
 """
 from __future__ import annotations
 
+import math
 from typing import Any
 
+from app.config import resolve_cut_video_duration
 from app.services.llm.factory import LLM_REGISTRY
 from app.services.image.factory import DEFAULT_THUMBNAIL_MODEL, IMAGE_REGISTRY, resolve_image_model
 from app.services.tts.factory import TTS_REGISTRY
@@ -22,8 +24,7 @@ from app.services.video.factory import DEFAULT_VIDEO_MODEL, VIDEO_REGISTRY, reso
 # 상수 — 산정 가정
 # --------------------------------------------------------------------------- #
 
-# 컷당 길이 (초). base.py SCRIPT_SYSTEM_PROMPT_TEMPLATE 이 5초 컷을 기준으로 한다.
-# 을 강제하므로 고정.
+# 컷당 길이 기본값. 프로젝트 config.cut_video_duration 이 있으면 그 값을 쓴다.
 SECONDS_PER_CUT = 5
 
 # LLM 스크립트 생성 입력 토큰 추정 (시스템 프롬프트 + 토픽 + 예시)
@@ -38,7 +39,7 @@ LLM_CHUNK_INPUT_TOKENS = 6000
 LLM_CHUNK_OUTPUT_TOKENS_PER_CUT = 225
 LLM_CHUNK_OUTPUT_OVERHEAD = 700
 
-# 컷당 TTS 문자수. 2026-05-04 CH1 120컷 실제 ElevenLabs 원장 기준 평균 약 31자.
+# 컷당 TTS 문자수. 실제 ElevenLabs 원장 기준 평균 약 31자.
 TTS_CHARS_PER_CUT = 32
 
 # 모델별 실측 평균 처리 시간 (초). 순차 호출 기준, 네트워크 지연 포함.
@@ -47,6 +48,7 @@ IMAGE_SEC_PER_CUT = {
     "comfyui-dreamshaper-xl": 20.0,
     "comfyui-dreamshaper-xl-vector": 20.0,
     "comfyui-dreamshaper-xl-longtube": 20.0,
+    "comfyui-dreamshaper-xl-longtube-v15": 20.0,
     "comfyui-dreamshaper-xl-longtube-2k": 20.0,
     "comfyui-dreamshaper-xl-longtube-3k": 20.0,
     "comfyui-qwen-image-edit-2509": 25.0,
@@ -79,6 +81,8 @@ VIDEO_SEC_PER_CUT = {
     "ffmpeg-static":    0.6,   # v1.1.40: 효과 없음 — Ken Burns 보다 살짝 더 빠름
     "comfyui-hunyuan15-480p": 70.0,  # 로컬 Hunyuan 480p I2V, RTX 3090 실측 약 68~71초/5초 컷
     "comfyui-wan22-ti2v-5b": 180.0,  # 로컬 Wan2.2 TI2V-5B, 640x384/16fps/20 steps 보수 추정
+    "comfyui-ltx23-v3": 70.0,
+    "comfyui-ltx23-v4": 120.0,
     "ltx2-fast":        20.0,
     "ltx2-pro":         30.0,
     "seedance-lite":    35.0,
@@ -168,7 +172,7 @@ def _estimated_cuts(config: dict) -> int:
     if target_cuts > 0:
         return target_cuts
     target_duration = _safe_int(config.get("target_duration"), 300)
-    return max(1, target_duration // SECONDS_PER_CUT)
+    return max(1, math.ceil(target_duration / resolve_cut_video_duration(config)))
 
 
 # --------------------------------------------------------------------------- #
@@ -214,7 +218,7 @@ def _estimate_video_cost_usd(model_id: str, cuts: int) -> float:
     meta = VIDEO_REGISTRY.get(model_id)
     if not meta:
         return 0.0
-    # cost_value 는 5초 clip 당 USD. 한 컷 = 5초 = 1 clip.
+    # cost_value 는 clip 단위 USD. 한 컷 = 1 clip.
     per_clip = float(meta.get("cost_value") or 0.0)
     return per_clip * cuts
 
@@ -258,7 +262,8 @@ def estimate_project(config: dict | None) -> dict:
     """
     cfg = config or {}
     cuts = _estimated_cuts(cfg)
-    target_duration = cuts * SECONDS_PER_CUT if _safe_int(cfg.get("target_cuts"), 0) > 0 else _safe_int(cfg.get("target_duration"), cuts * SECONDS_PER_CUT)
+    seconds_per_cut = resolve_cut_video_duration(cfg)
+    target_duration = int(round(cuts * seconds_per_cut)) if _safe_int(cfg.get("target_cuts"), 0) > 0 else _safe_int(cfg.get("target_duration"), int(round(cuts * seconds_per_cut)))
 
     script_model = cfg.get("script_model") or "claude-sonnet-4-6"
     image_model = resolve_image_model(cfg.get("image_model"))

@@ -1,4 +1,5 @@
 """Project CRUD router"""
+import math
 import uuid
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -12,7 +13,7 @@ from app.services.estimation_service import estimate_project
 from app.services.image.factory import DEFAULT_IMAGE_MODEL, DEFAULT_THUMBNAIL_MODEL
 from app.services.subtitle_service import DEFAULT_SUBTITLE_STYLE
 from app.services.video.factory import DEFAULT_VIDEO_MODEL
-from app.config import CHANNELS_ROOT, RESULT_ARCHIVE_DIR, SYSTEM_PROJECTS_ROOT, resolve_project_dir
+from app.config import CHANNELS_ROOT, RESULT_ARCHIVE_DIR, SYSTEM_PROJECTS_ROOT, resolve_cut_video_duration, resolve_project_dir
 import os
 
 router = APIRouter()
@@ -33,6 +34,7 @@ class ProjectUpdate(BaseModel):
 DEFAULT_CONFIG = {
     "aspect_ratio": "16:9",
     "target_duration": 600,
+    "cut_video_duration": 4.0,
     "cut_transition": "slow",
     "style": "news_explainer",
     "script_model": "claude-sonnet-4-6",
@@ -51,7 +53,7 @@ DEFAULT_CONFIG = {
     # 같은 구간의 나머지 컷은 그 이미지를 재사용한다.
     "image_reuse_group_seconds": 0,
     # Burn subtitles directly into each generated cut. Final render only joins
-    # already-subtitled cut videos, so sync stays tied to each fixed 5s clip.
+    # already-subtitled cut videos, so sync stays tied to each fixed 4s clip.
     "cut_level_subtitles": True,
     "tts_model": "openai-tts",
     "tts_voice_id": "alloy",
@@ -69,7 +71,7 @@ DEFAULT_CONFIG = {
     "bgm_enabled": True,
     "bgm_path": "",
     "bgm_style_prompt": "subtle cinematic documentary background music, instrumental only, no vocals, no lyrics, soft percussion, low tension, supports narration",
-    "bgm_volume": 0.42,
+    "bgm_volume": 0.21,
     "bgm_ducking_strength": "low",
     "bgm_start_offset_sec": 60.0,
     "subtitle_style": dict(DEFAULT_SUBTITLE_STYLE),
@@ -78,11 +80,14 @@ DEFAULT_CONFIG = {
 
 def normalize_default_config(config: dict) -> dict:
     cfg = dict(config or {})
+    try:
+        target_duration = float(cfg.get("target_duration") or 0)
+    except (TypeError, ValueError):
+        target_duration = 0
+    if target_duration > 0:
+        cut_duration = resolve_cut_video_duration(cfg)
+        cfg["target_cuts"] = max(1, math.ceil(target_duration / cut_duration))
     if "image_reuse_group_seconds" not in cfg:
-        try:
-            target_duration = int(float(cfg.get("target_duration") or 0))
-        except (TypeError, ValueError):
-            target_duration = 0
         if target_duration > 0 and target_duration <= 60:
             cfg["image_reuse_group_seconds"] = 60
     return cfg

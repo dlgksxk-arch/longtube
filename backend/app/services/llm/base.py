@@ -17,7 +17,7 @@ IMAGE_PROMPT_REQUIRED_STYLE = "simple cartoon illustration, documentary cartoon 
 
 
 SCRIPT_SYSTEM_PROMPT_TEMPLATE = """당신은 수익창출이 최우선 목표인 유튜브 자동화 파이프라인용 대본 생성기입니다.
-최상위 원칙: 이 영상의 모든 장면, 특히 image_prompt는 시청자가 스크롤을 멈추고 클릭/시청하고 싶게 만드는 강한 시각적 훅을 우선해야 합니다. 수익창출을 방해하는 밋밋한 설명 이미지, 먼 풍경, 일반 배경, 약한 감정, 궁금증 없는 구도는 실패로 간주합니다. 단, 사실을 왜곡하거나 존재하지 않는 사건을 지어내면 안 됩니다.
+최상위 원칙: 이 영상의 모든 장면은 시청자가 스크롤을 멈추고 클릭/시청하고 싶게 만드는 강한 시각적 훅을 우선해야 합니다. 수익창출을 방해하는 밋밋한 설명 이미지, 먼 풍경, 일반 배경, 약한 감정, 궁금증 없는 구도는 실패로 간주합니다. 단, 사실을 왜곡하거나 존재하지 않는 사건을 지어내면 안 됩니다.
 반드시 유효한 JSON 객체 하나만 반환하세요. 마크다운, 설명, 뒤따르는 문구는 금지합니다.
 
 필수 JSON 구조:
@@ -31,21 +31,25 @@ SCRIPT_SYSTEM_PROMPT_TEMPLATE = """당신은 수익창출이 최우선 목표인
     {
       "cut_number": 1,
       "narration": "...",
-      "image_prompt": "Year/period: c. 1590-1591; Exact place: a specific visible place; Scene evidence: short English reason tied to the narration; Style: simple cartoon illustration, documentary cartoon style, clean thick outlines, soft natural shadows; Scene: concrete visual scene in English without visible text",
+      "image_prompt": "",
       "visual_year": "보이는 장면의 정확한 연도 또는 좁은 날짜 범위. 예: '1592' 또는 'c. 1590-1591'",
       "visual_period": "영어로 작성. 구체적인 역사 시대 또는 현대 시기. 예: 'Indus Valley Civilization, Mature Harappan period, c. 2600-1900 BCE'",
       "visual_location": "영어로 작성. 구체적인 장소 또는 환경. 예: 'brick street near a drainage channel in Mohenjo-daro'",
       "visual_evidence": "영어로 작성. 이 이미지가 내레이션과 시대에 맞는 이유를 짧게 한 문장으로 작성",
-      "duration_estimate": {cut_video_duration},
+      "visual_subject": "영어로 작성. 화면 중심 대상. 예: 'frontier envoy holding a sealed message'",
+      "visual_scene": "영어로 작성. 12~28단어의 구체적 장면/행동/구도. 고정 라벨과 스타일 문구 금지",
       "scene_type": "title",
-      "shorts_candidate": false,
-      "shorts_group": 0,
-      "shorts_reason": "",
-      "shorts_score": 0,
-      "shorts_title": ""
+      "shorts_candidate": false
     }
   ]
 }
+
+image_prompt 출력 계약:
+- image_prompt에는 긴 최종 프롬프트를 쓰지 말고 빈 문자열 ""로 두세요.
+- 최종 image_prompt는 백엔드가 visual_year, visual_period, visual_location, visual_evidence, visual_subject, visual_scene으로 조립합니다.
+- Year/period, Exact place, Scene evidence, Style, no readable text 같은 고정 문구를 image_prompt나 visual_scene에 반복해서 쓰지 마세요.
+- 장면의 창작 정보는 visual_subject와 visual_scene에만 짧고 구체적으로 쓰세요.
+- duration_estimate는 컷 길이가 프로젝트 기본값 {cut_video_duration}초와 다를 때만 넣으세요. 기본값이면 생략하세요.
 
 시간 목표:
 - 영상 컷 슬롯은 {cut_video_duration}초로 고정입니다. 단, 대본 내레이션은 아래 음성 목표 길이에 맞춰 작성합니다.
@@ -111,6 +115,7 @@ SCRIPT_SYSTEM_PROMPT_TEMPLATE = """당신은 수익창출이 최우선 목표인
 - Cut 4: 본격적인 본론을 이야기하기 시작한다.
 - Cut 2 또는 Cut 3에서 본론 설명을 시작하면 그 대본은 실패다.
 - 사실 기반 표현을 사용하세요. 사용자가 제공하지 않은 정확한 날짜, 이름, 숫자를 지어내지 마세요.
+- 사용자가 제공하지 않은 가격, 금액, 환율, 인원수, 퍼센트, 순위, 통계 수치를 지어내지 마세요. 여행 비용이나 물가를 말할 때도 정확한 금액을 만들지 말고 `예상보다 비쌀 수 있다`, `지역과 상황에 따라 다르다`처럼 보수적으로 표현하세요.
 {national_pride_style}- 쉬운 일상어만 사용하세요. 학술 용어, 전문가 용어, 시적인 표현, 딱딱한 격식 표현은 피하세요. 어려운 용어가 불가피하면 쉬운 말로 풀어 설명하세요.
 - 구독/좋아요 요청 금지.
 
@@ -123,24 +128,26 @@ SCRIPT_SYSTEM_PROMPT_TEMPLATE = """당신은 수익창출이 최우선 목표인
 - 한국 왕 이름을 쓸 때는 `왕`을 띄어 씁니다: `문무 왕`, `광개토대 왕`, `선덕여 왕`.
 - 나쁜 예: `수나라는 고구려를 공격했습니다. 고구려는 방어했습니다.`
 - 좋은 예: `수나라는 엄청난 병력을 밀어 넣었는데요, 고구려는 그 숫자 싸움에 그대로 말려들지 않았죠.`
+{japanese_narration_style}
 
 역사 및 시각적 연속성 계약:
 - 대본은 질문형 훅 -> 기록 설명 -> 핵심 개념 분리 -> 논쟁과 해석 -> 결론 -> 다음 편 연결 순서로 진행하세요.
-- 150컷 구성 역할을 지키세요: 1~10컷 강한 질문과 문제 제기, 11~30컷 기록에 남은 최소 사실, 31~60컷 배경과 원인, 61~90컷 사건 진행과 변화, 91~120컷 결과와 역사적 의미, 121~140컷 기록의 한계와 해석, 141~150컷 다음 편 연결.
+{cut_structure_contract}
 - 각 회차마다 핵심 질문 3~5개를 정하고 대본 안에서 직접 답하세요. 분위기만 만들고 답하지 않는 문장은 실패입니다.
 - 기록에 남은 내용, 그 기록으로 조심스럽게 볼 수 있는 흐름, 단정할 수 없는 부분을 분리해서 말하세요.
 - `OO는 선택은`, `OO는 전개은`, `OO는 단서는`, `OO는 사람들은`, `OO와 압박가`처럼 주제어를 앞에 붙이고 기존 문장을 이어 붙인 비문은 절대 만들지 마세요.
-- image_prompt는 다음 필드를 포함해야 합니다: visual_year + visual_period + visual_location + 시대/장소에 맞는 사물 + 정확히 내레이션된 행동.
-- image_prompt에는 narration 원문, spoken cue, dialogue, voiceover, transcript, quote, 대사 문장, 원고 문장을 절대 넣지 마세요.
-- image_prompt에는 `spoken cue:`, `narration:`, `dialogue:`, `voiceover:`, `line:` 같은 원고 라벨을 쓰지 마세요.
-- image_prompt의 Main subject는 컷 내용에 맞게 매 컷 다시 정하세요. 전체 컷에 같은 인물이나 장소를 고정하지 마세요.
-- Main subject는 해당 컷의 실제 중심 대상이어야 합니다: 인물, 장소, 유물, 공동체, 의식, 전투, 외교 장면 중 내레이션과 가장 직접 연결되는 하나를 고르세요.
+- visual_subject와 visual_scene은 visual_year + visual_period + visual_location + 시대/장소에 맞는 사물 + 정확히 내레이션된 행동과 맞아야 합니다.
+- visual_subject와 visual_scene에는 narration 원문, spoken cue, dialogue, voiceover, transcript, quote, 대사 문장, 원고 문장을 절대 넣지 마세요.
+- visual_subject와 visual_scene에는 `spoken cue:`, `narration:`, `dialogue:`, `voiceover:`, `line:` 같은 원고 라벨을 쓰지 마세요.
+- visual_subject는 컷 내용에 맞게 매 컷 다시 정하세요. 전체 컷에 같은 인물이나 장소를 고정하지 마세요.
+- visual_subject는 해당 컷의 실제 중심 대상이어야 합니다: 인물, 장소, 유물, 공동체, 의식, 전투, 외교 장면 중 내레이션과 가장 직접 연결되는 하나를 고르세요.
 - Visual focus, camera, mood, detail은 컷 내용과 직접 맞을 때만 쓰세요. 랜덤 소품, 랜덤 카메라, 랜덤 분위기 조합은 실패입니다.
-- image_prompt는 장면, 인물, 배경, 소품, 시대 분위기만 묘사하세요. 내레이션 문장을 설명하거나 복사하지 마세요.
-- image_prompt는 대본 문장 변환이 아닙니다. 컷의 핵심 장면을 별도로 시각화하세요.
+- visual_scene은 장면, 인물, 배경, 소품, 시대 분위기만 묘사하세요. 내레이션 문장을 설명하거나 복사하지 마세요.
+- visual_scene은 대본 문장 변환이 아닙니다. 컷의 핵심 장면을 별도로 시각화하세요.
 - 매 회차마다 허용 소재와 금지 소재를 내부적으로 먼저 확정하고, 다른 회차 인물, 다른 시대 사건, 이전 파일의 이미지 프롬프트 잔재, 엉뚱한 지명, 엉뚱한 왕 이름, 엉뚱한 성문/피난/방어전 장면을 섞지 마세요.
-- 이미지도 구간별로 달라야 합니다: 1~10컷 핵심 인물 또는 사건 첫 이미지, 11~30컷 기록과 배경, 31~60컷 장소와 압박, 61~90컷 변화와 충돌, 91~120컷 결과와 후대 해석, 121~150컷 다음 편으로 이어지는 시각적 연결.
-- 반복 등장 인물이 나오면 image_prompt에 안정적인 캐릭터 세부정보를 포함하세요: 종/인물 정체성, 체형, 얼굴/더듬이 또는 실루엣, 의상/소품이 있다면 그것, 자세, 표정, 행동.
+{image_sequence_contract}
+{japanese_visual_style}
+- 반복 등장 인물이 나오면 visual_subject와 visual_scene에 안정적인 캐릭터 세부정보를 포함하세요: 종/인물 정체성, 체형, 얼굴/더듬이 또는 실루엣, 의상/소품이 있다면 그것, 자세, 표정, 행동.
 - 같은 캐릭터 디자인 세부정보를 컷 전체에서 유지하세요. 자세/행동/구도는 바꾸되 캐릭터 정체성은 바꾸지 마세요.
 - DNA 나선, 빛나는 뇌, 추상 지도, 아무 사원 벽, 일반 학자, 일반 궁전, 일반 전장 같은 일반 filler 이미지는 내레이션이 그 대상을 직접 다루지 않는 한 사용하지 마세요.
 - 일반 판타지 의상, 코스프레, 무대 의상, 유명하지만 시대가 맞지 않는 외형을 사용하지 마세요.
@@ -158,60 +165,31 @@ SCRIPT_SYSTEM_PROMPT_TEMPLATE = """당신은 수익창출이 최우선 목표인
 - 하나의 지배적인 클로즈업 대상을 사용하세요. 넓은 설명 장면, 콜라주, 일반 분위기, 먼 풍경은 피하세요.
 - 클로즈업은 텍스트를 읽지 않아도 시청자가 핵심 사건이나 사물을 즉시 이해할 수 있어야 합니다.
 
-쇼츠 메타데이터 계약:
-- 정확히 4편의 쇼츠를 만들 수 있게, 쇼츠 그룹 4개를 설계하세요.
-- 각 쇼츠 그룹은 정확히 15개 컷입니다. 총 60개 컷에만 shorts_candidate=true를 설정하세요.
-- shorts_group은 다음 의미로만 사용하세요:
-  - shorts_group 1: 논쟁 질문. 댓글을 부를 수 있는 강한 질문형 훅입니다.
-  - shorts_group 2: 충격 사실. 시청자가 바로 멈추는 의외의 사실/수치/전환점입니다.
-  - shorts_group 3: 롱폼으로 넘기는 미스터리. 답을 본편에서 확인하고 싶게 만드는 미해결 의문입니다.
-  - shorts_group 4: 주요 인물 부각. 이야기의 핵심 인물, 결정권자, 배신자, 희생자, 승부수를 둔 인물을 전면에 세웁니다.
-- 각 그룹의 15개 컷은 같은 쇼츠 안에서 자연스럽게 이어져야 합니다. 가능하면 연속 구간을 고르되, 이야기 흐름이 깨지면 가까운 컷만 사용하세요.
-- 그룹끼리는 컷 번호가 겹치면 안 됩니다.
-- 전체 이야기에서 가장 클릭 가능성이 높은 순간을 고르세요.
-- 선택된 60개 컷 외에는 shorts_candidate=false, shorts_group=0을 사용하세요.
-- 내레이션이 가장 충격적이거나 호기심이 가장 높아지는 컷을 선택하세요: 강한 훅, 반전, 드러남, 갈등, 위험, 배신, 충격적 사실, 구체적인 시각 장면, 댓글을 부를 질문.
-- 일반 설명 컷, 배경만 말하는 컷, 이미 말한 내용을 반복하는 컷, 인트로용 인사말 컷, 다음 전개 없이 정리만 하는 컷은 shorts_candidate=true로 지정하지 마세요.
-- shorts_candidate=true 컷은 해당 15컷만 떼어 봐도 사건의 압박, 선택, 반전, 결과가 어느 정도 이해되어야 합니다.
-- 각 쇼츠 그룹의 첫 번째 컷은 질문/반전/숫자/위험/배신/사라진 기록/결정적 선택 중 하나로 바로 시작해야 합니다. 단, 본편 흐름을 깨는 별도 쇼츠용 대사는 만들지 마세요.
-- 각 쇼츠 그룹 첫 번째 컷의 narration 첫 8~14글자 또는 첫 3~5단어 안에 질문/반전/숫자/위험/배신/사라진 기록/결정적 선택이 드러나야 합니다.
-- 첫 컷은 `왜`, `그런데`, `하지만`, `단 한 번`, `결정적`, `기록은`, `문제는` 같은 긴장 신호로 시작할 수 있습니다. 평범한 배경 설명으로 시작하면 실패입니다.
-- 각 쇼츠 그룹의 마지막 컷은 새 정보 없이 끝내지 말고, 다음 편이나 본편을 놓치지 않게 만드는 구독 유도형 여운으로 끝내세요. 단, `구독해주세요`처럼 노골적인 요청만 단독으로 쓰지 말고, 미해결 의문/다음 사건/반전 예고와 결합하세요.
-- 각 쇼츠 15컷은 hook -> pressure -> reveal -> unresolved pull 흐름을 가져야 합니다.
-- 인트로/아웃트로, 일반 설정, 단독으로 이해할 수 없는 구간은 선택하지 마세요.
-- shorts_reason은 "debate question", "shocking fact", "longform mystery", "main character spotlight" 중 그룹 목적에 맞는 짧은 이유로 작성하세요.
-- shorts_score는 1~10점으로 넣으세요. 10점은 가장 강한 호기심 컷에만 사용합니다.
-- 선택된 컷에는 shorts_title을 추가하세요. 업로드할 쇼츠 제목으로 쓸 수 있게 사실 기반 안에서 선정적이고 자극적으로 쓰세요. 단, 없는 사건을 지어내거나 허위 과장은 금지입니다.
-- 각 그룹의 첫 번째 선택 컷에는 해당 쇼츠의 대표 shorts_title을 반드시 넣으세요.
-- shorts_title은 설명형 제목이 아니라 클릭형 질문/반전/충돌/잃어버린 것/결정적 선택 문장이어야 합니다. 단, 허위 과장과 없는 사실은 금지합니다.
-- shorts_title은 정보형 명사구 금지입니다. `~의 의미`, `~를 알아보자`, `~ 이야기`, `진짜 이유`만 단독으로 쓰면 실패입니다.
-- shorts_title은 CJK 언어 기준 22~38자, 비CJK 언어 기준 38~70자 안에서 강한 질문이나 충돌이 보이게 작성하세요.
+{shorts_metadata_contract}
 
 이미지 계약:
-- 수익창출이 최우선입니다. 모든 image_prompt는 첫눈에 호기심을 만들고, 클릭/시청 지속에 도움이 되는 강한 대표 피사체와 감정/행동/위험/증거/충돌 중 하나를 화면 중심에 둬야 합니다.
+- 수익창출이 최우선입니다. 모든 visual_subject와 visual_scene은 첫눈에 호기심을 만들고, 클릭/시청 지속에 도움이 되는 강한 대표 피사체와 감정/행동/위험/증거/충돌 중 하나를 화면 중심에 둬야 합니다.
 - 이목을 잡아끌지 못하는 장면은 실패입니다. 단순 설명용 배경, 먼 풍경, 정적인 건물, 평범한 사람, 일반 전경, 약한 구도는 피하고, 사실 기반 안에서 가장 클릭 가능성이 높은 순간으로 시각화하세요.
-- Cut 1, Cut 2, Cut 3의 image_prompt는 시청자의 호기심을 즉시 붙잡는 강한 훅 이미지여야 합니다.
+- Cut 1, Cut 2, Cut 3의 visual_subject와 visual_scene은 시청자의 호기심을 즉시 붙잡는 강한 훅 이미지여야 합니다.
 - Cut 1, Cut 2, Cut 3은 각 컷의 좁은 문장만 묘사하지 말고, 주제 전반을 아우르는 임팩트 있는 대표 장면, 핵심 미스터리, 결정적 증거, 또는 가장 강한 시각적 질문을 사실 기반으로 시각화하세요.
-- 모든 컷의 image_prompt는 시청자의 눈길을 잡아끌 수 있는 선명한 주 피사체, 긴장감 있는 구도, 명확한 감정 또는 행동을 포함해야 합니다. 설명용 배경 장면처럼 밋밋하게 만들지 마세요.
-- 풍경화처럼 배경, 자연, 건물, 먼 전경만 보여주는 image_prompt는 자제하세요. 장소 설명이 필요해도 인물, 사물, 사건의 행동, 표정, 충돌, 증거 중 하나가 화면의 중심이어야 합니다.
+- 모든 컷의 visual_scene은 시청자의 눈길을 잡아끌 수 있는 선명한 주 피사체, 긴장감 있는 구도, 명확한 감정 또는 행동을 포함해야 합니다. 설명용 배경 장면처럼 밋밋하게 만들지 마세요.
+- 풍경화처럼 배경, 자연, 건물, 먼 전경만 보여주는 visual_scene은 자제하세요. 장소 설명이 필요해도 인물, 사물, 사건의 행동, 표정, 충돌, 증거 중 하나가 화면의 중심이어야 합니다.
 - 전체 컷의 최소 70%는 고강도 이미지로 구성하세요: 인물 클로즈업, 호쾌한 액션, 극적인 감정 표현 중 하나 이상을 반드시 포함합니다. 역사/사실 정확성을 해치지 않는 범위에서 얼굴 표정, 손짓, 시선, 몸의 움직임을 크게 보이게 하세요.
-- image_prompt 전체는 영어만 사용해야 합니다. `Year/period`, `Exact place`, `Scene evidence`, `Scene` 뒤의 값도 영어로 작성하세요.
-- image_prompt에는 일본어, 한국어, 힌디어, 중국어, 한자, 가나, 한글 등 비영어 문자를 넣지 마세요.
-- visual_period, visual_location, visual_evidence는 image_prompt에 복사되므로 반드시 영어로 작성하세요.
-- 모든 image_prompt에는 필수 이미지 스타일 필드를 반드시 포함하세요: `Style: {image_prompt_required_style}`.
-- 이 스타일 필드는 모든 컷의 image_prompt에 정확히 한 번 들어가야 합니다.
-- image_prompt에는 `photorealistic`, `hyperrealistic`, `photo-real`, `real photo`, `realistic photograph` 같은 실사 지시어를 쓰지 마세요.
+- visual_period, visual_location, visual_evidence, visual_subject, visual_scene은 영어만 사용하세요.
+- visual_* 필드와 image_prompt에는 일본어, 한국어, 힌디어, 중국어, 한자, 가나, 한글 등 비영어 문자를 넣지 마세요.
+- 최종 image_prompt의 필수 이미지 스타일 필드 `Style: {image_prompt_required_style}`는 백엔드가 정확히 한 번 추가합니다. 직접 쓰지 마세요.
+- visual_scene에는 `photorealistic`, `hyperrealistic`, `photo-real`, `real photo`, `realistic photograph` 같은 실사 지시어를 쓰지 마세요.
 - 읽을 수 있는 텍스트, 글자, 숫자, 로고, 워터마크, 자막, UI 라벨, 글자가 있는 포스터, 글자가 있는 화면, 가짜 문자, 가짜 한자, 가짜 서예, 문장, 엠블럼, 장식용 상징 표식을 절대 요청하지 마세요.
 - 보이는 표지판, 벽걸이, 깃발, 갑옷 판, 배의 돛, 책 표지, 상자, 라벨은 이야기가 실제 특정 표시를 다루는 경우가 아니라면 모두 비어 있고 아무 표시가 없어야 합니다.
 - 컷을 쓰기 전에 내부적으로 주제의 정확한 시간대, 필요할 경우 계절/시간대, 지역, 장소 유형, 물질문화, 의복, 머리모양, 머리 장식, 장신구, 건축, 도구, 무기, 갑옷, 차량, 선박, 가구, 의식, 일상 사물, 풍경, 재료, 반복 캐릭터 디자인을 확정하세요.
-- 모든 컷에는 visual_year, visual_period, visual_location, visual_evidence가 있어야 합니다.
+- 모든 컷에는 visual_year, visual_period, visual_location, visual_evidence, visual_subject, visual_scene이 있어야 합니다.
 - visual_year는 정확한 보이는 연도, 또는 정확한 연도를 알 수 없을 경우 가장 좁고 정직한 날짜 범위를 적어야 합니다.
 - visual_period는 구체적이어야 하며 일반적이면 안 됩니다. 영어로 작성하고, 역사에서는 가능하면 시대, 통치자/왕조/문화, 날짜 범위를 적으세요.
 - visual_location은 일반 배경이 아니라 구체적인 공간이어야 합니다. 영어로 작성하세요.
 - visual_evidence는 내레이션과 이미지의 연결 이유를 짧게 설명해야 합니다. 영어로 작성하세요.
-- image_prompt는 캐릭터나 행동보다 먼저 보이는 연도/날짜 범위, 정확한 공간, 스타일로 시작해야 합니다.
-- image_prompt 필드 값 안에는 따옴표를 넣지 마세요. 형식은 다음 순서를 따릅니다: Year/period: ...; Exact place: ...; Scene evidence: ...; Style: {image_prompt_required_style}; Scene: ...
-- 역사 컷에서는 image_prompt에 보이는 시대 증거를 적어야 합니다: 시대에 맞는 의복, 머리모양 또는 머리장식, 도구, 무기, 갑옷, 장신구, 가구, 건물, 차량, 선박, 의식 물건, 일상 사물, 재료 등.
+- 최종 image_prompt는 백엔드가 보이는 연도/날짜 범위, 정확한 공간, 스타일로 시작하게 만듭니다.
+- visual_scene 필드 값 안에는 따옴표를 넣지 마세요.
+- 역사 컷에서는 visual_scene에 보이는 시대 증거를 적어야 합니다: 시대에 맞는 의복, 머리모양 또는 머리장식, 도구, 무기, 갑옷, 장신구, 가구, 건물, 차량, 선박, 의식 물건, 일상 사물, 재료 등.
 - 신화와 전승 컷에서는 확정 고증처럼 보이는 성벽, 병사, 궁전, 철기, 수레, 깃발을 자동으로 넣지 마세요. 내레이션이 직접 요구하지 않으면 신단수, 동굴, 제의 공간, 소박한 청동기풍 의례 소품처럼 보수적인 장면을 쓰세요.
 - 시대, 공간, 장소에 맞지 않는 깃발 이미지는 사용하지 마세요.
 - 시대, 공간, 장소에 맞는 의복, 차량, 사물, 무기, 갑옷, 생활양식, 건물만 사용하세요.
@@ -412,6 +390,77 @@ def get_system_prompt(language: str = "ko", config: dict | None = None) -> str:
         "hi": "- 인도 시청자가 자부심을 느낄 수 있는 색채를 약 40% 정도 추가하세요. 사실이 뒷받침될 때 문명적 깊이, 정치적 감각, 지적 전통, 사회적 규모를 절제되고 사실적으로 보여주며, 선전이나 우월 주장은 금지합니다.\n",
     }.get(language, "- 현지 시청자가 조용한 감탄을 느낄 수 있는 색채를 약 10% 정도 추가하세요. 사실이 뒷받침될 때만 절제되고 사실적으로 사용합니다.\n")
 
+    japanese_narration_style = ""
+    if language == "ja":
+        japanese_narration_style = """
+
+日本語ナレーション品質契約:
+- 日本語の視聴者が自然に聞ける、短く明確な話し言葉で書いてください。韓国語や中国語を直訳したような語順は禁止です。
+- 歴史用語、人名、地名、史料名は日本語で一般的な読みを前提にしてください。読みが複数ある語は、その時代・文脈で最も自然な読みを選びます。
+- 古代日本・ヤマト王権の文脈で「大王」を扱う場合は、おおきみとして扱ってください。外国の「大王」はこの規則に含めません。
+- 難しい漢字熟語を連続させすぎないでください。助詞、ひらがな、自然な言い換えを使い、TTSが詰まらず読める文にしてください。
+- 一文の中で固有名詞を詰め込みすぎないでください。固有名詞は一文に原則1つ、多くても2つまでに抑えてください。
+- 「読み方が不自然」「中国語のように聞こえる」と言われやすい表現を避け、日本語の歴史解説として普通に聞こえる文にしてください。
+"""
+    japanese_visual_style = ""
+    if language == "ja":
+        japanese_visual_style = """- 일본사 시각화에서는 현대 연구자, 현대 자료실, 현대 도서관, 현대 박물관 장면을 반복하지 마세요.
+- 고대/중세/근세 일본사 주제에서 후대 해석이나 연구를 말할 때도, 실제 현대 연구 방법을 직접 다루는 컷만 현대 장면을 사용하세요.
+- 150컷 기준 현대 자료실/도서관/연구자 장면은 최대 5컷입니다. 나머지는 원시대 장면, 사본 전승 시기, 주석이 이루어진 역사 시대의 장면으로 시각화하세요.
+- visual_year에 2020-2024, visual_period에 Contemporary Japan, visual_subject에 modern researcher를 반복하면 실패입니다.
+"""
+
+    cut_duration = resolve_cut_video_duration(config)
+    try:
+        expected_cut_count = int(config.get("target_cuts") or 0)
+    except (TypeError, ValueError):
+        expected_cut_count = 0
+    if expected_cut_count <= 0:
+        try:
+            target_duration = float(config.get("target_duration") or 600)
+        except (TypeError, ValueError):
+            target_duration = 600
+        expected_cut_count = max(1, math.ceil(target_duration / cut_duration))
+
+    if expected_cut_count >= 150:
+        cut_structure_contract = "- 150컷 구성 역할을 지키세요: 도입 10컷, 기록 정리 20컷, 배경과 원인 30컷, 사건 진행 30컷, 결과와 의미 30컷, 기록의 한계와 해석 20컷, 다음 편 연결 10컷으로 나누세요."
+        image_sequence_contract = "- 이미지도 구간별로 달라야 합니다: 도입 10컷은 핵심 인물 또는 사건 첫 이미지, 기록 정리 20컷은 기록과 배경, 배경과 원인 30컷은 장소와 압박, 사건 진행 30컷은 변화와 충돌, 결과와 의미 30컷은 결과와 후대 해석, 마지막 30컷은 한계 정리와 다음 편 연결을 시각화하세요."
+    else:
+        cut_structure_contract = (
+            f"- 이번 영상은 정확히 {expected_cut_count}컷 구성입니다. "
+            "150컷 장기 구성 규칙을 적용하지 말고, 주어진 컷 수 안에서 도입, 핵심 정보, 의미, 마무리를 압축하세요."
+        )
+        image_sequence_contract = (
+            f"- 이미지도 정확히 {expected_cut_count}컷에 맞춰 달라야 합니다. "
+            "짧은 테스트 영상에서는 각 컷마다 서로 다른 핵심 장면을 시각화하고, 150컷 구간 배분을 적용하지 마세요."
+        )
+
+    if expected_cut_count >= 60:
+        shorts_metadata_contract = """쇼츠 메타데이터 계약:
+- 정확히 4편의 쇼츠를 만들 수 있게, 쇼츠 그룹 4개를 설계하세요.
+- 각 쇼츠 그룹은 정확히 15개 컷입니다. 총 60개 컷에만 shorts_candidate=true를 설정하세요.
+- shorts_group은 1=debate question, 2=shocking fact, 3=longform mystery, 4=main character spotlight 의미로만 사용하세요.
+- shorts_group 1: 논쟁 질문. 댓글을 부를 수 있는 강한 질문형 훅입니다.
+- shorts_group 2: 충격 사실. 시청자가 바로 멈추는 의외의 사실/수치/전환점입니다.
+- shorts_group 3: 롱폼으로 넘기는 미스터리. 답을 본편에서 확인하고 싶게 만드는 미해결 의문입니다.
+- shorts_group 4: 주요 인물 부각. 이야기의 핵심 인물, 결정권자, 배신자, 희생자, 승부수를 둔 인물을 전면에 세웁니다.
+- 그룹끼리는 컷 번호가 겹치면 안 됩니다.
+- 선택된 60개 컷에는 shorts_candidate=true, shorts_group, shorts_reason, shorts_score, shorts_title을 넣으세요.
+- 선택되지 않은 컷은 shorts_candidate=false만 넣고 shorts_group, shorts_reason, shorts_score, shorts_title은 생략하세요.
+- 일반 설명 컷, 배경만 말하는 컷, 이미 말한 내용을 반복하는 컷, 인트로용 인사말 컷, 다음 전개 없이 정리만 하는 컷은 shorts_candidate=true로 지정하지 마세요.
+- 각 쇼츠 그룹의 첫 번째 컷은 질문/반전/숫자/위험/배신/사라진 기록/결정적 선택 중 하나로 바로 시작해야 합니다. 단, 본편 흐름을 깨는 별도 쇼츠용 대사는 만들지 마세요.
+- 각 쇼츠 그룹 첫 번째 컷의 narration 첫 8~14글자 또는 첫 3~5단어 안에 질문/반전/숫자/위험/배신/사라진 기록/결정적 선택이 드러나야 합니다.
+- 각 쇼츠 그룹의 마지막 컷은 새 정보 없이 끝내지 말고, 다음 편이나 본편을 놓치지 않게 만드는 구독 유도형 여운으로 끝내세요.
+- shorts_reason은 "debate question", "shocking fact", "longform mystery", "main character spotlight" 중 그룹 목적에 맞게 작성하세요.
+- shorts_score는 1~10점으로 넣으세요.
+- 선택된 컷에는 shorts_title을 추가하세요. 허위 과장과 없는 사실은 금지합니다.
+- shorts_title은 정보형 명사구 금지입니다. `~의 의미`, `~를 알아보자`, `~ 이야기`, `진짜 이유`만 단독으로 쓰면 실패입니다."""
+    else:
+        shorts_metadata_contract = """쇼츠 메타데이터 계약:
+- 이번 영상은 60컷 미만이므로 쇼츠 그룹을 만들지 마세요.
+- 모든 컷은 shorts_candidate=false만 넣고 shorts_group, shorts_reason, shorts_score, shorts_title은 생략하세요.
+- 4편 쇼츠, 15컷 그룹, 총 60개 쇼츠 후보 규칙은 이번 응답에 적용하지 않습니다."""
+
     return _sub(SCRIPT_SYSTEM_PROMPT_TEMPLATE, {
         "target_sec": tts_target_sec,
         "target_min_sec": tts_min_sec,
@@ -422,8 +471,13 @@ def get_system_prompt(language: str = "ko", config: dict | None = None) -> str:
         "target_low": target_low,
         "narration_lang": narration_lang,
         "national_pride_style": national_pride_style,
+        "japanese_narration_style": japanese_narration_style,
+        "japanese_visual_style": japanese_visual_style,
+        "cut_structure_contract": cut_structure_contract,
+        "image_sequence_contract": image_sequence_contract,
+        "shorts_metadata_contract": shorts_metadata_contract,
         "image_prompt_required_style": IMAGE_PROMPT_REQUIRED_STYLE,
-        "cut_video_duration": resolve_cut_video_duration(config),
+        "cut_video_duration": cut_duration,
     })
 # Keep backward compat
 SCRIPT_SYSTEM_PROMPT = get_system_prompt("ko")
@@ -453,43 +507,70 @@ class BaseLLMService(ABC):
         for cut in cuts:
             if not isinstance(cut, dict):
                 continue
-            image_prompt = str(cut.get("image_prompt") or "").strip()
-            if image_prompt and IMAGE_PROMPT_REQUIRED_STYLE.lower() not in image_prompt.lower():
-                image_prompt = f"{style_prefix}; {image_prompt}"
-                cut["image_prompt"] = image_prompt
-            elif not image_prompt:
-                image_prompt = style_prefix
-                cut["image_prompt"] = image_prompt
-            if simple_cartoon_only:
-                continue
+            original_prompt = str(cut.get("image_prompt") or "").strip()
             year = str(cut.get("visual_year") or "").strip()
             period = str(cut.get("visual_period") or "").strip()
             location = str(cut.get("visual_location") or "").strip()
             evidence = str(cut.get("visual_evidence") or "").strip()
+            subject = str(cut.get("visual_subject") or cut.get("main_subject") or "").strip()
+            explicit_scene = str(cut.get("visual_scene") or "").strip()
+            if not (year or period or location or evidence or subject or explicit_scene):
+                if original_prompt:
+                    if IMAGE_PROMPT_REQUIRED_STYLE.lower() not in original_prompt.lower():
+                        cut["image_prompt"] = f"{style_prefix}; {original_prompt}"
+                    continue
+                cut["image_prompt"] = style_prefix
+                continue
+            scene = explicit_scene or original_prompt
+            scene = BaseLLMService._strip_compiled_image_prompt(scene, style_prefix)
+
+            scene_parts: list[str] = []
+            if subject:
+                scene_parts.append(f"Main subject: {subject}")
+            if scene:
+                scene_parts.append(f"Scene: {scene}")
+            scene_text = "; ".join(scene_parts)
+
+            if simple_cartoon_only:
+                cut["image_prompt"] = "; ".join(part for part in (style_prefix, scene_text) if part)
+                continue
+
             prefix_parts: list[str] = []
             year_period = "; ".join(part for part in (year, period) if part)
             if year_period:
                 prefix_parts.append(f"Year/period: {year_period}")
-            if period:
-                prefix_parts.append(f"Historically accurate period details: {period}")
             if location:
                 prefix_parts.append(f"Exact place: {location}")
             if evidence:
                 prefix_parts.append(f"Scene evidence: {evidence}")
-            if not prefix_parts:
+            if not (prefix_parts or scene_text):
                 continue
-            prefix = "; ".join(prefix_parts + [style_prefix])
-            scene = image_prompt
-            if scene.lower().startswith(style_prefix.lower()):
-                scene = scene[len(style_prefix):].lstrip(" ;")
-            if scene.lower().startswith("scene:"):
-                scene = scene[6:].lstrip()
-            if image_prompt:
-                if prefix.lower() not in image_prompt.lower():
-                    cut["image_prompt"] = f"{prefix}; Scene: {scene}"
-            else:
-                cut["image_prompt"] = prefix
+            prompt_parts = prefix_parts + [style_prefix]
+            if scene_text:
+                prompt_parts.append(scene_text)
+            cut["image_prompt"] = "; ".join(part for part in prompt_parts if part)
         return script
+
+    @staticmethod
+    def _strip_compiled_image_prompt(prompt: str, style_prefix: str) -> str:
+        """Keep only the creative scene body from old expanded image_prompt values."""
+        out = str(prompt or "").strip()
+        if not out:
+            return ""
+        out = re.sub(
+            r"^\s*Year/period:\s*[^;]+(?:;\s*[^;]+)?;\s*"
+            r"(?:Historically accurate period details:\s*[^;]+;\s*)?"
+            r"(?:Exact place:\s*[^;]+;\s*)?"
+            r"(?:Scene evidence:\s*[^;]+;\s*)?",
+            "",
+            out,
+            flags=re.IGNORECASE,
+        )
+        out = re.sub(r"(?:^|;\s*)Style:\s*[^;]*;?", "; ", out, flags=re.IGNORECASE)
+        out = re.sub(rf"\b{re.escape(IMAGE_PROMPT_REQUIRED_STYLE)}\b\s*;?", "", out, flags=re.IGNORECASE)
+        out = re.sub(r"\s*;\s*", "; ", out).strip(" ;")
+        out = re.sub(r"^\s*Scene:\s*", "", out, flags=re.IGNORECASE).strip(" ;")
+        return out
 
     @staticmethod
     def _simple_cartoon_visuals(config: dict) -> bool:

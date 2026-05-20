@@ -157,8 +157,6 @@ def _has_required_scopes(creds: Optional[Credentials]) -> bool:
     granted = set(getattr(creds, "scopes", None) or getattr(creds, "granted_scopes", None) or [])
     if not granted:
         return False
-    if "https://www.googleapis.com/auth/youtube" in granted:
-        return True
     return set(SCOPES).issubset(granted)
 
 
@@ -172,18 +170,12 @@ def _token_file_has_required_scopes(path: Path) -> bool:
         granted = set(raw.split())
     else:
         granted = {str(item) for item in raw}
-    if "https://www.googleapis.com/auth/youtube" in granted:
-        return True
     return set(SCOPES).issubset(granted)
 
 
 def _load_credentials_from_token_file(path: Path) -> Credentials:
     """Load credentials while preserving broad-scope legacy YouTube tokens."""
     data = json.loads(path.read_text(encoding="utf-8"))
-    raw = data.get("scopes") or data.get("scope") or []
-    granted = set(raw.split()) if isinstance(raw, str) else {str(item) for item in raw}
-    if "https://www.googleapis.com/auth/youtube" in granted:
-        return Credentials.from_authorized_user_info(data)
     return Credentials.from_authorized_user_info(data, SCOPES)
 
 
@@ -193,7 +185,7 @@ def _friendly_youtube_error(prefix: str, e: Exception) -> str:
     if "youtube.thumbnail" in lowered and "doesn't have permissions" in lowered:
         return (
             f"{prefix}: 이 YouTube 채널은 현재 커스텀 썸네일 업로드 권한이 없습니다. "
-            "YouTube Studio의 채널 기능 자격요건에서 전화 인증/고급 기능을 활성화한 뒤 "
+            "YouTube 채널 기능 자격요건에서 전화 인증/고급 기능을 활성화한 뒤 "
             "썸네일만 다시 업로드하세요. (reason: customThumbnailPermissionDenied)"
         )
     if "uploadlimitexceeded" in lowered or "exceeded the number of videos" in lowered:
@@ -213,6 +205,20 @@ def _friendly_youtube_error(prefix: str, e: Exception) -> str:
             "잠시 후 다시 시도하거나 Google Cloud Console에서 YouTube Data API 할당량을 확인하세요. "
             "(reason: quotaExceeded)"
         )
+    if "insufficient authentication scopes" in lowered or "insufficientpermissions" in lowered:
+        return (
+            f"{prefix}: YouTube OAuth 권한이 부족합니다. "
+            "이 채널 토큰을 다시 인증해야 합니다. 필요한 권한은 "
+            "youtube.upload, youtube.force-ssl, youtube 입니다. "
+            "(reason: insufficientAuthenticationScopes)"
+        )
+    if (
+        "disabled comments" in lowered
+        or "comments disabled" in lowered
+        or "has disabled comments" in lowered
+        or "commentsdisabled" in lowered
+    ):
+        return f"{prefix}: 댓글이 비활성화된 영상입니다. (reason: commentsDisabled)"
     return f"{prefix}: {e}"
 
 
@@ -340,7 +346,11 @@ class YouTubeUploader:
 
                 try:
                     flow = InstalledAppFlow.from_client_secrets_file(str(CLIENT_SECRET_PATH), SCOPES)
-                    creds = flow.run_local_server(port=8090)
+                    creds = flow.run_local_server(
+                        port=0,
+                        prompt="select_account consent",
+                        include_granted_scopes="true",
+                    )
                 except Exception as e:
                     raise YouTubeAuthError(f"OAuth ë¡œì»¬ ì„œë²„ í”Œë¡œìš° ì‹¤íŒ¨: {e}") from e
 
@@ -1467,6 +1477,32 @@ class YouTubeUploader:
             raise YouTubeUploadError(f"ìž¬ìƒëª©ë¡ í•­ëª© ì¶”ê°€ ì‹¤íŒ¨: {e}") from e
         return {"item_id": resp.get("id"), "playlist_id": playlist_id, "video_id": video_id}
 
+    def add_to_playlist_if_missing(self, playlist_id: str, video_id: str) -> dict:
+        """Add a video to a playlist only when it is not already present."""
+        self._ensure()
+        if not playlist_id or not video_id:
+            raise YouTubeUploadError("playlist_id ë˜ëŠ” video_id ê°€ ë¹„ì–´ìžˆìŠµë‹ˆë‹¤.")
+        token = None
+        while True:
+            data = self.list_playlist_items(
+                playlist_id,
+                max_results=50,
+                page_token=token,
+            )
+            for item in data.get("items") or []:
+                if str(item.get("video_id") or "").strip() == str(video_id).strip():
+                    return {
+                        "item_id": item.get("item_id"),
+                        "playlist_id": playlist_id,
+                        "video_id": video_id,
+                        "already_present": True,
+                    }
+            token = data.get("next_page_token")
+            if not token:
+                break
+        result = self.add_to_playlist(playlist_id, video_id)
+        return {**result, "already_present": False}
+
     def remove_from_playlist(self, item_id: str) -> None:
         self._ensure()
         if not item_id:
@@ -1501,7 +1537,7 @@ class YouTubeUploader:
                 req["pageToken"] = page_token
             resp = self.youtube.commentThreads().list(**req).execute()
         except Exception as e:
-            raise YouTubeUploadError(f"ëŒ“ê¸€ ì¡°íšŒ ì‹¤íŒ¨: {e}") from e
+            raise YouTubeUploadError(_friendly_youtube_error("댓글 조회 실패", e)) from e
         out = []
         for it in resp.get("items") or []:
             sn = (it.get("snippet") or {})
@@ -1554,7 +1590,7 @@ class YouTubeUploader:
                 },
             ).execute()
         except Exception as e:
-            raise YouTubeUploadError(f"ë‹µê¸€ ìž‘ì„± ì‹¤íŒ¨: {e}") from e
+            raise YouTubeUploadError(_friendly_youtube_error("댓글 답변 실패", e)) from e
         sn = resp.get("snippet") or {}
         return {
             "comment_id": resp.get("id"),

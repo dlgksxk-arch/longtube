@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 from app.models.database import get_db
 from app.models.project import Project
 from app.models.cut import Cut
-from app.config import CHANNELS_ROOT, CUT_VIDEO_DURATION, RESULT_ARCHIVE_DIR, SYSTEM_PROJECTS_ROOT, resolve_project_dir
+from app.config import CHANNELS_ROOT, RESULT_ARCHIVE_DIR, SYSTEM_PROJECTS_ROOT, resolve_cut_video_duration, resolve_project_dir
 from app.services.video.factory import DEFAULT_VIDEO_MODEL, get_video_service, resolve_video_model
 from app.services.video.ffmpeg_service import FFmpegService
 from app.services.subtitle_service import burn_cut_subtitle_file
@@ -662,6 +662,7 @@ async def generate_all_videos(project_id: str, db: Session = Depends(get_db)):
 
     video_model = resolve_video_model(project.config.get("video_model", DEFAULT_VIDEO_MODEL))
     aspect_ratio = project.config.get("aspect_ratio", "16:9")
+    cut_duration = resolve_cut_video_duration(project.config or {})
     # v2.1.1: enable_ai_video=False → 모든 컷 Ken Burns 폴백
     enable_ai_video = bool((project.config or {}).get("enable_ai_video", True))
     selection = (project.config or {}).get("video_target_selection", "all") if enable_ai_video else "none"
@@ -724,7 +725,7 @@ async def generate_all_videos(project_id: str, db: Session = Depends(get_db)):
             result_path = await svc.generate(
                 image_path=_to_absolute(project_id, cut.image_path),
                 audio_path=_to_absolute(project_id, cut.audio_path),
-                duration=CUT_VIDEO_DURATION,
+                duration=cut_duration,
                 output_path=video_path,
                 aspect_ratio=aspect_ratio,
                 prompt=motion_prompt,
@@ -739,7 +740,7 @@ async def generate_all_videos(project_id: str, db: Session = Depends(get_db)):
                 narration,
                 aspect_ratio=aspect_ratio,
                 style_config=(project.config or {}).get("subtitle_style") or {},
-                duration=CUT_VIDEO_DURATION,
+                duration=cut_duration,
             )
 
             cut.video_path = _to_relative(project_id, result_path)
@@ -885,6 +886,7 @@ async def generate_all_videos_async(project_id: str, db: Session = Depends(get_d
             proj_config = dict(proj.config or {})
             video_model = resolve_video_model(proj_config.get("video_model", DEFAULT_VIDEO_MODEL))
             aspect_ratio = proj_config.get("aspect_ratio", "16:9")
+            cut_duration = resolve_cut_video_duration(proj_config)
             enable_ai_video = bool(proj_config.get("enable_ai_video", True))
             selection = proj_config.get("video_target_selection", "all") if enable_ai_video else "none"
             ai_first_n = int(proj_config.get("ai_video_first_n", 5) or 0) if enable_ai_video else 0
@@ -939,7 +941,7 @@ async def generate_all_videos_async(project_id: str, db: Session = Depends(get_d
                     "cut_number": c.cut_number,
                     "image_path": c.image_path,
                     "audio_path": c.audio_path,
-                    "audio_duration": c.audio_duration or 5.0,
+                    "audio_duration": c.audio_duration or cut_duration,
                     "narration": c.narration or "",
                     "script_cut": script_cut_map.get(int(c.cut_number), {}),
                 })
@@ -1034,7 +1036,7 @@ async def generate_all_videos_async(project_id: str, db: Session = Depends(get_d
                     )
                     print(
                         f"[video-async] cut {cut_number}/{total} START "
-                        f"duration={spec['audio_duration']} "
+                        f"duration={cut_duration} "
                         f"model={'ffmpeg-safe-motion' if force_safe_motion else (video_model if use_ai else 'ffmpeg-static')} ai={use_ai} "
                         f"motion={motion_prompt[:60]}..."
                     )
@@ -1054,7 +1056,7 @@ async def generate_all_videos_async(project_id: str, db: Session = Depends(get_d
                                 primary_disabled=primary_disabled,
                                 img_abs=img_abs,
                                 aud_abs=aud_abs,
-                                duration=CUT_VIDEO_DURATION,
+                                duration=cut_duration,
                                 output_path=video_path_out,
                                 aspect_ratio=aspect_ratio,
                                 motion_prompt=motion_prompt,
@@ -1075,7 +1077,7 @@ async def generate_all_videos_async(project_id: str, db: Session = Depends(get_d
                             narration,
                             aspect_ratio=aspect_ratio,
                             style_config=(proj_config or {}).get("subtitle_style") or {},
-                            duration=CUT_VIDEO_DURATION,
+                            duration=cut_duration,
                         )
                         counts[source] += 1
                         cut_results[cut_number] = result_path
@@ -1218,19 +1220,19 @@ async def generate_all_videos_async(project_id: str, db: Session = Depends(get_d
                 try:
                     from app.routers.subtitle import render_video_with_subtitles
                     from app.models.database import SessionLocal
-                    with open(_auto_render_log, "w") as _lf:
+                    with open(_auto_render_log, "w", encoding="utf-8") as _lf:
                         _lf.write("auto-render START\n")
                     render_db = SessionLocal()
                     try:
                         result = await render_video_with_subtitles(project_id, db=render_db)
-                        with open(_auto_render_log, "a") as _lf:
+                        with open(_auto_render_log, "a", encoding="utf-8") as _lf:
                             _lf.write(f"auto-render DONE: {result}\n")
                     finally:
                         render_db.close()
                 except Exception as re:
                     import traceback
                     tb = traceback.format_exc()
-                    with open(_auto_render_log, "a") as _lf:
+                    with open(_auto_render_log, "a", encoding="utf-8") as _lf:
                         _lf.write(f"auto-render FAILED: {re}\n{tb}\n")
                     print(f"[video-async] auto-render FAILED (non-fatal): {re}")
             else:
@@ -1324,6 +1326,7 @@ async def resume_videos_async(project_id: str, db: Session = Depends(get_db)):
             proj_config = dict(proj.config or {})
             video_model = resolve_video_model(proj_config.get("video_model", DEFAULT_VIDEO_MODEL))
             aspect_ratio = proj_config.get("aspect_ratio", "16:9")
+            cut_duration = resolve_cut_video_duration(proj_config)
             enable_ai_video = bool(proj_config.get("enable_ai_video", True))
             selection = proj_config.get("video_target_selection", "all") if enable_ai_video else "none"
             ai_first_n = int(proj_config.get("ai_video_first_n", 5) or 0) if enable_ai_video else 0
@@ -1367,7 +1370,7 @@ async def resume_videos_async(project_id: str, db: Session = Depends(get_db)):
                         "cut_number": c.cut_number,
                         "image_path": c.image_path,
                         "audio_path": c.audio_path,
-                        "audio_duration": c.audio_duration or 5.0,
+                        "audio_duration": c.audio_duration or cut_duration,
                         "narration": c.narration or "",
                         "script_cut": script_cut_map.get(int(c.cut_number), {}),
                     })
@@ -1439,6 +1442,7 @@ async def resume_videos_async(project_id: str, db: Session = Depends(get_db)):
                     )
                     print(
                         f"[video-resume] cut {cut_number} START "
+                        f"duration={cut_duration} "
                         f"model={'ffmpeg-safe-motion' if force_safe_motion else (video_model if use_ai else 'ffmpeg-static')} ai={use_ai}"
                     )
                     _s = _t.time()
@@ -1456,7 +1460,7 @@ async def resume_videos_async(project_id: str, db: Session = Depends(get_db)):
                                 primary_disabled=primary_disabled,
                                 img_abs=img_abs,
                                 aud_abs=aud_abs,
-                                duration=CUT_VIDEO_DURATION,
+                                duration=cut_duration,
                                 output_path=video_path_out,
                                 aspect_ratio=aspect_ratio,
                                 motion_prompt=motion_prompt,
@@ -1477,7 +1481,7 @@ async def resume_videos_async(project_id: str, db: Session = Depends(get_db)):
                             narration,
                             aspect_ratio=aspect_ratio,
                             style_config=(proj_config or {}).get("subtitle_style") or {},
-                            duration=CUT_VIDEO_DURATION,
+                            duration=cut_duration,
                         )
                         counts[source] += 1
                         cut_results[cut_number] = result_path
@@ -1618,19 +1622,19 @@ async def resume_videos_async(project_id: str, db: Session = Depends(get_db)):
                 try:
                     from app.routers.subtitle import render_video_with_subtitles
                     from app.models.database import SessionLocal
-                    with open(_auto_render_log, "w") as _lf:
+                    with open(_auto_render_log, "w", encoding="utf-8") as _lf:
                         _lf.write("auto-render START (resume)\n")
                     render_db = SessionLocal()
                     try:
                         result = await render_video_with_subtitles(project_id, db=render_db)
-                        with open(_auto_render_log, "a") as _lf:
+                        with open(_auto_render_log, "a", encoding="utf-8") as _lf:
                             _lf.write(f"auto-render DONE: {result}\n")
                     finally:
                         render_db.close()
                 except Exception as re:
                     import traceback
                     tb = traceback.format_exc()
-                    with open(_auto_render_log, "a") as _lf:
+                    with open(_auto_render_log, "a", encoding="utf-8") as _lf:
                         _lf.write(f"auto-render FAILED: {re}\n{tb}\n")
                     print(f"[video-resume] auto-render FAILED (non-fatal): {re}")
             else:

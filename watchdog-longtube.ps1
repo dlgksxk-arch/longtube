@@ -9,6 +9,10 @@ $StateFile = Join-Path $LogDir "longtube-watchdog-state.json"
 $BackendFailThreshold = 3
 $FrontendFailThreshold = 3
 $ComfyFailThreshold = 5
+$WatchdogMutex = New-Object System.Threading.Mutex($false, "Global\LongTubeWatchdog")
+if (-not $WatchdogMutex.WaitOne(0)) {
+  exit 0
+}
 
 function Write-WatchLog([string]$Message) {
   $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
@@ -66,6 +70,17 @@ function Test-Http([string]$Url, [int]$TimeoutSec = 5) {
   }
 }
 
+function Test-ProcessCommand([string]$Pattern) {
+  try {
+    $matches = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+      Where-Object { $_.CommandLine -and $_.CommandLine -match $Pattern })
+    return ($matches.Count -gt 0)
+  } catch {
+    Write-WatchLog "process command check failed: $($_.Exception.Message)"
+    return $false
+  }
+}
+
 function Stop-Port([int]$Port, [string]$Label) {
   try {
     $pids = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue |
@@ -82,6 +97,10 @@ function Stop-Port([int]$Port, [string]$Label) {
 }
 
 function Start-Backend {
+  if (Test-ProcessCommand "uvicorn\s+app\.main:app.*--port\s+8000") {
+    Write-WatchLog "Backend port not ready; uvicorn process already exists"
+    return
+  }
   $backend = Join-Path $Root "backend"
   $out = Join-Path $LogDir "watchdog-backend.out.log"
   $err = Join-Path $LogDir "watchdog-backend.err.log"
@@ -100,6 +119,10 @@ function Resolve-Node {
 }
 
 function Start-Frontend {
+  if (Test-ProcessCommand "next.*dev.*--port\s+3000") {
+    Write-WatchLog "Frontend port not ready; Next process already exists"
+    return
+  }
   $frontend = Join-Path $Root "frontend"
   $node = Resolve-Node
   $out = Join-Path $LogDir "watchdog-frontend.out.log"
@@ -115,6 +138,10 @@ function Start-Frontend {
 }
 
 function Start-Comfy {
+  if (Test-ProcessCommand "ComfyUI\\main\.py|main\.py.*--port\s+8188") {
+    Write-WatchLog "ComfyUI port not ready; ComfyUI process already exists"
+    return
+  }
   $script = Join-Path $Root "start-comfyui-lan.bat"
   if (!(Test-Path $script)) {
     Write-WatchLog "ComfyUI down but start script missing: $script"
@@ -178,4 +205,12 @@ try {
   Save-State $state
 } catch {
   Write-WatchLog "watchdog error: $($_.Exception.Message)"
+} finally {
+  if ($WatchdogMutex) {
+    try {
+      $WatchdogMutex.ReleaseMutex() | Out-Null
+      $WatchdogMutex.Dispose()
+    } catch {
+    }
+  }
 }

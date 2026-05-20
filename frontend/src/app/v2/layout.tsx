@@ -15,11 +15,7 @@ import {
   Layers,
   ListChecks,
   Activity,
-  Film,
-  Youtube,
   Image as ImageIcon,
-  MessageSquare,
-  ListVideo,
   KeyRound,
   HardDrive,
   ChevronDown,
@@ -46,16 +42,6 @@ const SECTIONS: NavSection[] = [
     ],
   },
   {
-    key: "youtube",
-    label: "유튜브",
-    items: [
-      { href: "/v2/youtube/channels", label: "채널 허브", icon: <Youtube size={15} /> },
-      { href: "/v2/youtube/videos", label: "내 영상", icon: <Film size={15} /> },
-      { href: "/v2/youtube/playlists", label: "재생목록", icon: <ListVideo size={15} /> },
-      { href: "/v2/youtube/comments", label: "댓글", icon: <MessageSquare size={15} /> },
-    ],
-  },
-  {
     key: "settings",
     label: "설정",
     items: [
@@ -72,7 +58,6 @@ export default function V2Layout({ children }: { children: React.ReactNode }) {
     const map: Record<string, boolean> = {
       preset: false,
       ddalkkak: false,
-      youtube: false,
       settings: false,
     };
     for (const s of SECTIONS) {

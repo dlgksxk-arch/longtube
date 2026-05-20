@@ -10,7 +10,7 @@ from app.config import REDIS_URL, resolve_cut_video_duration, resolve_project_di
 from app.models.database import SessionLocal
 from app.models.project import Project
 from app.models.cut import Cut
-from app.services.title_utils import script_title_for_language, with_episode_prefix, without_episode_prefix
+from app.services.title_utils import script_title_for_language, shorts_upload_title, with_episode_prefix, without_episode_prefix
 from app.services.llm.visual_policy import apply_script_visual_policy, normalize_cut_image_prompt, normalize_image_prompt
 from app.services.llm.script_quality import assert_script_quality
 from app.services.shorts_service import annotate_script_shorts
@@ -1925,8 +1925,7 @@ def _step_upload(project_id: str, config: dict):
                 or without_episode_prefix(script.get("title", "Untitled"))
                 or "Untitled"
             )
-            suffix = " #Shorts" if len(shorts_files) == 1 else f" #{idx} #Shorts"
-            shorts_title = f"{shorts_base_title[:max(1, 100 - len(suffix))].rstrip()}{suffix}"
+            shorts_title = shorts_upload_title(shorts_base_title, index=idx, total=len(shorts_files))
             shorts_description = format_description(
                 upload_description,
                 title=shorts_title,

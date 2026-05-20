@@ -23,6 +23,7 @@ from app.security.crypto import encrypt
 DEFAULT_VAULT_PROVIDERS: list[tuple[str, str]] = [
     ("Anthropic", "ANTHROPIC_API_KEY"),
     ("OpenAI", "OPENAI_API_KEY"),
+    ("OpenAI Admin", "OPENAI_ADMIN_KEY"),
     ("ElevenLabs", "ELEVENLABS_API_KEY"),
     ("fal.ai", "FAL_KEY"),
     ("xAI (Grok)", "XAI_API_KEY"),

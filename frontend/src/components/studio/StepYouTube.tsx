@@ -73,7 +73,7 @@ const PRIVACY_OPTIONS: { value: YouTubePrivacy; label: string; description: stri
   {
     value: "public",
     label: "전체 공개 (public)",
-    description: "모든 사람이 볼 수 있음. 되돌리려면 YouTube Studio 에서 직접 변경해야 함.",
+    description: "모든 사람이 볼 수 있음. 되돌리려면 YouTube에서 직접 변경해야 함.",
   },
 ];
 
@@ -675,7 +675,7 @@ export default function StepYouTube({ project, cuts, onUpdate }: Props) {
           <div className="text-[10px] text-gray-500 mt-1">
             {thumbMainHookTouched
               ? "직접 편집한 상태입니다."
-              : "자동값: titleHook > title 에서 'EP. N - ' 제거. 'AI 전체 추천' 후 바뀝니다."}
+              : "자동값: titleHook > title 에서 에피소드 표기 제거. 'AI 전체 추천' 후 바뀝니다."}
             {titleHook && <span className="ml-2 text-gray-600">후크: "{titleHook}"</span>}
           </div>
         </div>

@@ -4,7 +4,7 @@
  * 카드 한 개 = 한 프로바이더. 세로로 3영역 분할:
  *   1) 상태 — last_ping_status + last_ping_at + "테스트 핑" CTA
  *   2) 키  — masked_key + "편집" CTA (모달에서 평문 입력)
- *   3) 잔액 — balance_usd + "충전했어요" CTA (모달에서 금액 텍스트 수정)
+ *   3) 잔액 — balance_usd + OpenAI 공식 비용 동기화
  */
 "use client";
 
@@ -27,11 +27,25 @@ interface KeyRow {
   last_ping_at: string | null;
   balance_usd: string | null;
   enabled: boolean;
+  official_cost_sync?: OfficialCostSync | null;
+}
+
+interface OfficialCostSync {
+  configured: boolean;
+  status: string;
+  initial_balance_usd: number | null;
+  baseline_at: string | null;
+  official_spend_usd: number | null;
+  remaining_usd: number | null;
+  last_sync_at: string | null;
+  last_error: string | null;
+  credential_source: string | null;
 }
 
 const PROVIDER_ROLE: Record<string, string> = {
   Anthropic: "대본",
   OpenAI: "대본/이미지/보조",
+  "OpenAI Admin": "공식 비용 조회",
   ElevenLabs: "TTS · BGM",
   "fal.ai": "이미지 · 영상",
   "xAI (Grok)": "보조",
@@ -58,10 +72,30 @@ function pingTone(s: string): { dot: "ok" | "fail" | "idle"; label: string } {
   return { dot: "idle", label: "미확인" };
 }
 
+function fmtUsd(value: number | null | undefined): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "—";
+  return `$${value.toFixed(2)}`;
+}
+
+function isoToLocalInput(iso: string | null | undefined): string {
+  const d = iso ? new Date(iso) : new Date();
+  if (Number.isNaN(d.getTime())) return "";
+  const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 16);
+}
+
+function localInputToIso(value: string): string | null {
+  if (!value) return null;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString();
+}
+
 export default function V2SettingsApiPage() {
   const [rows, setRows] = useState<KeyRow[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [pinging, setPinging] = useState<string | null>(null);
+  const [syncingOpenAI, setSyncingOpenAI] = useState(false);
 
   // 모달 상태 ---------------------------------------------------------------
   const [keyModalProvider, setKeyModalProvider] = useState<string | null>(null);
@@ -96,6 +130,22 @@ export default function V2SettingsApiPage() {
     }
   };
 
+  const syncOpenAICosts = async () => {
+    setSyncingOpenAI(true);
+    setErr(null);
+    try {
+      const res = await fetch(v2Url("/v2/keys/openai-cost-sync/sync"), {
+        method: "POST",
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status} ${await res.text()}`);
+      await load();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSyncingOpenAI(false);
+    }
+  };
+
   const activeKeyRow = useMemo(
     () => rows?.find((r) => r.provider === keyModalProvider) ?? null,
     [rows, keyModalProvider],
@@ -111,7 +161,7 @@ export default function V2SettingsApiPage() {
         <h1 className="text-gray-100">API 키 · 잔액</h1>
         <p className="text-sm text-gray-500 mt-1">
           AES-GCM 암호화로 DB(api_key_vault) 에 저장됩니다. .env 파일은 건드리지
-          않습니다. 잔액은 수동 입력 (자동 동기화 없음).
+          않습니다. OpenAI는 Admin key가 있으면 공식 비용을 동기화합니다.
         </p>
       </header>
 
@@ -125,7 +175,9 @@ export default function V2SettingsApiPage() {
               key={r.provider}
               row={r}
               pinging={pinging === r.provider}
+              syncingOpenAI={syncingOpenAI && r.provider === "OpenAI"}
               onPing={() => ping(r.provider)}
+              onSyncOpenAI={syncOpenAICosts}
               onOpenKey={() => setKeyModalProvider(r.provider)}
               onOpenBalance={() => setBalanceModalProvider(r.provider)}
             />
@@ -163,18 +215,25 @@ export default function V2SettingsApiPage() {
 function ProviderCard({
   row,
   pinging,
+  syncingOpenAI,
   onPing,
+  onSyncOpenAI,
   onOpenKey,
   onOpenBalance,
 }: {
   row: KeyRow;
   pinging: boolean;
+  syncingOpenAI: boolean;
   onPing: () => void;
+  onSyncOpenAI: () => void;
   onOpenKey: () => void;
   onOpenBalance: () => void;
 }) {
   const tone = pingTone(row.last_ping_status);
   const role = PROVIDER_ROLE[row.provider] ?? "—";
+  const isOpenAI = row.provider === "OpenAI";
+  const isOpenAIAdmin = row.provider === "OpenAI Admin";
+  const sync = row.official_cost_sync;
   return (
     <li className="rounded-xl border border-border bg-bg-secondary p-4 space-y-3">
       {/* 헤더 --------------------------------------------------------- */}
@@ -219,18 +278,53 @@ function ProviderCard({
         </V2Button>
       </section>
 
-      {/* 영역 3: 잔액 ------------------------------------------------ */}
-      <section className="rounded-lg border border-border bg-bg-tertiary/60 px-3 py-2 flex items-center gap-3">
-        <div className="flex-1">
-          <div className="text-[11px] text-gray-500 uppercase tracking-wide">잔액</div>
-          <div className="text-sm text-gray-100 tabular-nums">
-            {row.balance_usd ? row.balance_usd : <span className="text-gray-500">—</span>}
+      {!isOpenAIAdmin && (
+        <section className="rounded-lg border border-border bg-bg-tertiary/60 px-3 py-2 flex items-center gap-3">
+          <div className="flex-1">
+            <div className="text-[11px] text-gray-500 uppercase tracking-wide">
+              {isOpenAI ? "충전 기준" : "잔액"}
+            </div>
+            <div className="text-sm text-gray-100 tabular-nums">
+              {row.balance_usd ? row.balance_usd : <span className="text-gray-500">—</span>}
+            </div>
           </div>
-        </div>
-        <V2Button size="sm" variant="secondary" onClick={onOpenBalance}>
-          충전했어요
-        </V2Button>
-      </section>
+          <V2Button size="sm" variant="secondary" onClick={onOpenBalance}>
+            {isOpenAI ? "기준 설정" : "충전했어요"}
+          </V2Button>
+        </section>
+      )}
+
+      {isOpenAI && (
+        <section className="rounded-lg border border-border bg-bg-tertiary/60 px-3 py-2 flex items-center gap-3">
+          <div className="flex-1 min-w-0">
+            <div className="text-[11px] text-gray-500 uppercase tracking-wide">공식 비용</div>
+            <div className="text-sm text-gray-100 tabular-nums">
+              {sync?.configured && sync.remaining_usd !== null
+                ? `${fmtUsd(sync.remaining_usd)} 남음`
+                : <span className="text-gray-500">기준 없음</span>}
+            </div>
+            {sync?.configured && (
+              <div className="text-xs text-gray-500 truncate">
+                사용 {fmtUsd(sync.official_spend_usd)} · 기준 {sync.baseline_at ? fmtRelTime(sync.baseline_at) : "미설정"} · 동기화 {fmtRelTime(sync.last_sync_at)}
+              </div>
+            )}
+            {sync?.last_error && (
+              <div className="text-xs text-red-300 truncate" title={sync.last_error}>
+                {sync.last_error}
+              </div>
+            )}
+          </div>
+          <V2Button
+            size="sm"
+            variant="secondary"
+            onClick={onSyncOpenAI}
+            loading={syncingOpenAI}
+            disabled={!sync?.configured}
+          >
+            동기화
+          </V2Button>
+        </section>
+      )}
     </li>
   );
 }
@@ -351,15 +445,18 @@ function BalanceEditModal({
 }) {
   const idp = useId();
   const [value, setValue] = useState("");
+  const [baselineLocal, setBaselineLocal] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
     setValue(row?.balance_usd ?? "");
+    setBaselineLocal(isoToLocalInput(row?.official_cost_sync?.baseline_at));
     setErr(null);
-  }, [row?.provider, row?.balance_usd]);
+  }, [row?.provider, row?.balance_usd, row?.official_cost_sync?.baseline_at]);
 
   if (!row) return null;
+  const isOpenAI = row.provider === "OpenAI";
 
   const submit = async () => {
     setSubmitting(true);
@@ -368,7 +465,11 @@ function BalanceEditModal({
       const res = await fetch(v2Url("/v2/keys/balance"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider: row.provider, balance_usd: value }),
+        body: JSON.stringify({
+          provider: row.provider,
+          balance_usd: value,
+          official_baseline_at: isOpenAI ? localInputToIso(baselineLocal) : null,
+        }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status} ${await res.text()}`);
       await onSaved();
@@ -399,7 +500,7 @@ function BalanceEditModal({
       <div className="space-y-3 text-sm">
         <div>
           <label htmlFor={`${idp}-bal`} className="block text-xs text-gray-400 mb-1">
-            현재 충전 잔액 (자유 텍스트)
+            {isOpenAI ? "충전액 USD" : "현재 충전 잔액 (자유 텍스트)"}
           </label>
           <input
             id={`${idp}-bal`}
@@ -411,9 +512,28 @@ function BalanceEditModal({
             placeholder="$25.00"
           />
           <p className="mt-1 text-xs text-gray-500">
-            표기 형식 자유. 비워 두면 &quot;—&quot; 로 표시됩니다.
+            {isOpenAI
+              ? "이 금액에서 OpenAI 공식 Costs API 사용액을 차감합니다."
+              : "표기 형식 자유. 비워 두면 \"—\" 로 표시됩니다."}
           </p>
         </div>
+        {isOpenAI && (
+          <div>
+            <label htmlFor={`${idp}-baseline`} className="block text-xs text-gray-400 mb-1">
+              충전/기준 시각
+            </label>
+            <input
+              id={`${idp}-baseline`}
+              type="datetime-local"
+              value={baselineLocal}
+              onChange={(e) => setBaselineLocal(e.target.value)}
+              className="w-full bg-bg-tertiary border border-border rounded-md px-3 py-2 text-sm text-gray-100 tabular-nums"
+            />
+            <p className="mt-1 text-xs text-gray-500">
+              이 시각 이후의 공식 OpenAI 비용만 차감합니다.
+            </p>
+          </div>
+        )}
         {err && (
           <p
             role="alert"

@@ -10,7 +10,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-from app.config import CUT_VIDEO_DURATION, NARRATION_VOLUME_GAIN
+from app.config import BGM_VOLUME_MULTIPLIER, CUT_VIDEO_DURATION, NARRATION_VOLUME_GAIN
 from app.services.video.subprocess_helper import find_ffmpeg, run_subprocess
 
 
@@ -51,7 +51,15 @@ def _cut_score(cut: dict[str, Any], index: int, total: int) -> int:
     return score
 
 
-SHORTS_CUT_COUNT = 12
+SHORTS_SEGMENT_COUNT = 4
+SHORTS_CUT_COUNT = 15
+SHORTS_TOTAL_CANDIDATE_CUT_COUNT = SHORTS_SEGMENT_COUNT * SHORTS_CUT_COUNT
+SHORTS_GROUP_PURPOSES = {
+    1: "논쟁 질문",
+    2: "충격 사실",
+    3: "롱폼으로 넘기는 미스터리",
+    4: "주요 인물 부각",
+}
 SHORTS_EXCLUDE_EDGE_CUTS = 5
 SHORTS_WIDTH = 1080
 SHORTS_HEIGHT = 1920
@@ -120,7 +128,7 @@ def _expand_segment(
     return start, end
 
 
-def select_shorts_segments(script: dict[str, Any], *, count: int = 1) -> list[dict[str, Any]]:
+def select_shorts_segments(script: dict[str, Any], *, count: int = SHORTS_SEGMENT_COUNT) -> list[dict[str, Any]]:
     """Return shorts segments using script-marked cuts first."""
     cuts = [c for c in script.get("cuts", []) or [] if isinstance(c, dict)]
     if not cuts:
@@ -172,8 +180,9 @@ def select_shorts_segments(script: dict[str, Any], *, count: int = 1) -> list[di
             "start_cut": nums[0],
             "end_cut": nums[-1],
             "cut_numbers": nums,
-            "reason": first_cut.get("shorts_reason") or "script-marked shorts cuts",
+            "reason": first_cut.get("shorts_reason") or SHORTS_GROUP_PURPOSES.get(group) or "script-marked shorts cuts",
             "title": first_cut.get("shorts_title") or first_cut.get("headline") or "",
+            "purpose": SHORTS_GROUP_PURPOSES.get(group) or "",
         })
         if len(segments) >= count:
             return segments
@@ -201,7 +210,8 @@ def select_shorts_segments(script: dict[str, Any], *, count: int = 1) -> list[di
             "group": len(segments) + 1,
             "start_cut": start,
             "end_cut": end,
-            "reason": "auto-selected hook/reveal segment",
+            "reason": SHORTS_GROUP_PURPOSES.get(len(segments) + 1) or "auto-selected hook/reveal segment",
+            "purpose": SHORTS_GROUP_PURPOSES.get(len(segments) + 1) or "",
         })
         if len(segments) >= count:
             break
@@ -224,14 +234,15 @@ def select_shorts_segments(script: dict[str, Any], *, count: int = 1) -> list[di
                 "group": len(segments) + 1,
                 "start_cut": start,
                 "end_cut": end,
-                "reason": "auto-selected distinct fallback segment",
+                "reason": SHORTS_GROUP_PURPOSES.get(len(segments) + 1) or "auto-selected distinct fallback segment",
+                "purpose": SHORTS_GROUP_PURPOSES.get(len(segments) + 1) or "",
             })
             if len(segments) >= count:
                 break
     return segments
 
 
-def annotate_script_shorts(script: dict[str, Any], *, count: int = 1) -> dict[str, Any]:
+def annotate_script_shorts(script: dict[str, Any], *, count: int = SHORTS_SEGMENT_COUNT) -> dict[str, Any]:
     """Ensure script cuts contain deterministic shorts metadata."""
     cuts = [c for c in script.get("cuts", []) or [] if isinstance(c, dict)]
     for cut in cuts:
@@ -250,19 +261,38 @@ def annotate_script_shorts(script: dict[str, Any], *, count: int = 1) -> dict[st
         c for c in cuts
         if c.get("shorts_candidate") is True and int(c.get("shorts_group") or 0) > 0
     ]
-    if len(existing_marked) >= SHORTS_CUT_COUNT:
-        ranked = sorted(
-            existing_marked,
-            key=lambda cut: (
-                -_cut_score(cut, int(cut.get("cut_number") or 0), len(cuts)),
-                int(cut.get("cut_number") or 0),
-            ),
-        )
-        keep = {id(cut) for cut in ranked[:SHORTS_CUT_COUNT]}
+    group_counts = {
+        group: sum(1 for cut in existing_marked if int(cut.get("shorts_group") or 0) == group)
+        for group in range(1, SHORTS_SEGMENT_COUNT + 1)
+    }
+    if all(group_counts[group] >= SHORTS_CUT_COUNT for group in range(1, SHORTS_SEGMENT_COUNT + 1)):
+        keep: set[int] = set()
+        for group in range(1, SHORTS_SEGMENT_COUNT + 1):
+            group_ranked = sorted(
+                (cut for cut in existing_marked if int(cut.get("shorts_group") or 0) == group),
+                key=lambda cut: (
+                    -_cut_score(cut, int(cut.get("cut_number") or 0), len(cuts)),
+                    int(cut.get("cut_number") or 0),
+                ),
+            )
+            keep.update(id(cut) for cut in group_ranked[:SHORTS_CUT_COUNT])
+        if len(keep) < SHORTS_TOTAL_CANDIDATE_CUT_COUNT:
+            ranked = sorted(
+                existing_marked,
+                key=lambda cut: (
+                    -_cut_score(cut, int(cut.get("cut_number") or 0), len(cuts)),
+                    int(cut.get("cut_number") or 0),
+                ),
+            )
+            for cut in ranked:
+                if len(keep) >= SHORTS_TOTAL_CANDIDATE_CUT_COUNT:
+                    break
+                keep.add(id(cut))
         for cut in cuts:
             if id(cut) in keep:
                 cut["shorts_candidate"] = True
-                cut["shorts_group"] = 1
+                group = int(cut.get("shorts_group") or 0)
+                cut["shorts_group"] = group if 1 <= group <= SHORTS_SEGMENT_COUNT else 1
                 cut["shorts_score"] = max(int(cut.get("shorts_score") or 0), 7)
             else:
                 cut["shorts_candidate"] = False
@@ -270,6 +300,9 @@ def annotate_script_shorts(script: dict[str, Any], *, count: int = 1) -> dict[st
         return script
 
     segments = select_shorts_segments(script, count=count)
+    for cut in cuts:
+        cut["shorts_candidate"] = False
+        cut["shorts_group"] = 0
     by_number = {}
     for cut in cuts:
         try:
@@ -740,7 +773,7 @@ def _short_title(script: dict[str, Any], seg: dict[str, Any], labels: dict[str, 
         if value:
             if _is_foreign_shorts_text(value, language):
                 continue
-            return _wrap_text(value, width=15, max_lines=2)
+            return _wrap_text(value, width=15, max_lines=3)
     return "\n".join(_hook_title_lines(script, seg))
 
 
@@ -831,7 +864,7 @@ async def render_shorts_from_final(
     channel_avatar_url: str | None = None,
     source_title: str | None = None,
     bgm_path: str | Path | None = None,
-    bgm_volume: float = 0.42,
+    bgm_volume: float = 0.21,
     bgm_ducking_strength: str = "low",
 ) -> list[dict[str, Any]]:
     """Render composed 9:16 shorts from the final rendered video."""
@@ -860,7 +893,7 @@ async def render_shorts_from_final(
         print(f"[shorts] BGM skipped, file not found: {bgm_file}")
         bgm_file = None
 
-    for idx, seg in enumerate(segments[:1], start=1):
+    for idx, seg in enumerate(segments[:SHORTS_SEGMENT_COUNT], start=1):
         start_cut = max(1, int(seg["start_cut"]))
         end_cut = max(start_cut, int(seg["end_cut"]))
         cut_numbers_raw = seg.get("cut_numbers")
@@ -1032,7 +1065,7 @@ async def render_shorts_from_final(
             cmd.extend(["-loop", "1", "-i", str(avatar_path)])
         if bgm_file:
             bgm_index = next_input_index
-            vol = max(0.0, min(1.0, float(bgm_volume)))
+            vol = max(0.0, min(1.0, float(bgm_volume) * float(BGM_VOLUME_MULTIPLIER)))
             narration_gain = max(0.5, min(4.0, float(NARRATION_VOLUME_GAIN)))
             duck = str(bgm_ducking_strength or "normal").strip().lower()
             bgm_filter = (

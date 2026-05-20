@@ -22,12 +22,16 @@ _WORKFLOW_FILES = {
     "comfyui-hunyuan15-480p": "hunyuan15_480p_i2v.json",
     "comfyui-wan22-ti2v-5b": "wan22_ti2v_5b_track_control.json",
     "comfyui-ltx23-v2": "ltx23_v2_i2v.json",
+    "comfyui-ltx23-v3": "ltx23_v3_t2v.json",
+    "comfyui-ltx23-v4": "ltx23_v4_i2v.json",
 }
 
 _DISPLAY_NAMES = {
     "comfyui-hunyuan15-480p": "ComfyUI HunyuanVideo 1.5 480p (local)",
     "comfyui-wan22-ti2v-5b": "ComfyUI Wan2.2 TI2V-5B (local)",
     "comfyui-ltx23-v2": "LTX 2.3 Local V2 (ComfyUI)",
+    "comfyui-ltx23-v3": "로컬모델 V3 (LTX 2.3 T2V)",
+    "comfyui-ltx23-v4": "로컬영상모델 V4 (LTX 2.3 I2V)",
 }
 
 # 모델별 기본 FPS. Wan 5B는 24fps 네이티브보다 16fps가 RTX 3090에서
@@ -36,6 +40,8 @@ _FPS_BY_MODEL = {
     "comfyui-hunyuan15-480p": 16,
     "comfyui-wan22-ti2v-5b": 16,
     "comfyui-ltx23-v2": 16,
+    "comfyui-ltx23-v3": 24,
+    "comfyui-ltx23-v4": 24,
 }
 
 # 해상도 배수 요구사항 (width/height 가 이 값의 배수여야 함).
@@ -43,6 +49,8 @@ _DIM_MULTIPLE = {
     "comfyui-hunyuan15-480p": 16,
     "comfyui-wan22-ti2v-5b": 32,
     "comfyui-ltx23-v2": 32,
+    "comfyui-ltx23-v3": 32,
+    "comfyui-ltx23-v4": 32,
 }
 
 # WAN/Hunyuan 계열은 프레임 수가 4n+1 형태.
@@ -50,6 +58,8 @@ _FRAME_QUANTIZE = {
     "comfyui-hunyuan15-480p": 4,
     "comfyui-wan22-ti2v-5b": 4,
     "comfyui-ltx23-v2": 4,
+    "comfyui-ltx23-v3": 4,
+    "comfyui-ltx23-v4": 8,
 }
 
 
@@ -74,15 +84,43 @@ def _wan_dims(aspect_ratio: str, multiple: int = 16) -> tuple[int, int]:
 
 
 def _wan22_ti2v_dims(aspect_ratio: str, multiple: int = 32) -> tuple[int, int]:
-    """Wan2.2 TI2V-5B quality-oriented 480p dimensions for RTX 3090."""
+    """Wan2.2 TI2V-5B safe dimensions for RTX 3090 test runs."""
     if aspect_ratio == "9:16":
-        w, h = 480, 864
+        w, h = 384, 640
     elif aspect_ratio == "1:1":
-        w, h = 512, 512
+        w, h = 448, 448
     elif aspect_ratio == "3:4":
-        w, h = 480, 640
+        w, h = 384, 512
     else:  # 16:9
-        w, h = 864, 480
+        w, h = 640, 384
+    w = (w // multiple) * multiple
+    h = (h // multiple) * multiple
+    return w, h
+
+
+def _ltx23_t2v_dims(aspect_ratio: str, multiple: int = 32) -> tuple[int, int]:
+    if aspect_ratio == "9:16":
+        w, h = 480, 832
+    elif aspect_ratio == "1:1":
+        w, h = 640, 640
+    elif aspect_ratio == "3:4":
+        w, h = 576, 768
+    else:
+        w, h = 832, 480
+    w = (w // multiple) * multiple
+    h = (h // multiple) * multiple
+    return w, h
+
+
+def _ltx23_i2v_dims(aspect_ratio: str, multiple: int = 32) -> tuple[int, int]:
+    if aspect_ratio == "9:16":
+        w, h = 576, 1024
+    elif aspect_ratio == "1:1":
+        w, h = 768, 768
+    elif aspect_ratio == "3:4":
+        w, h = 768, 1024
+    else:
+        w, h = 1024, 576
     w = (w // multiple) * multiple
     h = (h // multiple) * multiple
     return w, h
@@ -104,7 +142,111 @@ def _negative_for_model(model_id: str) -> str:
             + ", walking, running, foot lifting, leg crossing, kicking, stepping forward, "
             + "distorted gait, broken legs, duplicated limbs, melted legs, large arm swing"
         )
+    if model_id == "comfyui-ltx23-v2":
+        return (
+            "low quality, blurry, watermark, text, logo, subtitles, flicker, jitter, "
+            "sudden cut, scene change, object popping, geometry warping, new object, "
+            "new subject, new person, new character, new prop, appearing object, "
+            "spawned object, hallucinated object, extra object, extra person, invented prop, "
+            "face appearing, added face, new face, floating head, facial features appearing, "
+            "mouth movement, lip sync, blinking, eye blink, moving eyes, "
+            "impossible object transformation, identity change, melting buildings, "
+            "wobbly houses, breathing walls, liquid background, morphing architecture, "
+            "distorted windows, warped doors, texture crawling, deformed hands, "
+            "extra fingers, extra limbs, face morphing, identity drift, motion blur, "
+            "afterimage, ghosting, double exposure, transparent duplicate, duplicate people, "
+            "duplicate silhouette, frame echo, long exposure, speed lines, motion trails, "
+            "smeared body, smeared hands, stretched limbs, multiple heads, multiple bodies, "
+            "dotted texture, stippled texture, noisy body, dissolving body, melting person, "
+            "character transformation, broken anatomy, warped hands"
+        )
+    if model_id == "comfyui-ltx23-v3":
+        return (
+            VIDEO_NEGATIVE_PROMPT
+            + ", dotted texture, stippled texture, noisy body, dissolving body, melting person, "
+            + "ghosting, duplicate silhouette, transparent duplicate, body smear, face smear, "
+            + "identity drift, walking, stepping, large body movement, character transformation"
+        )
+    if model_id == "comfyui-ltx23-v4":
+        return (
+            "camera movement, zoom in, zoom out, camera push, dolly, pan, tilt, "
+            "handheld camera, shaky camera, text, subtitles, captions, watermark, logo, UI, "
+            "flicker, jitter, sudden cut, scene change, new object, duplicate subject, "
+            "identity drift, warping, melting, ghosting, motion smear"
+        )
     return VIDEO_NEGATIVE_PROMPT
+
+
+def _prompt_for_model(model_id: str, prompt: str) -> str:
+    base = (prompt or "").strip() or "a cinematic shot"
+    if model_id == "comfyui-ltx23-v2":
+        return (
+            base
+            + ". Preserve the exact source image composition and character identity. "
+            + "Add readable but controlled motion across the whole clip: slow camera push, "
+            + "gentle parallax, clothing sway, hand or head micro-movement, light movement, "
+            + "dust, smoke, paper, cloth, water, or screen glow when those elements are visible. "
+            + "Keep identity, anatomy, object count, and scene layout stable. "
+            + "Avoid sudden pose changes, walking cycles, new objects, or scene transformation."
+        )
+    if model_id == "comfyui-ltx23-v3":
+        return (
+            base
+            + ". Text-to-video generation. Clear stable composition, coherent anatomy, "
+            + "natural motion, no identity morphing, no flicker, no duplicate bodies."
+        )
+    if model_id == "comfyui-ltx23-v4":
+        return (
+            base
+            + ". Preserve the exact source image composition and subject identity. "
+            + "Create a locked-off image-to-video shot. No camera movement. No zoom in. "
+            + "No zoom out. No pan. No tilt. No dolly. No camera push. Only subtle natural "
+            + "internal motion where appropriate. Keep stable structure, coherent anatomy, "
+            + "no new objects, no text, no flicker."
+        )
+    return base
+
+
+def _i2v_strength_for_model(model_id: str) -> float:
+    if model_id in {"comfyui-ltx23-v2", "comfyui-ltx23-v4"}:
+        return 0.7
+    return 0.75
+
+
+def _cfg_for_model(model_id: str) -> float:
+    if model_id == "comfyui-wan22-ti2v-5b":
+        return 4.0
+    if model_id == "comfyui-ltx23-v2":
+        return 3.0
+    if model_id == "comfyui-ltx23-v3":
+        return 3.0
+    return 1.0
+
+
+def _steps_for_model(model_id: str) -> int:
+    if model_id == "comfyui-wan22-ti2v-5b":
+        return 12
+    if model_id == "comfyui-ltx23-v2":
+        return 20
+    if model_id == "comfyui-ltx23-v3":
+        return 32
+    return 8
+
+
+def _max_shift_for_model(model_id: str) -> float:
+    if model_id == "comfyui-ltx23-v3":
+        return 2.05
+    return 2.05
+
+
+def _base_shift_for_model(model_id: str) -> float:
+    if model_id == "comfyui-ltx23-v3":
+        return 0.95
+    return 0.95
+
+
+def _is_t2v_model(model_id: str) -> bool:
+    return model_id == "comfyui-ltx23-v3"
 
 
 def _length_for(duration: float, fps: int, quantize: int = 4) -> int:
@@ -155,16 +297,22 @@ class ComfyUIVideoService(BaseVideoService):
     ) -> str:
         if not output_path:
             raise ValueError("output_path required")
-        if not Path(image_path).exists():
+        if not _is_t2v_model(self.model_id) and not Path(image_path).exists():
             raise FileNotFoundError(f"입력 이미지 없음: {image_path}")
 
         # 0) 이전 모델(DreamShaper XL 등)이 VRAM 에 남아있으면 OOM 위험 → 해제
         await comfyui_client.free_memory(unload_models=True, free_memory=True)
 
-        # 1) 소스 이미지를 ComfyUI 서버에 업로드 → filename 획득
-        uploaded_name = await comfyui_client.upload_image(image_path)
+        # 1) I2V 모델은 소스 이미지를 ComfyUI 서버에 업로드한다. T2V 모델은 이미지 입력이 없다.
+        uploaded_name = ""
+        if not _is_t2v_model(self.model_id):
+            uploaded_name = await comfyui_client.upload_image(image_path)
 
-        if self.model_id == "comfyui-wan22-ti2v-5b":
+        if self.model_id == "comfyui-ltx23-v3":
+            w, h = _ltx23_t2v_dims(aspect_ratio, self.dim_multiple)
+        elif self.model_id == "comfyui-ltx23-v4":
+            w, h = _ltx23_i2v_dims(aspect_ratio, self.dim_multiple)
+        elif self.model_id == "comfyui-wan22-ti2v-5b":
             w, h = _wan22_ti2v_dims(aspect_ratio, self.dim_multiple)
         else:
             w, h = _wan_dims(aspect_ratio, self.dim_multiple)
@@ -187,13 +335,18 @@ class ComfyUIVideoService(BaseVideoService):
             self._template,
             {
                 "INPUT_IMAGE_NAME": uploaded_name,
-                "PROMPT": (prompt or "").strip() or "a cinematic shot",
+                "PROMPT": _prompt_for_model(self.model_id, prompt),
                 "NEGATIVE": _negative_for_model(self.model_id),
                 "WIDTH": w,
                 "HEIGHT": h,
                 "LENGTH": length,
                 "FPS": self.fps,
                 "SEED": seed,
+                "I2V_STRENGTH": _i2v_strength_for_model(self.model_id),
+                "CFG": _cfg_for_model(self.model_id),
+                "STEPS": _steps_for_model(self.model_id),
+                "MAX_SHIFT": _max_shift_for_model(self.model_id),
+                "BASE_SHIFT": _base_shift_for_model(self.model_id),
                 "PREFIX": prefix,
                 "TRACK_COORDS": track_coords,
                 "TRACK_STRENGTH": track_strength,

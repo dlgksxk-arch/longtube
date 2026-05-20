@@ -97,8 +97,11 @@ export function withEpisodeTitle(title: string | null | undefined, ep?: number |
   const text = String(title || "").trim();
   const prefix = episodePrefix(ep);
   if (!prefix) return text;
-  if (/^EP\.\s*\d+/i.test(text)) return text;
-  return `${prefix} ${text}`;
+  const clean = text
+    .replace(/^\s*EP\.?\s*\d+\s*[-:.)]?\s*/i, "")
+    .replace(/\s*(?:[|/\\\-–—:·]\s*)?EP\.?\s*\d+\s*$/i, "")
+    .trim();
+  return `${clean || text} ${prefix}`.trim();
 }
 
 export function queueTitle(item: OneClickQueueItem) {

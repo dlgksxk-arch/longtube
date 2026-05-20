@@ -11,6 +11,7 @@ from app.models.project import Project
 from app.models.cut import Cut
 from app.config import resolve_project_dir
 from app.services.llm.factory import get_llm_service
+from app.services.llm.base import BaseLLMService
 from app.services.llm.visual_policy import (
     apply_script_visual_policy,
     normalize_image_prompt,
@@ -85,6 +86,48 @@ def _save_script(project_id: str, script: dict, language: str = "ko"):
         json.dump(script, f, ensure_ascii=False, indent=2)
 
 
+def _load_prepared_script_for_router(project_id: str, config: dict, topic: str) -> Optional[dict]:
+    from app.tasks.pipeline_tasks import _load_prepared_script
+
+    prepared = _load_prepared_script(project_id, config, topic)
+    if not prepared:
+        return None
+    script, source_path = prepared
+    safe_source = str(source_path).encode("ascii", "backslashreplace").decode("ascii")
+    print(f"[Script] prepared script use: {safe_source}")
+    return script
+
+
+def _assert_script_provider_key(model_id: str) -> None:
+    from app import config as app_config
+
+    provider = "anthropic" if "claude" in model_id else "openai"
+    if provider == "anthropic" and not app_config.ANTHROPIC_API_KEY:
+        raise HTTPException(400, "ANTHROPIC_API_KEY not set. Add it to backend/.env file.")
+    if provider == "openai" and not app_config.OPENAI_API_KEY:
+        raise HTTPException(400, "OPENAI_API_KEY not set. Add it to backend/.env file.")
+
+
+def _finalize_script(
+    script: dict,
+    *,
+    project_title: str,
+    topic: str,
+    config: dict,
+) -> dict:
+    script = apply_script_visual_policy(script)
+    script = annotate_script_shorts(script)
+    BaseLLMService.assert_script_timing(script, config)
+    script["title"] = script_title_for_language(
+        generated_title=script.get("title"),
+        project_title=project_title,
+        topic=topic,
+        episode_number=config.get("episode_number"),
+        language=config.get("language", "ko"),
+    )
+    return _strip_script_motion_prompts(script)
+
+
 @router.post("/{project_id}/generate")
 async def generate_script(project_id: str, db: Session = Depends(get_db)):
     """Generate script using LLM"""
@@ -94,36 +137,26 @@ async def generate_script(project_id: str, db: Session = Depends(get_db)):
 
     model_id = project.config.get("script_model", "claude-sonnet-4-6")
 
-    # API 키 확인
-    # v1.1.63: UI 에서 바꾼 키가 즉시 반영되도록 config 모듈 속성을 참조.
-    from app import config as app_config
-    provider = "anthropic" if "claude" in model_id else "openai"
-    if provider == "anthropic" and not app_config.ANTHROPIC_API_KEY:
-        raise HTTPException(400, "ANTHROPIC_API_KEY not set. Add it to backend/.env file.")
-    if provider == "openai" and not app_config.OPENAI_API_KEY:
-        raise HTTPException(400, "OPENAI_API_KEY not set. Add it to backend/.env file.")
-
-    llm_service = get_llm_service(model_id)
-
     try:
         llm_config = dict(project.config or {})
         llm_config["__project_id"] = project_id
-        try:
-            await ensure_voice_profile_from_config(llm_config, log=print)
-        except Exception as profile_error:
-            print(f"[voice-profile] warning: using default timing because profiling failed: {profile_error}")
-        script = await llm_service.generate_script(project.topic, llm_config)
-        script = apply_script_visual_policy(script)
-        script = annotate_script_shorts(script)
-        llm_service.assert_script_timing(script, llm_config)
-        script["title"] = script_title_for_language(
-            generated_title=script.get("title"),
+        script = _load_prepared_script_for_router(project_id, llm_config, project.topic)
+        if script is None:
+            _assert_script_provider_key(model_id)
+            try:
+                await ensure_voice_profile_from_config(llm_config, log=print)
+            except Exception as profile_error:
+                print(f"[voice-profile] warning: using default timing because profiling failed: {profile_error}")
+            llm_service = get_llm_service(model_id)
+            script = await llm_service.generate_script(project.topic, llm_config)
+        script = _finalize_script(
+            script,
             project_title=project.title,
             topic=project.topic,
-            episode_number=(project.config or {}).get("episode_number"),
-            language=(project.config or {}).get("language", "ko"),
+            config=llm_config,
         )
-        script = _strip_script_motion_prompts(script)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(500, f"LLM script generation failed: {str(e)}")
 
@@ -197,15 +230,6 @@ async def generate_script_async(project_id: str, db: Session = Depends(get_db)):
 
     model_id = project.config.get("script_model", "claude-sonnet-4-6")
 
-    # API 키 확인
-    # v1.1.63: UI 에서 바꾼 키가 즉시 반영되도록 config 모듈 속성을 참조.
-    from app import config as app_config
-    provider = "anthropic" if "claude" in model_id else "openai"
-    if provider == "anthropic" and not app_config.ANTHROPIC_API_KEY:
-        raise HTTPException(400, "ANTHROPIC_API_KEY not set. Add it to backend/.env file.")
-    if provider == "openai" and not app_config.OPENAI_API_KEY:
-        raise HTTPException(400, "OPENAI_API_KEY not set. Add it to backend/.env file.")
-
     est_seconds = float((project.config or {}).get("estimate", {}).get("time_breakdown", {}).get("llm_script", 60))
     state = start_task(project_id, "script", 1, estimated_total_seconds=est_seconds)
 
@@ -225,23 +249,21 @@ async def generate_script_async(project_id: str, db: Session = Depends(get_db)):
         from app.models.database import SessionLocal
         local_db = SessionLocal()
         try:
-            try:
-                await ensure_voice_profile_from_config(config, log=print)
-            except Exception as profile_error:
-                print(f"[voice-profile] warning: using default timing because profiling failed: {profile_error}")
-            llm_service = get_llm_service(model_id)
-            script = await llm_service.generate_script(topic, config)
-            script = apply_script_visual_policy(script)
-            script = annotate_script_shorts(script)
-            llm_service.assert_script_timing(script, config)
-            script["title"] = script_title_for_language(
-                generated_title=script.get("title"),
+            script = _load_prepared_script_for_router(project_id, config, topic)
+            if script is None:
+                _assert_script_provider_key(model_id)
+                try:
+                    await ensure_voice_profile_from_config(config, log=print)
+                except Exception as profile_error:
+                    print(f"[voice-profile] warning: using default timing because profiling failed: {profile_error}")
+                llm_service = get_llm_service(model_id)
+                script = await llm_service.generate_script(topic, config)
+            script = _finalize_script(
+                script,
                 project_title=project_title,
                 topic=topic,
-                episode_number=config.get("episode_number"),
-                language=config.get("language", "ko"),
+                config=config,
             )
-            script = _strip_script_motion_prompts(script)
 
             proj = local_db.query(Project).filter(Project.id == project_id).first()
             if not proj:

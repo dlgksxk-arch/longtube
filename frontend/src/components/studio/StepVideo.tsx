@@ -182,7 +182,8 @@ export default function StepVideo({ project, cuts, onUpdate }: Props) {
   // Cost estimate
   const selectedModel = videoModels.find((m) => m.id === project.config.video_model);
   const costPerClip = selectedModel?.cost_value || 0;
-  const cutCount = cuts.length || Math.floor(project.config.target_duration / 5);
+  const cutVideoDuration = Math.max(1, Number(project.config.cut_video_duration || 5));
+  const cutCount = cuts.length || Math.ceil(project.config.target_duration / cutVideoDuration);
   // v1.1.36: 선택된 AI 컷 수 계산. 규칙은 backend video.py 와 동일.
   const videoTargetSelection = project.config.video_target_selection || "all";
   const countAiCuts = (total: number, selection: string): number => {

@@ -1,9 +1,9 @@
 """TTS generation wrapper with local duration fitting.
 
-The saved cut audio must be exactly the fixed video slot length. The spoken
-line is expected to land in the configured 4.3~4.8s window; if it is too long,
-local FFmpeg fitting compresses it under the hard ceiling and pads the file to
-the fixed cut duration. No extra TTS API calls are made for timing repair.
+The saved cut audio must be exactly the fixed video slot length. Spoken audio
+over the video slot is long and gets time-compressed into the slot; audio over
+the configured hard ceiling is too long. No extra TTS API calls are made for
+timing repair.
 """
 from __future__ import annotations
 
@@ -27,6 +27,21 @@ def _duration_ok(duration: float) -> bool:
     return app_config.TTS_MIN_DURATION <= duration <= min(app_config.TTS_MAX_DURATION, _hard_max_duration())
 
 
+def _duration_status(duration: float, config: dict | None = None) -> str:
+    """Classify measured spoken TTS against the fixed video slot."""
+    if duration <= 0:
+        return "unknown"
+    final_target = _final_cut_audio_duration(config)
+    hard_max = _hard_max_duration()
+    if duration > hard_max:
+        return "too_long"
+    if duration > final_target + 0.02:
+        return "long"
+    if duration < final_target - 0.02:
+        return "short"
+    return "slot_fit"
+
+
 def _hard_max_duration() -> float:
     try:
         return float(getattr(app_config, "TTS_HARD_MAX_DURATION", 4.8))
@@ -34,11 +49,11 @@ def _hard_max_duration() -> float:
         return 4.8
 
 
-def _final_cut_audio_duration() -> float:
+def _final_cut_audio_duration(config: dict | None = None) -> float:
     try:
-        return float(getattr(app_config, "CUT_VIDEO_DURATION", 5.0) or 5.0)
+        return float(app_config.resolve_cut_video_duration(config))
     except (TypeError, ValueError):
-        return 5.0
+        return 4.0
 
 
 def _unit_count(text: str, language: str) -> int:
@@ -197,17 +212,18 @@ def _probe_audio_duration(path: str) -> float:
     return 0.0
 
 
-def _fit_audio_duration_in_place(path: str, current_duration: float, log=None) -> float:
+def _fit_audio_duration_in_place(path: str, current_duration: float, config: dict | None = None, log=None) -> float:
     """Fit audio to the fixed cut slot without spending API credits.
 
-    The spoken narration should naturally land in TTS_MIN_DURATION~TTS_MAX_DURATION.
+    Spoken narration may land in TTS_MIN_DURATION~TTS_MAX_DURATION, but anything
+    above the fixed video slot is still long and must be compressed into it.
     The saved audio file itself must match the fixed video cut duration so muxing
     and subtitles stay aligned.
     """
     if current_duration <= 0:
         return current_duration
 
-    final_target = _final_cut_audio_duration()
+    final_target = _final_cut_audio_duration(config)
     if abs(current_duration - final_target) <= 0.02:
         return current_duration
 
@@ -216,7 +232,7 @@ def _fit_audio_duration_in_place(path: str, current_duration: float, log=None) -
     output_args: list[str] = ["-t", f"{final_target:.3f}"]
 
     hard_max = _hard_max_duration()
-    max_allowed = min(float(app_config.TTS_MAX_DURATION), hard_max)
+    max_allowed = min(float(app_config.TTS_MAX_DURATION), hard_max, final_target)
     if current_duration > max_allowed:
         spoken_target = max_allowed
         pad = max(0.0, final_target - spoken_target)
@@ -271,16 +287,16 @@ def _fit_audio_duration_in_place(path: str, current_duration: float, log=None) -
 def ensure_audio_duration_window(path: str, current_duration: float, config: dict | None = None, log=None) -> float:
     """Final no-credit guard before saving a cut audio file.
 
-    Returns the final file duration, which should be CUT_VIDEO_DURATION (5.0s).
+    Returns the final file duration, which should match the configured cut window.
     """
     if config and config.get("tts_audio_timing_fit", True) is False:
         return current_duration
-    final_target = _final_cut_audio_duration()
+    final_target = _final_cut_audio_duration(config)
     if abs(current_duration - final_target) <= 0.02:
         return current_duration
-    fitted = _fit_audio_duration_in_place(path, current_duration, log=log)
+    fitted = _fit_audio_duration_in_place(path, current_duration, config=config, log=log)
     if abs(fitted - final_target) > 0.03:
-        fitted = _fit_audio_duration_in_place(path, fitted, log=log)
+        fitted = _fit_audio_duration_in_place(path, fitted, config=config, log=log)
     return fitted
 
 
@@ -500,6 +516,9 @@ async def generate_tts_with_auto_narration_fit(
     final_result["narration_changed"] = final_narration != original
     final_result["rewrite_count"] = rewrite_count
     final_result["timing_ok"] = _duration_ok(fitted_spoken_duration)
+    final_result["timing_status"] = _duration_status(spoken_duration, config)
+    final_result["duration_was_long"] = final_result["timing_status"] in {"long", "too_long"}
+    final_result["duration_was_too_long"] = final_result["timing_status"] == "too_long"
     final_result["timing_distance"] = round(_duration_distance(fitted_spoken_duration), 3)
     if log and not _duration_ok(fitted_spoken_duration):
         log(

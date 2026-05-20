@@ -333,7 +333,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     #   음성이 창 길이보다 길면 창 길이로 잘린다 (길어봐야 창 안에서 잘림).
     #   음성이 짧으면 창의 나머지는 무음 + 자막 없음 상태로 남는다.
     for cut in cuts:
-        cut_window = float(CUT_VIDEO_DURATION)
+        cut_window = float(cut.get("cut_video_duration") or CUT_VIDEO_DURATION)
         speech_dur = float(cut.get("actual_duration") or cut.get("duration_estimate") or cut_window)
         if speech_dur <= 0:
             speech_dur = cut_window
@@ -375,7 +375,7 @@ def generate_srt(cuts: list[dict]) -> str:
     index = 1
 
     for cut in cuts:
-        cut_window = float(CUT_VIDEO_DURATION)
+        cut_window = float(cut.get("cut_video_duration") or CUT_VIDEO_DURATION)
         speech_dur = float(cut.get("actual_duration") or cut.get("duration_estimate") or cut_window)
         if speech_dur <= 0:
             speech_dur = cut_window

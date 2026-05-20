@@ -3,8 +3,11 @@
 These tests lock down small pure helpers before splitting the large
 oneclick_service module further. They do not call external APIs or start jobs.
 """
+import asyncio
 import copy
+import inspect
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -20,18 +23,28 @@ from app.services.tts import narration_fit  # noqa: E402
 from app.services.tts.pronunciation_normalizer import prepare_spoken_narration_for_tts  # noqa: E402
 from app.services import shorts_service  # noqa: E402
 from app.services import subtitle_service  # noqa: E402
+from app.services import youtube_service  # noqa: E402
+from app import config as app_config  # noqa: E402
+from app.services.title_utils import shorts_upload_title  # noqa: E402
 from app.services.image import prompt_builder  # noqa: E402
-from app.services.thumbnail_service import build_standard_thumbnail_prompt  # noqa: E402
+from app.services.thumbnail_service import (  # noqa: E402
+    THUMBNAIL_TEXT_OVERLAY_SCALE,
+    _scale_font_candidates,
+    build_standard_thumbnail_prompt,
+)
 from app.services.image.comfyui_service import (  # noqa: E402
     apply_longtube_local_v1_master_prompt,
     build_longtube_local_v1_negative_prompt,
     _enrich_local_v1_positive_prompt,
     _strip_local_v1_positive_only_prompt,
 )
-from app.services.llm.base import BaseLLMService  # noqa: E402
+from app.services.llm.base import BaseLLMService, get_system_prompt  # noqa: E402
 from app.services.llm.visual_policy import apply_script_visual_policy, normalize_cut_image_prompt  # noqa: E402
 from app.services.llm.script_quality import inspect_script_quality  # noqa: E402
 from app.routers import interlude as interlude_router  # noqa: E402
+from app.routers import script as script_router  # noqa: E402
+from app.routers import channel_ops as channel_ops_router  # noqa: E402
+from app.routers.projects import DEFAULT_CONFIG  # noqa: E402
 from app.routers import subtitle as subtitle_router  # noqa: E402
 from app.services.interlude_service import DEFAULT_INTERMISSION_EVERY  # noqa: E402
 from app.tasks import pipeline_tasks  # noqa: E402
@@ -50,6 +63,26 @@ class OneClickQueueStabilityTests(unittest.TestCase):
         self.assertEqual(cfg["target_duration"], 600)
         self.assertEqual(cfg["script_tts_target_sec"], 4.4)
         self.assertEqual(cfg["script_tts_tolerance_sec"], 0.2)
+
+    def test_oneclick_main_length_uses_requested_duration(self):
+        cfg = {}
+        svc._force_oneclick_main_length(cfg, 20)
+
+        self.assertEqual(cfg["cut_video_duration"], 4.0)
+        self.assertEqual(cfg["target_duration"], 20)
+        self.assertEqual(cfg["target_cuts"], 5)
+
+    def test_default_script_generation_uses_150_four_second_cuts(self):
+        self.assertEqual(app_config.CUT_VIDEO_DURATION, 4.0)
+        self.assertEqual(DEFAULT_CONFIG["cut_video_duration"], 4.0)
+        self.assertEqual(DEFAULT_CONFIG["target_duration"], 600)
+
+        prompt = get_system_prompt("ko", DEFAULT_CONFIG)
+        self.assertIn('"image_prompt": ""', prompt)
+        self.assertIn("visual_subject", prompt)
+        self.assertIn("visual_scene", prompt)
+        self.assertIn("duration_estimate는 컷 길이가 프로젝트 기본값", prompt)
+        self.assertIn("영상 컷 슬롯은 4.0초로 고정", prompt)
 
     def test_sort_queue_keeps_running_first_and_removes_terminal_rows(self):
         state = {
@@ -176,6 +209,181 @@ class OneClickQueueStabilityTests(unittest.TestCase):
         )
 
         self.assertEqual(direct["items"][0]["channel"], 4)
+
+    def test_orphan_v3_result_lookup_skips_empty_retry_folders(self):
+        original_root = svc.RESULT_ARCHIVE_DIR
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                svc.RESULT_ARCHIVE_DIR = root
+                ch_dir = root / "CH1"
+                ch_dir.mkdir(parents=True)
+                empty_retry = ch_dir / "EP.2.2605191735323cc127"
+                empty_retry.mkdir()
+                (empty_retry / "audio").mkdir()
+                existing = ch_dir / "EP.2.26051815093946c7fd"
+                existing.mkdir()
+                (existing / "script.json").write_text(
+                    json.dumps({"cuts": [{"cut_number": 1}]}),
+                    encoding="utf-8",
+                )
+                os.utime(empty_retry, (2000, 2000))
+                os.utime(existing, (1000, 1000))
+
+                found = svc._find_orphan_v3_result_project_for_queue_item(
+                    {"channel": 1, "episode_number": 2, "topic": "단군왕검"}
+                )
+        finally:
+            svc.RESULT_ARCHIVE_DIR = original_root
+
+        self.assertIsNotNone(found)
+        self.assertEqual(found[0], "V3_CH1_EP2_26051815093946c7fd")
+        self.assertEqual(found[2]["total_cuts"], 1)
+
+    def test_fire_queue_recovers_existing_project_before_preparing_new_v3_run(self):
+        old_tasks = copy.deepcopy(svc._TASKS)
+        old_queue = copy.deepcopy(svc._QUEUE)
+        old_loaded = svc._STATE_LOADED
+        originals = {
+            "_save_queue_to_disk": svc._save_queue_to_disk,
+            "_save_tasks_to_disk": svc._save_tasks_to_disk,
+            "_normalize_queue_runtime_state": svc._normalize_queue_runtime_state,
+            "_queue_running_task_for_channel": svc._queue_running_task_for_channel,
+            "_has_inflight_task": svc._has_inflight_task,
+            "_find_existing_task_for_queue_item": svc._find_existing_task_for_queue_item,
+            "_find_existing_project_for_queue_item": svc._find_existing_project_for_queue_item,
+            "recover_project": svc.recover_project,
+            "_reconcile_task_outputs": svc._reconcile_task_outputs,
+            "_compute_progress_pct": svc._compute_progress_pct,
+            "start_task": svc.start_task,
+            "prepare_task": svc.prepare_task,
+        }
+        started = []
+        result = None
+        queue_project_id = None
+
+        def fake_recover(project_id):
+            task = {
+                "task_id": "recovered-task",
+                "project_id": project_id,
+                "status": "failed",
+                "step_states": {"2": "completed", "3": "pending"},
+                "completed_cuts_by_step": {},
+                "total_cuts": 150,
+                "config": {},
+            }
+            svc._TASKS[task["task_id"]] = task
+            return task
+
+        def fail_prepare(**_kwargs):
+            raise AssertionError("prepare_task should not be called")
+
+        try:
+            svc._STATE_LOADED = True
+            svc._TASKS.clear()
+            svc._QUEUE.clear()
+            svc._QUEUE.update(
+                {
+                    "channel_times": {"1": None, "2": None, "3": None, "4": None},
+                    "last_run_dates": {},
+                    "channel_presets": {"1": "studio-ch1"},
+                    "items": [
+                        {
+                            "id": "queue-ep2",
+                            "topic": "단군왕검은 왕이었나",
+                            "channel": 1,
+                            "episode_number": 2,
+                            "status": "pending",
+                        }
+                    ],
+                }
+            )
+            svc._save_queue_to_disk = lambda: None
+            svc._save_tasks_to_disk = lambda: None
+            svc._normalize_queue_runtime_state = lambda save=True: None
+            svc._queue_running_task_for_channel = lambda _ch: None
+            svc._has_inflight_task = lambda: False
+            svc._find_existing_task_for_queue_item = lambda _item, _preset: None
+            svc._find_existing_project_for_queue_item = lambda _item: "V3_CH1_EP2_existing"
+            svc.recover_project = fake_recover
+            svc._reconcile_task_outputs = lambda _task, clear_terminal_cursor=False: False
+            svc._compute_progress_pct = lambda _task: 10.0
+            svc.start_task = lambda task_id: started.append(task_id) or svc._TASKS[task_id]
+            svc.prepare_task = fail_prepare
+
+            result = asyncio.run(svc._fire_queue_for_channel(1, triggered_by="manual"))
+            queue_project_id = svc._QUEUE["items"][0].get("project_id")
+        finally:
+            for name, value in originals.items():
+                setattr(svc, name, value)
+            svc._TASKS.clear()
+            svc._TASKS.update(old_tasks)
+            svc._QUEUE.clear()
+            svc._QUEUE.update(old_queue)
+            svc._STATE_LOADED = old_loaded
+
+        self.assertEqual(result["project_id"], "V3_CH1_EP2_existing")
+        self.assertEqual(started, ["recovered-task"])
+        self.assertEqual(queue_project_id, "V3_CH1_EP2_existing")
+
+    def test_empty_v3_retry_task_redirects_to_existing_episode_outputs(self):
+        old_tasks = copy.deepcopy(svc._TASKS)
+        originals = {
+            "_save_tasks_to_disk": svc._save_tasks_to_disk,
+            "_inspect_project_progress": svc._inspect_project_progress,
+            "_find_existing_project_for_queue_item": svc._find_existing_project_for_queue_item,
+            "recover_project": svc.recover_project,
+        }
+
+        def fake_recover(project_id):
+            recovered = {
+                "task_id": "fresh-recovered-task",
+                "project_id": project_id,
+                "status": "failed",
+                "step_states": {"2": "completed", "3": "pending"},
+                "completed_cuts_by_step": {},
+                "total_cuts": 150,
+                "config": {},
+                "logs": [],
+            }
+            svc._TASKS[recovered["task_id"]] = recovered
+            return recovered
+
+        try:
+            svc._TASKS.clear()
+            task = {
+                "task_id": "empty-retry",
+                "project_id": "V3_CH1_EP2_2605191735323cc127",
+                "status": "cancelled",
+                "topic": "단군왕검은 왕이었나",
+                "template_project_id": "studio-ch1",
+                "config": {},
+                "logs": [],
+            }
+            svc._TASKS["empty-retry"] = task
+            svc._save_tasks_to_disk = lambda: None
+            svc._inspect_project_progress = lambda *_args, **_kwargs: {
+                "has_script": False,
+                "audio_count": 0,
+                "image_count": 0,
+                "video_count": 0,
+                "has_merged": False,
+                "has_thumbnail": False,
+            }
+            svc._find_existing_project_for_queue_item = lambda _item: "V3_CH1_EP2_26051815093946c7fd"
+            svc.recover_project = fake_recover
+
+            redirected = svc._redirect_empty_v3_task_to_existing_episode("empty-retry", task)
+            recovered_present_after_redirect = "fresh-recovered-task" in svc._TASKS
+        finally:
+            for name, value in originals.items():
+                setattr(svc, name, value)
+            svc._TASKS.clear()
+            svc._TASKS.update(old_tasks)
+
+        self.assertEqual(redirected["task_id"], "empty-retry")
+        self.assertEqual(redirected["project_id"], "V3_CH1_EP2_26051815093946c7fd")
+        self.assertFalse(recovered_present_after_redirect)
 
     def test_queue_task_sync_prunes_terminal_rows_and_marks_active_as_running(self):
         old_tasks = copy.deepcopy(svc._TASKS)
@@ -533,7 +741,8 @@ class InterludeStabilityTests(unittest.TestCase):
         self.assertIn("정보형 명사구 금지", prompt_source)
         self.assertIn("shorts_title", prompt_source)
         self.assertIn("visual_year", prompt_source)
-        self.assertIn("Year/period: c. 1590-1591; Exact place: a specific visible place", prompt_source)
+        self.assertIn("image_prompt에는 긴 최종 프롬프트를 쓰지 말고", prompt_source)
+        self.assertIn("최종 image_prompt는 백엔드가", prompt_source)
 
     def test_prepared_script_loader_ignores_non_matching_invalid_files(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -585,6 +794,52 @@ class InterludeStabilityTests(unittest.TestCase):
         self.assertEqual(selected["episode_number"], 2)
         self.assertTrue(source_path.endswith("EP_002_good.json"))
 
+    def test_script_router_checks_prepared_script_before_llm_path(self):
+        self.assertIn(
+            "_load_prepared_script_for_router",
+            inspect.getsource(script_router.generate_script_async),
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            script_dir = root / "대본"
+            script_dir.mkdir()
+            valid_cut = {
+                "cut_number": 1,
+                "narration": "The target event begins.",
+                "image_prompt": (
+                    "Year/period: test period; Exact place: test place; "
+                    "Scene evidence: clay cup; Style: simple; Scene: visible person face; "
+                    "Main subject: visible person face"
+                ),
+                "visual_year": "test period",
+                "visual_period": "test period",
+                "visual_location": "test place",
+                "visual_evidence": "clay cup",
+            }
+            (script_dir / "EP_002_good.json").write_text(
+                json.dumps({
+                    "episode_number": 2,
+                    "topic": "Target topic",
+                    "title": "Target title",
+                    "cuts": [valid_cut],
+                }),
+                encoding="utf-8",
+            )
+
+            original_resolver = pipeline_tasks.resolve_project_dir
+            pipeline_tasks.resolve_project_dir = lambda *args, **kwargs: root
+            try:
+                selected = script_router._load_prepared_script_for_router(
+                    "unit-project",
+                    {"episode_number": 2},
+                    "Target topic",
+                )
+            finally:
+                pipeline_tasks.resolve_project_dir = original_resolver
+
+        self.assertEqual(selected["title"], "Target title")
+
     def test_thumbnail_prompt_forces_visible_character_face(self):
         prompt = build_standard_thumbnail_prompt({
             "topic": "곰이 사람이 됐다는 말, 사실은 왕권 이야기였다",
@@ -601,6 +856,10 @@ class InterludeStabilityTests(unittest.TestCase):
         self.assertIn("cropped head", prompt)
         self.assertIn("back view", prompt)
         self.assertIn("This face rule overrides any earlier scenery", prompt)
+
+    def test_thumbnail_overlay_font_candidates_are_scaled_to_seventy_percent(self):
+        self.assertEqual(THUMBNAIL_TEXT_OVERLAY_SCALE, 0.70)
+        self.assertEqual(_scale_font_candidates((200, 180, 42)), (140, 126, 29))
 
     def test_thumbnail_fallback_and_request_reject_body_only_faces(self):
         fallback = BaseLLMService._fallback_thumbnail_prompt(
@@ -736,6 +995,230 @@ class ShortsStabilityTests(unittest.TestCase):
         self.assertIn("segments[:SHORTS_SEGMENT_COUNT]", source)
 
 
+class YouTubeScopeStabilityTests(unittest.TestCase):
+    def test_youtube_token_scope_check_requires_force_ssl(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            token_path = Path(tmp) / "token.json"
+            token_path.write_text(
+                json.dumps({
+                    "token": "x",
+                    "refresh_token": "y",
+                    "token_uri": "https://oauth2.googleapis.com/token",
+                    "client_id": "cid",
+                    "client_secret": "sec",
+                    "scopes": [
+                        "https://www.googleapis.com/auth/youtube.upload",
+                        "https://www.googleapis.com/auth/youtube",
+                    ],
+                }),
+                encoding="utf-8",
+            )
+
+            self.assertFalse(youtube_service._token_file_has_required_scopes(token_path))
+
+    def test_youtube_insufficient_scope_error_is_actionable(self):
+        text = youtube_service._friendly_youtube_error(
+            "댓글 조회 실패",
+            Exception("Request had insufficient authentication scopes."),
+        )
+
+        self.assertIn("OAuth 권한이 부족", text)
+        self.assertIn("youtube.force-ssl", text)
+        self.assertIn("insufficientAuthenticationScopes", text)
+
+    def test_youtube_disabled_comments_error_is_readable(self):
+        text = youtube_service._friendly_youtube_error(
+            "댓글 조회 실패",
+            Exception("The video identified by the videoId parameter has disabled comments."),
+        )
+
+        self.assertIn("댓글이 비활성화", text)
+        self.assertIn("commentsDisabled", text)
+
+
+class UploadAndAudioMixStabilityTests(unittest.TestCase):
+    def test_shorts_upload_title_has_no_numeric_hashtag(self):
+        title = shorts_upload_title("숨겨진 진실 #1 #Shorts", index=1, total=4)
+
+        self.assertEqual(title, "숨겨진 진실 · Part 1 #Shorts")
+        self.assertNotRegex(title, r"#\d+\b")
+
+    def test_global_render_audio_mix_defaults(self):
+        self.assertAlmostEqual(app_config.NARRATION_VOLUME_GAIN, 1.3)
+        self.assertAlmostEqual(app_config.BGM_VOLUME_MULTIPLIER, 0.7)
+        self.assertAlmostEqual(subtitle_router._effective_bgm_volume(0.21), 0.147)
+
+
+class ChannelOpsCommentLoadingTests(unittest.TestCase):
+    def test_comment_translation_targets_non_korean_text(self):
+        self.assertFalse(channel_ops_router._needs_korean_translation("좋은 영상입니다."))
+        self.assertFalse(channel_ops_router._needs_korean_translation("123 !!! 😊"))
+        self.assertTrue(channel_ops_router._needs_korean_translation("Great video, thank you."))
+        self.assertTrue(channel_ops_router._needs_korean_translation("日本語の使い方が意味わかんねぇ"))
+        self.assertTrue(channel_ops_router._needs_korean_translation("यह बहुत अच्छा है"))
+
+    def test_comment_translation_assigns_korean_text(self):
+        captured = {}
+
+        class FakeCompletions:
+            async def create(self, **kwargs):
+                payload = json.loads(kwargs["messages"][1]["content"])
+                captured["texts"] = [item["text"] for item in payload["comments"]]
+                return SimpleNamespace(
+                    choices=[
+                        SimpleNamespace(
+                            message=SimpleNamespace(
+                                content=json.dumps({"translations": ["일본어 사용법이 이해가 잘 안 되네요."]}, ensure_ascii=False)
+                            )
+                        )
+                    ],
+                    usage=None,
+                )
+
+        class FakeChat:
+            def __init__(self):
+                self.completions = FakeCompletions()
+
+        class FakeOpenAI:
+            def __init__(self, api_key=None):
+                self.chat = FakeChat()
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        comments = [
+            {"text": "日本語の使い方が意味わかんねぇ"},
+            {"text": "한국어 댓글입니다."},
+        ]
+        original_openai = channel_ops_router.AsyncOpenAI
+        original_key = app_config.OPENAI_API_KEY
+        try:
+            channel_ops_router.AsyncOpenAI = FakeOpenAI
+            app_config.OPENAI_API_KEY = "test-key"
+            asyncio.run(channel_ops_router._translate_loaded_comments(comments))
+        finally:
+            channel_ops_router.AsyncOpenAI = original_openai
+            app_config.OPENAI_API_KEY = original_key
+
+        self.assertEqual(captured["texts"], ["日本語の使い方が意味わかんねぇ"])
+        self.assertEqual(comments[0]["translated_text"], "일본어 사용법이 이해가 잘 안 되네요.")
+        self.assertIsNone(comments[0]["translation_error"])
+        self.assertIsNone(comments[1]["translated_text"])
+        self.assertIsNone(comments[1]["translation_error"])
+
+    def test_comment_reply_profile_is_stable_and_varied(self):
+        first = channel_ops_router.CommentReplyTarget(
+            parent_comment_id="comment-a",
+            video_id="video-a",
+            comment_text="집현전이란 기관을 연구해봤어?",
+        )
+        second = channel_ops_router.CommentReplyTarget(
+            parent_comment_id="comment-b",
+            video_id="video-b",
+            comment_text="훌륭한 사람입니다 세종대왕 님 감사합니다",
+        )
+
+        self.assertEqual(
+            channel_ops_router._reply_profile(first),
+            channel_ops_router._reply_profile(first),
+        )
+        self.assertNotEqual(
+            channel_ops_router._reply_profile(first)["comment_type"],
+            channel_ops_router._reply_profile(second)["comment_type"],
+        )
+
+    def test_comment_loader_filters_videos_without_comments(self):
+        calls = []
+
+        class FakeUploader:
+            def __init__(self, channel_id=None):
+                self.channel_id = channel_id
+
+            def list_my_videos(self, max_results=50, page_token=None, include_details=True):
+                return {
+                    "items": [
+                        {"video_id": "no-comment", "title": "No comment", "comment_count": 0},
+                        {"video_id": "has-comment-1", "title": "Has comment 1", "comment_count": 2},
+                        {"video_id": "has-comment-2", "title": "Has comment 2", "comment_count": 1},
+                    ],
+                    "next_page_token": None,
+                }
+
+            def list_comment_threads(self, video_id, max_results=50, page_token=None, order="time"):
+                calls.append(video_id)
+                return {
+                    "items": [
+                        {
+                            "thread_id": f"thread-{video_id}",
+                            "top_comment_id": f"comment-{video_id}",
+                            "author": "viewer",
+                            "author_channel_id": "viewer-channel",
+                            "text": f"text {video_id}",
+                            "like_count": 0,
+                            "published_at": "2026-05-19T00:00:00Z",
+                            "updated_at": "2026-05-19T00:00:00Z",
+                            "total_reply_count": 0,
+                            "can_reply": True,
+                            "replies": [],
+                        }
+                    ],
+                    "next_page_token": None,
+                    "total_results": 1,
+                }
+
+        original_uploader = channel_ops_router.YouTubeUploader
+        original_own_channel = channel_ops_router._get_own_channel_id
+        try:
+            channel_ops_router.YouTubeUploader = FakeUploader
+            channel_ops_router._get_own_channel_id = lambda uploader: "owner-channel"
+
+            result = channel_ops_router._list_comments_sync(1, 10, 10)
+        finally:
+            channel_ops_router.YouTubeUploader = original_uploader
+            channel_ops_router._get_own_channel_id = original_own_channel
+
+        self.assertEqual(calls, ["has-comment-1", "has-comment-2"])
+        self.assertEqual(result["videos_scanned"], 3)
+        self.assertEqual(result["videos_with_comments"], 2)
+        self.assertEqual(result["videos_skipped_no_comments"], 1)
+        self.assertEqual(len(result["comments"]), 2)
+
+    def test_comment_loader_suppresses_disabled_comment_warnings(self):
+        class FakeUploader:
+            def __init__(self, channel_id=None):
+                self.channel_id = channel_id
+
+            def list_my_videos(self, max_results=50, page_token=None, include_details=True):
+                return {
+                    "items": [
+                        {"video_id": "disabled", "title": "Disabled", "comment_count": 1},
+                    ],
+                    "next_page_token": None,
+                }
+
+            def list_comment_threads(self, video_id, max_results=50, page_token=None, order="time"):
+                raise youtube_service.YouTubeUploadError(
+                    "댓글 조회 실패: The video identified by the videoId parameter has disabled comments."
+                )
+
+        original_uploader = channel_ops_router.YouTubeUploader
+        original_own_channel = channel_ops_router._get_own_channel_id
+        try:
+            channel_ops_router.YouTubeUploader = FakeUploader
+            channel_ops_router._get_own_channel_id = lambda uploader: "owner-channel"
+
+            result = channel_ops_router._list_comments_sync(1, 10, 10)
+        finally:
+            channel_ops_router.YouTubeUploader = original_uploader
+            channel_ops_router._get_own_channel_id = original_own_channel
+
+        self.assertEqual(result["comments"], [])
+        self.assertEqual(result["errors"], [])
+
+
 class TTSPronunciationStabilityTests(unittest.TestCase):
     def test_japanese_tts_uses_reading_only_for_spoken_input(self):
         original = "古事記と日本書紀では、卑弥呼と倭国、藤原不比等の扱いが変わります。"
@@ -750,6 +1233,7 @@ class TTSPronunciationStabilityTests(unittest.TestCase):
         self.assertIn("ふじわらのふひと", spoken)
         self.assertNotIn("古事記", spoken)
         self.assertNotIn("日本書紀", spoken)
+        self.assertNotRegex(spoken, r"[\u3400-\u9fff]")
 
     def test_japanese_tts_expanded_history_readings(self):
         original = "聖徳太子、大化の改新、壬申の乱、関ヶ原の戦い、明治維新を扱います。"
@@ -761,6 +1245,71 @@ class TTSPronunciationStabilityTests(unittest.TestCase):
         self.assertIn("じんしんのらん", spoken)
         self.assertIn("せきがはらのたたかい", spoken)
         self.assertIn("めいじいしん", spoken)
+
+    def test_japanese_tts_uses_okimi_in_yamato_context(self):
+        original = "ヤマト王権では、大王の権威が豪族との関係で強まりました。"
+
+        spoken = prepare_spoken_narration_for_tts(original, "ja")
+
+        self.assertIn("おおきみ", spoken)
+        self.assertNotIn("大王", spoken)
+
+    def test_japanese_tts_keeps_foreign_daio_context(self):
+        original = "アレクサンドロス大王の遠征とは別の話です。"
+
+        spoken = prepare_spoken_narration_for_tts(original, "ja")
+
+        self.assertIn("だいおう", spoken)
+        self.assertNotIn("おおきみ", spoken)
+        self.assertNotIn("大王", spoken)
+
+    def test_japanese_tts_comment_reported_ancient_terms(self):
+        original = "山背大兄王、蘇我入鹿、白村江の戦い、纒向遺跡を扱います。"
+
+        spoken = prepare_spoken_narration_for_tts(original, "ja")
+
+        self.assertIn("やましろのおおえのおう", spoken)
+        self.assertIn("そがのいるか", spoken)
+        self.assertIn("はくすきのえのたたかい", spoken)
+        self.assertIn("まきむくいせき", spoken)
+
+    def test_japanese_tts_manyoshu_reported_terms(self):
+        original = "東歌、防人歌、万葉仮名、古今和歌集を扱います。"
+
+        spoken = prepare_spoken_narration_for_tts(original, "ja")
+
+        self.assertIn("あずまうた", spoken)
+        self.assertIn("さきもりうた", spoken)
+        self.assertIn("まんようがな", spoken)
+        self.assertIn("こきんわかしゅう", spoken)
+
+    def test_japanese_tts_converts_leaked_korean_history_terms(self):
+        original = "신라와 백제はヤマト王権と関係します。"
+
+        spoken = prepare_spoken_narration_for_tts(original, "ja")
+
+        self.assertIn("しらぎとくだらは", spoken)
+        self.assertIn("やまとおうけん", spoken)
+        self.assertNotRegex(spoken, r"[\uac00-\ud7a3]")
+
+    def test_japanese_tts_uses_kana_safety_net_for_remaining_kanji(self):
+        original = "万葉集は、八世紀後半に形を整えた歌集です。歌は四千五百首前後です。"
+
+        spoken = prepare_spoken_narration_for_tts(original, "ja")
+
+        self.assertIn("まんようしゅう", spoken)
+        self.assertIn("はっせいきこうはん", spoken)
+        self.assertIn("よんせんごひゃくしゅぜんご", spoken)
+        self.assertNotRegex(spoken, r"[\u3400-\u9fff]")
+
+    def test_japanese_tts_handles_manyoshu_volume_counter(self):
+        original = "万葉集は、全二十巻の大きなまとまりです。"
+
+        spoken = prepare_spoken_narration_for_tts(original, "ja")
+
+        self.assertIn("ぜんにじゅっかん", spoken)
+        self.assertNotIn("じじゅう", spoken)
+        self.assertNotRegex(spoken, r"[\u3400-\u9fff]")
 
     def test_japanese_reading_does_not_apply_to_korean_tts(self):
         text = "古事記와 日本書紀"
@@ -913,13 +1462,13 @@ class HistoricalImagePromptStabilityTests(unittest.TestCase):
         )
 
         self.assertIn("의복, 머리모양, 머리 장식, 장신구", prompt_source)
-        self.assertIn("image_prompt에 보이는 시대 증거를 적어야 합니다", prompt_source)
+        self.assertIn("visual_scene에 보이는 시대 증거를 적어야 합니다", prompt_source)
         self.assertIn("시대에 맞을 법한 평범한 사물", prompt_source)
         self.assertIn("가짜 문자, 가짜 한자, 가짜 서예", prompt_source)
         self.assertIn("visual_year는 정확한 보이는 연도", prompt_source)
         self.assertIn("visual_location은 일반 배경이 아니라 구체적인 공간", prompt_source)
         self.assertIn("spoken cue", prompt_source)
-        self.assertIn("Main subject는 컷 내용에 맞게", prompt_source)
+        self.assertIn("visual_subject는 컷 내용에 맞게", prompt_source)
 
     def test_cut_image_prompt_strips_spoken_cue_and_narration_text(self):
         narration = "곰이 사람이 됐다는 이야기는 이상하게 들립니다."
@@ -960,6 +1509,28 @@ class HistoricalImagePromptStabilityTests(unittest.TestCase):
         self.assertTrue(any("narration label leaked" in issue for issue in issues))
         self.assertTrue(any("bad grammar pattern" in issue for issue in issues))
 
+    def test_script_quality_does_not_treat_scene_evidence_as_scene(self):
+        cuts = []
+        for i in range(150):
+            cuts.append({
+                "cut_number": i + 1,
+                "narration": f"테스트 문장 {i + 1}입니다.",
+                "image_prompt": (
+                    "Year/period: c. 1280s; "
+                    "Exact place: Gojoseon ritual settlement; "
+                    "Scene evidence: shared dating clue; "
+                    "Style: simple cartoon illustration, documentary cartoon style, clean thick outlines, soft natural shadows; "
+                    f"Main subject: subject {i + 1}; "
+                    f"Scene: unique action {i + 1} near a blank ritual table"
+                ),
+                "shorts_candidate": i < 60,
+                "shorts_group": (i // 15) + 1 if i < 60 else 0,
+            })
+
+        issues = inspect_script_quality({"title": "단군왕검", "cuts": cuts}, "단군왕검")
+
+        self.assertFalse(any("image scene repeated too often" in issue for issue in issues))
+
     def test_visual_context_injects_year_and_exact_place_into_image_prompt(self):
         script = {
             "cuts": [
@@ -980,6 +1551,32 @@ class HistoricalImagePromptStabilityTests(unittest.TestCase):
         self.assertTrue(prompt.startswith("Year/period: 1591; Late Sengoku period"))
         self.assertIn("Exact place: Hizen Nagoya castle council room, northern Kyushu, interior", prompt)
         self.assertIn("Scene: armored lords in a tense council room", prompt)
+
+    def test_visual_context_builds_prompt_from_compact_visual_fields(self):
+        script = {
+            "cuts": [
+                {
+                    "cut_number": 1,
+                    "image_prompt": "",
+                    "visual_year": "1591",
+                    "visual_period": "Late Sengoku period, Toyotomi rule, Japan",
+                    "visual_location": "Hizen Nagoya castle council room",
+                    "visual_evidence": "invasion planning pressure",
+                    "visual_subject": "Toyotomi envoy holding a sealed order",
+                    "visual_scene": "tense officials lean over a blank campaign map under dim lamplight",
+                }
+            ]
+        }
+
+        strengthened = BaseLLMService.strengthen_visual_context(script, {})
+        prompt = strengthened["cuts"][0]["image_prompt"]
+
+        self.assertIn("Year/period: 1591; Late Sengoku period", prompt)
+        self.assertIn("Exact place: Hizen Nagoya castle council room", prompt)
+        self.assertIn("Style: simple cartoon illustration", prompt)
+        self.assertIn("Main subject: Toyotomi envoy holding a sealed order", prompt)
+        self.assertIn("Scene: tense officials lean over a blank campaign map", prompt)
+        self.assertEqual(prompt.count("Style:"), 1)
 
     def test_visual_policy_preserves_year_and_place_prefix_before_storage(self):
         script = {
@@ -1002,6 +1599,66 @@ class HistoricalImagePromptStabilityTests(unittest.TestCase):
         self.assertIn("Year/period: c. 1590-1592; Late Sengoku period", prompt)
         self.assertIn("Exact place: Hizen Nagoya Castle area, northern Kyushu coast, exterior", prompt)
         self.assertIn("Scene: Toyotomi Hideyoshi standing near a dark sea", prompt)
+
+    def test_visual_policy_does_not_duplicate_compiled_visual_context(self):
+        script = {
+            "cuts": [
+                {
+                    "cut_number": 1,
+                    "narration": "test",
+                    "image_prompt": "",
+                    "visual_year": "1591",
+                    "visual_period": "Late Sengoku period",
+                    "visual_location": "Hizen Nagoya Castle",
+                    "visual_evidence": "planning pressure",
+                    "visual_subject": "Toyotomi envoy",
+                    "visual_scene": "officials point at a blank coastal map",
+                }
+            ]
+        }
+
+        strengthened = BaseLLMService.strengthen_visual_context(script, {})
+        applied = apply_script_visual_policy(strengthened)
+        prompt = applied["cuts"][0]["image_prompt"]
+
+        self.assertEqual(prompt.count("Year/period:"), 1)
+        self.assertEqual(prompt.count("Exact place:"), 1)
+        self.assertEqual(prompt.count("Scene evidence:"), 1)
+        self.assertEqual(prompt.count("Style:"), 1)
+        self.assertEqual(prompt.count("Main subject:"), 1)
+
+    def test_visual_policy_caps_modern_archive_scenes_for_classical_japan(self):
+        script = {
+            "title": "万葉集はなぜ古代の声なのか",
+            "description": "奈良時代と古代日本の和歌を扱います。",
+            "cuts": [
+                {
+                    "cut_number": idx,
+                    "narration": "記録と伝承を分けて見ることが大切です",
+                    "image_prompt": "",
+                    "visual_year": "c. 2020-2024",
+                    "visual_period": "Contemporary Japan, manuscript research",
+                    "visual_location": "modern archive reading room in Japan",
+                    "visual_evidence": "modern researcher comparison",
+                    "visual_subject": "modern researcher handling a manuscript reproduction",
+                    "visual_scene": "A researcher compares facsimile copies at a modern archive table",
+                }
+                for idx in range(1, 7)
+            ],
+        }
+
+        applied = apply_script_visual_policy(script)
+        prompts = [cut["image_prompt"] for cut in applied["cuts"]]
+        modern_count = sum(
+            1
+            for prompt in prompts
+            if "2020" in prompt
+            or "Contemporary Japan" in prompt
+            or "modern researcher" in prompt
+        )
+
+        self.assertLessEqual(modern_count, 1)
+        self.assertIn("Nara period manuscript compilation", prompts[-1])
 
 
 if __name__ == "__main__":

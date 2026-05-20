@@ -249,25 +249,40 @@ DATA_DIR = _DataDirProxy(_RAW_DATA_DIR)
 # v1.1.45 — 컷당 고정 영상 길이
 # --------------------------------------------------------------------------- #
 # 모든 컷은 정확히 이 길이(초)로 렌더링된다. 시간 계산과 자막 싱크가 단순해지고,
-# fal.ai 처럼 "5초 클립만 뽑아오는" 모델의 출력과 1:1 로 맞춰진다.
+# 150컷 × 4초 = 600초 롱폼 구성을 기본으로 맞춘다.
 # 음성이 이 길이보다 짧으면 끝에 무음으로 패딩되고, 길면 잘린다(경고 로그).
 # 값을 바꾸면 영상/자막/병합 전 파이프라인이 일괄로 따라간다.
-CUT_VIDEO_DURATION = 5.0
+CUT_VIDEO_DURATION = 4.0
 
-# TTS 음성 목표 길이. 대본 생성은 4.5초 중심으로 쓰고,
-# 음성 단계는 4.3~4.8초 범위를 정상으로 본다.
-TTS_TARGET_DURATION = 4.5
-TTS_MIN_DURATION = 4.3
-TTS_MAX_DURATION = 4.8
+
+def resolve_cut_video_duration(config: dict | None = None, default: float | None = None) -> float:
+    """Return per-project cut duration, falling back to the 4s default."""
+    fallback = float(default if default is not None else CUT_VIDEO_DURATION)
+    raw = None
+    if isinstance(config, dict):
+        raw = config.get("cut_video_duration")
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return fallback
+    if value <= 0:
+        return fallback
+    return max(1.0, min(30.0, value))
+
+# TTS 음성 목표 길이. 대본 생성은 4.4초 중심으로 쓰되,
+# 음성 단계에서는 4초 컷 슬롯보다 긴 음성을 "압축 대상"으로 본다.
+TTS_TARGET_DURATION = 4.4
+TTS_MIN_DURATION = 4.2
+TTS_MAX_DURATION = 4.6
 
 # Anthropic safety brake.  The automation can start multiple 600s scripts in a
 # row, so block new Claude calls after the rolling 24h spend crosses this cap.
 # Set ANTHROPIC_DAILY_LIMIT_USD=0 to disable deliberately.
 ANTHROPIC_DAILY_LIMIT_USD = float(os.getenv("ANTHROPIC_DAILY_LIMIT_USD", "1.00"))
 
-# Absolute safety ceiling: target is 4.3~4.8s, and audio longer than this
+# Absolute safety ceiling: target is 4.2~4.6s, and audio longer than this
 # must not be accepted into the pipeline.
-TTS_HARD_MAX_DURATION = 4.8
+TTS_HARD_MAX_DURATION = 4.6
 FIRST_CUT_FADE_IN_SECONDS = 0.5
 
 # Final render narration gain. This is applied at render/mix time so script text,
@@ -276,4 +291,8 @@ FIRST_CUT_FADE_IN_SECONDS = 0.5
 # 2026-05-06: 2.6 drove already-normal cut audio into the final limiter and
 # produced audible hard limiting in long renders. Keep the gain conservative;
 # final loudness is handled by the render filters.
-NARRATION_VOLUME_GAIN = float(os.getenv("NARRATION_VOLUME_GAIN", "1.0"))
+NARRATION_VOLUME_GAIN = float(os.getenv("NARRATION_VOLUME_GAIN", "1.3"))
+
+# Final render BGM gain multiplier. Stored project BGM volume remains unchanged;
+# this is applied only at render/mix time for both long-form and shorts outputs.
+BGM_VOLUME_MULTIPLIER = float(os.getenv("BGM_VOLUME_MULTIPLIER", "0.7"))

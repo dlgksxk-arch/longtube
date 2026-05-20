@@ -785,7 +785,7 @@ export default function V2PresetEditPage() {
       nextConfig.bgm_enabled = audio.bgm_enabled;
       nextConfig.bgm_style_prompt = audio.bgm_style_prompt;
       nextConfig.bgm_volume_db = bgmVolumeDb;
-      nextConfig.bgm_volume = dbToLinearVolume(bgmVolumeDb) ?? 0.42;
+      nextConfig.bgm_volume = dbToLinearVolume(bgmVolumeDb) ?? 0.21;
 
       const body: Record<string, unknown> = { config: nextConfig };
       if (name.trim() !== detail.name) body.name = name.trim();
@@ -1566,7 +1566,7 @@ function UploadSection({
           className="w-full bg-bg-tertiary border border-border rounded-md px-3 py-2 text-sm text-gray-100 font-mono"
         />
         <p className="mt-1 text-[11px] text-gray-500">
-          신규 재생목록 생성은 `/v2/youtube/playlists` 연결 후 지원 예정 (v2.4.0).
+          재생목록은 YouTube에서 생성한 뒤 ID만 입력합니다.
         </p>
       </div>
 

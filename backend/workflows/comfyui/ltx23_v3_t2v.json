@@ -1,14 +1,4 @@
 {
-  "_meta": {
-    "name": "LTX 2.3 Local V2 FP8 (image-to-video)",
-    "notes": "Uses local Lightricks LTX 2.3 FP8 checkpoint and Gemma 3 12B text encoder. No distilled LoRA or spatial upscaler dependency is required for this LongTube V2 registration."
-  },
-  "1": {
-    "class_type": "LoadImage",
-    "inputs": {
-      "image": "${INPUT_IMAGE_NAME}"
-    }
-  },
   "2": {
     "class_type": "CheckpointLoaderSimple",
     "inputs": {
@@ -60,16 +50,6 @@
       "batch_size": 1
     }
   },
-  "9": {
-    "class_type": "LTXVImgToVideoInplace",
-    "inputs": {
-      "vae": ["2", 2],
-      "image": ["1", 0],
-      "latent": ["8", 0],
-      "strength": "${I2V_STRENGTH}",
-      "bypass": false
-    }
-  },
   "10": {
     "class_type": "LTXVEmptyLatentAudio",
     "inputs": {
@@ -82,7 +62,7 @@
   "11": {
     "class_type": "LTXVConcatAVLatent",
     "inputs": {
-      "video_latent": ["9", 0],
+      "video_latent": ["8", 0],
       "audio_latent": ["10", 0]
     }
   },
@@ -104,7 +84,7 @@
   "14": {
     "class_type": "KSamplerSelect",
     "inputs": {
-      "sampler_name": "euler_ancestral_cfg_pp"
+      "sampler_name": "euler"
     }
   },
   "15": {
@@ -168,5 +148,9 @@
       "format": "mp4",
       "codec": "h264"
     }
+  },
+  "_meta": {
+    "name": "LTX 2.3 Local V3 T2V",
+    "mode": "text-to-video"
   }
 }

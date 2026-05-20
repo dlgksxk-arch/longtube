@@ -9,6 +9,9 @@ import re
 from typing import Any
 
 
+IMAGE_PROMPT_REQUIRED_STYLE = "simple cartoon illustration, documentary cartoon style, clean thick outlines, soft natural shadows"
+
+
 _PERSON_COUNT_RE = re.compile(
     r"\b(?:a\s+)?(?:single|one|two)\s+(?:simplified\s+)?(?:faceless\s+)?"
     r"(?:round[- ]head|rounded[- ]head)\s+"
@@ -106,6 +109,16 @@ _BANNED_BACKGROUND_RE = re.compile(
     r"\b(?:room|classroom|meeting room|office|laboratory|library|city|street|landscape|forest|window|wall|floor|ceiling|skyline)\b",
     re.IGNORECASE,
 )
+_CLASSICAL_JAPAN_TOPIC_RE = re.compile(
+    r"(万葉|古事記|日本書紀|奈良|飛鳥|平安|鎌倉|室町|戦国|江戸|"
+    r"古代|中世|ヤマト|大和|倭|古墳|和歌|東歌|防人|藤原|源氏|平家|幕府|国学)"
+)
+_MODERN_JAPAN_VISUAL_RE = re.compile(
+    r"\b(?:20\d{2}|2020s|contemporary|present[- ]day|modern|current|today|"
+    r"university|researcher|modern scholar|facsimile|classroom|public archive|"
+    r"modern archive|modern library|modern museum|tokyo classroom)\b",
+    re.IGNORECASE,
+)
 
 
 def _clean_spaces(text: str) -> str:
@@ -125,6 +138,93 @@ def _clean_spaces(text: str) -> str:
     text = re.sub(r"\s+,", ",", text)
     text = re.sub(r",\s*,+", ", ", text)
     return text.strip(" ,")
+
+
+def _looks_like_classical_japanese_history(script: dict[str, Any]) -> bool:
+    context = " ".join(str(script.get(key) or "") for key in ("title", "topic", "description"))
+    return bool(_CLASSICAL_JAPAN_TOPIC_RE.search(context))
+
+
+def _is_modern_japan_visual(cut: dict[str, Any]) -> bool:
+    fields = " ".join(
+        str(cut.get(key) or "")
+        for key in (
+            "visual_year",
+            "visual_period",
+            "visual_location",
+            "visual_evidence",
+            "visual_subject",
+            "visual_scene",
+            "image_prompt",
+        )
+    )
+    return bool(_MODERN_JAPAN_VISUAL_RE.search(fields))
+
+
+def _historical_japan_replacement(narration: str) -> dict[str, str]:
+    text = str(narration or "")
+    if any(term in text for term in ("江戸", "国学")):
+        return {
+            "visual_year": "c. 1700-1800",
+            "visual_period": "Edo period kokugaku manuscript study",
+            "visual_location": "quiet Edo-period scholar room with blank manuscript copies",
+            "visual_evidence": "The narration discusses later interpretation, so an Edo-period study scene fits without using a present-day archive.",
+            "visual_subject": "Edo-period scholar comparing blank manuscript copies",
+            "visual_scene": "A robed scholar leans over blank manuscript copies beside an inkstone and low wooden desk",
+        }
+    if any(term in text for term in ("近代", "文学")):
+        return {
+            "visual_year": "c. 1900-1930",
+            "visual_period": "early twentieth-century Japanese literary study",
+            "visual_location": "plain study room with blank manuscript reproductions",
+            "visual_evidence": "The narration mentions modern literary value, so an early scholarly setting is enough without repeating present-day archives.",
+            "visual_subject": "early twentieth-century literary scholar studying blank manuscript copies",
+            "visual_scene": "A scholar in plain period clothing compares blank manuscript copies at a simple wooden desk",
+        }
+    if any(term in text for term in ("鎌倉", "写本", "注釈", "写し")):
+        return {
+            "visual_year": "c. 1200-1300",
+            "visual_period": "Kamakura period manuscript transmission",
+            "visual_location": "monastic manuscript copying room in medieval Japan",
+            "visual_evidence": "The narration concerns copied manuscripts, so a medieval transmission scene matches the historical process.",
+            "visual_subject": "medieval scribe handling a blank copied scroll",
+            "visual_scene": "A scribe carefully compares blank scrolls on a low desk under quiet lamplight",
+        }
+    if any(term in text for term in ("平安", "古今", "和歌")):
+        return {
+            "visual_year": "c. 905-950",
+            "visual_period": "Heian period court poetry culture",
+            "visual_location": "Heian court writing room with blank poetry scrolls",
+            "visual_evidence": "The narration concerns waka reception, so a Heian poetry scene is closer than a present-day archive.",
+            "visual_subject": "Heian court poet reviewing blank scrolls",
+            "visual_scene": "A court poet studies blank scrolls near a low desk, sleeves resting beside an inkstone",
+        }
+    return {
+        "visual_year": "c. 759",
+        "visual_period": "Nara period manuscript compilation and preservation",
+        "visual_location": "Heijo-kyo record room with blank scroll bundles",
+        "visual_evidence": "The narration concerns ancient voices and surviving records, so a Nara manuscript scene fits the source world.",
+        "visual_subject": "Nara-period scribe guarding blank scroll bundles",
+        "visual_scene": "A court scribe steadies blank scroll bundles inside a wooden record room under soft lamplight",
+    }
+
+
+def limit_modern_japanese_history_visuals(script: dict[str, Any]) -> dict[str, Any]:
+    """Cap present-day archive/researcher scenes in classical Japanese history scripts."""
+    if not isinstance(script, dict) or not _looks_like_classical_japanese_history(script):
+        return script
+    cuts = script.get("cuts")
+    if not isinstance(cuts, list):
+        return script
+    modern_cuts = [cut for cut in cuts if isinstance(cut, dict) and _is_modern_japan_visual(cut)]
+    if not modern_cuts:
+        return script
+    cap = 5 if len(cuts) >= 100 else max(1, min(3, len(cuts) // 30 or 1))
+    for cut in modern_cuts[cap:]:
+        replacement = _historical_japan_replacement(str(cut.get("narration") or ""))
+        cut.update(replacement)
+        cut["image_prompt"] = ""
+    return script
 
 
 _SOFT_IDENTITY_REWRITES: tuple[tuple[str, str], ...] = (
@@ -184,6 +284,13 @@ def strip_repetitive_style_fillers(text: str) -> str:
 
 _ANT_GRASSHOPPER_CONTEXT_RE = re.compile(
     r"\b(ant|grasshopper|anthill)\b",
+    re.IGNORECASE,
+)
+
+_NARRATION_LEAK_LABEL_RE = re.compile(
+    r"(?:^|[;,.]\s*)"
+    r"(?:spoken\s+cue|narration\s+cue|narration|dialogue|voiceover|transcript|quote|line)"
+    r"\s*:\s*[^;]+;?",
     re.IGNORECASE,
 )
 
@@ -273,9 +380,25 @@ def normalize_image_prompt(prompt: str) -> str:
     return strip_repetitive_style_fillers(sanitize_softened_identity_phrases(prompt))
 
 
+def strip_narration_leakage(prompt: str, narration: str = "") -> str:
+    """Remove narration/script text that leaked into an image prompt."""
+    out = prompt or ""
+    out = _NARRATION_LEAK_LABEL_RE.sub("; ", out)
+    current = (narration or "").strip()
+    if current:
+        candidates = {current, current.rstrip(".!?。！？")}
+        candidates.update(part.strip() for part in re.split(r"[.!?。！？]\s*", current) if part.strip())
+        for candidate in sorted(candidates, key=len, reverse=True):
+            if len(candidate) >= 6:
+                out = re.sub(re.escape(candidate), "", out, flags=re.IGNORECASE)
+    out = re.sub(r";\s*;", "; ", out)
+    out = re.sub(r":\s*,", ":", out)
+    return _clean_spaces(out)
+
+
 def normalize_cut_image_prompt(prompt: str, narration: str = "", script_context: str = "") -> str:
     """Normalize one cut with narration-aware role alignment."""
-    normalized = normalize_image_prompt(prompt)
+    normalized = strip_narration_leakage(normalize_image_prompt(prompt), narration)
     return repair_ant_grasshopper_alignment(normalized, narration, script_context)
 
 
@@ -286,11 +409,21 @@ def _strip_visual_context_prefix(prompt: str) -> str:
         r"(?:Historically accurate period details:\s*[^;]+;\s*)?"
         r"(?:Exact place:\s*[^;]+;\s*)?"
         r"(?:Scene evidence:\s*[^;]+;\s*)?"
+        r"(?:Style:\s*[^;]+;\s*)?"
         r"Scene:\s*",
         "",
         out,
         flags=re.IGNORECASE,
     )
+    out = re.sub(r"(?:^|;\s*)Style:\s*[^;]*;?", "; ", out, flags=re.IGNORECASE)
+    out = re.sub(
+        rf"\b{re.escape(IMAGE_PROMPT_REQUIRED_STYLE)}\b\s*;?",
+        "",
+        out,
+        flags=re.IGNORECASE,
+    )
+    out = _clean_spaces(out).strip(" ;")
+    out = re.sub(r"^\s*Scene:\s*", "", out, flags=re.IGNORECASE).strip(" ;")
     return _clean_spaces(out)
 
 
@@ -303,23 +436,31 @@ def inject_cut_visual_context(cut: dict[str, Any]) -> None:
     period = str(cut.get("visual_period") or "").strip()
     location = str(cut.get("visual_location") or "").strip()
     evidence = str(cut.get("visual_evidence") or "").strip()
-    if not (year or period or location):
+    subject = str(cut.get("visual_subject") or cut.get("main_subject") or "").strip()
+    explicit_scene = str(cut.get("visual_scene") or "").strip()
+    if not (year or period or location or evidence or subject or explicit_scene):
         return
+    scene = explicit_scene or prompt
 
     parts: list[str] = []
     year_period = "; ".join(part for part in (year, period) if part)
     if year_period:
         parts.append(f"Year/period: {year_period}")
-    if period:
-        parts.append(f"Historically accurate period details: {period}")
     if location:
         parts.append(f"Exact place: {location}")
     if evidence:
         parts.append(f"Scene evidence: {evidence}")
+    parts.append(f"Style: {IMAGE_PROMPT_REQUIRED_STYLE}")
 
-    scene = _strip_visual_context_prefix(prompt)
+    scene = _strip_visual_context_prefix(scene)
+    scene_parts: list[str] = []
+    if subject:
+        scene_parts.append(f"Main subject: {subject}")
+    if scene:
+        scene_parts.append(f"Scene: {scene}")
     prefix = "; ".join(parts)
-    cut["image_prompt"] = f"{prefix}; Scene: {scene}" if scene else prefix
+    suffix = "; ".join(scene_parts)
+    cut["image_prompt"] = f"{prefix}; {suffix}" if suffix else prefix
 
 
 def normalize_motion_prompt(prompt: str, image_prompt: str = "") -> str:
@@ -331,6 +472,7 @@ def apply_script_visual_policy(script: dict[str, Any]) -> dict[str, Any]:
     """Keep generated prompts, but block known broken identity softeners."""
     if not isinstance(script, dict):
         return script
+    script = limit_modern_japanese_history_visuals(script)
     if isinstance(script.get("thumbnail_prompt"), str):
         script["thumbnail_prompt"] = normalize_image_prompt(script["thumbnail_prompt"])
     cuts = script.get("cuts")

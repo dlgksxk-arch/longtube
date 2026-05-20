@@ -13,8 +13,8 @@ import {
   Activity,
   Film,
   Upload,
+  MessageSquare,
   LayoutDashboard,
-  Youtube as YoutubeIcon,
   Key,
 } from "lucide-react";
 import {
@@ -28,13 +28,13 @@ const NAV = [
   { href: "/oneclick", label: "제작 큐", icon: ListTodo },
   { href: "/oneclick/upload-pending", label: "업로드 대기", icon: Upload },
   { href: "/oneclick/live", label: "작업대", icon: Activity },
+  { href: "/oneclick/channel-ops", label: "채널운영", icon: MessageSquare },
   { href: "/oneclick/library", label: "완성작 관리", icon: Film },
 ] as const;
 
 const TOP_NAV = [
   { href: "/", label: "대시보드", icon: LayoutDashboard },
   { href: "/oneclick", label: "딸깍 대시보드", icon: Zap },
-  { href: "/youtube", label: "YouTube Studio", icon: YoutubeIcon },
   { href: "/settings", label: "API 설정", icon: Key },
 ] as const;
 
@@ -71,6 +71,7 @@ function activeModelNameForStep(task: OneClickTask, step: number) {
     const names: Record<string, string> = {
       "comfyui-dreamshaper-xl": "SDXL Lightning",
       "comfyui-dreamshaper-xl-longtube": "SDXL 로컬모델 v1",
+      "comfyui-dreamshaper-xl-longtube-v15": "SDXL 로컬모델 v1.5 실사",
       "openai-image-1": "GPT Image 1",
       "openai-image-2": "OpenAI Image 2",
       "nano-banana-3": "Nano Banana 3",
@@ -107,6 +108,7 @@ const ONECLICK_SUBNAV = [
   { href: "/oneclick", label: "제작 큐", icon: ListTodo },
   { href: "/oneclick/upload-pending", label: "업로드 대기", icon: Upload },
   { href: "/oneclick/live", label: "작업대", icon: Activity },
+  { href: "/oneclick/channel-ops", label: "채널운영", icon: MessageSquare },
   { href: "/oneclick/library", label: "완성작 관리", icon: Film },
 ] as const;
 

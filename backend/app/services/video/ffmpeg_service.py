@@ -540,9 +540,9 @@ class FFmpegSafeMotionService(BaseVideoService):
         # still uses the original image only; no generative model is called.
         vf = (
             f"[0:v]scale={resolution}:force_original_aspect_ratio=increase,"
-            f"crop={resolution},setsar=1,fps={fps},"
+            f"crop={pad_wh},setsar=1,fps={fps},"
             "scale=iw*1.12:ih*1.12,"
-            f"crop={resolution}:"
+            f"crop={pad_wh}:"
             "x=(in_w-out_w)/2+6*sin(2*PI*n/9):"
             "y=(in_h-out_h)/2+4*cos(2*PI*n/7),"
             "eq=contrast='1.12+0.10*sin(2*PI*n/30)':"

@@ -170,7 +170,8 @@ export default function StepImage({ project, cuts, onUpdate }: Props) {
   // v1.1.56: `||` 대신 `??` — `cost_value: 0` (ComfyUI 로컬 무료 모델) 이
   // falsy 로 간주돼 0.03 폴백에 덮여 실제는 $0 인데 UI 는 ~$0.18 로 표시되던 버그 수정.
   const costPerImage = selectedModel?.cost_value ?? 0.03;
-  const cutCount = cuts.length || Math.floor(project.config.target_duration / 5);
+  const cutVideoDuration = Math.max(1, Number(project.config.cut_video_duration || 5));
+  const cutCount = cuts.length || Math.ceil(project.config.target_duration / cutVideoDuration);
   const estimatedImageCost = cutCount * costPerImage;
 
   return (

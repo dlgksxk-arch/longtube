@@ -1,214 +1,426 @@
-# 새 세션 인계 메모 - 2026-05-09 21:50 KST
+# 새 세션 인계 메모 - 2026-05-12 12:52 KST
 
 ## 작업 원칙
 
-- 추측으로 수정하지 말 것. 실제 파일, 실제 API, 실제 브라우저 상태 기준으로만 판단.
+- 추측으로 수정하지 말 것. 실제 파일, 실제 API, 실제 브라우저/파일 상태 기준으로만 판단.
 - 생성 결과물 직접 수정 금지. 결과물 문제는 로직 수정으로 다음 생성물에 반영.
-- 실행 중 작업이 있으면 백엔드/ComfyUI 재시작은 사용자 허락 없이 하지 말 것.
-- 현재 워킹트리에 이전 세션 변경이 다수 섞여 있음. 이번 큐 정리와 무관한 변경은 되돌리지 말 것.
+- 중요 수정 또는 기능 수정은 사용자 허락 후 진행.
+- 현재 워킹트리에는 이전 작업 변경이 다수 섞여 있음. 무관한 변경은 되돌리지 말 것.
 
-## 이번 세션 핵심 목표
+## 현재 상태
 
-사용자가 지적한 문제:
-- 전체 작업큐에서 실제 진행 중인 에피소드가 최상단 고정되지 않음.
-- 진행 중 작업인데 `1번 지정`, 이동, 삭제 버튼이 살아 있음.
-- 완료/실패/취소/중단 상태가 큐에 섞여 다음 실행 순서와 작업대 표시가 틀어짐.
-- 프론트가 자체 정렬을 하면서 백엔드 실제 순서와 화면 순서가 어긋날 수 있음.
+- LongTube 백엔드/프론트 재시작 완료.
+  - 백엔드 PID: `13160`
+  - 프론트 PID: `15492`
+- 현재 실행 중 oneclick 작업 없음.
+- 마지막 추적 작업 `31f18df4` 완료.
+  - 작업: `CH3 EP.15`
+  - 제목: `埴輪はなぜ墓の上に立ったのか？知られざる古代日本の境界線 EP.15`
+  - 결과 폴더: `D:\long_result\CH3\EP.15.2605121137376a5eb5`
+  - YouTube URL: `https://www.youtube.com/watch?v=WM49E5sBMU0`
+  - 생성물 확인: 이미지 150개, 음성 150개, 영상 151개, 최종 output 파일 6개
+  - 완료 로그: `YouTube 처리 완료 확인`, `제작 완료`
 
-정한 동작 규칙:
-1. 백엔드가 제작큐의 단일 기준이다.
-2. 작업큐에는 `pending`과 `running`만 남긴다.
-3. `completed / failed / cancelled / paused`는 작업큐에서 제거한다.
-4. `running / queued / prepared / uploading`은 작업큐 표시상 `running`으로 취급한다.
-5. 실행 중 작업은 항상 최상단에 고정한다.
-6. 실행 중 작업의 선택, `1번 지정`, 위/아래 이동, 삭제는 비활성화한다.
-7. 실행 순서는 `running` -> 작업대 수동 1번 지정 -> 일반 자동 큐 순서다.
-8. 일반 자동 큐는 채널 실행 시간 순, 같은 채널 내부는 EP 오름차순이다.
-9. 프론트는 서버가 내려준 큐 순서를 그대로 표시한다.
-10. 프론트가 PUT으로 실행 중 항목을 빼거나 바꿔 보내도 백엔드가 실행 중 항목을 보존한다.
+## 이번 세션에서 완료한 일
 
-## 이번 세션 수정 파일
+### 1. OpenAI 공식 비용 동기화 기능 추가
 
-### `backend/app/services/oneclick_stability_helpers.py`
+추가/수정 파일:
+- `backend/app/services/openai_cost_sync.py`
+- `backend/app/routers/v2/keys.py`
+- `backend/app/security/vault_sync.py`
+- `frontend/src/app/v2/settings/api/page.tsx`
 
-추가/수정:
-- `QUEUE_ACTIVE_STATUSES = {"running", "uploading", "queued", "prepared"}`
-- `QUEUE_TERMINAL_STATUSES = {"completed", "failed", "cancelled", "paused"}`
-- `normalized_queue_status(value)`
-- `is_active_queue_status(value)`
-- `is_terminal_queue_status(value)`
-- `sort_queue_items_for_execution()`에서 terminal 상태 항목은 실행 정렬 결과에서 제외.
-- active 상태는 모두 `running` 그룹으로 정렬.
+동작:
+- OpenAI는 잔액 API가 없으므로 공식 `organization/costs` API 사용액을 조회한다.
+- 표시 계산은 `사용자가 입력한 충전액 - 공식 Costs API 사용액`.
+- `OpenAI Admin` provider를 추가했다.
+- `OPENAI_ADMIN_KEY` 또는 vault의 `OpenAI Admin` 키가 필요하다.
+- 현재 일반 `OPENAI_API_KEY`는 모델 조회는 되지만 costs 조회는 `api.usage.read` 권한 부족으로 실패했었다.
 
-의도:
-- 큐 정렬 기준을 순수 헬퍼에 고정.
-- 서비스/테스트가 같은 상태 해석을 쓰게 함.
+검증:
+- `python -m py_compile` 통과
+- v2 keys 라우터 등록 확인
+- `npx tsc --noEmit` 통과
+- ESLint는 프로젝트 설정이 없어 Next 설정 프롬프트가 떠서 실행 불가
 
-### `backend/app/services/oneclick_service.py`
+### 2. CH3 EP.15 작업 팔로우
 
-주요 추가/수정 지점:
-- `_sync_queue_items_from_tasks_for_save(save: bool = True)`
-  - 큐 행과 `_TASKS` 상태를 동기화.
-  - linked task가 terminal이면 큐에서 제거.
-  - linked task가 active이면 큐 행을 `running`으로 보정.
-  - 큐 행이 `running`인데 linked task가 없으면 `pending`으로 내리고 task 관련 필드 제거.
-  - 실행 중 task가 있는데 큐 행이 없으면 `running` 큐 행을 새로 생성.
-  - `_STATE_LOADED` 전이고 실제 큐 파일이 존재하는 경우, task 저장 시 빈 `_QUEUE`가 실제 큐를 덮어쓰지 않도록 early return 추가.
+- 재시작 후 `queued -> running` 복구 확인.
+- 이미지 생성 Step 4 정상 증가 확인.
+- 영상 생성 Step 5 정상 전환 확인.
+- 업로드 Step 7 정상 완료 확인.
+- `follow-ch3-ep15` heartbeat automation은 완료 후 삭제했다.
 
-- `_queue_item_identity_values(item)`
-  - `id`, `task_id`, `project_id`, `result_dir`, `(channel, episode_number, topic)` 기반 identity 생성.
+## 남은 핵심 이슈
 
-- `_queue_item_matches_identity(item, identities)`
-  - 프론트 PUT 입력에서 실행 중 행 중복/삭제 방지에 사용.
+### 이미지 얼굴 뭉개짐
 
-- `_normalize_queue_runtime_state(save: bool = True)`
-  - get/save/scheduler/fire 전에 큐를 동기화, dedupe, 정렬.
+사용자 지적:
+- 생성 이미지에서 얼굴이 뭉개짐.
 
-- `get_queue()`
-  - 반환 전에 `_normalize_queue_runtime_state()` 실행.
+확인된 사실:
+- 현재 EP.15 결과물의 문제는 단순 모델 품질 문제가 아니라 프롬프트 로직 문제다.
+- 실제 프롬프트에서 `workers in plain hemp garments... focused faces` 같은 문장이 이미지 생성 전 `one faceless rounded-head worker... focused faces`처럼 바뀌고 있다.
+- 즉 `faceless`와 `focused faces`가 동시에 들어가는 모순 프롬프트가 생긴다.
 
-- `set_queue(new_state)`
-  - 기존 active/running 항목을 먼저 캡처.
-  - 프론트가 보내온 항목 중 active identity와 겹치는 항목 제거.
-  - active 항목을 맨 앞에 합쳐 저장.
-  - `last_run_dates`는 기존 값 유지.
+문제 위치:
+- `backend/app/services/image/prompt_builder.py`
+  - `_ANATOMY_RISK_IMAGE_PATTERNS`
+    - `crowd of people -> one simplified faceless rounded-head character`
+    - `group of people -> one simplified faceless rounded-head character`
+    - `workers -> one faceless rounded-head worker`
+    - `researchers -> one faceless rounded-head researcher`
+  - `CARTOON_FACELESS_DIRECTIVE`
+    - `blank smooth round head, featureless face area...`
+  - `SIMPLE_CHARACTER_COUNT_DIRECTIVE`
+    - `single faceless round-head character...`
+- `backend/app/services/llm/visual_policy.py`
+  - `_PROMPT_REWRITES`에도 `faceless round-head` 계열 리라이트가 정의되어 있다.
+  - 단, 현재 코드상 `_PROMPT_REWRITES`는 직접 적용되는 흔적이 약하고, EP.15 실제 프롬프트에서는 `prompt_builder.py` 쪽 리라이트가 직접 확인됐다.
 
-- `_fire_queue_for_channel()`
-  - 실행 전 runtime normalize.
-  - `pending`이 아닌 큐 행은 실행 대상으로 삼지 않음.
+실제 확인 예:
+- `D:\long_result\CH3\EP.15.2605121137376a5eb5\images\cut_4.png.prompt.json`
+- 원본 성격: `workers ... focused faces`
+- 최종 프롬프트 일부: `one faceless rounded-head worker ... focused faces`
 
-- `_queue_loop()`
-  - 매 iteration에서 runtime normalize 후 head 확인.
+수정 방향:
+1. 역사 다큐 컷에서는 `faceless` 리라이트를 비활성화한다.
+2. 실제 사람 인물은 `simple readable face`, `small readable facial features`, `medium-wide shot` 쪽으로 유도한다.
+3. `haniwa`, `clay figure`, `statue`, `ceramic figure`는 얼굴 단순/무표정 허용.
+4. 글자 금지, 지도 금지, 시대 고증 잠금은 유지한다.
+5. 군중/다수 인물은 `faceless`로 뭉개지 말고 `small background crowd with simplified readable faces`처럼 바꾼다.
 
-- `run_queue_top_now()`
-  - 실행 전 runtime normalize.
+추가 확인 사항:
+- 현재 이미지 모델: `comfyui-dreamshaper-xl-longtube`
+- 워크플로: `backend/workflows/comfyui/dreamshaper_xl_longtube_text2img.json`
+- 파일 메모 권장값:
+  - LoRA `0.85`
+  - CFG `2.0`
+  - Steps `6~8`
+- 현재 실제 워크플로 값:
+  - LoRA strength `1.0 / 1.0`
+  - CFG `5.0`
+  - Steps `20`
+- 얼굴/선 뭉개짐에는 이 과한 설정도 영향을 줄 수 있다. 다만 우선순위는 `faceless` 리라이트 제거다.
 
-- `_dispatch_next_persisted_queue_item()`
-  - 즉시 실행 dispatch 전 runtime normalize.
+## 다음 세션 첫 작업 권장
 
-주의:
-- 이 파일에는 이번 세션 이전부터 많은 변경이 이미 들어가 있었음.
-- 이번 큐 수정 외 기존 V3 재시작 복구/스토리지 관련 변경을 되돌리지 말 것.
+사용자에게 확인받고 진행:
 
-### `frontend/src/app/oneclick/live/page.tsx`
+`역사 다큐 컷에서 faceless 리라이트가 적용되지 않게 prompt_builder.py 로직을 수정하고, 사람 인물은 readable face로 유도하게 바꾼다. 하니와/조각상은 예외로 둔다.`
+
+수정 후 검증:
+- 새 프롬프트 샘플에 `faceless`, `blank round head`, `featureless face`가 사람 컷에 붙지 않는지 확인.
+- 하니와/토기 컷에는 과도한 얼굴 디테일 유도가 들어가지 않는지 확인.
+- `python -m py_compile backend/app/services/image/prompt_builder.py backend/app/services/llm/visual_policy.py`
+- 가능하면 소량 테스트 컷만 생성해서 결과 확인.
+
+---
+
+# 새 세션 인계 메모 - 2026-05-13 KST
+
+## 작업 원칙 유지
+
+- 추측 금지. 실제 파일/로그/산출물 기준으로만 답변.
+- 생성 결과물 직접 수정 금지. 문제는 로직 수정으로 다음 생성물에 반영.
+- 중요 수정 또는 기능 수정은 사용자 허락 후 진행.
+- 워킹트리에는 기존 변경이 매우 많음. 무관한 변경 되돌리지 말 것.
+
+## 이번 세션에서 확인/수정한 핵심
+
+### 1. 150컷 길이 문제
+
+사용자 지적:
+- 컷 150개면 컷당 4초인데 결과가 12분을 넘음.
+
+확인:
+- `D:\long_result\CH3\EP.15.2605121137376a5eb5`
+- DB/대본 설정은 `cut_video_duration=4.0`, `target_cuts=150`, `target_duration=600`.
+- 실제 컷 영상/자막은 5초 기반.
+- 원인: `backend/app/routers/video.py`가 설정값 대신 `CUT_VIDEO_DURATION=5.0` 상수를 사용.
 
 수정:
-- `sortQueueItemsForWorkbench` import 제거.
-- `refreshLiveSnapshot()`에서 `queueState.items || []`를 그대로 사용.
-- 자동 tick에서도 `queueState.items || []`를 그대로 사용.
-- `moveQueueItem`, `sortQueueItems`, `deleteQueueItem`, `deleteQueueItems`, `promoteQueueItemsToNext`에서 서버 응답 `updated.items || []` 그대로 반영.
-- 실행 중 항목은 기존 `isQueueItemLocked()` 기준으로 선택/이동/삭제/1번 지정 비활성화.
+- `backend/app/routers/video.py`
+  - `CUT_VIDEO_DURATION` 직접 사용 제거.
+  - `resolve_cut_video_duration(project.config or {})` 사용.
+  - fallback `audio_duration or 5.0`도 `or cut_duration`으로 변경.
 
-의도:
-- 프론트 자체 정렬 제거.
-- 화면 순서와 백엔드 순서를 일치시킴.
-
-### `frontend/src/app/oneclick/live/queueHelpers.ts`
-
-현재 상태:
-- `sortQueueItemsForWorkbench()` 함수는 남아 있으나 `page.tsx`에서는 더 이상 사용하지 않음.
-- 필요 시 다음 세션에서 완전 제거 가능. 현재 `tsc` 통과.
-
-### `backend/tests/test_oneclick_stability.py`
-
-추가/수정:
-- `test_sort_queue_keeps_running_first_and_removes_terminal_rows`
-  - running 최상단, terminal 제거 검증.
-- `test_queue_task_sync_prunes_terminal_rows_and_marks_active_as_running`
-  - linked terminal 큐 제거, active task 큐 running 보정 검증.
-- `test_queue_task_sync_keeps_active_task_visible_when_queue_row_is_missing`
-  - active task가 있는데 큐 행이 없어도 running 큐 행이 생성되는지 검증.
-- 기존 `test_queue_normalize_preserves_schema_and_rejects_bad_items`
-  - 입력 순서 보존 전제를 제거하고 topic 기준 검증으로 수정. 현재 큐는 저장 시 실행 순서로 정렬하는 것이 맞음.
-
-## 실제 큐 파일 확인 결과
-
-기준 파일:
-- `C:\Users\Ai_M9\Desktop\longsult\_system\oneclick_queue.json`
-- `C:\Users\Ai_M9\Desktop\longsult\_system\oneclick_tasks.json`
-
-마지막 확인:
-- 시각: `2026-05-09 21:50 KST`
-- queue_count: `537`
-- terminal_count: `0`
-- 큐 상태 카운트: `pending 537`
-
-큐 상단 6건:
-1. `pending` CH3 EP10 `야요이인은 무엇을 바꿨을까` / note: `작업대에서 실행순 1번 지정`
-2. `pending` CH1 EP41 `신생국이 대국을 먼저 공격한 날` / note: `실패/중단 태스크 복구`
-3. `pending` CH2 EP22 `The # Symbol: Why Americans Call It 'Pound' and Brits Call It 'Hash'` / note: `실패/중단 태스크 복구`
-4. `pending` CH3 EP11 `벼농사는 왜 일본 역사를 갈라놨을까` / note: `엑셀 업로드`
-5. `pending` CH4 EP19 `칼링가 전쟁` / note: `실패/중단 태스크 복구`
-6. `pending` CH1 EP42 `고구려보다 큰 나라가 만주에 있었다` / note: `실패/중단 태스크 복구`
-
-중요:
-- 확인 시점에는 실행 중 task가 없었음.
-- 그래서 큐 최상단 running 검증은 실제 화면이 아니라 단위 테스트와 로컬 service normalize 시뮬레이션으로 검증함.
-
-## 검증 완료
-
-성공:
-- `python -m py_compile backend/app/services/oneclick_service.py backend/app/services/oneclick_stability_helpers.py`
-- `python -m unittest backend.tests.test_oneclick_stability.OneClickQueueStabilityTests`
-  - `7 tests OK`
-- `npx tsc --noEmit`
-  - frontend 통과
-
-전체 안정성 테스트:
-- `python -m unittest backend.tests.test_oneclick_stability`
-  - 실패 2건 있음.
-  - 이번 큐 수정과 직접 관련 없는 기존 기대값 불일치.
-  - 실패 1: `test_script_prompt_uses_single_global_base_file`
-    - `backend/app/services/llm/base.py`의 프롬프트 문구가 테스트 기대 문구와 다름.
-  - 실패 2: `test_default_subtitle_size_is_ten_points_larger`
-    - 테스트는 `CUT_SUBTITLE_MARKER_VERSION == 3` 기대, 실제는 `4`.
-
-## 브라우저/API 확인 결과
-
-브라우저로 접속:
-- URL: `http://192.168.0.221:3000/oneclick/live`
-- 페이지 title: `LongTube`
-
-브라우저 콘솔 실제 오류:
-- `GET http://192.168.0.221:8000/api/oneclick/queue Failed to fetch`
-- `GET http://192.168.0.221:8000/api/oneclick/running Failed to fetch`
-- `GET http://192.168.0.221:8000/api/oneclick/queue/auto-production Failed to fetch`
-- 화면에는 `0건 대기`, `실행 상태 로드 실패`가 표시됨.
-
-쉘 직접 확인:
-- `Invoke-WebRequest http://192.168.0.221:8000/api/oneclick/queue`
-- 결과: `401 Unauthorized`
-- `127.0.0.1:8000`도 `401 Unauthorized`
-
-판단 가능한 사실:
-- 백엔드는 포트 8000에서 응답함.
-- 쉘에서는 인증 없어서 401.
-- 브라우저 세션에서는 fetch가 실패로 떨어져 큐 화면 검증을 완료하지 못함.
-- 다음 세션에서 브라우저 인증/CORS/쿠키 상태부터 확인 필요.
-
-## 다음 세션 우선순위
-
-1. 브라우저에서 `http://192.168.0.221:3000/oneclick/live` API fetch 실패 원인 확인.
-   - 인증 쿠키 누락인지, CORS인지, 프론트 API base 문제인지 실제 콘솔/네트워크 기준으로 확인.
-2. 백엔드가 새 코드로 재로드됐는지 확인.
-   - 실행 중 작업이 있으면 재시작하지 말 것.
-3. 실행 중 task가 실제로 생긴 상태에서 작업큐 모달 확인.
-   - running 행이 최상단인지.
-   - `진행중` 표시가 붙는지.
-   - checkbox, `1번 지정`, 위/아래/삭제 버튼이 disabled인지.
-4. API `GET /api/oneclick/queue` 응답에서 terminal status가 섞이지 않는지 확인.
-5. `frontend/src/app/oneclick/live/queueHelpers.ts`의 미사용 `sortQueueItemsForWorkbench()` 제거 여부 판단.
-6. 전체 안정성 테스트 실패 2건은 큐 수정과 별개. 필요 시 별도 지시 받고 수정.
-
-## 변경 파일 현황
-
-`git status --short` 기준 수정 파일이 많음. 이번 세션에서 직접 건드린 핵심 파일:
-- `SESSION_HANDOFF.md`
-- `backend/app/services/oneclick_service.py`
-- `backend/app/services/oneclick_stability_helpers.py`
-- `backend/tests/test_oneclick_stability.py`
-- `frontend/src/app/oneclick/live/page.tsx`
+검증:
+- `rg "CUT_VIDEO_DURATION|duration=5\.0|audio_duration.*5\.0" backend\app\routers\video.py` 결과 없음.
+- `python -m py_compile backend\app\routers\video.py` 통과.
 
 주의:
-- 워킹트리에는 위 외에도 다수 파일 변경이 이미 존재함.
-- 이번 작업과 무관한 파일은 다음 세션에서도 되돌리지 말 것.
+- 기존 EP.15 결과물은 그대로 5초 컷임.
+- 다음 생성부터 4초 설정 적용.
+
+### 2. 쇼츠 4개 생성/업로드 확인
+
+EP.15 기준:
+- `output/shorts/short_1.mp4` ~ `short_4.mp4` 존재.
+- `output/shorts/shorts_uploads.json`에 4개 업로드 기록 존재.
+- 문제:
+  - 쇼츠 제목 일부에 줄바꿈 기반 공백 깨짐 있음.
+  - `processing_verified: false`.
+
+### 3. 얼굴 뭉개짐 원인 확인
+
+확인된 원인:
+- 이미지 프롬프트에서 사람 컷에 `faceless`, `featureless`, `blank round head` 계열 리라이트가 들어감.
+- 동시에 `focused faces`, `readable face` 성격의 문장도 남아 모순 발생.
+
+주요 위치:
+- `backend/app/services/image/prompt_builder.py`
+  - `CARTOON_FACELESS_DIRECTIVE`
+  - `SIMPLE_CHARACTER_COUNT_DIRECTIVE`
+  - `_ANATOMY_RISK_IMAGE_PATTERNS`
+
+개선안:
+- 역사 다큐/실사 컷에서는 사람 대상 `faceless` 리라이트 금지.
+- 하니와/토기/조각상은 artifact로 별도 처리.
+- 사람 컷은 `small readable facial features`, `natural readable face`, `medium shot` 계열로 유도.
+
+### 4. 로컬 이미지 모델 v1.5 추가
+
+추가 모델:
+- `comfyui-dreamshaper-xl-longtube-v15`
+- 이름: `SDXL 로컬모델 v1.5 실사`
+
+수정/추가 파일:
+- `backend/app/services/image/factory.py`
+- `backend/app/services/image/comfyui_service.py`
+- `backend/app/services/estimation_service.py`
+- `frontend/src/app/oneclick/layout.tsx`
+- `frontend/src/app/oneclick/live/displayHelpers.ts`
+- `backend/workflows/comfyui/dreamshaper_xl_longtube_v15_text2img.json`
+
+v1.5 특징:
+- DreamShaper XL Lightning 체크포인트 사용.
+- LoRA 없음.
+- steps `8`, cfg `2.0`, sampler `dpmpp_sde`, scheduler `karras`.
+- 실사 다큐/고품질/자연스러운 얼굴 유도 프롬프트 추가.
+- faceless/cartoon/anime/blank face 계열 negative 강화.
+
+검증:
+- `python -m py_compile backend\app\services\image\factory.py backend\app\services\image\comfyui_service.py backend\app\services\estimation_service.py`
+- `npx tsc --noEmit` in frontend
+- workflow JSON parse 확인.
+
+### 5. 서버 재시작
+
+실행:
+- `cmd /c force-restart.bat`
+
+확인:
+- backend health OK.
+- frontend `http://127.0.0.1:3000/` status 200.
+- 당시 PID:
+  - backend uvicorn python `31344`
+  - frontend node `34916`
+
+### 6. EP.15 대본으로 v1.5 이미지 10장 테스트
+
+출력:
+- `C:\Users\Ai_M9\Desktop\longtube\tmp\v15_ep15_image_test`
+
+파일:
+- `cut_001_v15.png` ~ `cut_010_v15.png`
+- 각 prompt json
+- `results.json`
+- `contact_sheet_v15_10.png`
+
+모델:
+- `comfyui-dreamshaper-xl-longtube-v15`
+
+### 7. CH4 EP.28 대본으로 v1.5 쇼츠 1편 생성
+
+원본 최신 CH4:
+- `D:\long_result\CH4\EP.28.26051309000787107e`
+
+대본:
+- `script.json`
+- 제목: `समुद्री व्यापार और साम्राज्य: चोलों की खतरनाक समुद्री बाजी EP.28`
+- 컷 수: 150
+
+사용 구간:
+- 쇼츠 group 1
+- 컷 `25~36`
+- 제목: `व्यापार बचाने के लिए युद्ध सही था?`
+
+출력:
+- `C:\Users\Ai_M9\Desktop\longtube\tmp\ch4_ep28_v15_short`
+- 쇼츠:
+  - `C:\Users\Ai_M9\Desktop\longtube\tmp\ch4_ep28_v15_short\output\shorts\short_1.mp4`
+- 미리보기:
+  - `C:\Users\Ai_M9\Desktop\longtube\tmp\ch4_ep28_v15_short\short_1_preview.jpg`
+
+검증:
+- `48.00초`
+- `1080x1920`
+- `30fps`
+- 오디오 포함.
+
+주의:
+- 기존 CH4 결과물은 수정하지 않음.
+- 별도 tmp 테스트 출력만 생성.
+
+### 8. 등록 영상 모델 확인
+
+현재 `backend/app/services/video/factory.py` 기준:
+- 기본값: `ffmpeg-static`
+- 등록:
+  - `ffmpeg-static`
+  - `ffmpeg-safe-motion`
+  - `seedance-lite`
+  - `comfyui-ltx23-v2`
+  - `comfyui-ltx23-v3`
+  - `comfyui-wan22-ti2v-5b`
+
+폐기 alias:
+- `ffmpeg-kenburns` -> `ffmpeg-static`
+- `comfyui-ltxv-2b` -> `ffmpeg-static`
+- `comfyui-ltxv-13b` -> `ffmpeg-static`
+- `comfyui-wan22-i2v-fast` -> `ffmpeg-static`
+- `comfyui-wan22-5b` -> `ffmpeg-static`
+
+### 9. v1.5 이미지 12장으로 로컬 영상 모델별 쇼츠 테스트
+
+사용 이미지:
+- `C:\Users\Ai_M9\Desktop\longtube\tmp\ch4_ep28_v15_short\images`
+- `cut_25.png` ~ `cut_36.png`
+
+테스트 스크립트:
+- `tmp/run_ch4_ep28_all_local_video_models.py`
+
+출력 루트:
+- `C:\Users\Ai_M9\Desktop\longtube\tmp\ch4_ep28_video_model_shorts`
+
+대상 로컬 모델:
+- `ffmpeg-static`
+- `ffmpeg-safe-motion`
+- `comfyui-ltx23-v2`
+- `comfyui-ltx23-v3`
+- `comfyui-wan22-ti2v-5b`
+
+완료 확인:
+- `ffmpeg-static`
+  - 쇼츠 완료:
+  - `C:\Users\Ai_M9\Desktop\longtube\tmp\ch4_ep28_video_model_shorts\ffmpeg-static\output\shorts\short_1.mp4`
+  - size 로그: `5678954`
+- `ffmpeg-safe-motion`
+  - 쇼츠 완료:
+  - `C:\Users\Ai_M9\Desktop\longtube\tmp\ch4_ep28_video_model_shorts\ffmpeg-safe-motion\output\shorts\short_1.mp4`
+  - size 로그: `14099584`
+- `comfyui-ltx23-v2`
+  - 쇼츠 완료:
+  - `C:\Users\Ai_M9\Desktop\longtube\tmp\ch4_ep28_video_model_shorts\comfyui-ltx23-v2\output\shorts\short_1.mp4`
+  - size 로그: `38445141`
+- `comfyui-ltx23-v3`
+  - 쇼츠 완료:
+  - `C:\Users\Ai_M9\Desktop\longtube\tmp\ch4_ep28_video_model_shorts\comfyui-ltx23-v3\output\shorts\short_1.mp4`
+  - size 로그: `40280076`
+- `comfyui-wan22-ti2v-5b`
+  - 진행 중 사용자가 중단.
+  - 마지막 확인 로그: 컷 `25`, `26` 완료.
+  - 이후 사용자가 “새 세션가자” 요청.
+  - 백그라운드 프로세스 확인 시 `24016`, `21760` 남아있지 않았음.
+  - 따라서 Wan 전체 완료 여부는 다음 세션에서 파일로 재확인 필요.
+
+중간 오류 및 수정:
+- `ffmpeg-safe-motion` 첫 실행 실패.
+- 원인: `backend/app/services/video/ffmpeg_service.py`의 `crop={resolution}`가 FFmpeg crop 필터에 `640x384` 형식으로 들어감.
+- 수정:
+  - `crop={resolution}` -> `crop={pad_wh}`
+  - `crop={resolution}:` -> `crop={pad_wh}:`
+- 검증:
+  - `python -m py_compile backend\app\services\video\ffmpeg_service.py` 통과.
+- 이 수정은 실제 코드 변경임.
+
+주의:
+- `comfyui-ltx23-v3`는 코드상 T2V 모델이라 입력 이미지를 직접 쓰지 않음.
+- `comfyui-wan22-ti2v-5b`는 이미지 입력 사용 모델.
+- 테스트 스크립트는 tmp용이며 운영 플로우에 직접 연결하지 않음.
+
+## 다음 세션 시작 시 확인할 것
+
+1. Wan 출력 폴더 확인:
+   - `C:\Users\Ai_M9\Desktop\longtube\tmp\ch4_ep28_video_model_shorts\comfyui-wan22-ti2v-5b`
+   - `videos\cut_25.mp4` ~ `cut_36.mp4` 개수
+   - `output\shorts\short_1.mp4` 존재 여부
+2. 모든 생성 쇼츠 duration/해상도 검증:
+   - ffmpeg-static
+   - ffmpeg-safe-motion
+   - comfyui-ltx23-v2
+   - comfyui-ltx23-v3
+   - comfyui-wan22-ti2v-5b
+3. `ffmpeg-safe-motion` crop 수정은 운영 코드 변경이므로 필요 시 별도 보고/테스트 유지.
+4. 아직 근본 얼굴 개선 로직(`prompt_builder.py` faceless 제거)은 실제로 수정하지 않음. 다음 작업 후보.
+
+---
+
+## 2026-05-17 13:59 KST 세션 인계
+
+### 사용자 지시
+
+- 채널 전체 모든 영상과 숏츠의 BGM 음량을 반으로 줄임.
+- 대본 작성/생성 로직에 남은 `120컷`, `5초`, `duration_estimate 5.0` 흔적을 확인하고 `150컷 / 4초` 기준으로 변경.
+- 현재 내용 저장 후 새 세션으로 이동 요청.
+
+### 완료한 변경
+
+BGM:
+- 기존 기본값 `0.42`를 `0.21`로 변경.
+- 일반 렌더 기본값, 숏츠 렌더 기본값, 프론트 렌더 UI fallback, v2 프리셋 fallback을 맞춤.
+- DB `projects` 111건, `channel_presets` 2건의 `bgm_volume`을 모두 `0.21`로 변경.
+- 백업 DB:
+  - `C:\Users\Ai_M9\Desktop\longtube\data\longtube.before_bgm_volume_half_20260517_134149.db`
+
+150컷 / 4초:
+- `backend/app/config.py`
+  - `CUT_VIDEO_DURATION = 4.0`
+  - fallback 설명을 4초 기준으로 변경.
+- `backend/app/routers/projects.py`
+  - `DEFAULT_CONFIG["cut_video_duration"] = 4.0`
+  - `target_duration = 600`
+- `backend/app/services/llm/base.py`
+  - 시스템 프롬프트가 `duration_estimate: 4.0`을 쓰도록 확인.
+  - `91~120컷` 표기가 `120컷`으로 오해될 수 있어 구간 수 설명으로 변경.
+- `backend/app/services/tts/narration_fit.py`
+  - 컷 길이 fallback `5.0`을 `4.0`으로 변경.
+- DB `projects` 111건, `channel_presets` 2건 모두 아래 값으로 정규화:
+  - `cut_video_duration: 4.0`
+  - `target_cuts: 150`
+  - `target_duration: 600`
+- 백업 DB:
+  - `C:\Users\Ai_M9\Desktop\longtube\data\longtube.before_150cuts_4s_20260517_134916.db`
+
+### 검증
+
+- `python -m py_compile backend/app/services/llm/base.py backend/app/config.py backend/app/routers/projects.py backend/app/routers/subtitle.py backend/app/services/tts/narration_fit.py backend/app/services/estimation_service.py` 통과.
+- `python backend/tests/test_oneclick_stability.py` 통과.
+- 결과: `51 tests OK`.
+- 대본 생성 관련 범위에서 아래 검색어 잔여 없음:
+  - `target_cuts: 120`
+  - `cut_video_duration: 5.0`
+  - `CUT_VIDEO_DURATION = 5.0`
+  - `duration_estimate: 5.0`
+  - `120컷`
+  - `5초 컷`
+
+### 현재 변경 파일
+
+작업 관련 미커밋 파일:
+- `backend/app/config.py`
+- `backend/app/routers/projects.py`
+- `backend/app/routers/subtitle.py`
+- `backend/app/services/estimation_service.py`
+- `backend/app/services/llm/base.py`
+- `backend/app/services/tts/narration_fit.py`
+- `backend/tests/test_oneclick_stability.py`
+- `frontend/src/app/v2/presets/[id]/page.tsx`
+- `frontend/src/components/studio/StepRender.tsx`
+
+주의:
+- DB `data/longtube.db`는 Git status에 표시되지 않지만 실제 변경됨.
+- 기존에 이미 많은 unrelated dirty 파일이 있었으므로 다음 세션에서 커밋 시 staging 범위를 반드시 제한할 것.
+- 이미 렌더된 MP4와 업로드된 영상의 소리는 설정만으로 바뀌지 않음. 실제 영상 파일 반영은 재렌더 필요.

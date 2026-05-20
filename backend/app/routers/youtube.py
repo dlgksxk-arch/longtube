@@ -68,7 +68,7 @@ class MetadataRecommendRequest(BaseModel):
         default=None,
         description=(
             "시리즈 에피소드 번호. 주어지면 LLM 이 짧은 hook 만 쓰고, "
-            "backend 는 최종 title 을 'EP. N - {hook}' 으로 조립합니다."
+            "backend 는 최종 title 을 '{hook} EP.N' 형식으로 조립합니다."
         ),
     )
 
@@ -260,7 +260,7 @@ def auth_status():
 async def start_oauth_flow():
     """OAuth 로컬 서버 플로우 (legacy 전역 토큰).
 
-    `flow.run_local_server()` 는 블로킹이고 localhost:8090 을 잠깐 연 뒤
+    `flow.run_local_server()` 는 블로킹이고 localhost 임시 포트를 잠깐 연 뒤
     브라우저 팝업을 띄웁니다. FastAPI 이벤트 루프가 막히지 않도록
     `asyncio.to_thread` 로 감쌉니다. 최초 1회만 호출하면 됩니다.
     """
@@ -911,11 +911,11 @@ async def recommend_metadata(
     hook_clean = _strip_episode_prefix(hook_raw)
 
     if body.episode_number is not None and hook_clean:
-        final_title = f"EP. {body.episode_number} - {hook_clean}"
+        final_title = with_episode_prefix(hook_clean, body.episode_number)
     elif body.episode_number is not None:
         # LLM 이 hook 을 못 줬을 때 폴백: 기존 프로젝트 title 이나 topic 사용
         fallback_hook = _strip_episode_prefix(title_hint or topic or "Untitled")[:48]
-        final_title = f"EP. {body.episode_number} - {fallback_hook}"
+        final_title = with_episode_prefix(fallback_hook, body.episode_number)
     else:
         final_title = hook_clean or title_hint or "Untitled"
 

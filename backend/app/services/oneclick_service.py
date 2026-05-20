@@ -56,6 +56,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import os
 import re
 import shutil
@@ -74,6 +75,7 @@ if os.name == "nt":
 
 from app.config import (
     SYSTEM_DIR,
+    RESULT_ARCHIVE_DIR,
     parse_v3_oneclick_project_id,
     resolve_project_dir,
     get_channel_projects_root,
@@ -95,7 +97,7 @@ from app.services.oneclick_stability_helpers import (
     task_progress_signature as _task_progress_signature,
     task_rank_for_project_dedupe as _task_rank_for_project_dedupe,
 )
-from app.services.title_utils import coerce_episode_number, with_episode_prefix, without_episode_prefix
+from app.services.title_utils import coerce_episode_number, shorts_upload_title, with_episode_prefix, without_episode_prefix
 
 # v1.1.52: pipeline_tasks 의 _redis_get 을 사용 — 인메모리 fallback 포함이라
 # Redis 없어도 같은 프로세스 내에서 진행률을 정확히 읽는다.
@@ -166,6 +168,7 @@ def _sync_queue_items_from_tasks_for_save(*, save: bool = True) -> bool:
             next_items.append(item)
             continue
 
+        task_id_for_status = str(task.get("task_id") or tid).strip()
         status = str(task.get("status") or "").strip().lower()
         if _is_terminal_queue_status(status):
             changed = True
@@ -174,7 +177,7 @@ def _sync_queue_items_from_tasks_for_save(*, save: bool = True) -> bool:
 
         linked = {
             "status": queue_status,
-            "task_id": str(task.get("task_id") or tid),
+            "task_id": task_id_for_status,
             "project_id": str(task.get("project_id") or pid),
             "source_project_id": str(task.get("source_project_id") or task.get("template_project_id") or ""),
             "result_dir": str(task.get("result_dir") or ""),
@@ -187,6 +190,9 @@ def _sync_queue_items_from_tasks_for_save(*, save: bool = True) -> bool:
         if queue_status == "running" and item.get("queued_note") != "실행 중":
             item["queued_note"] = "실행 중"
             changed = True
+        if queue_status != "running" and item.get("queued_note") in (None, "", "실행 중"):
+            item["queued_note"] = "대기"
+            changed = True
         for key, value in linked.items():
             if value and item.get(key) != value:
                 item[key] = value
@@ -195,15 +201,16 @@ def _sync_queue_items_from_tasks_for_save(*, save: bool = True) -> bool:
 
     active_identities: set[str] = set()
     for item in next_items:
-        if _is_active_queue_status(item.get("status")):
-            active_identities.update(_queue_item_identity_values(item))
+        active_identities.update(_queue_item_identity_values(item))
 
     for task in list(_TASKS.values()):
         status = str(task.get("status") or "").strip().lower()
-        if not _is_active_queue_status(status):
+        if status not in ("running", "uploading", "queued", "prepared"):
             continue
+        task_id_for_status = str(task.get("task_id") or "").strip()
+        queue_status = "running" if _is_active_queue_status(status) else "pending"
         task_identity = {
-            f"task_id:{str(task.get('task_id') or '').strip()}",
+            f"task_id:{task_id_for_status}",
             f"project_id:{str(task.get('project_id') or '').strip()}",
             f"result_dir:{str(task.get('result_dir') or '').strip()}",
         }
@@ -235,11 +242,11 @@ def _sync_queue_items_from_tasks_for_save(*, save: bool = True) -> bool:
             "next_episode_preview": "",
             "queued_source": "system",
             "queued_at": str(task.get("created_at") or task.get("started_at") or "") or None,
-            "queued_note": "실행 중",
+            "queued_note": "실행 중" if queue_status == "running" else "대기",
             "requeued_from_task_id": "",
             "restored_from_project_id": "",
-            "status": "running",
-            "task_id": str(task.get("task_id") or ""),
+            "status": queue_status,
+            "task_id": task_id_for_status,
             "project_id": str(task.get("project_id") or ""),
             "source_project_id": str(task.get("source_project_id") or task.get("template_project_id") or ""),
             "result_dir": str(task.get("result_dir") or ""),
@@ -470,6 +477,12 @@ def _prepare_inflight_task_for_restart(task: dict[str, Any]) -> bool:
     task["current_step_progress_text"] = None
     task["current_step_cut_progress_pct"] = None
     task["sub_status"] = None
+    project_id = str(task.get("project_id") or "").strip()
+    if project_id:
+        try:
+            _reset_project_steps_for_resume(project_id, resume_step)
+        except Exception as e:
+            print(f"[oneclick] project resume state reset failed: {e}")
     _add_log(task, f"↻ 서버 재시작 복구: Step {resume_step}부터 자동 재개 대기", "warn")
     return True
 
@@ -1047,26 +1060,41 @@ def _has_live_runner(*, exclude_task_id: Optional[str] = None) -> bool:
     return False
 
 
+def _task_has_live_runner(task_id: str, task: Optional[dict[str, Any]] = None) -> bool:
+    """Queue 표시 기준: 실제 asyncio runner 가 살아있는 작업만 running."""
+    tid = str(task_id or "").strip()
+    if not tid and task is not None:
+        tid = str(task.get("task_id") or "").strip()
+    if not tid:
+        return False
+    runner = _ACTIVE_RUNS.get(tid)
+    if runner is None or runner.done():
+        return False
+    if task is not None and str(task.get("status") or "").lower() not in ("running", "uploading"):
+        return False
+    return True
+
+
 def _has_running_task(*, exclude_task_id: Optional[str] = None) -> bool:
-    """지금 실제 실행 중인 작업이 있는지 확인."""
+    """지금 실행/업로드 확인 중인 작업이 있는지 확인."""
     if _has_live_runner(exclude_task_id=exclude_task_id):
         return True
     for tid, task in _TASKS.items():
         if exclude_task_id is not None and tid == exclude_task_id:
             continue
-        if task.get("status") == "running":
+        if task.get("status") in ("running", "uploading"):
             return True
     return False
 
 
 def _has_inflight_task(*, exclude_task_id: Optional[str] = None) -> bool:
-    """running/queued 태스크가 이미 있으면 새 작업을 끼워 넣지 않는다."""
+    """running/uploading/queued 태스크가 이미 있으면 새 작업을 끼워 넣지 않는다."""
     if _has_running_task(exclude_task_id=exclude_task_id):
         return True
     for tid, task in _TASKS.items():
         if exclude_task_id is not None and tid == exclude_task_id:
             continue
-        if task.get("status") == "queued":
+        if task.get("status") in ("queued", "prepared"):
             return True
     return False
 
@@ -1103,6 +1131,10 @@ def _dispatch_next_queued_task(
         return None
     next_task_id = _pick_next_queued_task_id(exclude_task_id=exclude_task_id)
     if not next_task_id:
+        return None
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
         return None
     _schedule_oneclick_run(next_task_id)
     return next_task_id
@@ -1177,16 +1209,24 @@ STEP_ORDER = [
 
 # UI 상 단계별 "총 진행률" 기여도 (합=100).
 # render 는 컷 단위 카운터가 없어 고정 15% 를 부여하고 단계 시작/끝으로만 진행.
-ONECLICK_MAIN_CUT_COUNT = 120
-ONECLICK_SECONDS_PER_CUT = 5
-ONECLICK_MAIN_TARGET_DURATION = ONECLICK_MAIN_CUT_COUNT * ONECLICK_SECONDS_PER_CUT
+ONECLICK_MAIN_CUT_COUNT = 150
+ONECLICK_SECONDS_PER_CUT = 4.0
+ONECLICK_MAIN_TARGET_DURATION = int(ONECLICK_MAIN_CUT_COUNT * ONECLICK_SECONDS_PER_CUT)
 
 
-def _force_oneclick_main_length(config: dict) -> dict:
-    """OneClick main videos are fixed by clip count, not a free duration field."""
-    config["target_cuts"] = ONECLICK_MAIN_CUT_COUNT
-    # Keep this legacy field in sync because older render/subtitle/estimate code reads it.
-    config["target_duration"] = ONECLICK_MAIN_TARGET_DURATION
+def _force_oneclick_main_length(config: dict, target_duration: Optional[int] = None) -> dict:
+    """Apply OneClick clip timing and derive cut count from the configured duration."""
+    config["cut_video_duration"] = ONECLICK_SECONDS_PER_CUT
+    try:
+        duration = int(float(target_duration if target_duration is not None else config.get("target_duration") or 0))
+    except (TypeError, ValueError):
+        duration = 0
+    if duration <= 0:
+        duration = ONECLICK_MAIN_TARGET_DURATION
+    config["target_duration"] = duration
+    config["target_cuts"] = max(1, math.ceil(duration / ONECLICK_SECONDS_PER_CUT))
+    config.setdefault("script_tts_target_sec", 4.4)
+    config.setdefault("script_tts_tolerance_sec", 0.2)
     return config
 
 STEP_WEIGHTS = {
@@ -2114,6 +2154,15 @@ def _inspect_backup_progress(path: Path) -> dict[str, Any]:
         "progress_pct": 0.0,
         "disk_bytes": _dir_size(path),
     }
+    script_total = 0
+    try:
+        if out["has_script"]:
+            payload = json.loads((path / "script.json").read_text(encoding="utf-8"))
+            cuts = payload.get("cuts") or []
+            if isinstance(cuts, list):
+                script_total = len(cuts)
+    except Exception:
+        script_total = 0
     for sub, key, exts in [
         ("audio", "audio_count", (".mp3", ".wav", ".m4a", ".ogg")),
         ("images", "image_count", (".png", ".jpg", ".jpeg", ".webp")),
@@ -2131,7 +2180,7 @@ def _inspect_backup_progress(path: Path) -> dict[str, Any]:
     except Exception:
         pass
     total = max(int(out["audio_count"] or 0), int(out["image_count"] or 0), int(out["video_count"] or 0))
-    out["total_cuts"] = total
+    out["total_cuts"] = script_total or total
     denom = max(1, total)
     out["progress_pct"] = round(
         (10.0 if out["has_script"] else 0.0)
@@ -2245,6 +2294,7 @@ def _restore_backup_project_record_for_queue_item(item: dict[str, Any]) -> Optio
         "__oneclick__": True,
         "__oneclick_v3__": True,
         "template_project_id": item.get("template_project_id") or None,
+        "cut_video_duration": ONECLICK_SECONDS_PER_CUT,
         "target_duration": ONECLICK_MAIN_TARGET_DURATION,
         "target_cuts": ONECLICK_MAIN_CUT_COUNT,
         "result_dir": str(resolve_project_dir(project_id, create=False)),
@@ -2273,7 +2323,7 @@ def _restore_backup_project_record_for_queue_item(item: dict[str, Any]) -> Optio
         "7": "pending",
     }
     topic = str(item.get("topic") or "").strip() or project_id
-    title = f"EP.{int(item.get('episode_number') or 0):02d} {topic}" if int(item.get("episode_number") or 0) > 0 else topic
+    title = with_episode_prefix(topic, item.get("episode_number"))
 
     db = SessionLocal()
     try:
@@ -2305,6 +2355,161 @@ def _restore_backup_project_record_for_queue_item(item: dict[str, Any]) -> Optio
     except Exception as e:
         print(f"[oneclick] backup project restore failed: {backup_dir} -> {dest_dir}: {e}")
         return None
+    return project_id
+
+
+def _v3_project_id_from_result_dir(channel: int, episode_number: int, result_dir: Path) -> Optional[str]:
+    parts = result_dir.name.split(".", 2)
+    if len(parts) != 3 or parts[0] != "EP":
+        return None
+    try:
+        if int(parts[1]) != int(episode_number):
+            return None
+    except (TypeError, ValueError):
+        return None
+    unique_id = parts[2].strip()
+    if not unique_id:
+        return None
+    return f"V3_CH{int(channel)}_EP{int(episode_number)}_{unique_id}"
+
+
+def _has_meaningful_generation_progress(progress: dict[str, Any]) -> bool:
+    return bool(
+        progress.get("has_script")
+        or int(progress.get("audio_count") or 0) > 0
+        or int(progress.get("image_count") or 0) > 0
+        or int(progress.get("video_count") or 0) > 0
+        or progress.get("has_merged")
+        or progress.get("has_thumbnail")
+    )
+
+
+def _find_orphan_v3_result_project_for_queue_item(item: dict[str, Any]) -> Optional[tuple[str, Path, dict[str, Any]]]:
+    try:
+        channel = int(item.get("channel") or 0)
+        episode_number = int(item.get("episode_number") or 0)
+    except (TypeError, ValueError):
+        return None
+    if channel <= 0 or episode_number <= 0:
+        return None
+
+    channel_dir = RESULT_ARCHIVE_DIR / f"CH{channel}"
+    if not channel_dir.exists():
+        return None
+
+    candidates: list[tuple[float, str, Path, dict[str, Any]]] = []
+    try:
+        for result_dir in channel_dir.iterdir():
+            if not result_dir.is_dir():
+                continue
+            project_id = _v3_project_id_from_result_dir(channel, episode_number, result_dir)
+            if not project_id:
+                continue
+            progress = _inspect_backup_progress(result_dir)
+            if not _has_meaningful_generation_progress(progress):
+                continue
+            try:
+                mtime = result_dir.stat().st_mtime
+            except OSError:
+                mtime = 0.0
+            candidates.append((mtime, project_id, result_dir, progress))
+    except Exception:
+        return None
+
+    if not candidates:
+        return None
+    candidates.sort(key=lambda row: row[0], reverse=True)
+    _mtime, project_id, result_dir, progress = candidates[0]
+    return project_id, result_dir, progress
+
+
+def _restore_orphan_v3_project_record_for_queue_item(item: dict[str, Any]) -> Optional[str]:
+    found = _find_orphan_v3_result_project_for_queue_item(item)
+    if not found:
+        return None
+    project_id, result_dir, progress = found
+
+    try:
+        channel = int(item.get("channel") or 0)
+    except (TypeError, ValueError):
+        channel = 0
+    try:
+        episode_number = int(item.get("episode_number") or 0)
+    except (TypeError, ValueError):
+        episode_number = 0
+
+    source_project_id = _channel_studio_project_id(channel, item.get("template_project_id"))
+    config: dict[str, Any] = {
+        "__oneclick__": True,
+        "__oneclick_v3__": True,
+        "template_project_id": source_project_id or item.get("template_project_id") or None,
+        "source_project_id": source_project_id or item.get("template_project_id") or None,
+        "cut_video_duration": ONECLICK_SECONDS_PER_CUT,
+        "target_duration": ONECLICK_MAIN_TARGET_DURATION,
+        "target_cuts": ONECLICK_MAIN_CUT_COUNT,
+        "result_dir": str(result_dir),
+        "result_channel_dir": f"CH{channel}" if channel > 0 else None,
+        "result_episode_dir": result_dir.name,
+        "topic": str(item.get("topic") or "").strip(),
+    }
+    if channel > 0:
+        config["channel"] = channel
+    if episode_number > 0:
+        config["episode_number"] = episode_number
+
+    for item_key, config_key in (
+        ("openings", "episode_openings"),
+        ("endings", "episode_endings"),
+        ("core_content", "episode_core_content"),
+        ("next_episode_preview", "next_episode_preview"),
+    ):
+        value = item.get(item_key)
+        if value:
+            config[config_key] = value
+    config = _force_oneclick_main_length(config)
+
+    total_cuts = int(progress.get("total_cuts") or ONECLICK_MAIN_CUT_COUNT)
+    step_states = {
+        "2": "completed" if progress.get("has_script") else "pending",
+        "3": "completed" if int(progress.get("audio_count") or 0) >= total_cuts else "pending",
+        "4": "completed" if int(progress.get("image_count") or 0) >= total_cuts else "pending",
+        "5": "completed" if int(progress.get("video_count") or 0) >= total_cuts else "pending",
+        "6": "completed" if progress.get("has_merged") else "pending",
+        "7": "pending",
+    }
+    topic = str(item.get("topic") or "").strip() or project_id
+    title = with_episode_prefix(topic, episode_number)
+
+    db = SessionLocal()
+    try:
+        row = db.query(Project).filter(Project.id == project_id).first()
+        if not row:
+            row = Project(
+                id=project_id,
+                title=title,
+                topic=topic,
+                config=config,
+                status="draft",
+                current_step=6 if progress.get("has_merged") else 0,
+                step_states=step_states,
+                total_cuts=total_cuts,
+            )
+            db.add(row)
+        else:
+            row.title = row.title or title
+            row.topic = row.topic or topic
+            row.config = {**dict(row.config or {}), **config}
+            row.step_states = {**dict(row.step_states or {}), **step_states}
+            row.total_cuts = int(row.total_cuts or total_cuts)
+            if str(row.status or "").lower() in ("failed", "cancelled"):
+                row.status = "draft"
+            from sqlalchemy.orm.attributes import flag_modified
+            flag_modified(row, "config")
+            flag_modified(row, "step_states")
+        db.commit()
+    finally:
+        db.close()
+
     return project_id
 
 
@@ -2426,11 +2631,80 @@ def _find_existing_project_for_queue_item(item: dict[str, Any]) -> Optional[str]
             scored.append((score, project.id))
 
         if not scored:
-            return _restore_backup_project_record_for_queue_item(item)
+            return (
+                _restore_orphan_v3_project_record_for_queue_item(item)
+                or _restore_backup_project_record_for_queue_item(item)
+            )
         scored.sort(key=lambda row: row[0], reverse=True)
         return scored[0][1]
     finally:
         db.close()
+
+
+def _queue_item_from_v3_task(task: dict[str, Any]) -> Optional[dict[str, Any]]:
+    project_id = str(task.get("project_id") or "").strip()
+    parsed = parse_v3_oneclick_project_id(project_id)
+    if not parsed:
+        return None
+    channel, episode_number, _unique_id = parsed
+    cfg = task.get("config") if isinstance(task.get("config"), dict) else {}
+    return {
+        "topic": str(task.get("topic") or task.get("title") or cfg.get("topic") or "").strip(),
+        "template_project_id": task.get("source_project_id") or task.get("template_project_id") or cfg.get("source_project_id") or cfg.get("template_project_id"),
+        "target_duration": cfg.get("target_duration") or ONECLICK_MAIN_TARGET_DURATION,
+        "target_cuts": cfg.get("target_cuts") or ONECLICK_MAIN_CUT_COUNT,
+        "channel": channel,
+        "episode_number": episode_number,
+    }
+
+
+def _redirect_empty_v3_task_to_existing_episode(task_id: str, task: dict[str, Any]) -> dict[str, Any]:
+    item = _queue_item_from_v3_task(task)
+    if not item:
+        return task
+
+    project_id = str(task.get("project_id") or "").strip()
+    progress = _inspect_project_progress(
+        project_id,
+        task.get("total_cuts"),
+        task.get("config") if isinstance(task.get("config"), dict) else {},
+    )
+    if _has_meaningful_generation_progress(progress):
+        return task
+
+    existing_project_id = _find_existing_project_for_queue_item(item)
+    if not existing_project_id or existing_project_id == project_id:
+        return task
+
+    old_logs = list(task.get("logs") or [])
+    recovered = recover_project(existing_project_id)
+    recovered_task_id = str(recovered.get("task_id") or "")
+    merged = dict(recovered)
+    merged["task_id"] = task_id
+    merged["triggered_by"] = task.get("triggered_by") or recovered.get("triggered_by")
+    try:
+        ch = int(item.get("channel") or 0)
+        if 1 <= ch <= 4:
+            merged["channel"] = ch
+    except (TypeError, ValueError):
+        pass
+    try:
+        ep = int(item.get("episode_number") or 0)
+        if ep > 0:
+            merged["episode_number"] = ep
+    except (TypeError, ValueError):
+        pass
+    logs = old_logs + list(recovered.get("logs") or [])
+    merged["logs"] = logs
+    task.clear()
+    task.update(merged)
+    _TASKS[task_id] = task
+    if recovered_task_id and recovered_task_id != task_id:
+        _TASKS.pop(recovered_task_id, None)
+        _ACTIVE_RUNS.pop(recovered_task_id, None)
+    _add_log(task, f"빈 V3 재시작 작업을 기존 에피소드 산출물로 대체: {existing_project_id}", "info")
+    _save_tasks_to_disk()
+    return task
 
 
 def _find_blocking_broken_project(topic: str) -> Optional[str]:
@@ -2926,7 +3200,7 @@ def _clone_project_from_template(
         base_config["auto_pause_after_step"] = False
 
         # v1.1.42: 모달 "시간" 입력 반영
-        _force_oneclick_main_length(base_config)
+        _force_oneclick_main_length(base_config, target_duration)
 
         # v1.1.42: 프리셋 목록에서 숨길 마커
         base_config["__oneclick__"] = True
@@ -3405,6 +3679,26 @@ async def _step_youtube_upload(
             main_state = recovered
             print(f"[oneclick] YouTube main upload id recovered: {old_video_id} -> {main_video_id}")
 
+        main_playlist_result = None
+        main_playlist_id = str(
+            config.get("youtube_playlist_id")
+            or ((config.get("upload") or {}).get("playlist_id") if isinstance(config.get("upload"), dict) else "")
+            or ""
+        ).strip()
+        if main_playlist_id:
+            try:
+                main_playlist_result = await asyncio.to_thread(
+                    uploader.add_to_playlist_if_missing,
+                    main_playlist_id,
+                    main_video_id,
+                )
+                print(
+                    "[oneclick] YouTube main playlist linked: "
+                    f"{main_playlist_id} already={bool(main_playlist_result.get('already_present'))}"
+                )
+            except Exception as exc:
+                print(f"[oneclick] YouTube main playlist link failed: {exc}")
+
         uploaded_videos: list[dict[str, Any]] = [{
             "kind": "main",
             "title": title,
@@ -3418,6 +3712,9 @@ async def _step_youtube_upload(
             "failed_reason": None,
             "studio_verified": True,
             "verification_method": main_visible.get("verification_method"),
+            "playlist_id": main_playlist_id or None,
+            "playlist_item_id": (main_playlist_result or {}).get("item_id"),
+            "playlist_already_present": bool((main_playlist_result or {}).get("already_present")),
             "last_checked_at": _utcnow_iso(),
         }]
         print(f"[oneclick] YouTube upload processed: {video_url}")
@@ -3476,9 +3773,7 @@ async def _step_youtube_upload(
                     or "Shorts"
                 )
                 short_title_base = without_episode_prefix(short_title_base) or "Shorts"
-                suffix = " #Shorts" if len(shorts_files) == 1 else f" #{idx} #Shorts"
-                max_base_len = max(1, 100 - len(suffix))
-                short_title = (short_title_base[:max_base_len].rstrip() + suffix).strip()
+                short_title = shorts_upload_title(short_title_base, index=idx, total=len(shorts_files))
                 short_description = (description or project.topic or "").strip()
                 if short_description:
                     short_description = f"{short_description}\n\n#Shorts"
@@ -3526,6 +3821,29 @@ async def _step_youtube_upload(
                     "studio_verified": True,
                     "processing_verified": False,
                 }
+                shorts_playlist_id = str(
+                    config.get("youtube_shorts_playlist_id")
+                    or config.get("shorts_playlist_id")
+                    or ""
+                ).strip()
+                shorts_playlist_result = None
+                if shorts_playlist_id and item.get("video_id"):
+                    try:
+                        shorts_playlist_result = await asyncio.to_thread(
+                            uploader.add_to_playlist_if_missing,
+                            shorts_playlist_id,
+                            str(item.get("video_id")),
+                        )
+                        item["playlist_id"] = shorts_playlist_id
+                        item["playlist_item_id"] = shorts_playlist_result.get("item_id")
+                        item["playlist_already_present"] = bool(shorts_playlist_result.get("already_present"))
+                        print(
+                            "[oneclick] YouTube Shorts playlist linked: "
+                            f"{shorts_playlist_id} already={bool(shorts_playlist_result.get('already_present'))}"
+                        )
+                    except Exception as exc:
+                        item["playlist_error"] = str(exc)
+                        print(f"[oneclick] YouTube Shorts playlist link failed: {exc}")
                 uploaded_videos.append({
                     "kind": "shorts",
                     "file": key,
@@ -3533,6 +3851,9 @@ async def _step_youtube_upload(
                     "url": short_url,
                     "video_id": short_result.get("video_id"),
                     "processing_verified": False,
+                    "playlist_id": shorts_playlist_id or None,
+                    "playlist_item_id": (shorts_playlist_result or {}).get("item_id"),
+                    "playlist_already_present": bool((shorts_playlist_result or {}).get("already_present")),
                 })
                 shorts_uploads[key] = item
                 uploaded_items.append(item)
@@ -3979,6 +4300,9 @@ _ONECLICK_CLONE_PRESERVE_KEYS = (
     "episode_endings",
     "episode_core_content",
     "next_episode_preview",
+    "cut_video_duration",
+    "script_tts_target_sec",
+    "script_tts_tolerance_sec",
     "target_duration",
     "target_cuts",
     "channel",
@@ -4028,12 +4352,6 @@ def _effective_live_config_for_task(task: dict) -> dict:
     template = _load_project(str(template_project_id))
     template_config = dict(template.config or {}) if template and isinstance(template.config, dict) else {}
     effective = _merge_template_config(project_config, template_config, str(template_project_id))
-    if project_config.get("__oneclick_v3__") or project_config.get("source_project_id"):
-        for live_key in ("target_duration", "target_cuts"):
-            if live_key in template_config:
-                effective[live_key] = template_config[live_key]
-            else:
-                effective.pop(live_key, None)
     return effective
 
 
@@ -4068,12 +4386,6 @@ def _effective_project_config(project_id: str, fallback_config: Optional[dict] =
     if not template_config:
         return project_config
     effective = _merge_template_config(project_config, template_config, str(template_project_id))
-    if project_config.get("__oneclick_v3__") or project_config.get("source_project_id"):
-        for live_key in ("target_duration", "target_cuts"):
-            if live_key in template_config:
-                effective[live_key] = template_config[live_key]
-            else:
-                effective.pop(live_key, None)
     return effective
 
 
@@ -4201,7 +4513,7 @@ def _sync_v3_run_project_from_source(task: dict, *, step_label: str = "") -> dic
     source_config = dict(source.config or {})
     config = _merge_template_config(project_config, source_config, source_project_id)
     # V3 작업대 본편은 원본 Studio 프리셋의 짧은 테스트 길이를 따라가면 안 된다.
-    # 연결된 Studio가 60초 테스트폼이어도 실행 프로젝트는 항상 120컷/600초로 고정한다.
+    # 연결된 Studio가 60초 테스트폼이어도 실행 프로젝트는 항상 150컷/600초로 고정한다.
     _force_oneclick_main_length(config)
     config["__oneclick__"] = True
     config["__oneclick_v3__"] = True
@@ -5217,7 +5529,15 @@ def _schedule_oneclick_run(task_id: str) -> None:
             print(f"[oneclick] 이전 _run_oneclick_task({task_id}) 를 취소합니다 — 새 실행 스케줄")
         except Exception as e:
             print(f"[oneclick] 이전 task 취소 실패: {e}")
-    loop = asyncio.get_running_loop()
+    task = _TASKS.get(task_id)
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        if task is not None:
+            _add_log(task, "실행 루프가 없어 자동 시작을 보류했습니다", "warn")
+            _save_tasks_to_disk()
+        print(f"[oneclick] running event loop not found; cannot schedule task {task_id}")
+        return
 
     async def _delayed_start():
         # 3) 잠깐 대기 후 cancel 플래그를 비우고 본 작업 시작 — 잔존 스레드가
@@ -5314,6 +5634,19 @@ def _schedule_oneclick_run(task_id: str) -> None:
         if _ACTIVE_RUNS.get(task_id) is t:
             _ACTIVE_RUNS.pop(task_id, None)
         try:
+            if t.cancelled():
+                return
+            exc = t.exception()
+            if exc is not None:
+                finished = _TASKS.get(task_id) or {}
+                if finished:
+                    finished["status"] = "failed"
+                    finished["error"] = f"실행 프로세스 오류: {type(exc).__name__}: {exc}"
+                    finished["finished_at"] = _utcnow_iso()
+                    _add_log(finished, finished["error"], "error")
+                    _save_tasks_to_disk()
+                print(f"[oneclick] _run_oneclick_task({task_id}) failed: {exc}")
+                return
             finished = _TASKS.get(task_id) or {}
             if finished.get("status") == "cancelled" or _emergency_stop_active():
                 return
@@ -5535,6 +5868,29 @@ def _update_project_status(project_id: str, status: str) -> None:
         db.close()
 
 
+def _reset_project_steps_for_resume(project_id: str, resume_step: int) -> None:
+    db = SessionLocal()
+    try:
+        p = db.query(Project).filter(Project.id == project_id).first()
+        if not p:
+            return
+        states = dict(p.step_states or {})
+        for _slug, step_num, _label in STEP_ORDER:
+            if step_num >= resume_step and states.get(str(step_num)) != "completed":
+                states[str(step_num)] = "pending"
+        p.step_states = states
+        if p.status in ("failed", "cancelled"):
+            p.status = "draft"
+        try:
+            from sqlalchemy.orm.attributes import flag_modified
+            flag_modified(p, "step_states")
+        except Exception:
+            pass
+        db.commit()
+    finally:
+        db.close()
+
+
 # --------------------------------------------------------------------------- #
 # Public API (routers/oneclick.py 에서 호출)
 # --------------------------------------------------------------------------- #
@@ -5542,6 +5898,7 @@ def _update_project_status(project_id: str, status: str) -> None:
 def _mark_stale_inflight_tasks() -> bool:
     """Recover UI-visible in-flight state when no runner exists in this process."""
     changed = False
+    dispatch_needed = False
     for task_id, task in list(_TASKS.items()):
         status = str(task.get("status") or "")
         if status not in ("running", "queued"):
@@ -5549,12 +5906,19 @@ def _mark_stale_inflight_tasks() -> bool:
         runner = _ACTIVE_RUNS.get(task_id)
         if runner is not None and not runner.done():
             continue
-        if status == "queued" and _has_running_task(exclude_task_id=task_id):
+        if status == "queued":
+            dispatch_needed = True
             continue
-
+        if _has_running_task(exclude_task_id=task_id):
+            continue
         if _prepare_inflight_task_for_restart(task):
-            _add_log(task, "실행 프로세스가 없어 자동 재개 대기열로 복구", "warn")
-        changed = True
+            dispatch_needed = True
+            changed = True
+
+    if dispatch_needed and not _has_running_task():
+        dispatched = _dispatch_next_queued_task(respect_auto_pause=False)
+        if dispatched:
+            changed = True
     return changed
 
 
@@ -5583,6 +5947,35 @@ def prepare_task(
     _ensure_state_loaded()
     source_project_id = _channel_studio_project_id(channel, template_project_id)
     if source_project_id:
+        existing_project_id = _find_existing_project_for_queue_item(
+            {
+                "topic": topic,
+                "template_project_id": source_project_id,
+                "target_duration": target_duration or ONECLICK_MAIN_TARGET_DURATION,
+                "target_cuts": ONECLICK_MAIN_CUT_COUNT,
+                "channel": channel,
+                "openings": episode_openings,
+                "endings": episode_endings,
+                "core_content": episode_core_content,
+                "episode_number": episode_number,
+                "next_episode_preview": next_episode_preview,
+            }
+        )
+        if existing_project_id:
+            task = recover_project(existing_project_id)
+            try:
+                ch_int = int(channel or task.get("channel") or 0)
+                if 1 <= ch_int <= 4:
+                    task["channel"] = ch_int
+            except (TypeError, ValueError):
+                pass
+            if episode_number:
+                task["episode_number"] = episode_number
+            task["source_project_id"] = source_project_id
+            task["template_project_id"] = source_project_id
+            _add_log(task, f"기존 에피소드 산출물 재사용: {existing_project_id}", "info")
+            _save_tasks_to_disk()
+            return task
         return _prepare_v3_studio_linked_task(
             source_project_id=source_project_id,
             topic=topic,
@@ -5636,7 +6029,7 @@ def prepare_task(
                 # __oneclick__ 마커 유지 + 기존 target_duration 보존
                 base["__oneclick__"] = True
                 base["auto_pause_after_step"] = False
-                _force_oneclick_main_length(base)
+                _force_oneclick_main_length(base, target_duration or old_cfg.get("target_duration"))
 
                 # v1.2.9: 에피소드 상세 — 재사용 시에도 최신값으로 갱신.
                 # None 이면 기존값 유지. 전달은 있지만 비어 있으면 제거.
@@ -6005,6 +6398,7 @@ def start_task(task_id: str) -> dict:
     task = _TASKS.get(task_id)
     if not task:
         raise KeyError("task not found")
+    task = _redirect_empty_v3_task_to_existing_episode(task_id, task)
     if task["status"] not in ("prepared", "failed", "cancelled"):
         # 이미 running/completed 면 무시 (idempotent)
         return task
@@ -6037,6 +6431,9 @@ def resume_task(task_id: str) -> dict:
         raise KeyError("task not found")
     if task["status"] not in ("failed", "cancelled", "paused", "completed", "queued"):
         raise ValueError(f"resume 불가: 현재 상태가 '{task['status']}'")
+    task = _redirect_empty_v3_task_to_existing_episode(task_id, task)
+    if task.get("status") == "completed":
+        return task
 
     project_id = str(task.get("project_id") or "").strip()
     task_config = task.get("config") if isinstance(task.get("config"), dict) else {}
@@ -6150,6 +6547,8 @@ def resume_task(task_id: str) -> dict:
     task["error"] = None
     task["finished_at"] = None
     task["resume_from_step"] = resume_step
+    if project_id:
+        _reset_project_steps_for_resume(project_id, resume_step)
     _add_log(task, f"↻ 이어서 하기 대기열 등록 (Step {resume_step})", "info")
 
     # Redis cancel 플래그 초기화
@@ -7717,9 +8116,11 @@ async def manual_youtube_upload(task_id: str) -> dict:
     states = dict(task.get("step_states") or {})
     states["7"] = "running"
     task["step_states"] = states
-    task["status"] = "running"
+    task["status"] = "uploading"
     task["current_step"] = 7
-    task["current_step_name"] = "유튜브 업로드"
+    task["current_step_name"] = "유튜브 수동 업로드"
+    task["current_step_label"] = "유튜브 수동 업로드"
+    task["sub_status"] = "manual-uploading"
     task["finished_at"] = None
     task["resume_from_step"] = 7
     task["error"] = None
@@ -8204,7 +8605,7 @@ def recover_existing_for_queue_item(item_id: str) -> dict[str, Any]:
         task["progress_pct"] = _compute_progress_pct(task)
 
         linked_item = dict(items[idx] or {})
-        linked_item["status"] = "running" if str(task.get("status") or "") in ("running", "uploading") else "pending"
+        linked_item["status"] = "running" if _task_has_live_runner(str(task.get("task_id") or ""), task) else "pending"
         linked_item["task_id"] = str(task.get("task_id") or "")
         linked_item["project_id"] = str(task.get("project_id") or "")
         linked_item["source_project_id"] = str(task.get("source_project_id") or task.get("template_project_id") or item.get("template_project_id") or "")
@@ -8275,8 +8676,68 @@ def _queue_running_task_for_channel(ch: int) -> dict[str, Any] | None:
         if str(item.get("status") or "").lower() != "running":
             continue
         tid = str(item.get("task_id") or "").strip()
-        if tid and tid in _TASKS:
+        if tid and tid in _TASKS and _task_has_live_runner(tid, _TASKS[tid]):
             return _TASKS[tid]
+    return None
+
+
+def _normalize_queue_work_topic(value: Any) -> str:
+    return re.sub(r"\s+", " ", str(value or "").strip().casefold())
+
+
+def _task_matches_queue_item(task: dict[str, Any], item: dict[str, Any], preset_id: str | None) -> bool:
+    if not task or not item:
+        return False
+    if _normalize_queue_work_topic(task.get("topic") or task.get("title")) != _normalize_queue_work_topic(item.get("topic")):
+        return False
+    try:
+        if int(task.get("channel") or 1) != _queue_item_channel(item):
+            return False
+    except Exception:
+        return False
+    item_ep = coerce_episode_number(item.get("episode_number"))
+    if item_ep is not None and coerce_episode_number(task.get("episode_number")) != item_ep:
+        return False
+    if preset_id:
+        task_preset = str(task.get("source_project_id") or task.get("template_project_id") or "").strip()
+        if task_preset and task_preset != str(preset_id).strip():
+            return False
+    return True
+
+
+def _task_has_uploaded_result(task: dict[str, Any]) -> bool:
+    if task.get("youtube_url"):
+        return True
+    pid = str(task.get("project_id") or "").strip()
+    if not pid:
+        return False
+    try:
+        project = _load_project(pid)
+        return bool(project and project.youtube_url and (project.step_states or {}).get("7") == "completed")
+    except Exception:
+        return False
+
+
+def _find_existing_task_for_queue_item(
+    item: dict[str, Any],
+    preset_id: str | None,
+) -> tuple[str, dict[str, Any]] | None:
+    active: list[dict[str, Any]] = []
+    completed: list[dict[str, Any]] = []
+    for task in _TASKS.values():
+        if not _task_matches_queue_item(task, item, preset_id):
+            continue
+        status = str(task.get("status") or "").strip().lower()
+        if status in ("running", "uploading", "queued", "prepared"):
+            active.append(task)
+        elif status == "completed" and _task_has_uploaded_result(task):
+            completed.append(task)
+    if active:
+        active.sort(key=lambda task: str(task.get("started_at") or task.get("created_at") or ""), reverse=True)
+        return "active", active[0]
+    if completed:
+        completed.sort(key=lambda task: str(task.get("finished_at") or task.get("started_at") or ""), reverse=True)
+        return "completed", completed[0]
     return None
 
 
@@ -8294,6 +8755,24 @@ def _mark_queue_item_running(index: int, task: dict[str, Any], source_project_id
     item["started_at"] = str(task.get("started_at") or _utcnow_iso())
     item.pop("finished_at", None)
     item["queued_note"] = "실행 중"
+    items[index] = item
+    _QUEUE["items"] = items
+    _save_queue_to_disk()
+
+
+def _mark_queue_item_completed(index: int, task: dict[str, Any], source_project_id: str | None = None) -> None:
+    items = list(_QUEUE.get("items") or [])
+    if index < 0 or index >= len(items):
+        return
+    item = dict(items[index] or {})
+    item["status"] = "completed"
+    item["task_id"] = str(task.get("task_id") or "")
+    item["project_id"] = str(task.get("project_id") or "")
+    item["source_project_id"] = str(source_project_id or task.get("source_project_id") or task.get("template_project_id") or "")
+    item["result_dir"] = str(task.get("result_dir") or "")
+    item["title"] = str(task.get("title") or "")
+    item["finished_at"] = str(task.get("finished_at") or _utcnow_iso())
+    item["queued_note"] = "이미 완료됨"
     items[index] = item
     _QUEUE["items"] = items
     _save_queue_to_disk()
@@ -8337,6 +8816,53 @@ async def _fire_queue_for_channel(ch: int, triggered_by: str = "schedule") -> di
     head = dict(items[target_idx] or {})
 
     preset_id = _resolve_item_preset(head)
+    existing = _find_existing_task_for_queue_item(head, preset_id)
+    if existing:
+        existing_state, existing_task = existing
+        if existing_state == "active":
+            _mark_queue_item_running(target_idx, existing_task, preset_id)
+            print(
+                f"[oneclick.queue] skip duplicate ch{ch}: existing task "
+                f"{existing_task.get('task_id')} status={existing_task.get('status')}"
+            )
+            return existing_task
+        _mark_queue_item_completed(target_idx, existing_task, preset_id)
+        print(
+            f"[oneclick.queue] skip completed duplicate ch{ch}: existing task "
+            f"{existing_task.get('task_id')}"
+        )
+        return existing_task
+
+    existing_project_id = _find_existing_project_for_queue_item(head)
+    if existing_project_id:
+        try:
+            task = recover_project(existing_project_id)
+            try:
+                ep = int(head.get("episode_number") or 0)
+                if ep > 0:
+                    task["episode_number"] = ep
+            except (TypeError, ValueError):
+                pass
+            task["triggered_by"] = "schedule" if triggered_by == "schedule" else "manual"
+            task["channel"] = ch
+            if preset_id:
+                task["source_project_id"] = preset_id
+                task["template_project_id"] = preset_id
+            _add_log(task, f"작업대 큐 기존 에피소드 산출물 재사용: {existing_project_id}", "info")
+            _reconcile_task_outputs(task, clear_terminal_cursor=True)
+            task["progress_pct"] = _compute_progress_pct(task)
+            if str(task.get("status") or "").lower() == "completed":
+                _mark_queue_item_completed(target_idx, task, preset_id)
+                _save_tasks_to_disk()
+                return task
+            _mark_queue_item_running(target_idx, task, preset_id)
+            _save_tasks_to_disk()
+            start_task(task["task_id"])
+            return task
+        except Exception as e:
+            print(f"[oneclick.queue] recover existing ch{ch} failed, queue item retained: {e}")
+            return None
+
     print(
         f"[oneclick.queue] firing ch{ch} item: topic={head.get('topic')!r} "
         f"template={preset_id} cuts={ONECLICK_MAIN_CUT_COUNT}"

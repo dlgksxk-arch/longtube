@@ -105,6 +105,7 @@ export function stepModelName(stepKey: string, task?: OneClickTask | null) {
     const names: Record<string, string> = {
       "comfyui-dreamshaper-xl": "SDXL Lightning",
       "comfyui-dreamshaper-xl-longtube": "SDXL 로컬모델 v1",
+      "comfyui-dreamshaper-xl-longtube-v15": "SDXL 로컬모델 v1.5 실사",
       "openai-image-1": "GPT Image 1 (gpt-image-1)",
       "openai-image-2": "OpenAI Image 2 (gpt-image-2)",
       "nano-banana-3": "Nano Banana 3 (Reference style lock)",
@@ -135,7 +136,7 @@ export function stepTargetText(stepKey: string, task?: OneClickTask | null) {
     if (chunk) return `chunk ${chunk[1]} / ${chunk[2]}`;
     return task.current_step === 2 ? "chunk 1 / 3" : "chunk 0 / 3";
   }
-  if (["3", "4", "5"].includes(stepKey)) return `${done} / ${total || 120}`;
+  if (["3", "4", "5"].includes(stepKey)) return `${done} / ${total || 150}`;
   return task.step_states?.[stepKey] === "completed" ? "완료" : "대기";
 }
 

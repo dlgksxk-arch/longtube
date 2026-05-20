@@ -80,8 +80,8 @@
       "negative": ["8", 1],
       "latent_image": ["8", 2],
       "seed": "${SEED}",
-      "steps": 20,
-      "cfg": 5.0,
+      "steps": "${STEPS}",
+      "cfg": "${CFG}",
       "sampler_name": "uni_pc",
       "scheduler": "simple",
       "denoise": 1.0

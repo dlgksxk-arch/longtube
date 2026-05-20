@@ -660,7 +660,7 @@ export default function LivePage() {
 
     const youtubeUrl = String((nextTask as any).youtube_url || "").trim();
     const uploadVerified = Boolean(youtubeUrl) || (nextTask.logs || []).some((log) =>
-      /유튜브 업로드 완료|유튜브 수동 업로드 완료|YouTube Studio verified|YouTube Shorts uploaded|YouTube Shorts uploaded count|업로드 확인 완료/i.test(
+      /유튜브 업로드 완료|유튜브 수동 업로드 완료|YouTube verified|YouTube Shorts uploaded|YouTube Shorts uploaded count|업로드 확인 완료/i.test(
         String(log?.msg || ""),
       ),
     );
@@ -1096,6 +1096,15 @@ export default function LivePage() {
         }
 
         setTask(fresh);
+        setActiveTasks((prev) => {
+          if (!["prepared", "queued", "running"].includes(fresh.status)) {
+            return prev.filter((item) => item.task_id !== fresh.task_id);
+          }
+          if (!prev.some((item) => item.task_id === fresh.task_id)) {
+            return [fresh];
+          }
+          return prev.map((item) => (item.task_id === fresh.task_id ? fresh : item));
+        });
         maybeReloadAfterVerifiedUpload(fresh);
       } catch {
         setPollFails((prev) => {
@@ -1828,7 +1837,11 @@ export default function LivePage() {
     }
   };
   const runningDisplayTask = activeTasks.find((item) => item.status === "running") || null;
-  const displayTask = getEffectiveTask(runningDisplayTask || task);
+  const displaySourceTask =
+    task && runningDisplayTask?.task_id === task.task_id
+      ? task
+      : runningDisplayTask || task;
+  const displayTask = getEffectiveTask(displaySourceTask);
   const isCompleted = displayTask?.status === "completed";
   const pct = isCompleted ? 100 : Math.round(displayTask?.progress_pct || 0);
   const activeStepKey = displayTask?.current_step ? String(displayTask.current_step) : inferLiveStepKey(displayTask);
@@ -1905,7 +1918,7 @@ export default function LivePage() {
   const compactStageRows = STEPS.filter((step) => ["2", "3", "4", "5", "6", "7"].includes(step.key)).map((step) => {
     const state = getStepState(displayTask, step.key);
     const isActive = activeStepKey === step.key && displayTask?.status === "running";
-    const total = Math.max(1, Number(displayTask?.total_cuts || displayTask?.current_step_total || 120));
+    const total = Math.max(1, Number(displayTask?.total_cuts || displayTask?.current_step_total || 150));
     const done = Number(displayTask?.completed_cuts_by_step?.[step.key] || 0);
     const activeCutPct =
       isActive && ["3", "4", "5"].includes(step.key)
@@ -2379,10 +2392,10 @@ export default function LivePage() {
           cycle: index,
           dueMinutes: scheduledDelayMinutes(queueChannelTimes[String(item.channel || 1)], nowMinutes),
         }));
-        const liveNextCount = pendingQueueItems.reduce(
-          (count, item, index) => (index === count && isLiveNextQueueItem(item) ? count + 1 : count),
-          0,
-        );
+        const liveNextCount = pendingQueueItems.reduce((count, item) => {
+          if (isQueueItemLocked(item)) return count;
+          return count >= 0 && isLiveNextQueueItem(item) ? count + 1 : -1;
+        }, 0);
         const visibleQueueEntries =
           queueChannelFilter == null
             ? allQueueEntries
@@ -2406,11 +2419,18 @@ export default function LivePage() {
           const isRunningQueueItem = isQueueItemLocked(item);
           const isWorkbenchQueueItem = !isRunningQueueItem && Boolean(item.task_id);
           const actionDisabled = queueBatchRunning || isRunningQueueItem;
-          const liveNextRank =
-            isLiveNextQueueItem(item) &&
-            pendingQueueItems.slice(0, index).every((prev) => isLiveNextQueueItem(prev))
-              ? index + 1
-              : 0;
+          const liveNextRank = (() => {
+            if (!isLiveNextQueueItem(item)) return 0;
+            let rank = 0;
+            for (let i = 0; i < pendingQueueItems.length; i += 1) {
+              const prev = pendingQueueItems[i];
+              if (isQueueItemLocked(prev)) continue;
+              if (!isLiveNextQueueItem(prev)) return 0;
+              rank += 1;
+              if (i === index) return rank;
+            }
+            return 0;
+          })();
           const isPromotedNext = liveNextRank > 0;
           const nextStartLabel =
             isPromotedNext && task && ["prepared", "queued", "running"].includes(task.status)

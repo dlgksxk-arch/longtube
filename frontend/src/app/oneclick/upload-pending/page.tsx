@@ -30,7 +30,12 @@ function episodeLabel(task: OneClickTask) {
 function taskTitle(task: OneClickTask) {
   const title = String(task.title || task.topic || "").trim();
   const ep = episodeLabel(task);
-  return /^EP\.\s*\d+/i.test(title) ? title : `${ep} ${title}`;
+  if (ep === "EP.--") return title;
+  const clean = title
+    .replace(/^\s*EP\.?\s*\d+\s*[-:.)]?\s*/i, "")
+    .replace(/\s*(?:[|/\\\-–—:·]\s*)?EP\.?\s*\d+\s*$/i, "")
+    .trim();
+  return `${clean || title} ${ep}`.trim();
 }
 
 function timeValue(value?: string | null) {
@@ -110,11 +115,11 @@ export default function UploadPendingPage() {
     try {
       await waitForPaint();
       const result = await oneclickApi.manualUpload(task.task_id);
-      if (result.pending) {
+      if (result.pending || result.status === "uploading") {
         setRowStates((prev) => ({ ...prev, [task.task_id]: "pending" }));
         setMessage({
           type: "info",
-          text: `${taskTitle(task)} YouTube Studio 처리 대기 중${result.youtube_url ? `: ${result.youtube_url}` : ""}`,
+          text: `${taskTitle(task)} 재업로드는 백그라운드 처리 대기 중${result.youtube_url ? `: ${result.youtube_url}` : ""}`,
         });
         await load();
         return;
@@ -148,11 +153,11 @@ export default function UploadPendingPage() {
         try {
           await waitForPaint();
           const result = await oneclickApi.manualUpload(task.task_id);
-          if (result.pending) {
+          if (result.pending || result.status === "uploading") {
             setRowStates((prev) => ({ ...prev, [task.task_id]: "pending" }));
             setMessage({
               type: "info",
-              text: `${taskTitle(task)} YouTube Studio 처리 대기 중이라 목록에 남겨둡니다.`,
+              text: `${taskTitle(task)} 백그라운드 재업로드 처리 대기 중이라 목록에 남겨둡니다.`,
             });
             continue;
           }

@@ -167,11 +167,12 @@ export default function StepVoice({ project, cuts, onUpdate }: Props) {
 
   const cutsWithAudio = cuts.filter((c) => c.audio_path);
 
-  // Cost estimate: avg ~70 chars per cut narration (5sec Korean)
+  // Cost estimate: avg ~70 chars per cut narration
   const selectedTts = ttsModels.find((m) => m.id === project.config.tts_model);
   const costPerKChars = selectedTts?.cost_value ?? 0.30;
   const avgCharsPerCut = 70;
-  const totalChars = cuts.length > 0 ? cuts.reduce((sum, c) => sum + c.narration.length, 0) : (Math.floor(project.config.target_duration / 5) * avgCharsPerCut);
+  const cutVideoDuration = Math.max(1, Number(project.config.cut_video_duration || 5));
+  const totalChars = cuts.length > 0 ? cuts.reduce((sum, c) => sum + c.narration.length, 0) : (Math.ceil(project.config.target_duration / cutVideoDuration) * avgCharsPerCut);
   const estimatedVoiceCost = (totalChars / 1000) * costPerKChars;
   const currentModelLabel = selectedTts?.name || project.config.tts_model || "-";
 
