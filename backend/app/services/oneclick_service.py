@@ -662,8 +662,7 @@ def _normalize_uploaded_title(title: str) -> str:
 def _project_has_uploaded_video(project: Optional[Project]) -> bool:
     if not project or not str(project.youtube_url or "").strip():
         return False
-    states = project.step_states or {}
-    return states.get("7") == "completed"
+    return True
 
 
 def _mark_project_uploaded(db, project: Project) -> bool:
@@ -1538,9 +1537,7 @@ def _scan_project_outputs(
         try:
             proj = db.query(Project).filter(Project.id == project_id).first()
             proj_states = (proj.step_states or {}) if proj else {}
-            states["7"] = "completed" if (
-                proj and proj.youtube_url and proj_states.get("7") == "completed"
-            ) else "pending"
+            states["7"] = "completed" if (proj and proj.youtube_url) else "pending"
         finally:
             db.close()
         return states, counts, 0, removed
@@ -1627,9 +1624,7 @@ def _scan_project_outputs(
     try:
         proj = db.query(Project).filter(Project.id == project_id).first()
         proj_states = (proj.step_states or {}) if proj else {}
-        states["7"] = "completed" if (
-            proj and proj.youtube_url and proj_states.get("7") == "completed"
-        ) else "pending"
+        states["7"] = "completed" if (proj and proj.youtube_url) else "pending"
 
         if cleanup_broken and (broken_audio or broken_image or broken_video):
             for num in sorted(set(broken_audio + broken_image + broken_video)):
@@ -5848,6 +5843,31 @@ async def _run_oneclick_task(task_id: str) -> None:
             task["status"] = "completed"
             task["finished_at"] = _utcnow_iso()
             _update_project_status(project_id, "completed")
+            return
+
+        uploaded_project = _load_project(project_id)
+        uploaded_url = str(getattr(uploaded_project, "youtube_url", "") or "").strip() if uploaded_project else ""
+        if uploaded_url:
+            states = dict(task.get("step_states") or {})
+            states["7"] = "completed"
+            task["youtube_url"] = uploaded_url
+            _mark_task_completed(task, states)
+            if uploaded_project:
+                db = SessionLocal()
+                try:
+                    project = db.query(Project).filter(Project.id == project_id).first()
+                    if project:
+                        project.status = "completed"
+                        ss = dict(project.step_states or {})
+                        ss["7"] = "completed"
+                        project.step_states = ss
+                        from sqlalchemy.orm.attributes import flag_modified
+                        flag_modified(project, "step_states")
+                        db.commit()
+                finally:
+                    db.close()
+            _add_log(task, f"✓ 기존 YouTube URL 확인 — 업로드 완료 처리: {uploaded_url}")
+            _save_tasks_to_disk()
             return
 
         task["current_step"] = 7
