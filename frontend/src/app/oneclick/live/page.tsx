@@ -465,6 +465,8 @@ function StepIcon({ state }: { state: "done" | "active" | "pending" | "failed" }
   return <Circle size={16} className="text-gray-600" />;
 }
 
+const PRODUCTION_LOG_RETENTION_MS = 36 * 60 * 60 * 1000;
+
 export default function LivePage() {
   const [task, setTask] = useState<OneClickTask | null>(null);
   const taskRef = useRef<OneClickTask | null>(null);
@@ -544,6 +546,36 @@ export default function LivePage() {
       second: "2-digit",
     });
 
+  const latestProductionLogTime = useCallback((item: OneClickTask | null | undefined) => {
+    if (!item) return 0;
+    const serverLogs = item.logs || [];
+    for (let i = serverLogs.length - 1; i >= 0; i -= 1) {
+      const value = timeValue(serverLogs[i]?.ts_iso || null);
+      if (value > 0) return value;
+    }
+    return Math.max(
+      timeValue(item.finished_at),
+      timeValue(item.started_at),
+      timeValue(item.created_at),
+    );
+  }, []);
+
+  const isRetainedProductionLogTask = useCallback(
+    (item: OneClickTask | null | undefined) => Boolean(
+      item &&
+        (item.logs?.length || 0) > 0 &&
+        Date.now() - latestProductionLogTime(item) <= PRODUCTION_LOG_RETENTION_MS,
+    ),
+    [latestProductionLogTime],
+  );
+
+  const pickRecentProductionLogTask = useCallback((items: OneClickTask[]) =>
+    [...items]
+      .filter(isRetainedProductionLogTask)
+      .sort((a, b) => latestProductionLogTime(b) - latestProductionLogTime(a))[0] || null,
+    [isRetainedProductionLogTask, latestProductionLogTime],
+  );
+
   const formatAutoProductionCountdown = (seconds: number) => {
     return compactSeconds(Math.max(0, Math.floor(seconds || 0)));
   };
@@ -605,7 +637,7 @@ export default function LivePage() {
 
   const addLog = useCallback(
     (msg: string, level: LogEntry["level"] = "info") => {
-      setLogs((prev) => [...prev.slice(-200), { time: timeStr(), msg, level }]);
+      setLogs((prev) => [...prev, { time: timeStr(), msg, level }]);
     },
     [],
   );
@@ -644,7 +676,7 @@ export default function LivePage() {
         .filter((log) => !isConsoleProgressLog(log))
         .map(serverLogToEntry);
       serverLogCountRef.current = serverLogs.length;
-      setLogs((prev) => [...prev, ...newEntries].slice(-200));
+      setLogs((prev) => [...prev, ...newEntries]);
     },
     [replaceLogsFromTask],
   );
@@ -811,7 +843,13 @@ export default function LivePage() {
       if (!running?.task_id) {
         setActiveTasks([]);
         const selectedTask = taskRef.current;
-        if (selectedTask && ["failed", "cancelled", "paused", "prepared", "queued"].includes(selectedTask.status)) {
+        if (
+          selectedTask &&
+          (
+            ["failed", "cancelled", "paused", "prepared", "queued"].includes(selectedTask.status) ||
+            isRetainedProductionLogTask(selectedTask)
+          )
+        ) {
           return selectedTask;
         }
         const topQueueItem = queueItems[0] || null;
@@ -844,6 +882,22 @@ export default function LivePage() {
             if (mode === "manual" && !routeMissing) {
               addLog(`[오류] 기존 자료 불러오기 실패: ${e?.message || e}`, "error");
             }
+          }
+        }
+        try {
+          const { tasks } = await oneclickApi.list();
+          markServerSync();
+          const recentLogTask = pickRecentProductionLogTask(tasks || []);
+          if (recentLogTask) {
+            setTask(recentLogTask);
+            replaceLogsFromTask(recentLogTask);
+            setPollFails(0);
+            setStalled(false);
+            return recentLogTask;
+          }
+        } catch (e: any) {
+          if (mode === "manual") {
+            addLog(`[오류] 최근 제작 로그 로드 실패: ${e?.message || e}`, "error");
           }
         }
         setTask(null);
@@ -886,7 +940,16 @@ export default function LivePage() {
       setStalled(false);
       return active;
     },
-    [activeQueueTaskId, addLog, markServerSync, maybeReloadOnAutoTaskSwitch, replaceLogsFromTask, syncSafetyState],
+    [
+      activeQueueTaskId,
+      addLog,
+      isRetainedProductionLogTask,
+      markServerSync,
+      maybeReloadOnAutoTaskSwitch,
+      pickRecentProductionLogTask,
+      replaceLogsFromTask,
+      syncSafetyState,
+    ],
   );
 
   // ─── 초기 로드: 페이지 열 때 (또는 다시 돌아올 때) 실행 중 태스크 자동 복구 ───

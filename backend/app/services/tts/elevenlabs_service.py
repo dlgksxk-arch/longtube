@@ -9,7 +9,6 @@ import httpx
 from app.services.tts.base import BaseTTSService, _resolve_bins
 from app.services.cancel_ctx import raise_if_cancelled  # v1.2.25 cancel 방어
 from app import config
-from app.config import TTS_MAX_DURATION, TTS_MIN_DURATION  # 상수는 고정이라 직접 import OK
 
 BASE_URL = "https://api.elevenlabs.io/v1"
 
@@ -88,19 +87,6 @@ class ElevenLabsService(BaseTTSService):
                 raise
 
         duration = self._get_duration(output_path)
-
-        # Do not tempo-shift or cut narration. Timing must be solved by text length.
-        if os.path.basename(output_path) != "voice_preview.mp3":
-            try:
-                duration = self.validate_duration_window(
-                    output_path, duration, TTS_MIN_DURATION, TTS_MAX_DURATION
-                )
-            except ValueError:
-                try:
-                    os.remove(output_path)
-                except OSError:
-                    pass
-                raise
 
         # Return relative path for DB storage (audio/cut_X.wav)
         rel_path = output_path

@@ -215,6 +215,88 @@ def _videos_with_comments(videos: list[dict]) -> tuple[list[dict], int]:
 def _list_comments_sync(channel_id: int, max_videos: int, max_comments: int) -> dict:
     uploader = YouTubeUploader(channel_id=channel_id)
     own_channel_id = _get_own_channel_id(uploader)
+    if hasattr(uploader, "list_channel_comment_threads") and own_channel_id:
+        comments: list[dict] = []
+        errors: list[dict] = []
+        page_token: Optional[str] = None
+        scanned_pages = 0
+        while len(comments) < max_comments:
+            try:
+                thread_data = uploader.list_channel_comment_threads(
+                    channel_youtube_id=own_channel_id,
+                    max_results=min(100, max_comments - len(comments)),
+                    page_token=page_token,
+                    order="time",
+                )
+            except Exception as exc:
+                if not _is_disabled_comment_error(exc):
+                    errors.append({"error": _comment_error_text(exc)})
+                break
+            scanned_pages += 1
+            threads = thread_data.get("items") or []
+            if not threads:
+                break
+            video_ids = [
+                str(thread.get("video_id") or "").strip()
+                for thread in threads
+                if str(thread.get("video_id") or "").strip()
+            ]
+            try:
+                video_details = uploader.get_videos_details(video_ids)
+            except Exception:
+                video_details = {}
+            for thread in threads:
+                if len(comments) >= max_comments:
+                    break
+                video_id = str(thread.get("video_id") or "").strip()
+                details = video_details.get(video_id) or {}
+                replies = thread.get("replies") or []
+                author_channel_id = str(thread.get("author_channel_id") or "").strip()
+                has_channel_reply = any(
+                    str(reply.get("author_channel_id") or "").strip() == own_channel_id
+                    for reply in replies
+                )
+                is_own_comment = bool(own_channel_id and author_channel_id == own_channel_id)
+                comments.append({
+                    "channel_id": channel_id,
+                    "own_channel_id": own_channel_id,
+                    "video_id": video_id,
+                    "video_title": details.get("title") or video_id,
+                    "video_url": f"https://www.youtube.com/watch?v={video_id}" if video_id else "",
+                    "video_thumbnail": details.get("thumbnail"),
+                    "thread_id": thread.get("thread_id"),
+                    "parent_comment_id": thread.get("top_comment_id"),
+                    "author": thread.get("author") or "",
+                    "author_channel_id": author_channel_id or None,
+                    "text": thread.get("text") or "",
+                    "like_count": thread.get("like_count"),
+                    "published_at": thread.get("published_at"),
+                    "updated_at": thread.get("updated_at"),
+                    "total_reply_count": thread.get("total_reply_count") or 0,
+                    "can_reply": thread.get("can_reply") is not False,
+                    "has_channel_reply": has_channel_reply,
+                    "is_own_comment": is_own_comment,
+                    "replies": replies,
+                })
+            page_token = thread_data.get("next_page_token")
+            if not page_token:
+                break
+        return {
+            "ok": True,
+            "channel_id": channel_id,
+            "channel_youtube_id": own_channel_id,
+            "max_videos": max_videos,
+            "max_comments": max_comments,
+            "videos_scanned": 0,
+            "videos_with_comments": len({c.get("video_id") for c in comments if c.get("video_id")}),
+            "videos_skipped_no_comments": 0,
+            "comments": comments,
+            "errors": errors,
+            "scan_mode": "channel_comments",
+            "comment_pages_scanned": scanned_pages,
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
+        }
+
     videos = _list_uploaded_videos_for_comment_scan(uploader, max_videos)
     comment_videos, skipped_no_comments = _videos_with_comments(videos)
     comments: list[dict] = []

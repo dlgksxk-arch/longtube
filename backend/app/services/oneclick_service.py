@@ -118,6 +118,12 @@ _TASKS_FILE = SYSTEM_DIR / "oneclick_tasks.json"
 _TASKS_SAVE_LOCK = threading.RLock()
 _QUEUE_RECOVER_LOCK = threading.RLock()
 
+try:
+    ONECLICK_LOG_RETENTION_HOURS = float(os.getenv("ONECLICK_LOG_RETENTION_HOURS", "36"))
+except (TypeError, ValueError):
+    ONECLICK_LOG_RETENTION_HOURS = 36.0
+ONECLICK_LOG_RETENTION_SECONDS = max(3600.0, ONECLICK_LOG_RETENTION_HOURS * 3600.0)
+
 
 def _project_storage_exists(project_id: str, config: Optional[dict] = None) -> bool:
     """현재 저장소 기준으로 프로젝트 폴더가 실제 존재하는지 확인한다."""
@@ -302,8 +308,16 @@ def _save_tasks_to_disk() -> None:
                     )
             _sync_queue_items_from_tasks_for_save()
             _TASKS_FILE.parent.mkdir(parents=True, exist_ok=True)
-            # 최근 50건만 보존 (오래된 completed 태스크는 버린다)
-            recent = dict(list(_TASKS.items())[-50:])
+            for task in _TASKS.values():
+                if isinstance(task, dict):
+                    _prune_task_logs_for_retention(task)
+            items = list(_TASKS.items())
+            recent_task_ids = {tid for tid, _task in items[-50:]}
+            recent = {
+                tid: task
+                for tid, task in items
+                if tid in recent_task_ids or _task_within_log_retention(task)
+            }
             _TASKS_FILE.write_text(
                 json.dumps(recent, ensure_ascii=False, indent=2, default=str),
                 encoding="utf-8",
@@ -1225,7 +1239,7 @@ def _force_oneclick_main_length(config: dict, target_duration: Optional[int] = N
         duration = ONECLICK_MAIN_TARGET_DURATION
     config["target_duration"] = duration
     config["target_cuts"] = max(1, math.ceil(duration / ONECLICK_SECONDS_PER_CUT))
-    config.setdefault("script_tts_target_sec", 4.4)
+    config["script_tts_target_sec"] = round(ONECLICK_SECONDS_PER_CUT * 1.25, 3)
     config.setdefault("script_tts_tolerance_sec", 0.2)
     return config
 
@@ -1253,6 +1267,47 @@ def _utc_age_seconds(iso_value: Any) -> Optional[float]:
         return max(0.0, (now - started).total_seconds())
     except Exception:
         return None
+
+
+def _prune_task_logs_for_retention(task: dict) -> bool:
+    logs = task.get("logs")
+    if not isinstance(logs, list):
+        if logs is None:
+            return False
+        task["logs"] = []
+        return True
+    kept = []
+    changed = False
+    for row in logs:
+        if not isinstance(row, dict):
+            changed = True
+            continue
+        age = _utc_age_seconds(row.get("ts_iso") or row.get("created_at"))
+        if age is None or age <= ONECLICK_LOG_RETENTION_SECONDS:
+            kept.append(row)
+        else:
+            changed = True
+    if changed:
+        task["logs"] = kept
+    return changed
+
+
+def _task_within_log_retention(task: dict) -> bool:
+    status = str(task.get("status") or "").lower()
+    if status in ("running", "queued", "prepared", "uploading", "paused"):
+        return True
+    logs = task.get("logs") if isinstance(task.get("logs"), list) else []
+    for row in reversed(logs):
+        if not isinstance(row, dict):
+            continue
+        age = _utc_age_seconds(row.get("ts_iso") or row.get("created_at"))
+        if age is not None:
+            return age <= ONECLICK_LOG_RETENTION_SECONDS
+    for key in ("finished_at", "started_at", "created_at"):
+        age = _utc_age_seconds(task.get(key))
+        if age is not None:
+            return age <= ONECLICK_LOG_RETENTION_SECONDS
+    return False
 
 
 def _make_task_record(
@@ -1323,7 +1378,7 @@ def _make_task_record(
         "created_at": _utcnow_iso(),
         "triggered_by": "manual",   # "manual" | "schedule"
         # v2.1.2: 제작 로그 — UI 에서 진행 상황/문제를 실시간 확인.
-        # 각 항목: {"ts": "HH:MM:SS", "level": "info"|"warn"|"error", "msg": "..."}
+        # 각 항목: {"ts": "HH:MM:SS", "ts_iso": "...Z", "level": "info"|"warn"|"error", "msg": "..."}
         "logs": [],
     }
 
@@ -1333,17 +1388,17 @@ def _make_task_record(
 # --------------------------------------------------------------------------- #
 
 def _add_log(task: dict, msg: str, level: str = "info") -> None:
-    """task["logs"] 에 한 줄 추가. 최대 200 줄 유지."""
+    """Append a production log row and keep server-side rows for 36 hours."""
     from datetime import datetime as _dt
+    now_utc = _dt.utcnow()
     logs = task.setdefault("logs", [])
     logs.append({
         "ts": _dt.now().strftime("%H:%M:%S"),
+        "ts_iso": now_utc.isoformat(timespec="seconds") + "Z",
         "level": level,
         "msg": msg,
     })
-    # 너무 길어지면 앞쪽 잘라내기
-    if len(logs) > 200:
-        task["logs"] = logs[-200:]
+    _prune_task_logs_for_retention(task)
     try:
         _refresh_task_safety(task, force=False)
     except Exception:
@@ -1603,7 +1658,7 @@ def _cleanup_and_detect_completed_steps(
     project_id: str,
     config: Optional[dict] = None,
 ) -> tuple[dict[str, str], dict[str, int], int, list[str]]:
-    return _scan_project_outputs(project_id, config=config, cleanup_broken=True)
+    return _scan_project_outputs(project_id, config=config, cleanup_broken=False)
 
 
 def _detect_completed_steps(project_id: str, config: Optional[dict] = None) -> dict[str, str]:
@@ -1682,7 +1737,7 @@ def _reconcile_task_outputs(
     task: dict[str, Any],
     *,
     clear_terminal_cursor: bool = False,
-    cleanup_broken: bool = True,
+    cleanup_broken: bool = False,
 ) -> bool:
     """디스크 실물 기준으로 task step 상태를 보정한다.
 
@@ -8003,12 +8058,14 @@ def prune_tasks(keep: int = 20) -> None:
     finished = [
         t for t in _TASKS.values()
         if t["status"] in ("completed", "failed", "cancelled")
+        and not _task_within_log_retention(t)
     ]
     finished.sort(key=lambda t: t.get("finished_at") or t.get("created_at") or "")
     excess = len(finished) - keep
     if excess > 0:
         for t in finished[:excess]:
             _TASKS.pop(t["task_id"], None)
+        _save_tasks_to_disk()
 
 
 # --------------------------------------------------------------------------- #

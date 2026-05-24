@@ -332,6 +332,7 @@ def _font_path(language: str | None = None) -> str:
     lang = str(language or "").lower()
     if lang in {"hi", "hindi"}:
         candidates = (
+            r"C:\Windows\Fonts\Nirmala.ttc",
             r"C:\Windows\Fonts\NirmalaB.ttf",
             r"C:\Windows\Fonts\Nirmala.ttf",
             r"C:\Windows\Fonts\NirmalaS.ttf",
@@ -1084,12 +1085,12 @@ async def render_shorts_from_final(
                     f"[bgm][main]sidechaincompress=threshold={threshold}:ratio={ratio}:"
                     "attack=80:release=650[ducked];"
                     "[main][ducked]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,"
-                    "alimiter=limit=0.55:level=false[aout]"
+                    "alimiter=limit=0.85:level=false[aout]"
                 )
             else:
                 bgm_filter += (
                     "[main][bgm]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,"
-                    "alimiter=limit=0.55:level=false[aout]"
+                    "alimiter=limit=0.85:level=false[aout]"
                 )
             filter_complex = f"{filter_complex};{bgm_filter}"
             cmd.extend(["-stream_loop", "-1", "-i", str(bgm_file)])
@@ -1101,7 +1102,7 @@ async def render_shorts_from_final(
                 f"{filter_complex};"
                 f"{audio_source}volume={narration_gain:.4f},"
                 "aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,"
-                "alimiter=limit=0.55:level=false[aout]"
+                "alimiter=limit=0.85:level=false[aout]"
             )
             audio_map = "[aout]"
         cmd.extend([

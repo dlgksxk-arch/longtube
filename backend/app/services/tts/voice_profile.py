@@ -167,13 +167,17 @@ def _samples_for_language(language: str) -> list[str]:
     return KO_PROFILE_SAMPLES
 
 
-def _target_range(chars_per_sec: float) -> dict:
-    low = max(8, int(math.ceil(app_config.TTS_MIN_DURATION * chars_per_sec)) - 1)
-    high = int(math.ceil(app_config.TTS_MAX_DURATION * chars_per_sec))
+def _target_range(chars_per_sec: float, config: dict | None = None) -> dict:
+    min_sec, max_sec, target_sec = app_config.resolve_tts_timing_window(config)
+    low = max(8, int(math.ceil(min_sec * chars_per_sec)) - 1)
+    high = int(math.ceil(max_sec * chars_per_sec))
     return {
         "min_chars": min(low, high),
         "max_chars": high,
         "target_range": f"{min(low, high)}~{high}",
+        "target_min_sec": min_sec,
+        "target_max_sec": max_sec,
+        "target_sec": target_sec,
     }
 
 
@@ -271,7 +275,7 @@ async def ensure_voice_profile_from_config(
 
     chars_per_sec = total_chars / total_duration
     words_per_sec = total_words / total_duration if total_words else None
-    timing = _target_range(chars_per_sec)
+    timing = _target_range(chars_per_sec, cfg)
     profile = {
         "key": key,
         "provider": tts_model,
@@ -283,8 +287,6 @@ async def ensure_voice_profile_from_config(
         "sample_count": len(measurements),
         "chars_per_sec": round(chars_per_sec, 3),
         "words_per_sec": round(words_per_sec, 3) if words_per_sec else None,
-        "target_min_sec": app_config.TTS_MIN_DURATION,
-        "target_max_sec": app_config.TTS_MAX_DURATION,
         **timing,
         "samples": measurements,
         "updated_at": datetime.now(timezone.utc).isoformat(),

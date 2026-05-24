@@ -178,6 +178,13 @@ _MODERN_SETTING_RE = re.compile(
     re.IGNORECASE,
 )
 
+_EXPLICIT_MODERN_PERIOD_RE = re.compile(
+    r"\b(20\d{2}|2020s|21st\s+century|twenty[-\s]*first\s+century|"
+    r"present[-\s]*day|present\s+day|contemporary|current\s+era|today|modern)\b|"
+    r"(現代|令和)",
+    re.IGNORECASE,
+)
+
 _GLOBAL_STYLE_PUBLIC_PATTERNS: tuple[str, ...] = (
     r"\bColoringBookAF\b",
     r"\bColoring Book\b",
@@ -733,7 +740,7 @@ def historical_negative_prompt(prompt: str, enabled: bool = False) -> str:
         return ""
     p = prompt or ""
     parts = [NO_TEXT_NEGATIVE_PROMPT, NO_MAP_NEGATIVE_PROMPT]
-    if not _MODERN_SETTING_RE.search(p):
+    if not _EXPLICIT_MODERN_PERIOD_RE.search(p):
         parts.insert(0, GENERAL_HISTORY_NEGATIVE_PROMPT)
     if needs_book_render_guard(p):
         parts.append(BOOK_RENDER_NEGATIVE_PROMPT)

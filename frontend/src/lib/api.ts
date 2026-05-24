@@ -1017,7 +1017,7 @@ export interface OneClickTask {
   created_at: string;
   youtube_url?: string | null;
   // v2.1.2: 제작 로그
-  logs?: { ts: string; level: "info" | "warn" | "error"; msg: string }[];
+  logs?: { ts: string; ts_iso?: string; level: "info" | "warn" | "error"; msg: string }[];
 }
 
 // v1.1.54: 완성작 상세 + 라이브러리 통계 타입

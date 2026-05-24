@@ -1169,6 +1169,53 @@ class YouTubeUploader:
             "definition": cd.get("definition"),
         }
 
+    def get_videos_details(self, video_ids: list[str]) -> dict[str, dict]:
+        """Return current metadata/status/statistics keyed by video id."""
+        self._ensure()
+        ids: list[str] = []
+        seen: set[str] = set()
+        for raw in video_ids or []:
+            vid = str(raw or "").strip()
+            if vid and vid not in seen:
+                seen.add(vid)
+                ids.append(vid)
+        if not ids:
+            return {}
+        out: dict[str, dict] = {}
+        for start in range(0, len(ids), 50):
+            chunk = ids[start:start + 50]
+            try:
+                resp = self.youtube.videos().list(
+                    part="snippet,status,statistics,contentDetails",
+                    id=",".join(chunk),
+                    maxResults=50,
+                ).execute()
+            except Exception as e:
+                raise YouTubeUploadError(f"영상 상세 조회 실패: {e}") from e
+            for v in resp.get("items") or []:
+                sn = v.get("snippet") or {}
+                st = v.get("status") or {}
+                stats = v.get("statistics") or {}
+                cd = v.get("contentDetails") or {}
+                thumbs = sn.get("thumbnails") or {}
+                thumb = None
+                for key in ("maxres", "high", "medium", "default"):
+                    t = thumbs.get(key)
+                    if t and t.get("url"):
+                        thumb = t["url"]
+                        break
+                out[str(v.get("id") or "")] = {
+                    "video_id": v.get("id"),
+                    "title": sn.get("title") or "",
+                    "description": sn.get("description") or "",
+                    "thumbnail": thumb,
+                    "published_at": sn.get("publishedAt"),
+                    "privacy_status": st.get("privacyStatus"),
+                    "comment_count": _to_int(stats.get("commentCount")),
+                    "duration": cd.get("duration"),
+                }
+        return out
+
     def update_video(
         self,
         video_id: str,
@@ -1557,6 +1604,68 @@ class YouTubeUploader:
                 })
             out.append({
                 "thread_id": it.get("id"),
+                "top_comment_id": (sn.get("topLevelComment") or {}).get("id"),
+                "author": top.get("authorDisplayName") or "",
+                "author_channel_id": (top.get("authorChannelId") or {}).get("value"),
+                "text": top.get("textDisplay") or "",
+                "like_count": top.get("likeCount"),
+                "published_at": top.get("publishedAt"),
+                "updated_at": top.get("updatedAt"),
+                "total_reply_count": sn.get("totalReplyCount") or 0,
+                "can_reply": sn.get("canReply"),
+                "replies": replies,
+            })
+        return {
+            "items": out,
+            "next_page_token": resp.get("nextPageToken"),
+            "total_results": (resp.get("pageInfo") or {}).get("totalResults"),
+        }
+
+    def list_channel_comment_threads(
+        self,
+        channel_youtube_id: str,
+        max_results: int = 50,
+        page_token: Optional[str] = None,
+        order: str = "time",
+    ) -> dict:
+        """Top-level comment threads across this channel, matching Studio comments."""
+        self._ensure()
+        channel_youtube_id = str(channel_youtube_id or "").strip()
+        if not channel_youtube_id:
+            raise YouTubeUploadError("channel_youtube_id 가 비어 있습니다.")
+        try:
+            req: dict = {
+                "part": "snippet,replies",
+                "allThreadsRelatedToChannelId": channel_youtube_id,
+                "maxResults": max(1, min(int(max_results or 50), 100)),
+                "order": order if order in ("time", "relevance") else "time",
+                "textFormat": "plainText",
+            }
+            if page_token:
+                req["pageToken"] = page_token
+            resp = self.youtube.commentThreads().list(**req).execute()
+        except Exception as e:
+            raise YouTubeUploadError(_friendly_youtube_error("댓글 조회 실패", e)) from e
+        out = []
+        for it in resp.get("items") or []:
+            sn = (it.get("snippet") or {})
+            top = ((sn.get("topLevelComment") or {}).get("snippet") or {})
+            replies_block = (it.get("replies") or {}).get("comments") or []
+            replies = []
+            for r in replies_block:
+                rs = r.get("snippet") or {}
+                replies.append({
+                    "comment_id": r.get("id"),
+                    "author": rs.get("authorDisplayName") or "",
+                    "author_channel_id": (rs.get("authorChannelId") or {}).get("value"),
+                    "text": rs.get("textDisplay") or "",
+                    "like_count": rs.get("likeCount"),
+                    "published_at": rs.get("publishedAt"),
+                    "updated_at": rs.get("updatedAt"),
+                })
+            out.append({
+                "thread_id": it.get("id"),
+                "video_id": sn.get("videoId"),
                 "top_comment_id": (sn.get("topLevelComment") or {}).get("id"),
                 "author": top.get("authorDisplayName") or "",
                 "author_channel_id": (top.get("authorChannelId") or {}).get("value"),

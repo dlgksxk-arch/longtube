@@ -10,7 +10,7 @@ import re
 from abc import ABC, abstractmethod
 from typing import Any, Optional
 
-from app.config import resolve_cut_video_duration
+from app.config import resolve_cut_video_duration, resolve_tts_timing_window
 
 
 IMAGE_PROMPT_REQUIRED_STYLE = "simple cartoon illustration, documentary cartoon style, clean thick outlines, soft natural shadows"
@@ -280,30 +280,8 @@ def _profiled_words_per_sec(config: dict | None, fallback: float) -> float:
 
 
 def _script_tts_target_window(config: dict | None) -> tuple[float, float, float]:
-    """Timing target used when writing narration text.
-
-    The voice step still has its runtime guard, but script generation should
-    aim close to one spoken length so audio repair is the exception.
-    """
-    cfg = config or {}
-    try:
-        target = float(cfg.get("script_tts_target_sec") or 4.4)
-    except (TypeError, ValueError):
-        target = 4.4
-    try:
-        tolerance = float(cfg.get("script_tts_tolerance_sec") or 0.2)
-    except (TypeError, ValueError):
-        tolerance = 0.2
-
-    min_floor = 4.2
-    max_ceiling = 4.6
-    target = max(min_floor, min(max_ceiling, target))
-    tolerance = max(0.05, min(0.5, tolerance))
-    min_sec = max(min_floor, target - tolerance)
-    max_sec = min(max_ceiling, target + tolerance)
-    if min_sec > max_sec:
-        min_sec = max_sec = target
-    return min_sec, max_sec, target
+    """Timing target used when writing narration text."""
+    return resolve_tts_timing_window(config)
 
 
 def normalize_language_code(language: Any = "ko") -> str:

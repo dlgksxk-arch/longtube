@@ -107,24 +107,55 @@ def _text(value: Any) -> str:
     return str(value or "").strip()
 
 
-def _primary_topic_terms(script: dict[str, Any], topic: str = "") -> list[str]:
-    source = " ".join(_text(v) for v in (topic, script.get("topic"), script.get("title")))
-    if not source:
+_TOPIC_PARTICLE_RE = re.compile(
+    r"(?:으로|에서|에게|까지|부터|처럼|보다|과|와|은|는|을|를|의|가|이)$"
+)
+_TOPIC_GENERIC_SUFFIXES = ("편", "이유", "진짜", "의미", "사건", "역사")
+
+
+def _topic_tokens(text: str) -> list[str]:
+    if not text:
         return []
-    source = re.sub(r"[_/|:()\[\]{}]", " ", source)
-    candidates = re.findall(r"[가-힣]{2,8}", source)
-    terms: list[str] = []
-    for token in candidates:
-        token = re.sub(r"(?:으로|에서|에게|까지|부터|처럼|보다|과|와|은|는|을|를|의|가|이)$", "", token)
-        if token in COMMON_TOPIC_WORDS:
-            continue
+    normalized = re.sub(r"[_/|:()\[\]{}.,!?;·\-]", " ", text)
+    tokens: list[str] = []
+    for token in re.findall(r"[가-힣]{2,12}", normalized):
+        token = _TOPIC_PARTICLE_RE.sub("", token)
         if len(token) < 2:
             continue
-        if token.endswith(("편", "이유", "진짜", "의미", "사건", "역사")):
+        if token.endswith(_TOPIC_GENERIC_SUFFIXES):
             continue
-        if token not in terms:
-            terms.append(token)
-    return terms[:3]
+        tokens.append(token)
+    return tokens
+
+
+def _primary_topic_phrases(script: dict[str, Any], topic: str = "") -> list[str]:
+    phrases: list[str] = []
+    sources = (topic, script.get("topic"), script.get("title"))
+    for source in sources:
+        tokens = _topic_tokens(_text(source))
+        for width in (4, 3, 2):
+            if len(tokens) < width:
+                continue
+            for idx in range(0, len(tokens) - width + 1):
+                window = tokens[idx:idx + width]
+                if all(token in COMMON_TOPIC_WORDS for token in window):
+                    continue
+                phrase = " ".join(window)
+                if phrase not in phrases:
+                    phrases.append(phrase)
+    return phrases[:12]
+
+
+def _topic_phrase_counts(narrations: list[str]) -> Counter[str]:
+    counts: Counter[str] = Counter()
+    for line in narrations:
+        tokens = _topic_tokens(line)
+        for width in (4, 3, 2):
+            if len(tokens) < width:
+                continue
+            for idx in range(0, len(tokens) - width + 1):
+                counts[" ".join(tokens[idx:idx + width])] += 1
+    return counts
 
 
 def _extract_prompt_field(prompt: str, label: str) -> str:
@@ -177,10 +208,11 @@ def inspect_script_quality(script: dict[str, Any], topic: str = "") -> list[str]
             if group_counts[group] != 15:
                 issues.append(f"invalid shorts group {group} count: {group_counts[group]}")
 
-    for term in _primary_topic_terms(script, topic):
-        count = full_text.count(term)
+    topic_phrase_counts = _topic_phrase_counts(narrations)
+    for phrase in _primary_topic_phrases(script, topic):
+        count = topic_phrase_counts.get(phrase, 0)
         if count > 15:
-            issues.append(f"topic term repeated too often: {term}={count}")
+            issues.append(f"topic phrase repeated too often: {phrase}={count}")
 
     image_prompts: list[str] = []
     main_subjects: list[str] = []

@@ -23,28 +23,31 @@ def _compact(text: str) -> str:
     return " ".join((text or "").split()).strip()
 
 
-def _duration_ok(duration: float) -> bool:
-    return app_config.TTS_MIN_DURATION <= duration <= min(app_config.TTS_MAX_DURATION, _hard_max_duration())
+def _duration_ok(duration: float, config: dict | None = None) -> bool:
+    min_sec, max_sec, _ = app_config.resolve_tts_timing_window(config)
+    return min_sec <= duration <= min(max_sec, _hard_max_duration(config))
 
 
 def _duration_status(duration: float, config: dict | None = None) -> str:
-    """Classify measured spoken TTS against the fixed video slot."""
+    """Classify measured spoken TTS against the configured narration target."""
     if duration <= 0:
         return "unknown"
-    final_target = _final_cut_audio_duration(config)
-    hard_max = _hard_max_duration()
+    min_sec, max_sec, target = app_config.resolve_tts_timing_window(config)
+    hard_max = _hard_max_duration(config)
     if duration > hard_max:
         return "too_long"
-    if duration > final_target + 0.02:
+    if duration > max_sec + 0.02:
         return "long"
-    if duration < final_target - 0.02:
+    if duration < min_sec - 0.02:
         return "short"
-    return "slot_fit"
+    if abs(duration - target) <= 0.02:
+        return "target_fit"
+    return "window_fit"
 
 
-def _hard_max_duration() -> float:
+def _hard_max_duration(config: dict | None = None) -> float:
     try:
-        return float(getattr(app_config, "TTS_HARD_MAX_DURATION", 4.8))
+        return float(app_config.resolve_tts_hard_max_duration(config))
     except (TypeError, ValueError):
         return 4.8
 
@@ -64,10 +67,10 @@ def _unit_label(language: str) -> str:
     return "chars"
 
 
-def _target_units_for_duration(text: str, duration: float, language: str) -> int:
+def _target_units_for_duration(text: str, duration: float, language: str, config: dict | None = None) -> int:
     if duration <= 0:
         return _unit_count(text, language)
-    target_mid = (app_config.TTS_MIN_DURATION + app_config.TTS_MAX_DURATION) / 2
+    _, _, target_mid = app_config.resolve_tts_timing_window(config)
     return max(1, round(_unit_count(text, language) * target_mid / duration))
 
 
@@ -134,17 +137,18 @@ def _ko_long_variants(text: str) -> list[str]:
     return unique
 
 
-def _duration_distance(duration: float) -> float:
+def _duration_distance(duration: float, config: dict | None = None) -> float:
     if duration <= 0:
         return 999.0
-    hard_max = _hard_max_duration()
+    min_sec, max_sec, target = app_config.resolve_tts_timing_window(config)
+    hard_max = _hard_max_duration(config)
     if duration > hard_max:
         return 1000.0 + (duration - hard_max)
-    if _duration_ok(duration):
-        return 0.0
-    if duration < app_config.TTS_MIN_DURATION:
-        return app_config.TTS_MIN_DURATION - duration
-    return duration - app_config.TTS_MAX_DURATION
+    if _duration_ok(duration, config):
+        return abs(duration - target)
+    if duration < min_sec:
+        return min_sec - duration
+    return duration - max_sec
 
 
 def _candidate_audio_path(audio_path: str, attempt: int) -> str:
@@ -215,10 +219,9 @@ def _probe_audio_duration(path: str) -> float:
 def _fit_audio_duration_in_place(path: str, current_duration: float, config: dict | None = None, log=None) -> float:
     """Fit audio to the fixed cut slot without spending API credits.
 
-    Spoken narration may land in TTS_MIN_DURATION~TTS_MAX_DURATION, but anything
-    above the fixed video slot is still long and must be compressed into it.
-    The saved audio file itself must match the fixed video cut duration so muxing
-    and subtitles stay aligned.
+    Spoken narration may target a longer configured narration window, but the
+    saved audio file itself must still match the fixed video cut duration so
+    muxing and subtitles stay aligned.
     """
     if current_duration <= 0:
         return current_duration
@@ -227,16 +230,11 @@ def _fit_audio_duration_in_place(path: str, current_duration: float, config: dic
     if abs(current_duration - final_target) <= 0.02:
         return current_duration
 
-    spoken_target = current_duration
     audio_filter: str | None = None
     output_args: list[str] = ["-t", f"{final_target:.3f}"]
 
-    hard_max = _hard_max_duration()
-    max_allowed = min(float(app_config.TTS_MAX_DURATION), hard_max, final_target)
-    if current_duration > max_allowed:
-        spoken_target = max_allowed
-        pad = max(0.0, final_target - spoken_target)
-        audio_filter = f"{_atempo_filter(current_duration / spoken_target)},apad=pad_dur={pad:.3f}"
+    if current_duration > final_target:
+        audio_filter = _atempo_filter(current_duration / final_target)
     else:
         pad = max(0.0, final_target - current_duration)
         audio_filter = f"apad=pad_dur={pad:.3f}"
@@ -411,21 +409,21 @@ async def generate_tts_with_auto_narration_fit(
             "result": dict(result),
             "attempt": attempt,
         }
-        if best is None or _duration_distance(duration) < _duration_distance(float(best.get("duration") or 0.0)):
+        if best is None or _duration_distance(duration, config) < _duration_distance(float(best.get("duration") or 0.0), config):
             best = candidate
-        if _duration_ok(duration) or attempt >= configured_max_rewrites:
+        if _duration_ok(duration, config) or attempt >= configured_max_rewrites:
             break
 
         if config and config.get("tts_auto_timing_fit") is False:
             break
 
-        direction = "short" if duration < app_config.TTS_MIN_DURATION else "long"
-        target_units = _target_units_for_duration(current, duration, language)
-        if duration > _hard_max_duration():
+        min_sec, max_sec, target_mid = app_config.resolve_tts_timing_window(config)
+        direction = "short" if duration < min_sec else "long"
+        target_units = _target_units_for_duration(current, duration, language, config)
+        if duration > _hard_max_duration(config):
             # Hard ceiling breach: push the rewrite shorter than the normal
             # target midpoint so the next measured candidate cannot slip past
-            # 4.8s again.
-            target_mid = (app_config.TTS_MIN_DURATION + app_config.TTS_MAX_DURATION) / 2
+            # the configured hard ceiling again.
             target_units = max(
                 1,
                 min(
@@ -444,8 +442,8 @@ async def generate_tts_with_auto_narration_fit(
                 cut_number=cut_number,
                 total_cuts=total_cuts,
                 measured_duration=duration,
-                target_min=app_config.TTS_MIN_DURATION,
-                target_max=app_config.TTS_MAX_DURATION,
+                target_min=min_sec,
+                target_max=max_sec,
                 direction=direction,
                 target_chars=target_units,
                 image_prompt=(cut_data or {}).get("image_prompt") or "",
@@ -483,7 +481,7 @@ async def generate_tts_with_auto_narration_fit(
         if log:
             log(
                 f"timing rewrite cut {cut_number} attempt {attempt + 1}: "
-                f"{duration:.2f}s -> target {app_config.TTS_MIN_DURATION:.1f}~{app_config.TTS_MAX_DURATION:.1f}s, "
+                f"{duration:.2f}s -> target {min_sec:.1f}~{max_sec:.1f}s, "
                 f"{current_units}->{_unit_count(rewritten, language)} {_unit_label(language)}"
             )
         current = rewritten
@@ -498,8 +496,9 @@ async def generate_tts_with_auto_narration_fit(
     spoken_duration = float(chosen.get("duration") or final_result.get("duration") or 0.0)
     final_duration = ensure_audio_duration_window(chosen_path, spoken_duration, config=config, log=log)
     fitted_spoken_duration = spoken_duration
-    if spoken_duration > min(float(app_config.TTS_MAX_DURATION), _hard_max_duration()):
-        fitted_spoken_duration = min(float(app_config.TTS_MAX_DURATION), _hard_max_duration())
+    _, max_sec, _ = app_config.resolve_tts_timing_window(config)
+    if spoken_duration > min(max_sec, _hard_max_duration(config)):
+        fitted_spoken_duration = min(max_sec, _hard_max_duration(config))
     if chosen_path != audio_path:
         shutil.copyfile(chosen_path, audio_path)
     for path in temp_paths:
@@ -515,15 +514,16 @@ async def generate_tts_with_auto_narration_fit(
     final_result["narration"] = final_narration
     final_result["narration_changed"] = final_narration != original
     final_result["rewrite_count"] = rewrite_count
-    final_result["timing_ok"] = _duration_ok(fitted_spoken_duration)
+    final_result["timing_ok"] = _duration_ok(fitted_spoken_duration, config)
     final_result["timing_status"] = _duration_status(spoken_duration, config)
     final_result["duration_was_long"] = final_result["timing_status"] in {"long", "too_long"}
     final_result["duration_was_too_long"] = final_result["timing_status"] == "too_long"
-    final_result["timing_distance"] = round(_duration_distance(fitted_spoken_duration), 3)
-    if log and not _duration_ok(fitted_spoken_duration):
+    final_result["timing_distance"] = round(_duration_distance(fitted_spoken_duration, config), 3)
+    if log and not _duration_ok(fitted_spoken_duration, config):
+        min_sec, max_sec, _ = app_config.resolve_tts_timing_window(config)
         log(
             f"timing best-effort cut {cut_number}: spoken {fitted_spoken_duration:.2f}s, file {final_duration:.2f}s "
-            f"(target {app_config.TTS_MIN_DURATION:.1f}~{app_config.TTS_MAX_DURATION:.1f}s), "
+            f"(target {min_sec:.1f}~{max_sec:.1f}s), "
             f"{len(final_narration)} chars"
         )
     return final_result

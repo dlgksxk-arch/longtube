@@ -269,29 +269,57 @@ def resolve_cut_video_duration(config: dict | None = None, default: float | None
         return fallback
     return max(1.0, min(30.0, value))
 
-# TTS 음성 목표 길이. 대본 생성은 4.4초 중심으로 쓰되,
-# 음성 단계에서는 4초 컷 슬롯보다 긴 음성을 "압축 대상"으로 본다.
-TTS_TARGET_DURATION = 4.4
-TTS_MIN_DURATION = 4.2
-TTS_MAX_DURATION = 4.6
+# Default TTS timing window. Project configs resolve this from
+# cut_video_duration * 1.25, so 4s cuts target 5s narration and 8s cuts target
+# 10s narration.
+TTS_SCRIPT_TARGET_MULTIPLIER = 1.25
+TTS_TARGET_DURATION = CUT_VIDEO_DURATION * TTS_SCRIPT_TARGET_MULTIPLIER
+TTS_MIN_DURATION = TTS_TARGET_DURATION - 0.2
+TTS_MAX_DURATION = TTS_TARGET_DURATION + 0.2
+
+
+def resolve_tts_timing_window(config: dict | None = None) -> tuple[float, float, float]:
+    """Return (min_sec, max_sec, target_sec) for narration/TTS timing."""
+    target = resolve_cut_video_duration(config) * TTS_SCRIPT_TARGET_MULTIPLIER
+    raw_tolerance = None
+    if isinstance(config, dict):
+        raw_tolerance = config.get("script_tts_tolerance_sec")
+    try:
+        tolerance = float(raw_tolerance)
+    except (TypeError, ValueError):
+        tolerance = 0.2
+    tolerance = max(0.05, min(1.0, tolerance))
+    min_sec = max(0.1, target - tolerance)
+    max_sec = target + tolerance
+    return min_sec, max_sec, target
 
 # Anthropic safety brake.  The automation can start multiple 600s scripts in a
 # row, so block new Claude calls after the rolling 24h spend crosses this cap.
 # Set ANTHROPIC_DAILY_LIMIT_USD=0 to disable deliberately.
 ANTHROPIC_DAILY_LIMIT_USD = float(os.getenv("ANTHROPIC_DAILY_LIMIT_USD", "1.00"))
 
-# Absolute safety ceiling: target is 4.2~4.6s, and audio longer than this
-# must not be accepted into the pipeline.
-TTS_HARD_MAX_DURATION = 4.6
+# Absolute default safety ceiling. Project configs use the resolved TTS target +
+# script_tts_tolerance_sec as their ceiling.
+TTS_HARD_MAX_DURATION = TTS_MAX_DURATION
+
+
+def resolve_tts_hard_max_duration(config: dict | None = None) -> float:
+    try:
+        _, max_sec, _ = resolve_tts_timing_window(config)
+        return max_sec
+    except Exception:
+        try:
+            return float(TTS_HARD_MAX_DURATION)
+        except (TypeError, ValueError):
+            return 5.2
 FIRST_CUT_FADE_IN_SECONDS = 0.5
 
 # Final render narration gain. This is applied at render/mix time so script text,
 # subtitles, and existing TTS files remain unchanged.
 #
-# 2026-05-06: 2.6 drove already-normal cut audio into the final limiter and
-# produced audible hard limiting in long renders. Keep the gain conservative;
-# final loudness is handled by the render filters.
-NARRATION_VOLUME_GAIN = float(os.getenv("NARRATION_VOLUME_GAIN", "1.3"))
+# Keep the gain high enough to sit clearly above low BGM without pushing
+# normal cut audio into harsh clipping.
+NARRATION_VOLUME_GAIN = float(os.getenv("NARRATION_VOLUME_GAIN", "1.8"))
 
 # Final render BGM gain multiplier. Stored project BGM volume remains unchanged;
 # this is applied only at render/mix time for both long-form and shorts outputs.

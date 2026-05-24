@@ -21,8 +21,20 @@ export const isUploadRecoverableTask = (task: OneClickTask) => {
 };
 
 export function serverLogToEntry(log: ServerLogEntry): LogEntry {
+  let time = log.ts || "";
+  if (!time && log.ts_iso) {
+    const parsed = new Date(log.ts_iso);
+    if (!Number.isNaN(parsed.getTime())) {
+      time = parsed.toLocaleTimeString("ko-KR", {
+        hour12: false,
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      });
+    }
+  }
   return {
-    time: log.ts || "",
+    time,
     msg: log.msg,
     level:
       log.level === "error"

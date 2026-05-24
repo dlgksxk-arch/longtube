@@ -11,7 +11,7 @@ import os
 import sys
 import tempfile
 import unittest
-from datetime import datetime
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from pathlib import Path
 
@@ -61,7 +61,7 @@ class OneClickQueueStabilityTests(unittest.TestCase):
         self.assertEqual(cfg["cut_video_duration"], 4.0)
         self.assertEqual(cfg["target_cuts"], 150)
         self.assertEqual(cfg["target_duration"], 600)
-        self.assertEqual(cfg["script_tts_target_sec"], 4.4)
+        self.assertEqual(cfg["script_tts_target_sec"], 5.0)
         self.assertEqual(cfg["script_tts_tolerance_sec"], 0.2)
 
     def test_oneclick_main_length_uses_requested_duration(self):
@@ -71,6 +71,90 @@ class OneClickQueueStabilityTests(unittest.TestCase):
         self.assertEqual(cfg["cut_video_duration"], 4.0)
         self.assertEqual(cfg["target_duration"], 20)
         self.assertEqual(cfg["target_cuts"], 5)
+
+    def test_oneclick_task_logs_prune_only_entries_older_than_36_hours(self):
+        now = datetime.utcnow()
+        old_iso = (now - timedelta(hours=37)).isoformat(timespec="seconds") + "Z"
+        recent_iso = (now - timedelta(hours=35)).isoformat(timespec="seconds") + "Z"
+        task = {
+            "status": "failed",
+            "created_at": recent_iso,
+            "logs": [
+                {"ts": "01:00:00", "ts_iso": old_iso, "level": "info", "msg": "old"},
+                {"ts": "02:00:00", "ts_iso": recent_iso, "level": "warn", "msg": "recent"},
+                {"ts": "03:00:00", "level": "error", "msg": "legacy"},
+            ],
+        }
+
+        self.assertTrue(svc._prune_task_logs_for_retention(task))
+        self.assertEqual([row["msg"] for row in task["logs"]], ["recent", "legacy"])
+        self.assertTrue(svc._task_within_log_retention(task))
+
+    def test_oneclick_log_retention_keeps_active_tasks(self):
+        old_iso = (datetime.utcnow() - timedelta(hours=37)).isoformat(timespec="seconds") + "Z"
+        task = {
+            "status": "running",
+            "created_at": old_iso,
+            "logs": [{"ts": "01:00:00", "ts_iso": old_iso, "level": "info", "msg": "old"}],
+        }
+
+        self.assertTrue(svc._task_within_log_retention(task))
+
+    def test_failed_output_scan_does_not_delete_existing_script_or_assets(self):
+        with tempfile.TemporaryDirectory() as td:
+            project_dir = Path(td)
+            (project_dir / "script.json").write_text("{broken", encoding="utf-8")
+            for sub, name in (
+                ("audio", "cut_1.mp3"),
+                ("images", "cut_1.png"),
+                ("videos", "cut_1.mp4"),
+            ):
+                folder = project_dir / sub
+                folder.mkdir()
+                (folder / name).write_bytes(b"broken")
+            output_dir = project_dir / "output"
+            output_dir.mkdir()
+            (output_dir / "merged.mp4").write_bytes(b"broken")
+
+            states, counts, total, removed = svc._cleanup_and_detect_completed_steps(
+                "preserve-test",
+                {"result_dir": str(project_dir)},
+            )
+
+            self.assertEqual(states["2"], "pending")
+            self.assertEqual(total, 0)
+            self.assertEqual(removed, [])
+            self.assertEqual(counts["3"], 0)
+            self.assertTrue((project_dir / "script.json").exists())
+            self.assertTrue((project_dir / "audio" / "cut_1.mp3").exists())
+            self.assertTrue((project_dir / "images" / "cut_1.png").exists())
+            self.assertTrue((project_dir / "videos" / "cut_1.mp4").exists())
+            self.assertTrue((project_dir / "output" / "merged.mp4").exists())
+
+    def test_reconcile_after_failure_preserves_broken_audio_file(self):
+        with tempfile.TemporaryDirectory() as td:
+            project_dir = Path(td)
+            script = {"cuts": [{"cut_number": 1, "narration": "test"}]}
+            (project_dir / "script.json").write_text(json.dumps(script), encoding="utf-8")
+            audio_dir = project_dir / "audio"
+            audio_dir.mkdir()
+            broken_audio = audio_dir / "cut_1.mp3"
+            broken_audio.write_bytes(b"broken")
+            task = {
+                "task_id": "preserve-audio",
+                "project_id": "preserve-audio",
+                "config": {"result_dir": str(project_dir)},
+                "status": "failed",
+                "step_states": {"2": "completed", "3": "failed", "4": "pending", "5": "pending", "6": "pending", "7": "pending"},
+                "completed_cuts_by_step": {"2": 1, "3": 0, "4": 0, "5": 0},
+                "logs": [],
+            }
+
+            svc._reconcile_task_outputs(task)
+
+            self.assertTrue(broken_audio.exists())
+            self.assertEqual(task["step_states"]["2"], "completed")
+            self.assertEqual(task["step_states"]["3"], "pending")
 
     def test_default_script_generation_uses_150_four_second_cuts(self):
         self.assertEqual(app_config.CUT_VIDEO_DURATION, 4.0)
@@ -882,7 +966,7 @@ class InterludeStabilityTests(unittest.TestCase):
         self.assertIn("torso-only", request)
         self.assertIn("faceless silhouette", request)
 
-    def test_four_second_video_keeps_script_tts_window_at_4_2_to_4_6(self):
+    def test_four_second_video_uses_five_second_script_tts_window(self):
         limits = BaseLLMService._calc_narration_limits({
             "language": "ko",
             "tts_model": "elevenlabs",
@@ -890,10 +974,10 @@ class InterludeStabilityTests(unittest.TestCase):
             "cut_video_duration": 4.0,
         })
 
-        self.assertEqual(limits["target_min_sec"], 4.2)
-        self.assertEqual(limits["target_sec"], 4.4)
-        self.assertEqual(limits["target_max_sec"], 4.6)
-        self.assertEqual(limits["target_range"], "42~46")
+        self.assertEqual(limits["target_min_sec"], 4.8)
+        self.assertEqual(limits["target_sec"], 5.0)
+        self.assertEqual(limits["target_max_sec"], 5.2)
+        self.assertEqual(limits["target_range"], "48~52")
 
         ja_limits = BaseLLMService._calc_narration_limits({
             "language": "ja",
@@ -902,18 +986,30 @@ class InterludeStabilityTests(unittest.TestCase):
             "cut_video_duration": 4.0,
         })
 
-        self.assertEqual(ja_limits["target_min_sec"], 4.2)
-        self.assertEqual(ja_limits["target_sec"], 4.4)
-        self.assertEqual(ja_limits["target_max_sec"], 4.6)
-        self.assertEqual(ja_limits["target_range"], "40~43")
+        self.assertEqual(ja_limits["target_min_sec"], 4.8)
+        self.assertEqual(ja_limits["target_sec"], 5.0)
+        self.assertEqual(ja_limits["target_max_sec"], 5.2)
+        self.assertEqual(ja_limits["target_range"], "46~48")
+
+    def test_eight_second_video_uses_ten_second_script_tts_window(self):
+        limits = BaseLLMService._calc_narration_limits({
+            "language": "en",
+            "tts_model": "elevenlabs",
+            "tts_speed": 1.0,
+            "cut_video_duration": 8.0,
+        })
+
+        self.assertEqual(limits["target_min_sec"], 9.8)
+        self.assertEqual(limits["target_sec"], 10.0)
+        self.assertEqual(limits["target_max_sec"], 10.2)
 
     def test_tts_duration_status_treats_over_slot_audio_as_long(self):
         cfg = {"cut_video_duration": 4.0}
 
-        self.assertEqual(narration_fit._duration_status(4.0, cfg), "slot_fit")
-        self.assertEqual(narration_fit._duration_status(4.2, cfg), "long")
-        self.assertEqual(narration_fit._duration_status(4.6, cfg), "long")
-        self.assertEqual(narration_fit._duration_status(4.61, cfg), "too_long")
+        self.assertEqual(narration_fit._duration_status(4.0, cfg), "short")
+        self.assertEqual(narration_fit._duration_status(5.0, cfg), "target_fit")
+        self.assertEqual(narration_fit._duration_status(5.2, cfg), "window_fit")
+        self.assertEqual(narration_fit._duration_status(5.21, cfg), "too_long")
 
 
 class ShortsStabilityTests(unittest.TestCase):
@@ -1040,11 +1136,12 @@ class UploadAndAudioMixStabilityTests(unittest.TestCase):
     def test_shorts_upload_title_has_no_numeric_hashtag(self):
         title = shorts_upload_title("숨겨진 진실 #1 #Shorts", index=1, total=4)
 
-        self.assertEqual(title, "숨겨진 진실 · Part 1 #Shorts")
+        self.assertEqual(title, "숨겨진 진실 #Shorts")
         self.assertNotRegex(title, r"#\d+\b")
+        self.assertNotRegex(title, r"\bPart\s+\d+\b")
 
     def test_global_render_audio_mix_defaults(self):
-        self.assertAlmostEqual(app_config.NARRATION_VOLUME_GAIN, 1.3)
+        self.assertAlmostEqual(app_config.NARRATION_VOLUME_GAIN, 1.8)
         self.assertAlmostEqual(app_config.BGM_VOLUME_MULTIPLIER, 0.7)
         self.assertAlmostEqual(subtitle_router._effective_bgm_volume(0.21), 0.147)
 
@@ -1217,6 +1314,64 @@ class ChannelOpsCommentLoadingTests(unittest.TestCase):
 
         self.assertEqual(result["comments"], [])
         self.assertEqual(result["errors"], [])
+
+    def test_comment_loader_uses_channel_comment_threads_when_available(self):
+        class FakeUploader:
+            def __init__(self, channel_id=None):
+                self.channel_id = channel_id
+
+            def list_channel_comment_threads(
+                self,
+                channel_youtube_id,
+                max_results=50,
+                page_token=None,
+                order="time",
+            ):
+                return {
+                    "items": [
+                        {
+                            "thread_id": "thread-a",
+                            "video_id": "video-a",
+                            "top_comment_id": "comment-a",
+                            "author": "viewer",
+                            "author_channel_id": "viewer-channel",
+                            "text": "Studio comment",
+                            "like_count": 1,
+                            "published_at": "2026-05-21T00:00:00Z",
+                            "updated_at": "2026-05-21T00:00:00Z",
+                            "total_reply_count": 0,
+                            "can_reply": True,
+                            "replies": [],
+                        }
+                    ],
+                    "next_page_token": None,
+                    "total_results": 1,
+                }
+
+            def get_videos_details(self, video_ids):
+                return {
+                    "video-a": {
+                        "title": "Video title",
+                        "thumbnail": "https://example.test/thumb.jpg",
+                    }
+                }
+
+        original_uploader = channel_ops_router.YouTubeUploader
+        original_own_channel = channel_ops_router._get_own_channel_id
+        try:
+            channel_ops_router.YouTubeUploader = FakeUploader
+            channel_ops_router._get_own_channel_id = lambda uploader: "owner-channel"
+
+            result = channel_ops_router._list_comments_sync(3, 10, 10)
+        finally:
+            channel_ops_router.YouTubeUploader = original_uploader
+            channel_ops_router._get_own_channel_id = original_own_channel
+
+        self.assertEqual(result["scan_mode"], "channel_comments")
+        self.assertEqual(result["videos_scanned"], 0)
+        self.assertEqual(result["videos_with_comments"], 1)
+        self.assertEqual(result["comments"][0]["text"], "Studio comment")
+        self.assertEqual(result["comments"][0]["video_title"], "Video title")
 
 
 class TTSPronunciationStabilityTests(unittest.TestCase):
@@ -1508,6 +1663,41 @@ class HistoricalImagePromptStabilityTests(unittest.TestCase):
         self.assertTrue(any("forbidden template phrase" in issue for issue in issues))
         self.assertTrue(any("narration label leaked" in issue for issue in issues))
         self.assertTrue(any("bad grammar pattern" in issue for issue in issues))
+
+    def test_script_quality_allows_repeated_single_topic_word(self):
+        cuts = [
+            {
+                "narration": f"부왕은 국면 {i}에서 다른 판단을 남겼습니다.",
+                "image_prompt": f"Scene: council chamber moment {i}; Main subject: envoy {i}",
+            }
+            for i in range(20)
+        ]
+
+        issues = inspect_script_quality(
+            {"title": "부왕의 굴복 외교", "cuts": cuts},
+            "부왕의 굴복 외교",
+        )
+
+        self.assertFalse(any("topic phrase repeated too often" in issue for issue in issues))
+        self.assertFalse(any("topic term repeated too often" in issue for issue in issues))
+
+    def test_script_quality_flags_repeated_topic_phrase(self):
+        cuts = [
+            {
+                "narration": f"부왕의 굴복 외교는 국면 {i}에서 다시 드러났습니다.",
+                "image_prompt": f"Scene: frontier negotiation moment {i}; Main subject: royal envoy {i}",
+            }
+            for i in range(16)
+        ]
+
+        issues = inspect_script_quality(
+            {"title": "부왕의 굴복 외교", "cuts": cuts},
+            "부왕의 굴복 외교",
+        )
+
+        self.assertTrue(
+            any("topic phrase repeated too often: 부왕 굴복 외교=16" in issue for issue in issues)
+        )
 
     def test_script_quality_does_not_treat_scene_evidence_as_scene(self):
         cuts = []

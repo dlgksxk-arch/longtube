@@ -82,7 +82,7 @@ _SDXL_FAMILY = {
 }
 
 _SDXL_DIMS = {
-    "16:9": (1344, 768),
+    "16:9": (1792, 1008),
     "9:16": (768, 1344),
     "1:1":  (1024, 1024),
     "3:4":  (832, 1088),
@@ -355,6 +355,16 @@ def _enrich_local_v1_positive_prompt(prompt: str) -> str:
         prefixes.append(
             "Present-day modern setting, current era, contemporary everyday interior, modern household objects."
         )
+    elif re.search(r"\b(year/period|nara period|heian period|kamakura period|edo period|ancient|medieval|c\.\s*\d{3,4}|[1-9]\d{2,3})\b", lower):
+        prefixes.append(
+            "Pre-modern historical scene. Era and place accuracy is the highest priority. "
+            "Use only period-correct clothing, hairstyle, architecture, furniture, tools, and materials. "
+            "No modern office, no business suits, no computers, no monitors, no screens, no modern desks, no city skyline."
+        )
+        if "construction office" in lower:
+            prefixes.append(
+                "Interpret construction office as a period construction administration room with wooden beams, low wooden desks, blank wooden tablets, scroll bundles, and guards in period-correct clothing."
+            )
     if "日本の一般家庭の台所" in p or "台所・食卓" in p or "home kitchen" in lower:
         prefixes.append(
             "Ordinary modern Japanese home kitchen and dining table, indoor close table scene, softly lit paper screen."

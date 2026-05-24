@@ -815,12 +815,12 @@ async def _mix_bgm_into_video(
                 f"[bgm][main]sidechaincompress=threshold={threshold}:ratio={ratio}:"
                 f"attack=80:release=650[ducked];"
                 f"[main][ducked]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,"
-                f"alimiter=limit=0.55:level=false[aout]"
+                f"alimiter=limit=0.85:level=false[aout]"
             )
         else:
             filter_complex += (
                 f"[main][bgm]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,"
-                f"alimiter=limit=0.55:level=false[aout]"
+                f"alimiter=limit=0.85:level=false[aout]"
             )
     else:
         filter_complex = (
@@ -868,7 +868,7 @@ async def _apply_narration_gain_to_video(
         "-map", "0:v:0",
         "-map", "0:a:0",
         "-c:v", "copy",
-        "-af", f"volume={narration_gain:.4f},alimiter=limit=0.55:level=false",
+        "-af", f"volume={narration_gain:.4f},alimiter=limit=0.85:level=false",
         "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
         "-shortest",
         output_path,

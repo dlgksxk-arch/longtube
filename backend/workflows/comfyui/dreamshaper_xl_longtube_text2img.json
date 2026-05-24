@@ -15,8 +15,8 @@
       "model": ["1", 0],
       "clip": ["1", 1],
       "lora_name": "longtube_style_v1.safetensors",
-      "strength_model": 1.0,
-      "strength_clip": 1.0
+      "strength_model": 0.85,
+      "strength_clip": 0.75
     }
   },
   "2": {
@@ -50,7 +50,7 @@
       "latent_image": ["4", 0],
       "seed": "${SEED}",
       "steps": 20,
-      "cfg": 5.0,
+      "cfg": 3.0,
       "sampler_name": "dpmpp_sde",
       "scheduler": "karras",
       "denoise": 1.0
