@@ -158,7 +158,7 @@ export default function OneClickLayout({
     pollRef.current = setInterval(() => {
       if (typeof document !== "undefined" && document.hidden) return;
       void load();
-    }, pathname === "/oneclick/live" ? 15000 : 10000);
+    }, pathname === "/oneclick/live" ? 60000 : 30000);
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };

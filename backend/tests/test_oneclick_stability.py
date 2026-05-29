@@ -11,7 +11,7 @@ import os
 import sys
 import tempfile
 import unittest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from pathlib import Path
 
@@ -28,9 +28,8 @@ from app import config as app_config  # noqa: E402
 from app.services.title_utils import shorts_upload_title  # noqa: E402
 from app.services.image import prompt_builder  # noqa: E402
 from app.services.thumbnail_service import (  # noqa: E402
-    THUMBNAIL_TEXT_OVERLAY_SCALE,
-    _scale_font_candidates,
     build_standard_thumbnail_prompt,
+    extract_thumbnail_text_parts,
 )
 from app.services.image.comfyui_service import (  # noqa: E402
     apply_longtube_local_v1_master_prompt,
@@ -61,7 +60,7 @@ class OneClickQueueStabilityTests(unittest.TestCase):
         self.assertEqual(cfg["cut_video_duration"], 4.0)
         self.assertEqual(cfg["target_cuts"], 150)
         self.assertEqual(cfg["target_duration"], 600)
-        self.assertEqual(cfg["script_tts_target_sec"], 5.0)
+        self.assertEqual(cfg["script_tts_target_sec"], 4.0)
         self.assertEqual(cfg["script_tts_tolerance_sec"], 0.2)
 
     def test_oneclick_main_length_uses_requested_duration(self):
@@ -517,9 +516,11 @@ class OneClickQueueStabilityTests(unittest.TestCase):
             svc._normalize_queue_runtime_state(save=False)
 
             self.assertTrue(changed)
-            self.assertEqual([item["id"] for item in svc._QUEUE["items"]], ["active", "normal"])
+            self.assertEqual([item["id"] for item in svc._QUEUE["items"]], ["active", "failed", "normal"])
             self.assertEqual(svc._QUEUE["items"][0]["status"], "running")
             self.assertEqual(svc._QUEUE["items"][0]["queued_note"], "실행 중")
+            self.assertEqual(svc._QUEUE["items"][1]["status"], "pending")
+            self.assertEqual(svc._QUEUE["items"][1]["queued_note"], "대기")
         finally:
             svc._TASKS.clear()
             svc._TASKS.update(old_tasks)
@@ -586,7 +587,68 @@ class OneClickQueueStabilityTests(unittest.TestCase):
             svc._ACTIVE_RUNS.clear()
             svc._ACTIVE_RUNS.update(old_active_runs)
 
-    def test_uploading_task_keeps_queue_row_active_without_live_runner(self):
+    def test_queue_task_sync_does_not_overwrite_unrelated_queue_row(self):
+        old_tasks = copy.deepcopy(svc._TASKS)
+        old_queue = copy.deepcopy(svc._QUEUE)
+        old_saver = svc._save_queue_to_disk
+        old_loaded = svc._STATE_LOADED
+        try:
+            svc._save_queue_to_disk = lambda: None
+            svc._STATE_LOADED = True
+            svc._TASKS.clear()
+            svc._TASKS.update(
+                {
+                    "running": {
+                        "task_id": "running",
+                        "project_id": "project-running",
+                        "status": "running",
+                        "topic": "겐페이 전쟁은 왜 벌어졌을까",
+                        "title": "겐페이 전쟁은 왜 벌어졌을까 EP.43",
+                        "channel": 3,
+                        "episode_number": 43,
+                        "started_at": "2026-05-29T03:26:47Z",
+                    },
+                }
+            )
+            svc._QUEUE.clear()
+            svc._QUEUE.update(
+                {
+                    "channel_times": {"1": "01:00", "2": "03:00", "3": "06:00", "4": "09:00"},
+                    "last_run_dates": {},
+                    "channel_presets": {"1": None, "2": None, "3": None, "4": None},
+                    "items": [
+                        {
+                            "id": "dfa24fb0",
+                            "topic": "The Qing Court Misreads the Opium War",
+                            "channel": 4,
+                            "episode_number": None,
+                            "status": "running",
+                            "task_id": "running",
+                            "project_id": "project-running",
+                            "queued_note": "실행 중",
+                        },
+                    ],
+                }
+            )
+
+            changed = svc._sync_queue_items_from_tasks_for_save()
+
+            self.assertTrue(changed)
+            self.assertEqual(svc._QUEUE["items"][0]["id"], "dfa24fb0")
+            self.assertEqual(svc._QUEUE["items"][0]["status"], "pending")
+            self.assertNotIn("task_id", svc._QUEUE["items"][0])
+            self.assertEqual(svc._QUEUE["items"][1]["id"], "task-running")
+            self.assertEqual(svc._QUEUE["items"][1]["channel"], 3)
+            self.assertEqual(svc._QUEUE["items"][1]["episode_number"], 43)
+        finally:
+            svc._TASKS.clear()
+            svc._TASKS.update(old_tasks)
+            svc._QUEUE.clear()
+            svc._QUEUE.update(old_queue)
+            svc._save_queue_to_disk = old_saver
+            svc._STATE_LOADED = old_loaded
+
+    def test_uploading_task_does_not_block_production_queue(self):
         old_tasks = copy.deepcopy(svc._TASKS)
         old_queue = copy.deepcopy(svc._QUEUE)
         old_saver = svc._save_queue_to_disk
@@ -631,9 +693,8 @@ class OneClickQueueStabilityTests(unittest.TestCase):
             changed = svc._sync_queue_items_from_tasks_for_save()
 
             self.assertTrue(changed)
-            self.assertTrue(svc._has_inflight_task())
-            self.assertEqual(svc._QUEUE["items"][0]["status"], "running")
-            self.assertEqual(svc._QUEUE["items"][0]["queued_note"], "실행 중")
+            self.assertFalse(svc._has_inflight_task())
+            self.assertEqual(svc._QUEUE["items"], [])
         finally:
             svc._TASKS.clear()
             svc._TASKS.update(old_tasks)
@@ -641,7 +702,6 @@ class OneClickQueueStabilityTests(unittest.TestCase):
             svc._QUEUE.update(old_queue)
             svc._save_queue_to_disk = old_saver
             svc._STATE_LOADED = old_loaded
-
 
 class OneClickSafetyStabilityTests(unittest.TestCase):
     def test_uploading_task_does_not_replace_running_workbench_task(self):
@@ -755,11 +815,16 @@ class OneClickSafetyStabilityTests(unittest.TestCase):
         self.assertFalse(svc._should_auto_dispatch_after_task({"triggered_by": "schedule"}))
         self.assertFalse(svc._should_auto_dispatch_after_task({"triggered_by": ""}))
         self.assertTrue(svc._should_auto_dispatch_after_task({"triggered_by": "manual"}))
+        self.assertTrue(svc._should_auto_dispatch_after_task({
+            "status": "upload_pending",
+            "triggered_by": "schedule",
+            "step_states": {"6": "completed", "7": "pending"},
+        }))
 
 
 class InterludeStabilityTests(unittest.TestCase):
-    def test_default_interval_is_250_cuts_and_first_three_cut_insert_is_kept(self):
-        self.assertEqual(DEFAULT_INTERMISSION_EVERY, 250)
+    def test_default_interval_is_45_cuts_and_first_three_cut_insert_is_kept(self):
+        self.assertEqual(DEFAULT_INTERMISSION_EVERY, 45)
 
         cuts = [f"cut{i}.mp4" for i in range(1, 6)]
         sequence, count = subtitle_router._insert_intermissions_after_cuts(
@@ -941,9 +1006,18 @@ class InterludeStabilityTests(unittest.TestCase):
         self.assertIn("back view", prompt)
         self.assertIn("This face rule overrides any earlier scenery", prompt)
 
-    def test_thumbnail_overlay_font_candidates_are_scaled_to_seventy_percent(self):
-        self.assertEqual(THUMBNAIL_TEXT_OVERLAY_SCALE, 0.70)
-        self.assertEqual(_scale_font_candidates((200, 180, 42)), (140, 126, 29))
+    def test_thumbnail_overlay_uses_absolute_font_sizes_and_no_ep_badge(self):
+        title, episode_label = extract_thumbnail_text_parts("EP.14 Target title", "EP.14")
+        source = (Path(__file__).resolve().parent.parent / "app" / "services" / "thumbnail_service.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertEqual(title, "Target title")
+        self.assertIsNone(episode_label)
+        self.assertIn("candidates = (98, 87, 76, 67", source)
+        self.assertNotIn("THUMBNAIL_TEXT_OVERLAY_SCALE", source)
+        self.assertNotIn("class=\"top\"", source)
+        self.assertNotIn("좌상단 EP 배지", source)
 
     def test_thumbnail_fallback_and_request_reject_body_only_faces(self):
         fallback = BaseLLMService._fallback_thumbnail_prompt(
@@ -966,7 +1040,7 @@ class InterludeStabilityTests(unittest.TestCase):
         self.assertIn("torso-only", request)
         self.assertIn("faceless silhouette", request)
 
-    def test_four_second_video_uses_five_second_script_tts_window(self):
+    def test_four_second_video_uses_four_second_script_tts_window(self):
         limits = BaseLLMService._calc_narration_limits({
             "language": "ko",
             "tts_model": "elevenlabs",
@@ -974,10 +1048,10 @@ class InterludeStabilityTests(unittest.TestCase):
             "cut_video_duration": 4.0,
         })
 
-        self.assertEqual(limits["target_min_sec"], 4.8)
-        self.assertEqual(limits["target_sec"], 5.0)
-        self.assertEqual(limits["target_max_sec"], 5.2)
-        self.assertEqual(limits["target_range"], "48~52")
+        self.assertEqual(limits["target_min_sec"], 3.8)
+        self.assertEqual(limits["target_sec"], 4.0)
+        self.assertEqual(limits["target_max_sec"], 4.2)
+        self.assertEqual(limits["target_range"], "38~42")
 
         ja_limits = BaseLLMService._calc_narration_limits({
             "language": "ja",
@@ -986,12 +1060,12 @@ class InterludeStabilityTests(unittest.TestCase):
             "cut_video_duration": 4.0,
         })
 
-        self.assertEqual(ja_limits["target_min_sec"], 4.8)
-        self.assertEqual(ja_limits["target_sec"], 5.0)
-        self.assertEqual(ja_limits["target_max_sec"], 5.2)
-        self.assertEqual(ja_limits["target_range"], "46~48")
+        self.assertEqual(ja_limits["target_min_sec"], 3.8)
+        self.assertEqual(ja_limits["target_sec"], 4.0)
+        self.assertEqual(ja_limits["target_max_sec"], 4.2)
+        self.assertEqual(ja_limits["target_range"], "36~39")
 
-    def test_eight_second_video_uses_ten_second_script_tts_window(self):
+    def test_eight_second_video_uses_eight_second_script_tts_window(self):
         limits = BaseLLMService._calc_narration_limits({
             "language": "en",
             "tts_model": "elevenlabs",
@@ -999,17 +1073,17 @@ class InterludeStabilityTests(unittest.TestCase):
             "cut_video_duration": 8.0,
         })
 
-        self.assertEqual(limits["target_min_sec"], 9.8)
-        self.assertEqual(limits["target_sec"], 10.0)
-        self.assertEqual(limits["target_max_sec"], 10.2)
+        self.assertEqual(limits["target_min_sec"], 7.8)
+        self.assertEqual(limits["target_sec"], 8.0)
+        self.assertEqual(limits["target_max_sec"], 8.2)
 
     def test_tts_duration_status_treats_over_slot_audio_as_long(self):
         cfg = {"cut_video_duration": 4.0}
 
-        self.assertEqual(narration_fit._duration_status(4.0, cfg), "short")
-        self.assertEqual(narration_fit._duration_status(5.0, cfg), "target_fit")
-        self.assertEqual(narration_fit._duration_status(5.2, cfg), "window_fit")
-        self.assertEqual(narration_fit._duration_status(5.21, cfg), "too_long")
+        self.assertEqual(narration_fit._duration_status(3.7, cfg), "short")
+        self.assertEqual(narration_fit._duration_status(4.0, cfg), "target_fit")
+        self.assertEqual(narration_fit._duration_status(4.2, cfg), "window_fit")
+        self.assertEqual(narration_fit._duration_status(4.21, cfg), "too_long")
 
 
 class ShortsStabilityTests(unittest.TestCase):
@@ -1034,6 +1108,18 @@ class ShortsStabilityTests(unittest.TestCase):
 
         self.assertEqual(language, "ja")
         self.assertNotIn("Watch what happens", title)
+
+    def test_english_shorts_fallback_uses_current_ch4_brand(self):
+        labels = shorts_service._shorts_labels("en")
+
+        self.assertEqual(labels["fallback_channel"], "Empire Errors")
+        self.assertIn(
+            "8mFhhpKQW1HpFEPyq0qziMmY26fDaaNTsUayMxnKWf65WuPzR_NQKB_pIb1ULR4lOqwbh_0",
+            shorts_service._default_channel_avatar_url("Empire Errors", "en") or "",
+        )
+
+    def test_hindi_shorts_fallback_is_not_bound_to_ch4(self):
+        self.assertNotEqual(shorts_service._shorts_labels("hi")["fallback_channel"], "CH4")
 
     def test_japanese_shorts_split_long_text_without_generic_filler(self):
         line1, line2 = shorts_service._split_headline(
@@ -1131,6 +1217,9 @@ class YouTubeScopeStabilityTests(unittest.TestCase):
         self.assertIn("댓글이 비활성화", text)
         self.assertIn("commentsDisabled", text)
 
+    def test_youtube_upload_insert_retry_default_does_not_hide_429_retries(self):
+        self.assertEqual(youtube_service.YOUTUBE_UPLOAD_INSERT_RETRIES, 0)
+
 
 class UploadAndAudioMixStabilityTests(unittest.TestCase):
     def test_shorts_upload_title_has_no_numeric_hashtag(self):
@@ -1145,6 +1234,51 @@ class UploadAndAudioMixStabilityTests(unittest.TestCase):
         self.assertAlmostEqual(app_config.BGM_VOLUME_MULTIPLIER, 0.7)
         self.assertAlmostEqual(subtitle_router._effective_bgm_volume(0.21), 0.147)
 
+    def test_youtube_upload_quota_classifier_is_precise(self):
+        self.assertTrue(svc._is_youtube_upload_quota_error(Exception(
+            "Quota exceeded for quota metric 'Video Uploads' and limit 'Video Uploads per day'"
+        )))
+        self.assertTrue(svc._is_youtube_upload_quota_error(Exception("reason: uploadLimitExceeded")))
+        self.assertFalse(svc._is_youtube_upload_quota_error(Exception("reason: rateLimitExceeded")))
+        self.assertFalse(svc._is_youtube_upload_quota_error(Exception("reason: quotaExceeded")))
+
+    def test_existing_main_upload_keeps_step7_pending_when_required_shorts_missing(self):
+        original_load_project = svc._load_project
+        original_shorts_completion = svc._shorts_upload_completion
+        try:
+            svc._load_project = lambda project_id: SimpleNamespace(
+                id=project_id,
+                youtube_url="https://youtube.com/watch?v=abc123def",
+                config={"shorts_enabled": True},
+            )
+            svc._shorts_upload_completion = lambda project_id, config=None: {
+                "enabled": True,
+                "required": 4,
+                "file_count": 4,
+                "uploaded_count": 0,
+                "complete": False,
+            }
+            task = {
+                "task_id": "t1",
+                "status": "uploading",
+                "step_states": {"6": "completed", "7": "pending"},
+                "logs": [],
+            }
+
+            completed = svc._complete_task_from_existing_upload(
+                task,
+                "project1",
+                {"shorts_enabled": True},
+            )
+        finally:
+            svc._load_project = original_load_project
+            svc._shorts_upload_completion = original_shorts_completion
+
+        self.assertFalse(completed)
+        self.assertEqual(task["youtube_url"], "https://youtube.com/watch?v=abc123def")
+        self.assertEqual(task["step_states"]["7"], "pending")
+        self.assertEqual(task["status"], "uploading")
+        self.assertTrue(any("쇼츠 업로드 미완료" in log["msg"] for log in task["logs"]))
 
 class ChannelOpsCommentLoadingTests(unittest.TestCase):
     def test_comment_translation_targets_non_korean_text(self):

@@ -371,7 +371,10 @@ export default function LocalServiceStatus({ variant = "sidebar", className = ""
 
   useEffect(() => {
     void load();
-    const timer = window.setInterval(() => void load(), 10_000);
+    const timer = window.setInterval(() => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      void load();
+    }, 30_000);
     return () => window.clearInterval(timer);
   }, [load]);
 

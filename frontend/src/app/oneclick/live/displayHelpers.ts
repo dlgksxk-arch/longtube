@@ -17,7 +17,11 @@ export const timeValue = (value?: string | null) => {
 
 export const isUploadRecoverableTask = (task: OneClickTask) => {
   const states = task.step_states || {};
-  return states["6"] === "completed" && states["7"] !== "completed";
+  const attempted =
+    Number(task.youtube_upload_attempt_count || 0) > 0 ||
+    task.status === "upload_failed" ||
+    states["7"] === "failed";
+  return states["6"] === "completed" && states["7"] === "pending" && !attempted;
 };
 
 export function serverLogToEntry(log: ServerLogEntry): LogEntry {

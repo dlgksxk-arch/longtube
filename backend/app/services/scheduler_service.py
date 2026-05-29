@@ -364,14 +364,7 @@ async def _run_episode(episode: ScheduledEpisode) -> None:
             False,       # made_for_kids
             None,        # progress_callback
         )
-        verified = await asyncio.to_thread(
-            uploader.confirm_upload_processed_in_studio,
-            video_id=result.get("video_id"),
-            title=final_title,
-            timeout_seconds=1200,
-            interval_seconds=20,
-        )
-        result = {**result, "studio_verified": True, "processing_verified": True, "studio_record": verified}
+        result = {**result, "studio_verified": False, "processing_verified": False}
         if thumb_path and result.get("video_id") and Path(str(thumb_path)).exists():
             try:
                 thumb_result = await asyncio.to_thread(

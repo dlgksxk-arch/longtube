@@ -184,6 +184,10 @@ export default function StepVideo({ project, cuts, onUpdate }: Props) {
   const costPerClip = selectedModel?.cost_value || 0;
   const cutVideoDuration = Math.max(1, Number(project.config.cut_video_duration || 5));
   const cutCount = cuts.length || Math.ceil(project.config.target_duration / cutVideoDuration);
+  const hasCharacterAnchor = Boolean(
+    (project.config.character_images || []).length ||
+      (project.config.character_description || "").trim(),
+  );
   // v1.1.36: 선택된 AI 컷 수 계산. 규칙은 backend video.py 와 동일.
   const videoTargetSelection = project.config.video_target_selection || "all";
   const countAiCuts = (total: number, selection: string): number => {
@@ -521,7 +525,7 @@ export default function StepVideo({ project, cuts, onUpdate }: Props) {
                     <div className={`absolute top-2 left-2 w-6 h-6 rounded-full text-white text-xs flex items-center justify-center font-bold ${isCurrentlyGenerating ? "bg-accent-primary" : "bg-black/70"}`}>
                       {cut.cut_number}
                     </div>
-                    {cutHasCharacter(cut.cut_number) && (
+                    {hasCharacterAnchor && cutHasCharacter(cut.cut_number) && (
                       <div
                         className="absolute bottom-2 left-2 px-1.5 py-0.5 rounded text-[10px] bg-accent-secondary/80 text-white font-bold flex items-center gap-1"
                         title="캐릭터가 자연스럽게 움직이는 프롬프트가 자동으로 적용됩니다."

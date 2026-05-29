@@ -1138,14 +1138,7 @@ async def upload_to_youtube(
             body.made_for_kids,
             None,  # progress_callback (아직 프론트로 연결 안 함)
         )
-        verified = await asyncio.to_thread(
-            uploader.confirm_upload_processed_in_studio,
-            video_id=result.get("video_id"),
-            title=title,
-            timeout_seconds=1200,
-            interval_seconds=20,
-        )
-        result = {**result, "studio_verified": True, "processing_verified": True, "studio_record": verified}
+        result = {**result, "studio_verified": False, "processing_verified": False}
         if thumb_path and result.get("video_id"):
             try:
                 thumb_result = await asyncio.to_thread(

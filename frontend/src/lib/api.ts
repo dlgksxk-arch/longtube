@@ -410,12 +410,12 @@ export interface CharacterSlotsResponse {
 }
 
 /**
- * 결정론적 규칙: 5컷마다 1장 캐릭터 (20%) — 컷 1, 6, 11, 16… 이 캐릭터 컷.
- * 백엔드 `cut_has_character()` 와 반드시 동일해야 함.
+ * 캐릭터 컷 제한 없음.
+ * 캐릭터 이미지 또는 캐릭터 설명이 있으면 모든 유효 컷이 캐릭터 적용 가능 컷이다.
  */
 export const cutHasCharacter = (cutNumber: number): boolean => {
   if (cutNumber == null || cutNumber < 1) return false;
-  return (cutNumber - 1) % 5 === 0;
+  return true;
 };
 
 export const imageApi = {
@@ -972,7 +972,17 @@ export interface OneClickTask {
   project_id: string;
   topic: string;
   title: string;
-  status: "prepared" | "queued" | "running" | "completed" | "failed" | "cancelled" | "paused";
+  status:
+    | "prepared"
+    | "queued"
+    | "running"
+    | "upload_pending"
+    | "uploading"
+    | "upload_failed"
+    | "completed"
+    | "failed"
+    | "cancelled"
+    | "paused";
   current_step: number | null;
   current_step_name: string | null;
   step_states: Record<string, string>;
@@ -1016,6 +1026,12 @@ export interface OneClickTask {
   finished_at: string | null;
   created_at: string;
   youtube_url?: string | null;
+  upload_pending_at?: string | null;
+  youtube_upload_attempt_count?: number | null;
+  youtube_upload_first_attempt_at?: string | null;
+  youtube_upload_last_attempt_at?: string | null;
+  youtube_upload_failed_at?: string | null;
+  youtube_upload_error?: string | null;
   // v2.1.2: 제작 로그
   logs?: { ts: string; ts_iso?: string; level: "info" | "warn" | "error"; msg: string }[];
 }
@@ -1164,6 +1180,8 @@ export const oneclickApi = {
     api.get(`/oneclick/tasks/${taskId}/detail`),
   manualUpload: (taskId: string): Promise<{ ok: boolean; status?: string; pending?: boolean; message?: string; youtube_url: string | null }> =>
     api.postWithTimeout(`/oneclick/tasks/${taskId}/upload`, undefined, 30 * 60_000),
+  manualReupload: (taskId: string): Promise<{ ok: boolean; status?: string; pending?: boolean; message?: string; youtube_url: string | null }> =>
+    api.postWithTimeout(`/oneclick/tasks/${taskId}/reupload`, undefined, 30 * 60_000),
   bulkDelete: (taskIds: string[]): Promise<{ ok: boolean; deleted: number; freed_mb: number; skipped: string[] }> =>
     api.post(`/oneclick/tasks/bulk-delete`, { task_ids: taskIds }),
   libraryStats: (): Promise<LibraryStats> =>

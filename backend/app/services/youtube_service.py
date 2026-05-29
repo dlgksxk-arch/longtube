@@ -66,6 +66,10 @@ DEFAULT_CATEGORY_ID = "22"
 YOUTUBE_HTTP_TIMEOUT_SECONDS = 180
 YOUTUBE_UPLOAD_CHUNK_SIZE = 8 * 1024 * 1024
 YOUTUBE_UPLOAD_TRANSIENT_RETRIES = 8
+try:
+    YOUTUBE_UPLOAD_INSERT_RETRIES = max(0, int(os.getenv("YOUTUBE_UPLOAD_INSERT_RETRIES", "0") or 0))
+except (TypeError, ValueError):
+    YOUTUBE_UPLOAD_INSERT_RETRIES = 0
 YOUTUBE_UPLOAD_FILE_READY_TIMEOUT_SECONDS = int(os.getenv("YOUTUBE_UPLOAD_FILE_READY_TIMEOUT_SECONDS", "300") or 300)
 YOUTUBE_UPLOAD_FILE_STABLE_SECONDS = float(os.getenv("YOUTUBE_UPLOAD_FILE_STABLE_SECONDS", "5") or 5)
 YOUTUBE_UPLOAD_FFMPEG_VALIDATE_TIMEOUT_SECONDS = int(os.getenv("YOUTUBE_UPLOAD_FFMPEG_VALIDATE_TIMEOUT_SECONDS", "600") or 600)
@@ -194,6 +198,12 @@ def _friendly_youtube_error(prefix: str, e: Exception) -> str:
             "이 계정은 현재 추가 영상을 업로드할 수 없습니다. "
             "일일/계정 업로드 한도가 풀린 뒤 업로드만 다시 시도하세요. "
             "(reason: uploadLimitExceeded)"
+        )
+    if "video uploads per day" in lowered or "quota metric 'video uploads'" in lowered or 'quota metric "video uploads"' in lowered:
+        return (
+            f"{prefix}: YouTube 영상 업로드 일일 제한입니다. "
+            "Video Uploads per day 한도가 풀린 뒤 업로드만 다시 시도하세요. "
+            "(reason: videoUploadsPerDay)"
         )
     if (
         "quotaexceeded" in lowered
@@ -542,7 +552,9 @@ class YouTubeUploader:
             transient_errors = 0
             while response is None:
                 try:
-                    status, response = request.next_chunk(num_retries=5)
+                    # googleapiclient retries 429/rateLimitExceeded when this is > 0.
+                    # Keep videos.insert quota accounting one local call = one HTTP attempt by default.
+                    status, response = request.next_chunk(num_retries=YOUTUBE_UPLOAD_INSERT_RETRIES)
                     transient_errors = 0
                 except Exception as e:
                     if not _is_transient_upload_error(e):
@@ -908,210 +920,6 @@ class YouTubeUploader:
                 break
             pages += 1
         return None
-
-    def find_upload_playlist_item_by_id(self, video_id: str, max_pages: int = 4) -> Optional[dict]:
-        """Return an uploads-playlist item by video id, including deleted placeholders."""
-        self._ensure()
-        vid = str(video_id or "").strip()
-        if not vid:
-            return None
-        token = None
-        pages = 0
-        while pages < max(1, int(max_pages or 4)):
-            data = self.list_my_videos(
-                max_results=50,
-                page_token=token,
-                include_details=False,
-            )
-            for item in data.get("items") or []:
-                if str(item.get("video_id") or "").strip() == vid:
-                    video_id_found = str(item.get("video_id") or "").strip()
-                    if video_id_found and not item.get("url"):
-                        item = {**item, "url": f"https://www.youtube.com/watch?v={video_id_found}"}
-                    return item
-            token = data.get("next_page_token")
-            if not token:
-                break
-            pages += 1
-        return None
-
-    def confirm_upload_visible_in_studio(
-        self,
-        *,
-        video_id: Optional[str] = None,
-        title: Optional[str] = None,
-        timeout_seconds: int = 120,
-        interval_seconds: int = 10,
-    ) -> dict:
-        """Wait until an uploaded video is visible in the channel's Studio list.
-
-        `videos.insert` returning a video id only means YouTube accepted the
-        resumable upload. For queue completion we want the stricter condition:
-        the authenticated channel's own uploads list can see the video. This
-        uses the uploads playlist path from `list_my_videos()` instead of
-        `search.list(q=...)` so upload-time verification does not burn the
-        expensive search quota.
-        """
-        vid = (video_id or "").strip()
-        wanted_title = normalize_upload_title_for_match(title or "")
-        deadline = time.monotonic() + max(1, int(timeout_seconds or 120))
-        interval = max(1, int(interval_seconds or 10))
-        last_seen_count = 0
-
-        while True:
-            data = self.list_my_videos(max_results=25)
-            items = data.get("items") or []
-            last_seen_count = len(items)
-            for item in items:
-                item_video_id = (item.get("video_id") or "").strip()
-                item_title = normalize_upload_title_for_match(item.get("title") or "")
-                id_matches = bool(vid and item_video_id == vid)
-                title_matches = bool(wanted_title and item_title == wanted_title)
-                if id_matches or (not vid and title_matches):
-                    if item_title == "deleted video":
-                        raise YouTubeUploadError(
-                            "YouTube 업로드 확인 실패: Studio 업로드 목록에서 "
-                            f"삭제된 영상 placeholder 로 확인되었습니다. (video_id={item_video_id or vid})"
-                        )
-                    return {
-                        **item,
-                        "url": item.get("url") or (
-                            f"https://www.youtube.com/watch?v={item_video_id}"
-                            if item_video_id
-                            else None
-                        ),
-                        "studio_verified": True,
-                        "verification_method": "uploads_playlist",
-                    }
-
-            if time.monotonic() >= deadline:
-                raise YouTubeUploadError(
-                    "YouTube 업로드 확인 실패: 업로드 API는 성공했지만 "
-                    "Studio 업로드 목록에서 영상을 확인하지 못했습니다. "
-                    f"(video_id={vid or '-'}, title={title or '-'}, last_seen={last_seen_count})"
-            )
-            time.sleep(interval)
-
-    def get_video_processing_state(self, video_id: str) -> dict:
-        """Return upload/processing state for one video."""
-        self._ensure()
-        vid = str(video_id or "").strip()
-        if not vid:
-            raise YouTubeUploadError("video_id is empty.")
-        try:
-            resp = self.youtube.videos().list(
-                part="snippet,status,processingDetails",
-                id=vid,
-            ).execute()
-        except Exception as e:
-            raise YouTubeUploadError(f"video processing lookup failed: {e}") from e
-        items = resp.get("items") or []
-        if not items:
-            playlist_item = self.find_upload_playlist_item_by_id(vid)
-            if playlist_item:
-                title = str(playlist_item.get("title") or "")
-                if normalize_upload_title_for_match(title) == "deleted video":
-                    return {
-                        "video_id": vid,
-                        "title": title,
-                        "url": f"https://www.youtube.com/watch?v={vid}",
-                        "upload_status": "deleted",
-                        "processing_status": None,
-                        "processed": False,
-                        "terminal_failure": True,
-                        "failed_reason": "deleted_video",
-                        "playlist_visible": True,
-                    }
-                return {
-                    "video_id": vid,
-                    "title": title,
-                    "url": playlist_item.get("url") or f"https://www.youtube.com/watch?v={vid}",
-                    "upload_status": "uploaded",
-                    "processing_status": "processing",
-                    "processed": False,
-                    "terminal_failure": False,
-                    "failed_reason": None,
-                    "playlist_visible": True,
-                }
-            raise YouTubeUploadError(f"video not found: {vid}")
-        item = items[0]
-        snippet = item.get("snippet") or {}
-        status = item.get("status") or {}
-        processing = item.get("processingDetails") or {}
-        upload_status = status.get("uploadStatus")
-        processing_status = processing.get("processingStatus")
-        failed_reason = (
-            status.get("failureReason")
-            or status.get("rejectionReason")
-            or processing.get("processingFailureReason")
-        )
-        processed = upload_status == "processed" or processing_status == "succeeded"
-        terminal_failure = upload_status in ("failed", "rejected", "deleted") or processing_status in (
-            "failed",
-            "terminated",
-        )
-        return {
-            "video_id": vid,
-            "title": snippet.get("title") or "",
-            "url": f"https://www.youtube.com/watch?v={vid}",
-            "upload_status": upload_status,
-            "processing_status": processing_status,
-            "processed": bool(processed and not terminal_failure),
-            "terminal_failure": bool(terminal_failure),
-            "failed_reason": failed_reason,
-        }
-
-    def confirm_upload_processed_in_studio(
-        self,
-        *,
-        video_id: Optional[str] = None,
-        title: Optional[str] = None,
-        timeout_seconds: int = 900,
-        interval_seconds: int = 20,
-    ) -> dict:
-        """Wait until Studio sees the upload and YouTube processing is done.
-
-        The upload API can return a video id while Studio still shows
-        "processing queued". Queue completion must wait for the processing
-        state, otherwise completed tasks can still be unusable in Studio.
-        """
-        visible = self.confirm_upload_visible_in_studio(
-            video_id=video_id,
-            title=title,
-            timeout_seconds=min(max(1, int(timeout_seconds or 900)), 120),
-            interval_seconds=interval_seconds,
-        )
-        vid = (video_id or visible.get("video_id") or "").strip()
-        if not vid:
-            raise YouTubeUploadError("YouTube processing check failed: video_id is empty.")
-
-        deadline = time.monotonic() + max(1, int(timeout_seconds or 900))
-        interval = max(1, int(interval_seconds or 20))
-        last_state: dict = {}
-        while True:
-            last_state = self.get_video_processing_state(vid)
-            if last_state.get("terminal_failure"):
-                raise YouTubeUploadError(
-                    "YouTube processing failed: "
-                    f"video_id={vid}, uploadStatus={last_state.get('upload_status')}, "
-                    f"processingStatus={last_state.get('processing_status')}, "
-                    f"reason={last_state.get('failed_reason') or '-'}"
-                )
-            if last_state.get("processed"):
-                return {
-                    **visible,
-                    **last_state,
-                    "studio_verified": True,
-                    "processing_verified": True,
-                    "verification_method": "uploads_playlist+videos.list",
-                }
-            if time.monotonic() >= deadline:
-                raise YouTubeUploadError(
-                    "YouTube upload is visible but still processing. "
-                    f"video_id={vid}, uploadStatus={last_state.get('upload_status') or '-'}, "
-                    f"processingStatus={last_state.get('processing_status') or '-'}"
-                )
-            time.sleep(interval)
 
     def get_video(self, video_id: str) -> dict:
         """ì˜ìƒ 1 ê±´ ìƒì„¸.

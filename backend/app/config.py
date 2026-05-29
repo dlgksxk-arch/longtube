@@ -46,6 +46,28 @@ REPLICATE_API_TOKEN = os.getenv("REPLICATE_API_TOKEN", "")
 RUNWAY_API_KEY = os.getenv("RUNWAY_API_KEY", "")
 MIDJOURNEY_API_KEY = os.getenv("MIDJOURNEY_API_KEY", "")
 
+
+def _read_env_file_value(name: str) -> str:
+    try:
+        env_path = BASE_DIR / "backend" / ".env"
+        if not env_path.exists():
+            return ""
+        for line in env_path.read_text(encoding="utf-8").splitlines():
+            raw = line.strip()
+            if not raw or raw.startswith("#") or "=" not in raw:
+                continue
+            key, _, value = raw.partition("=")
+            if key.strip() == name:
+                return value.strip().strip('"').strip("'")
+    except Exception:
+        return ""
+    return ""
+
+
+def get_runtime_api_key(name: str) -> str:
+    """Return the freshest API key value without requiring a server restart."""
+    return _read_env_file_value(name) or os.environ.get(name, "") or globals().get(name, "") or ""
+
 # YouTube OAuth
 YOUTUBE_CLIENT_ID = os.getenv("YOUTUBE_CLIENT_ID", "")
 YOUTUBE_CLIENT_SECRET = os.getenv("YOUTUBE_CLIENT_SECRET", "")
@@ -270,9 +292,8 @@ def resolve_cut_video_duration(config: dict | None = None, default: float | None
     return max(1.0, min(30.0, value))
 
 # Default TTS timing window. Project configs resolve this from
-# cut_video_duration * 1.25, so 4s cuts target 5s narration and 8s cuts target
-# 10s narration.
-TTS_SCRIPT_TARGET_MULTIPLIER = 1.25
+# cut_video_duration, so 4s cuts target 4s narration.
+TTS_SCRIPT_TARGET_MULTIPLIER = 1.0
 TTS_TARGET_DURATION = CUT_VIDEO_DURATION * TTS_SCRIPT_TARGET_MULTIPLIER
 TTS_MIN_DURATION = TTS_TARGET_DURATION - 0.2
 TTS_MAX_DURATION = TTS_TARGET_DURATION + 0.2

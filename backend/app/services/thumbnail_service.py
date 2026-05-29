@@ -34,7 +34,6 @@ from app.config import resolve_project_dir
 # YouTube 권장 썸네일 해상도
 THUMB_W = 1280
 THUMB_H = 720
-THUMBNAIL_TEXT_OVERLAY_SCALE = 0.70
 
 # 폰트 탐색 후보 (OS 별)
 FONT_CANDIDATES = [
@@ -270,10 +269,8 @@ async def ensure_standard_thumbnail(
     image_model = resolve_image_model(config.get("thumbnail_model") or DEFAULT_THUMBNAIL_MODEL)
 
     overlay_seed = build_clickbait_thumbnail_overlay(script, prompt_title, config)
-    overlay_title, extracted_episode_label = extract_thumbnail_text_parts(overlay_seed or prompt_title, None)
+    overlay_title, _extracted_episode_label = extract_thumbnail_text_parts(overlay_seed or prompt_title, None)
     overlay_title = suppress_foreign_hangul_thumbnail_overlay(overlay_title, config)
-    ep_raw = episode_number if episode_number is not None else config.get("episode_number")
-    overlay_episode_label = normalize_episode_label(str(ep_raw)) if ep_raw else extracted_episode_label
 
     char_paths = collect_character_images(project_id, config)
     ref_paths = collect_reference_images(project_id, config)
@@ -316,7 +313,6 @@ async def ensure_standard_thumbnail(
             image_model_id=image_model,
             overlay_title_text=overlay_title,
             overlay_subtitle=None,
-            overlay_episode_label=overlay_episode_label,
             output_path=str(thumb_path),
             reference_images=combined_refs or None,
             enable_historical_guard=enable_historical_guard,
@@ -332,7 +328,6 @@ async def ensure_standard_thumbnail(
             title=overlay_title or prompt_title,
             base_image_path=str(base_cut),
             output_path=str(thumb_path),
-            episode_label=overlay_episode_label,
             config=config,
         )
 
@@ -363,17 +358,13 @@ def extract_thumbnail_text_parts(
     episode_label: Optional[str] = None,
 ) -> tuple[str, Optional[str]]:
     raw_title = (title or "").strip()
-    raw_label = normalize_episode_label(episode_label)
 
-    extracted_label = None
     match = re.search(r"\bEP\.?\s*0*(\d{1,3})\b", raw_title, flags=re.IGNORECASE)
     if match:
-        extracted_label = f"EP.{int(match.group(1)):02d}"
         raw_title = re.sub(r"\bEP\.?\s*0*\d{1,3}\b", "", raw_title, flags=re.IGNORECASE)
 
     clean_title = sanitize_thumbnail_title(raw_title)
-    final_label = raw_label or extracted_label
-    return clean_title, final_label
+    return clean_title, None
 
 
 def _has_devanagari(text: Optional[str]) -> bool:
@@ -402,7 +393,6 @@ def _render_devanagari_thumbnail_with_browser(
     base_image_path: Optional[str],
     output_path: str,
     title: str,
-    episode_label: Optional[str],
     subtitle: Optional[str],
 ) -> Optional[str]:
     """Render Hindi/Devanagari overlays through Chrome for proper shaping."""
@@ -411,7 +401,6 @@ def _render_devanagari_thumbnail_with_browser(
         return None
 
     bg_data = base64.b64encode(Path(base_image_path).read_bytes()).decode("ascii")
-    ep = html.escape(normalize_episode_label(episode_label) or (episode_label or "").strip())
     title_words = title.strip().split()
     if len(title_words) >= 3:
         title_main = " ".join(title_words[:-2])
@@ -426,30 +415,26 @@ def _render_devanagari_thumbnail_with_browser(
         else f'<span class="title-impact">{html.escape(title_impact)}</span>'
     )
     subtitle_html = html.escape((subtitle or "").strip())
-    badge_block = f'<div class="top">{ep}</div>' if ep else ""
     subtitle_block = f'<div class="subtitle">{subtitle_html}</div>' if subtitle_html else ""
-    badge_font_px = _scale_font_size(38)
-    title_font_px = _scale_font_size(82)
-    subtitle_font_px = _scale_font_size(64)
-    badge_radius_px = _scale_font_size(14)
-    title_stroke_px = max(1, _scale_font_size(4))
-    subtitle_stroke_px = max(1, _scale_font_size(4))
-    title_shadow_y = _scale_font_size(7)
-    title_shadow_spread = _scale_font_size(5)
-    subtitle_shadow_y = _scale_font_size(6)
-    subtitle_shadow_spread = _scale_font_size(5)
+    title_font_px = 57
+    subtitle_font_px = 45
+    title_stroke_px = 3
+    subtitle_stroke_px = 3
+    title_shadow_y = 5
+    title_shadow_spread = 4
+    subtitle_shadow_y = 4
+    subtitle_shadow_spread = 4
     html_doc = f"""<!doctype html>
 <html><head><meta charset="utf-8"><style>
 *{{box-sizing:border-box}}
 body{{margin:0;width:{THUMB_W}px;height:{THUMB_H}px;overflow:hidden;background:#111}}
 .canvas{{position:relative;width:{THUMB_W}px;height:{THUMB_H}px;font-family:"Nirmala UI","Mangal","Arial Unicode MS",sans-serif;background-image:linear-gradient(180deg,rgba(0,0,0,.04) 0%,rgba(0,0,0,.12) 42%,rgba(0,0,0,.64) 100%),linear-gradient(90deg,rgba(0,0,0,.46),rgba(0,0,0,.04) 58%,rgba(0,0,0,.18)),url(data:image/png;base64,{bg_data});background-size:cover;background-position:center}}
-.top{{position:absolute;left:60px;top:40px;padding:8px 16px 9px;border-radius:{badge_radius_px}px;background:#ffd32a;color:#111;font-weight:900;font-size:{badge_font_px}px;line-height:1;box-shadow:0 5px 15px rgba(0,0,0,.35)}}
 .copy{{position:absolute;left:64px;right:76px;bottom:104px}}
 .title{{font-weight:900;font-size:{title_font_px}px;line-height:1.06;letter-spacing:0;text-wrap:balance;-webkit-text-stroke:{title_stroke_px}px #050505;text-shadow:0 {title_shadow_y}px 0 rgba(0,0,0,.86),0 0 22px rgba(0,0,0,.90),{title_shadow_spread}px 0 0 #050505,-{title_shadow_spread}px 0 0 #050505,0 {title_shadow_spread}px 0 #050505,0 -{title_shadow_spread}px 0 #050505,{title_stroke_px}px {title_stroke_px}px 0 #050505,-{title_stroke_px}px {title_stroke_px}px 0 #050505,{title_stroke_px}px -{title_stroke_px}px 0 #050505,-{title_stroke_px}px -{title_stroke_px}px 0 #050505}}
 .title-main{{display:block;color:#fff}}
 .title-impact{{display:block;color:#ffe736}}
 .subtitle{{margin-top:10px;color:#ffe736;font-weight:900;font-size:{subtitle_font_px}px;line-height:1.04;letter-spacing:0;-webkit-text-stroke:{subtitle_stroke_px}px #050505;text-shadow:0 {subtitle_shadow_y}px 0 rgba(0,0,0,.86),0 0 20px rgba(0,0,0,.86),{subtitle_shadow_spread}px 0 0 #050505,-{subtitle_shadow_spread}px 0 0 #050505,0 {subtitle_shadow_spread}px 0 #050505,0 -{subtitle_shadow_spread}px 0 #050505;text-wrap:balance}}
-</style></head><body><div class="canvas">{badge_block}<div class="copy"><div class="title">{title_html}</div>{subtitle_block}</div></div></body></html>"""
+</style></head><body><div class="canvas"><div class="copy"><div class="title">{title_html}</div>{subtitle_block}</div></div></body></html>"""
 
     try:
         with tempfile.TemporaryDirectory() as tmp:
@@ -585,16 +570,8 @@ def _wrap_text(text: str, font: ImageFont.ImageFont, max_width: int, draw: Image
     return lines
 
 
-# ─── 레퍼런스 스타일 (EP. 배지 + 컬러 텍스트 박스) 팔레트 ───
-# 좌측 상단 EP 배지, 하단 2줄 텍스트(각각 배경 박스 + 두꺼운 검정 테두리).
-# 밝은 색상 박스 + 검정 스트로크 + 흰/검정 텍스트로 모바일 해상도에서도 확 튐.
-BADGE_FILL = (255, 222, 23)       # 노랑
-BADGE_STROKE = (0, 0, 0)
-HOOK_BG_1 = (255, 222, 23)        # 노랑 (상단 라인)
-HOOK_BG_2 = (182, 255, 0)         # 라임 (하단 라인)
+# ─── 텍스트 오버레이 팔레트 ───
 TEXT_STROKE = (0, 0, 0)
-TEXT_FILL_DARK = (20, 20, 20)
-FRAME_COLOR = (0, 220, 120)       # 외곽 프레임(초록)
 
 
 def _text_size(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont) -> tuple[int, int]:
@@ -632,34 +609,6 @@ def _fit_font(
         if w <= max_w and h <= max_h:
             return font
     return _find_font(candidates[-1], text)
-
-
-def _scale_font_size(size: int) -> int:
-    return max(1, int(round(size * THUMBNAIL_TEXT_OVERLAY_SCALE)))
-
-
-def _scale_font_candidates(candidates: tuple[int, ...]) -> tuple[int, ...]:
-    scaled: list[int] = []
-    for size in candidates:
-        next_size = _scale_font_size(size)
-        if not scaled or scaled[-1] != next_size:
-            scaled.append(next_size)
-    return tuple(scaled)
-
-
-def _draw_rounded_box(
-    draw: ImageDraw.ImageDraw,
-    xy: tuple[int, int, int, int],
-    fill,
-    outline=(0, 0, 0),
-    outline_width: int = 6,
-    radius: int = 18,
-) -> None:
-    try:
-        draw.rounded_rectangle(xy, radius=radius, fill=fill, outline=outline, width=outline_width)
-    except AttributeError:
-        # 아주 구버전 Pillow 대비
-        draw.rectangle(xy, fill=fill, outline=outline, width=outline_width)
 
 
 def _draw_stroked_text(
@@ -705,7 +654,6 @@ def generate_thumbnail(
 
     레이아웃:
     - 배경: base_image_path (cover-crop) 또는 다크 폴백
-    - 좌측 상단: `episode_label` 이 있으면 "EP. 1" 같은 노랑 배지 (작게 유지)
     - 하단: 큰 흰색 글자 + 두꺼운 검정 아웃라인 + 드롭섀도 (박스 없음).
       MrBeast / Veritasium 스타일의 그림텍스트. 박스로 이미지를 가리지 않고,
       아웃라인 + 섀도로 가독성 확보.
@@ -716,13 +664,14 @@ def generate_thumbnail(
         title: 메인 후크 텍스트 (썸네일의 가장 큰 글자).
         base_image_path: 배경 이미지 경로.
         output_path: 저장 경로.
-        episode_label: "EP. 1" 같은 에피소드 배지 텍스트. None 이면 배지 생략.
+        episode_label: 이전 호환용 인자. 썸네일에는 EP 배지를 그리지 않음.
         subtitle: 메인 후크 위에 들어갈 보조 라인. None 이면 생략.
 
     Returns:
         저장된 파일의 절대 경로 (str).
     """
-    title, episode_label = extract_thumbnail_text_parts(title, episode_label)
+    title, _episode_label = extract_thumbnail_text_parts(title, episode_label)
+    episode_label = None
     if not title or not title.strip():
         raise ThumbnailError("제목이 비어있습니다.")
 
@@ -738,7 +687,6 @@ def generate_thumbnail(
             base_image_path=base_image_path,
             output_path=output_path,
             title=title,
-            episode_label=episode_label,
             subtitle=subtitle,
         )
         if browser_output:
@@ -778,7 +726,7 @@ def generate_thumbnail(
     # 박스 없이 크게 — 박스가 먹던 공간이 없으므로 폰트를 확 키움.
     # 후보 사이즈를 높은 것부터 내려가며 전체 문장이 잘리지 않도록 줄바꿈/축소한다.
     # v2.1.2: 폰트 크기 상향 — 제목이 짧아졌으므로 더 크게 표시
-    candidates = _scale_font_candidates((200, 180, 160, 140, 124, 108, 96, 86, 76, 68, 60, 54, 48, 42, 36, 32, 28, 24))
+    candidates = (98, 87, 76, 67, 60, 53, 48, 42, 38, 34, 29, 25, 22, 20, 17)
     max_title_block_h = int(THUMB_H * 0.62)
 
     def pick_title_font() -> tuple[ImageFont.ImageFont, list[str]]:
@@ -805,10 +753,10 @@ def generate_thumbnail(
     sub_font = None
     sub_stroke_w = 0
     if sub:
-        sub_size = max(_scale_font_size(44), int(title_size * 0.55))
+        sub_size = max(31, int(title_size * 0.55))
         sub_font = _find_font(sub_size, sub)
         # 너무 길면 쪼개지 않고 폰트만 낮춤
-        while _text_size(draw, sub, sub_font)[0] > max_text_w and sub_size > _scale_font_size(32):
+        while _text_size(draw, sub, sub_font)[0] > max_text_w and sub_size > 22:
             sub_size -= 4
             sub_font = _find_font(sub_size, sub)
         sub_stroke_w = max(4, min(10, sub_size // 10))
@@ -895,39 +843,6 @@ def generate_thumbnail(
             stroke_fill=(0, 0, 0),
             stroke_width=sub_stroke_w,
             embolden=sub_embolden,
-        )
-
-    # ── 좌상단 EP 배지 ──
-    if episode_label:
-        ep = normalize_episode_label(episode_label) or episode_label.strip()
-        # EP 배지는 작고 또렷하게만 보이면 된다.
-        ep_font = _fit_font(draw, ep, 150, 42, _scale_font_candidates((42, 36, 32, 28, 24)))
-        bbox = _text_bbox(draw, ep, ep_font)
-        tw = bbox[2] - bbox[0]
-        th = bbox[3] - bbox[1]
-        bx_pad = 14
-        by_pad = 8
-        # 상단 여백이 너무 타이트하면 미리보기/실제 썸네일에서 배지가 잘려 보인다.
-        # 좌측 상단 안쪽으로 조금 더 밀어 넣어 안전 여백을 확보한다.
-        ep_x0 = pad_x + 8
-        ep_y0 = 40
-        ep_x1 = ep_x0 + tw + 2 * bx_pad
-        ep_y1 = ep_y0 + th + 2 * by_pad
-        _draw_rounded_box(
-            draw,
-            (ep_x0, ep_y0, ep_x1, ep_y1),
-            fill=BADGE_FILL,
-            outline=BADGE_STROKE,
-            outline_width=4,
-            radius=12,
-        )
-        _draw_stroked_text(
-            draw,
-            (ep_x0 + bx_pad - bbox[0], ep_y0 + by_pad - bbox[1]),
-            ep,
-            ep_font,
-            fill=(20, 20, 20),
-            stroke_width=0,
         )
 
     # v1.1.26: 외곽 초록 프레임 제거 — 이미지가 액자처럼 보이는 문제 해결

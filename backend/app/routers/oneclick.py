@@ -545,6 +545,22 @@ async def manual_upload(task_id: str):
     return result
 
 
+@router.post("/tasks/{task_id}/reupload")
+async def manual_reupload(task_id: str):
+    """업로드 실패 항목을 사용자가 명시적으로 다시 업로드한다."""
+    task = oneclick_service.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="task not found")
+    step_states = task.get("step_states") or {}
+    if step_states.get("6") != "completed":
+        raise HTTPException(status_code=400, detail="최종 렌더링이 완료된 태스크만 재업로드 가능합니다")
+    try:
+        result = await oneclick_service.manual_youtube_upload(task_id, force_retry=True)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return result
+
+
 class BulkDeleteRequest(BaseModel):
     task_ids: List[str]
 

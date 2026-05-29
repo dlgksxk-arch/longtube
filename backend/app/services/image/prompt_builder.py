@@ -850,7 +850,7 @@ def apply_reference_style_prefix(
     return _apply_common_image_constraints(p, enable_historical_guard)
 
 
-# ── 캐릭터 슬롯 규칙 ──
+# ── 캐릭터 컷 제한 없음 ──
 
 def cut_has_character(cut_number: int) -> bool:
     """캐릭터 등장 비율 제한 해제.

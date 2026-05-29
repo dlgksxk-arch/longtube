@@ -748,7 +748,7 @@ export default function StepSettings({ project, onUpdate, onNextStep, onDirtyCha
               { value: "every_3",        label: "3컷당 1장",   hint: "1,4,7... 컷만 AI, 나머지는 Ken Burns" },
               { value: "every_4",        label: "4컷당 1장",   hint: "1,5,9... 컷만 AI" },
               { value: "every_5",        label: "5컷당 1장",   hint: "1,6,11... 컷만 AI" },
-              { value: "character_only", label: "캐릭터만",    hint: "기존 캐릭터 슬롯 기준 컷만 AI (1,6,11...)" },
+              { value: "character_only", label: "레거시 5컷",  hint: "기존 저장값 호환. 1,6,11... 컷만 AI" },
             ].map((opt) => {
               const selected = (config.video_target_selection || "all") === opt.value;
               return (

@@ -53,6 +53,32 @@ def _audio_file_exists(project_id: str, audio_path: str | None) -> bool:
         return False
 
 
+def _http_status_from_exception(exc: BaseException) -> int | None:
+    current: BaseException | None = exc
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        response = getattr(current, "response", None)
+        status_code = getattr(response, "status_code", None)
+        if isinstance(status_code, int):
+            return status_code
+        current = getattr(current, "__cause__", None) or getattr(current, "__context__", None)
+    return None
+
+
+def _fatal_tts_error_message(tts_model: str, voice_id: str, exc: BaseException) -> str | None:
+    status_code = _http_status_from_exception(exc)
+    if (tts_model or "").lower() != "elevenlabs" or status_code is None:
+        return None
+    if status_code in {401, 403}:
+        return f"ElevenLabs TTS 인증/권한 오류 HTTP {status_code}: API 키 또는 보이스 권한을 확인해야 합니다. voice_id={voice_id}"
+    if status_code == 404:
+        return f"ElevenLabs TTS 보이스를 찾을 수 없습니다 HTTP 404: voice_id={voice_id}"
+    if status_code in {402, 429}:
+        return f"ElevenLabs TTS 사용량/한도 오류 HTTP {status_code}: 계정 한도 또는 결제 상태를 확인해야 합니다. voice_id={voice_id}"
+    return None
+
+
 def _resolve_audio_path(project_id: str, audio_path: str | None) -> Path | None:
     if not audio_path:
         return None
@@ -372,14 +398,14 @@ async def generate_all_voices_async(project_id: str, db: Session = Depends(get_d
 
             # v1.1.63: UI 에서 바꾼 키가 즉시 반영되도록 config 모듈 속성을 참조.
             from app import config as app_config
-            if tts_model == "elevenlabs" and not app_config.ELEVENLABS_API_KEY:
-                if app_config.OPENAI_API_KEY:
+            if tts_model == "elevenlabs" and not app_config.get_runtime_api_key("ELEVENLABS_API_KEY"):
+                if app_config.get_runtime_api_key("OPENAI_API_KEY"):
                     tts_model = "openai-tts"
                     voice_id = "alloy"
                 else:
                     raise ValueError("No TTS API key configured (neither ElevenLabs nor OpenAI)")
 
-            if tts_model == "openai-tts" and not app_config.OPENAI_API_KEY:
+            if tts_model == "openai-tts" and not app_config.get_runtime_api_key("OPENAI_API_KEY"):
                 raise ValueError("OPENAI_API_KEY not set for OpenAI TTS")
 
             tts_service = get_tts_service(tts_model)
@@ -486,6 +512,9 @@ async def generate_all_voices_async(project_id: str, db: Session = Depends(get_d
                     record_item_error(project_id, "voice", cut_number, str(e))
                     cut.status = "failed"
                     local_db.commit()
+                    fatal_message = _fatal_tts_error_message(tts_model, voice_id, e)
+                    if fatal_message:
+                        raise RuntimeError(fatal_message) from e
 
                 update_task(project_id, "voice", i + 1)
 
@@ -610,8 +639,8 @@ async def resume_voices_async(project_id: str, db: Session = Depends(get_db)):
 
             # v1.1.63: UI 에서 바꾼 키가 즉시 반영되도록 config 모듈 속성을 참조.
             from app import config as app_config
-            if tts_model == "elevenlabs" and not app_config.ELEVENLABS_API_KEY:
-                if app_config.OPENAI_API_KEY:
+            if tts_model == "elevenlabs" and not app_config.get_runtime_api_key("ELEVENLABS_API_KEY"):
+                if app_config.get_runtime_api_key("OPENAI_API_KEY"):
                     tts_model = "openai-tts"
                     voice_id = "alloy"
 
@@ -704,6 +733,9 @@ async def resume_voices_async(project_id: str, db: Session = Depends(get_db)):
                     record_item_error(project_id, "voice", cut_number, str(e))
                     cut.status = "failed"
                     local_db.commit()
+                    fatal_message = _fatal_tts_error_message(tts_model, voice_id, e)
+                    if fatal_message:
+                        raise RuntimeError(fatal_message) from e
 
                 update_task(project_id, "voice", i + 1)
 
@@ -961,13 +993,13 @@ async def preview_voice(
     # v1.2.20: ElevenLabs → OpenAI 폴백 제거. 사용자 요구 — 선택 모델 API 가
     # 없으면 알림으로 띄우고 다른 모델로 갈아치우지 않는다.
     from app import config as app_config
-    if tts_model == "elevenlabs" and not app_config.ELEVENLABS_API_KEY:
+    if tts_model == "elevenlabs" and not app_config.get_runtime_api_key("ELEVENLABS_API_KEY"):
         raise HTTPException(
             400,
             "ElevenLabs 가 선택되어 있는데 ELEVENLABS_API_KEY 가 비어있습니다. "
             "키를 등록하거나 TTS 모델을 OpenAI 로 바꾸세요. (폴백 비활성화)",
         )
-    if tts_model == "openai-tts" and not app_config.OPENAI_API_KEY:
+    if tts_model == "openai-tts" and not app_config.get_runtime_api_key("OPENAI_API_KEY"):
         raise HTTPException(
             400,
             "OpenAI TTS 가 선택되어 있는데 OPENAI_API_KEY 가 비어있습니다. "

@@ -12,6 +12,7 @@ from app.models.cut import Cut
 from app.config import resolve_project_dir
 from app.services.llm.factory import get_llm_service
 from app.services.llm.base import BaseLLMService
+from app.services.script_generation_guard import ScriptGenerationGuard
 from app.services.llm.visual_policy import (
     apply_script_visual_policy,
     normalize_image_prompt,
@@ -136,10 +137,20 @@ async def generate_script(project_id: str, db: Session = Depends(get_db)):
         raise HTTPException(404, "Project not found")
 
     model_id = project.config.get("script_model", "claude-sonnet-4-6")
-
+    guard = None
     try:
         llm_config = dict(project.config or {})
         llm_config["__project_id"] = project_id
+        guard = ScriptGenerationGuard(
+            project_id,
+            llm_config,
+            reuse_existing=bool(llm_config.get("__oneclick__")),
+            log=print,
+        )
+        existing_script = await guard.acquire_async()
+        if existing_script is not None:
+            return existing_script
+
         script = _load_prepared_script_for_router(project_id, llm_config, project.topic)
         if script is None:
             _assert_script_provider_key(model_id)
@@ -155,59 +166,62 @@ async def generate_script(project_id: str, db: Session = Depends(get_db)):
             topic=project.topic,
             config=llm_config,
         )
+
+        for cut_data in script.get("cuts", []):
+            existing = db.query(Cut).filter(
+                Cut.project_id == project_id,
+                Cut.cut_number == cut_data["cut_number"]
+            ).first()
+
+            if existing:
+                existing.narration = cut_data.get("narration")
+                existing.image_prompt = normalize_image_prompt(cut_data.get("image_prompt") or "")
+                existing.scene_type = cut_data.get("scene_type")
+                # Reset generated assets — new script means re-generation needed
+                existing.audio_path = None
+                existing.audio_duration = None
+                existing.audio_original_duration = None
+                existing.image_path = None
+                existing.image_model = None
+                existing.video_path = None
+                existing.status = "pending"
+            else:
+                cut = Cut(
+                    project_id=project_id,
+                    cut_number=cut_data["cut_number"],
+                    narration=cut_data.get("narration"),
+                    image_prompt=normalize_image_prompt(cut_data.get("image_prompt") or ""),
+                    scene_type=cut_data.get("scene_type"),
+                    status="pending"
+                )
+                db.add(cut)
+
+        db.commit()
+        project.total_cuts = len(script.get("cuts", []))
+
+        # Mark script step as completed, reset subsequent steps
+        # v1.1.26 스텝 순서: 2 대본 · 3 음성 · 4 간지 · 5 이미지 · 6 영상 · 7 자막
+        step_states = dict(project.step_states or {})
+        step_states["2"] = "completed"
+        step_states.pop("3", None)  # voice
+        step_states.pop("5", None)  # image
+        step_states.pop("6", None)  # video
+        step_states.pop("7", None)  # subtitle
+        project.step_states = step_states
+        if project.current_step < 2:
+            project.current_step = 2
+
+        db.commit()
+
+        _save_script(project_id, script, (project.config or {}).get("language", "ko"))
+        return script
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(500, f"LLM script generation failed: {str(e)}")
-
-    for cut_data in script.get("cuts", []):
-        existing = db.query(Cut).filter(
-            Cut.project_id == project_id,
-            Cut.cut_number == cut_data["cut_number"]
-        ).first()
-
-        if existing:
-            existing.narration = cut_data.get("narration")
-            existing.image_prompt = normalize_image_prompt(cut_data.get("image_prompt") or "")
-            existing.scene_type = cut_data.get("scene_type")
-            # Reset generated assets — new script means re-generation needed
-            existing.audio_path = None
-            existing.audio_duration = None
-            existing.audio_original_duration = None
-            existing.image_path = None
-            existing.image_model = None
-            existing.video_path = None
-            existing.status = "pending"
-        else:
-            cut = Cut(
-                project_id=project_id,
-                cut_number=cut_data["cut_number"],
-                narration=cut_data.get("narration"),
-                image_prompt=normalize_image_prompt(cut_data.get("image_prompt") or ""),
-                scene_type=cut_data.get("scene_type"),
-                status="pending"
-            )
-            db.add(cut)
-
-    db.commit()
-    project.total_cuts = len(script.get("cuts", []))
-
-    # Mark script step as completed, reset subsequent steps
-    # v1.1.26 스텝 순서: 2 대본 · 3 음성 · 4 간지 · 5 이미지 · 6 영상 · 7 자막
-    step_states = dict(project.step_states or {})
-    step_states["2"] = "completed"
-    step_states.pop("3", None)  # voice
-    step_states.pop("5", None)  # image
-    step_states.pop("6", None)  # video
-    step_states.pop("7", None)  # subtitle
-    project.step_states = step_states
-    if project.current_step < 2:
-        project.current_step = 2
-
-    db.commit()
-
-    _save_script(project_id, script, (project.config or {}).get("language", "ko"))
-    return script
+    finally:
+        if guard is not None:
+            guard.release()
 
 
 @router.post("/{project_id}/generate-async")
@@ -248,7 +262,27 @@ async def generate_script_async(project_id: str, db: Session = Depends(get_db)):
     async def _run():
         from app.models.database import SessionLocal
         local_db = SessionLocal()
+        guard = ScriptGenerationGuard(
+            project_id,
+            config,
+            reuse_existing=bool(config.get("__oneclick__")),
+            log=print,
+        )
         try:
+            existing_script = await guard.acquire_async()
+            if existing_script is not None:
+                proj = local_db.query(Project).filter(Project.id == project_id).first()
+                if proj:
+                    proj.total_cuts = len(existing_script.get("cuts", []))
+                    ss = dict(proj.step_states or {})
+                    ss["2"] = "completed"
+                    proj.step_states = ss
+                    if proj.current_step < 2:
+                        proj.current_step = 2
+                    local_db.commit()
+                complete_task(project_id, "script")
+                return
+
             script = _load_prepared_script_for_router(project_id, config, topic)
             if script is None:
                 _assert_script_provider_key(model_id)
@@ -323,6 +357,7 @@ async def generate_script_async(project_id: str, db: Session = Depends(get_db)):
             except Exception:
                 pass
         finally:
+            guard.release()
             local_db.close()
 
     task = asyncio.create_task(_run())

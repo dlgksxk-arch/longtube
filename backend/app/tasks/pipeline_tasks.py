@@ -13,6 +13,7 @@ from app.models.cut import Cut
 from app.services.title_utils import script_title_for_language, shorts_upload_title, with_episode_prefix, without_episode_prefix
 from app.services.llm.visual_policy import apply_script_visual_policy, normalize_cut_image_prompt, normalize_image_prompt
 from app.services.llm.script_quality import assert_script_quality
+from app.services.script_generation_guard import ScriptGenerationGuard
 from app.services.shorts_service import annotate_script_shorts
 from app.services.youtube_metadata import expand_tags, format_description
 from app.services.multilingual_caption_service import should_upload_youtube_captions, upload_multilingual_captions
@@ -465,95 +466,110 @@ def _step_script(project_id: str, config: dict):
         run_async(ensure_voice_profile_from_config(script_config, log=print))
     except Exception as _e:
         print(f"[voice-profile] warning: using default timing because profiling failed: {_e}")
-    prepared = _load_prepared_script(project_id, script_config, project.topic)
-    # v2.1.2: API 500 등 일시적 에러 시 최대 3회 재시도 (5초 간격)
-    import time as _time
-    _max_api_retries = 3
-    script = None
-
-    def _sleep_with_cancel(seconds: float):
-        deadline = _time.monotonic() + float(seconds)
-        while True:
-            check_pause_or_cancel(project_id, 2)
-            remaining = deadline - _time.monotonic()
-            if remaining <= 0:
-                return
-            _time.sleep(min(0.25, remaining))
-
-    if prepared:
-        script, prepared_path = prepared
-        print(f"[Script] prepared script 사용: {_safe_console(prepared_path)}")
-    else:
-        for _attempt in range(1, _max_api_retries + 1):
-            check_pause_or_cancel(project_id, 2)
-            try:
-                script = run_async(service.generate_script(project.topic, script_config))
-                check_pause_or_cancel(project_id, 2)
-                break
-            except (_OperationCancelled, PipelineCancelled):
-                raise
-            except Exception as _e:
-                _err_str = str(_e)
-                _timed_out = "timed out" in _err_str.lower() or "timeout" in _err_str.lower()
-                _is_retryable = (
-                    not _timed_out
-                    and any(k in _err_str for k in ("500", "502", "503", "529", "overloaded"))
-                )
-                if _is_retryable and _attempt < _max_api_retries:
-                    print(f"[Script] attempt {_attempt}/{_max_api_retries} failed ({_err_str[:100]}), retrying in 5s...")
-                    _sleep_with_cancel(5)
-                    continue
-                raise
-    if script is None:
-        raise RuntimeError("Script generation failed")
-    script = apply_script_visual_policy(script)
-    script = annotate_script_shorts(script)
-    service.assert_script_timing(script, script_config)
-
-    # v1.1.48: LLM 완료 후에도 취소 여부 확인
-    check_pause_or_cancel(project_id, 2)
-
-    script["title"] = script_title_for_language(
-        generated_title=script.get("title"),
-        project_title=project.title,
-        topic=project.topic,
-        episode_number=config.get("episode_number"),
-        language=config.get("language", "ko"),
+    guard = ScriptGenerationGuard(
+        project_id,
+        script_config,
+        reuse_existing=bool(script_config.get("__oneclick__")),
+        log=print,
     )
     try:
-        from app.routers.script import _strip_script_motion_prompts
-        script = _strip_script_motion_prompts(script)
-    except Exception:
-        for cut_data in script.get("cuts", []) or []:
-            if isinstance(cut_data, dict):
-                cut_data.pop("motion_prompt", None)
-                cut_data.pop("video_motion_prompt", None)
-    save_script(project_id, script, config.get("language", "ko"))
+        existing_script = guard.acquire()
+        if existing_script is not None:
+            project.total_cuts = len(existing_script.get("cuts", []))
+            db.commit()
+            return
 
-    db.query(Cut).filter(Cut.project_id == project_id).delete()
-    for c in script.get("cuts", []):
-        cut = Cut(
-            project_id=project_id,
-            cut_number=c["cut_number"],
-            narration=c.get("narration"),
-            image_prompt=normalize_image_prompt(c.get("image_prompt") or ""),
-            scene_type=c.get("scene_type"),
-            status="pending",
+        prepared = _load_prepared_script(project_id, script_config, project.topic)
+        # v2.1.2: API 500 등 일시적 에러 시 최대 3회 재시도 (5초 간격)
+        import time as _time
+        _max_api_retries = 3
+        script = None
+
+        def _sleep_with_cancel(seconds: float):
+            deadline = _time.monotonic() + float(seconds)
+            while True:
+                check_pause_or_cancel(project_id, 2)
+                remaining = deadline - _time.monotonic()
+                if remaining <= 0:
+                    return
+                _time.sleep(min(0.25, remaining))
+
+        if prepared:
+            script, prepared_path = prepared
+            print(f"[Script] prepared script 사용: {_safe_console(prepared_path)}")
+        else:
+            for _attempt in range(1, _max_api_retries + 1):
+                check_pause_or_cancel(project_id, 2)
+                try:
+                    script = run_async(service.generate_script(project.topic, script_config))
+                    check_pause_or_cancel(project_id, 2)
+                    break
+                except (_OperationCancelled, PipelineCancelled):
+                    raise
+                except Exception as _e:
+                    _err_str = str(_e)
+                    _timed_out = "timed out" in _err_str.lower() or "timeout" in _err_str.lower()
+                    _is_retryable = (
+                        not _timed_out
+                        and any(k in _err_str for k in ("500", "502", "503", "529", "overloaded"))
+                    )
+                    if _is_retryable and _attempt < _max_api_retries:
+                        print(f"[Script] attempt {_attempt}/{_max_api_retries} failed ({_err_str[:100]}), retrying in 5s...")
+                        _sleep_with_cancel(5)
+                        continue
+                    raise
+        if script is None:
+            raise RuntimeError("Script generation failed")
+        script = apply_script_visual_policy(script)
+        script = annotate_script_shorts(script)
+        service.assert_script_timing(script, script_config)
+
+        # v1.1.48: LLM 완료 후에도 취소 여부 확인
+        check_pause_or_cancel(project_id, 2)
+
+        script["title"] = script_title_for_language(
+            generated_title=script.get("title"),
+            project_title=project.title,
+            topic=project.topic,
+            episode_number=config.get("episode_number"),
+            language=config.get("language", "ko"),
         )
-        db.add(cut)
-        track_progress(project_id, 2)
+        try:
+            from app.routers.script import _strip_script_motion_prompts
+            script = _strip_script_motion_prompts(script)
+        except Exception:
+            for cut_data in script.get("cuts", []) or []:
+                if isinstance(cut_data, dict):
+                    cut_data.pop("motion_prompt", None)
+                    cut_data.pop("video_motion_prompt", None)
+        save_script(project_id, script, config.get("language", "ko"))
 
-    project.total_cuts = len(script.get("cuts", []))
-    db.commit()
-    db.close()
+        db.query(Cut).filter(Cut.project_id == project_id).delete()
+        for c in script.get("cuts", []):
+            cut = Cut(
+                project_id=project_id,
+                cut_number=c["cut_number"],
+                narration=c.get("narration"),
+                image_prompt=normalize_image_prompt(c.get("image_prompt") or ""),
+                scene_type=c.get("scene_type"),
+                status="pending",
+            )
+            db.add(cut)
+            track_progress(project_id, 2)
 
-    # v1.2.25: cancel 키 해제 — 다음 step 에서 같은 스레드가 재사용될 때
-    # 이전 project 의 플래그를 오인하지 않도록.
-    try:
-        from app.services.cancel_ctx import set_cancel_key as _set_cancel_key
-        _set_cancel_key(None)
-    except Exception:
-        pass
+        project.total_cuts = len(script.get("cuts", []))
+        db.commit()
+    finally:
+        guard.release()
+        db.close()
+
+        # v1.2.25: cancel 키 해제 — 다음 step 에서 같은 스레드가 재사용될 때
+        # 이전 project 의 플래그를 오인하지 않도록.
+        try:
+            from app.services.cancel_ctx import set_cancel_key as _set_cancel_key
+            _set_cancel_key(None)
+        except Exception:
+            pass
 
 
 def _step_voice(project_id: str, config: dict):
@@ -939,7 +955,7 @@ def _step_image(project_id: str, config: dict):
     v1.1.52: 스튜디오(image.py router)와 **완전히 동일한** 로직으로 이미지 생성.
     - _build_image_prompt: 글로벌 스타일, 레퍼런스 유무, 캐릭터 설명을 프롬프트에 반영
     - _collect_reference_images / _collect_character_images: 레퍼런스/캐릭터 이미지 수집
-    - cut_has_character: 3컷마다 캐릭터 슬롯
+    - cut_has_character: 캐릭터 앵커가 있으면 모든 컷 허용
     - reference_images 파라미터 전달
     - v1.1.52: 이미지 컷 생성 전에 썸네일을 먼저 생성
 
@@ -992,9 +1008,9 @@ def _step_image(project_id: str, config: dict):
         config.get("topic"),
     )
     enable_historical_negative_guard = enable_historical_guard
-    # v1.1.60: 캐릭터 이미지/설명이 실제로 있는 프리셋만 캐릭터 컷을 활성화한다.
-    # 이게 없으면 cut_has_character() 가 1·4·7번에 무조건 "main character" 텍스트를
-    # 주입해서, 스타일 레퍼런스에 등장하는 인물이 캐릭터로 차용되는 사고가 난다.
+    # v1.1.60: 캐릭터 이미지/설명이 실제로 있는 프리셋만 캐릭터 적용을 활성화한다.
+    # 이게 없으면 모든 컷에 "main character" 텍스트가 주입되어, 스타일 레퍼런스에
+    # 등장하는 인물이 캐릭터로 차용되는 사고가 난다.
     has_character_anchor = bool(char_images) or bool(character_description)
 
     image_model_id = _img_model
@@ -1179,7 +1195,7 @@ def _step_image(project_id: str, config: dict):
                     num = cut_data["cut_number"]
                     output = str(canonical_cut_image_path(project_dir, num))
 
-                    # ★ 레퍼런스 이미지: 스타일 레퍼런스 + 캐릭터 슬롯이면 캐릭터 이미지
+                    # ★ 레퍼런스 이미지: 스타일 레퍼런스 + 캐릭터 적용 컷이면 캐릭터 이미지
                     all_refs = list(ref_images)
                     is_char_cut = cut_has_character(num) and has_character_anchor
                     if char_images and is_char_cut:
@@ -1842,11 +1858,7 @@ def _step_upload(project_id: str, config: dict):
             # v1.1.57: AI 생성 썸네일 우선, 없으면 첫 번째 컷 이미지 폴백
         privacy="private",
         ))
-        verified = uploader.confirm_upload_processed_in_studio(
-            video_id=result.get("video_id"),
-            title=upload_title,
-        )
-        result = {**result, "studio_verified": True, "processing_verified": True, "studio_record": verified}
+        result = {**result, "studio_verified": False, "processing_verified": False}
         if _Path(thumbnail_upload_path).exists() and result.get("video_id"):
             try:
                 thumb_set = uploader.set_thumbnail(str(result.get("video_id")), str(thumbnail_upload_path))
@@ -1855,7 +1867,7 @@ def _step_upload(project_id: str, config: dict):
             except Exception as exc:
                 result["thumbnail_error"] = str(exc)
                 print(f"[upload] thumbnail upload failed: {exc}")
-        print(f"[upload] Studio verified: {verified.get('url') or result.get('url')}")
+        print(f"[upload] YouTube upload accepted: {result.get('url')}")
 
     main_playlist_id = str(
         config.get("youtube_playlist_id")
@@ -1963,20 +1975,12 @@ def _step_upload(project_id: str, config: dict):
                         thumbnail_path=None,
                         privacy=str(config.get("youtube_privacy", "private") or "private"),
                     ))
-                    shorts_verified = uploader.confirm_upload_processed_in_studio(
-                        video_id=shorts_upload.get("video_id"),
-                        title=shorts_title[:100],
-                    )
                     shorts_upload = {
                         **shorts_upload,
-                        "studio_verified": True,
-                        "processing_verified": True,
-                        "studio_record": shorts_verified,
+                        "studio_verified": False,
+                        "processing_verified": False,
                     }
-                    print(
-                        "[upload] shorts Studio verified: "
-                        f"{shorts_verified.get('url') or shorts_upload.get('url')}"
-                    )
+                    print(f"[upload] shorts upload accepted: {shorts_upload.get('url')}")
                 shorts_results.append({
                     "index": idx,
                     "path": str(shorts_path),

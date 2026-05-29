@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import json
 import hashlib
+import html
 import os
 import re
+import tempfile
 import unicodedata
 import urllib.request
 from pathlib import Path
@@ -84,6 +86,29 @@ SHORTS_CAPTION_TEXT_SIZE = 76
 SHORTS_CAPTION_TEXT_BORDER = 7
 SHORTS_CAPTION_WRAP_WIDTH = 18
 SHORTS_PLAYBACK_SPEED = 1.0
+
+
+async def _validate_rendered_video(ffmpeg: str, path: Path, label: str, *, timeout: float = 180.0) -> None:
+    if not path.exists() or path.stat().st_size <= 0:
+        raise RuntimeError(f"{label} output is missing or empty: {path}")
+    cmd = [
+        ffmpeg,
+        "-v", "error",
+        "-i", str(path),
+        "-map", "0:v:0",
+        "-map", "0:a?",
+        "-f", "null",
+        "-",
+    ]
+    rc, _, stderr = await run_subprocess(
+        cmd,
+        timeout=timeout,
+        capture_stdout=False,
+        capture_stderr=True,
+    )
+    if rc != 0:
+        err = (stderr or b"").decode(errors="replace")[-800:]
+        raise RuntimeError(f"{label} validation failed: {err}")
 
 
 def _cut_duration(cut: dict[str, Any]) -> float:
@@ -361,6 +386,19 @@ def _font_path(language: str | None = None) -> str:
     return r"C:\Windows\Fonts\malgun.ttf"
 
 
+def _find_browser_executable() -> str | None:
+    candidates = (
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+    )
+    for candidate in candidates:
+        if Path(candidate).exists():
+            return candidate
+    return None
+
+
 def _ffmpeg_filter_path(path: Path | str) -> str:
     text = str(path).replace("\\", "/")
     return text.replace(":", r"\:")
@@ -431,14 +469,14 @@ def _shorts_labels(language: str) -> dict[str, str]:
             "badge": "देखना जरूरी",
             "default_title_1": "जरूरी पल",
             "default_title_2": "आगे देखिए",
-            "fallback_channel": "CH4",
+            "fallback_channel": "Shorts",
         }
     if language == "en":
         return {
             "badge": "MUST WATCH",
             "default_title_1": "Must-see moment",
             "default_title_2": "Watch what happens",
-            "fallback_channel": "CH4",
+            "fallback_channel": "Empire Errors",
         }
     if language == "ja":
         return {
@@ -460,16 +498,16 @@ def _default_channel_avatar_url(channel_name: str, language: str) -> str | None:
     by_name = {
         "10분역공": "https://yt3.ggpht.com/lZRG--gQU8wZ5Gzeethzm6NBlG6FD9Jx4QxR4djz4kOgIj-LS9Dm1fO0ruuMEhrZE1AjEFeXQ3Q=s88-c-k-c0x00ffffff-no-rj",
         "Jerry's Archaeo": "https://yt3.ggpht.com/NY92X-Yu-tgLBOvUtCPJBhqmuM47ZILmU33lPBSKiPEeC06imNtxH6Kdd1EVldLmBtPG590miA=s88-c-k-c0x00ffffff-no-rj",
+        "Jerry’s Archaeo": "https://yt3.ggpht.com/NY92X-Yu-tgLBOvUtCPJBhqmuM47ZILmU33lPBSKiPEeC06imNtxH6Kdd1EVldLmBtPG590miA=s88-c-k-c0x00ffffff-no-rj",
         "闇解き日本史": "https://yt3.ggpht.com/lRHg7iB8VCuQYJPyiu6P4mKHK6jslowo8ZURRESjmTbiVYqvXCOn0draMc_XV_dGMS6tbjj8DJs=s88-c-k-c0x00ffffff-no-rj",
-        "10 मिनट पलटवार": "https://yt3.ggpht.com/GmMBiNYytpUfw14ZP9SeX5kllM6j-uJcPhW0re1qcAz6n_FHUP1nTXKp_T2BmeFrxup9HYTm6Q=s88-c-k-c0x00ffffff-no-rj",
+        "Empire Errors": "https://yt3.ggpht.com/8mFhhpKQW1HpFEPyq0qziMmY26fDaaNTsUayMxnKWf65WuPzR_NQKB_pIb1ULR4lOqwbh_0=s88-c-k-c0x00ffffff-no-rj",
     }
     if name in by_name:
         return by_name[name]
     by_language = {
         "ko": by_name["10분역공"],
-        "en": by_name["Jerry's Archaeo"],
+        "en": by_name["Empire Errors"],
         "ja": by_name["闇解き日本史"],
-        "hi": by_name["10 मिनट पलटवार"],
     }
     return by_language.get(language)
 
@@ -516,7 +554,7 @@ def _wrap_text(text: str, *, width: int, max_lines: int = 2) -> str:
         lines.append(current)
 
     # Korean/Hindi titles often have no spaces in the best split points. If a
-    # line is still too wide, slice by visual width so drawtext stays on canvas.
+    # line is still too wide, slice by visual width so the overlay stays on canvas.
     normalized: list[str] = []
     for line in lines:
         while _visual_width(line) > width and len(normalized) < max_lines:
@@ -855,6 +893,83 @@ def _channel_brand_layout(channel: str, *, has_avatar: bool) -> tuple[int, int]:
     return SHORTS_CHANNEL_AVATAR_X, SHORTS_CHANNEL_TEXT_X
 
 
+def _html_lines(text: str) -> str:
+    lines = str(text or "").splitlines() or [str(text or "")]
+    return "<br>".join(html.escape(line) for line in lines)
+
+
+async def _render_browser_text_overlay(
+    *,
+    output_path: Path,
+    title1: str,
+    title2: str,
+    title3: str,
+    channel: str,
+    has_avatar: bool,
+) -> Path | None:
+    browser = _find_browser_executable()
+    if not browser:
+        return None
+
+    channel_left = SHORTS_CHANNEL_TEXT_X if has_avatar else 0
+    channel_width = SHORTS_WIDTH - SHORTS_CHANNEL_TEXT_X - 60 if has_avatar else SHORTS_WIDTH
+    channel_align = "left" if has_avatar else "center"
+    html_doc = f"""<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+*{{box-sizing:border-box}}
+html,body{{margin:0;width:{SHORTS_WIDTH}px;height:{SHORTS_HEIGHT}px;background:transparent;overflow:hidden}}
+.canvas{{position:relative;width:{SHORTS_WIDTH}px;height:{SHORTS_HEIGHT}px;background:transparent;font-family:"Malgun Gothic","Yu Gothic","Meiryo","Nirmala UI","Mangal","Arial Unicode MS","Arial",sans-serif}}
+.title{{position:absolute;left:0;width:{SHORTS_WIDTH}px;text-align:center;font-weight:900;font-size:{SHORTS_TEXT_SIZE}px;line-height:1.03;letter-spacing:0;-webkit-text-stroke:{SHORTS_TEXT_BORDER}px rgba(0,0,0,.95);paint-order:stroke fill;text-shadow:0 7px 0 rgba(0,0,0,.88),0 0 22px rgba(0,0,0,.92),5px 0 0 #050505,-5px 0 0 #050505,0 5px 0 #050505,0 -5px 0 #050505}}
+.t1{{top:64px;color:#fff}}
+.t2{{top:184px;color:#{SHORTS_TITLE_ACCENT_COLOR.removeprefix("0x")}}}
+.t3{{top:304px;color:#fff}}
+.channel{{position:absolute;left:{channel_left}px;top:{SHORTS_CHANNEL_Y}px;width:{channel_width}px;text-align:{channel_align};font-weight:900;font-size:{SHORTS_CHANNEL_TEXT_SIZE}px;line-height:1.05;color:#fff;letter-spacing:0;-webkit-text-stroke:{SHORTS_CHANNEL_TEXT_BORDER}px rgba(0,0,0,.95);paint-order:stroke fill;text-shadow:0 5px 0 rgba(0,0,0,.88),0 0 16px rgba(0,0,0,.9)}}
+</style>
+</head>
+<body>
+<div class="canvas">
+  <div class="title t1">{_html_lines(title1)}</div>
+  <div class="title t2">{_html_lines(title2)}</div>
+  <div class="title t3">{_html_lines(title3)}</div>
+  <div class="channel">{_html_lines(channel)}</div>
+</div>
+</body>
+</html>"""
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_dir = Path(tmp)
+        html_path = tmp_dir / "shorts_text_overlay.html"
+        png_path = tmp_dir / "shorts_text_overlay.png"
+        html_path.write_text(html_doc, encoding="utf-8")
+        cmd = [
+            browser,
+            "--headless=new",
+            "--disable-gpu",
+            "--hide-scrollbars",
+            "--default-background-color=00000000",
+            f"--window-size={SHORTS_WIDTH},{SHORTS_HEIGHT}",
+            f"--screenshot={png_path}",
+            html_path.as_uri(),
+        ]
+        rc, _, stderr = await run_subprocess(
+            cmd,
+            timeout=60.0,
+            capture_stdout=False,
+            capture_stderr=True,
+        )
+        if rc != 0 or not png_path.exists() or png_path.stat().st_size <= 0:
+            err = (stderr or b"").decode(errors="replace")[-500:]
+            print(f"[shorts] browser text overlay failed; falling back to drawtext: {err}")
+            return None
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(png_path.read_bytes())
+        return output_path
+
+
 async def render_shorts_from_final(
     final_video: Path,
     output_dir: Path,
@@ -966,6 +1081,7 @@ async def render_shorts_from_final(
         caption1_file = _ffmpeg_filter_path(caption1_path)
         caption2_file = _ffmpeg_filter_path(caption2_path)
         channel_file = _ffmpeg_filter_path(channel_path)
+        browser_text_overlay_path: Path | None = None
         source_prefix = ""
         video_source = "[0:v]"
         audio_source = "[0:a]"
@@ -995,25 +1111,48 @@ async def render_shorts_from_final(
         )
         concat_cmd = [
             ffmpeg, "-y",
+            "-fflags", "+genpts",
             "-f", "concat",
             "-safe", "0",
             "-i", str(concat_list),
-            "-c", "copy",
+            "-vf", "fps=30,format=yuv420p",
+            "-af", "aresample=async=1:first_pts=0",
+            "-c:v", "libx264",
+            "-preset", SHORTS_VIDEO_PRESET,
+            "-crf", SHORTS_VIDEO_CRF,
+            "-pix_fmt", "yuv420p",
+            "-profile:v", "high",
+            "-level", "4.2",
+            "-r", "30",
+            "-c:a", "aac",
+            "-b:a", "192k",
+            "-ar", "48000",
+            "-movflags", "+faststart",
             str(concat_source),
         ]
         rc, _, stderr = await run_subprocess(
             concat_cmd,
-            timeout=180.0,
+            timeout=300.0,
             capture_stdout=False,
             capture_stderr=True,
         )
         if rc != 0:
             err = (stderr or b"").decode(errors="replace")[-500:]
             raise RuntimeError(f"shorts cut concat failed for short_{idx}: {err}")
+        await _validate_rendered_video(ffmpeg, concat_source, f"short_{idx} concat")
         input_video_paths = [concat_source]
         source_prefix = ""
         video_source = "[0:v]"
         audio_source = "[0:a]"
+
+        browser_text_overlay_path = await _render_browser_text_overlay(
+            output_path=text_dir / f"short_{idx}_text_overlay.png",
+            title1=title1,
+            title2=title2,
+            title3=title3,
+            channel=channel,
+            has_avatar=bool(avatar_path),
+        )
 
         filter_base = (
             source_prefix +
@@ -1021,18 +1160,26 @@ async def render_shorts_from_final(
             f"{video_source}scale={SHORTS_WIDTH}:{SHORTS_CLIP_HEIGHT}:force_original_aspect_ratio=increase,"
             f"crop={SHORTS_WIDTH}:{SHORTS_CLIP_HEIGHT},setsar=1,fps=30,format=yuv420p[clip];"
             f"[base]drawbox=x=0:y=0:w={SHORTS_WIDTH}:h={SHORTS_HEIGHT}:color=0x050505@1:t=fill[v0];"
-            f"[v0]drawtext=fontfile='{font}':textfile='{title1_file}':"
-            f"fontcolor=white:fontsize={SHORTS_TEXT_SIZE}:borderw={SHORTS_TEXT_BORDER}:bordercolor=black@0.95:"
-            "x=(w-text_w)/2:y=64[v1];"
-            f"[v1]drawtext=fontfile='{font}':textfile='{title2_file}':"
-            f"fontcolor={SHORTS_TITLE_ACCENT_COLOR}:fontsize={SHORTS_TEXT_SIZE}:borderw={SHORTS_TEXT_BORDER}:bordercolor=black@0.95:"
-            "x=(w-text_w)/2:y=184[v2];"
-            f"[v2]drawtext=fontfile='{font}':textfile='{title3_file}':"
-            f"fontcolor=white:fontsize={SHORTS_TEXT_SIZE}:borderw={SHORTS_TEXT_BORDER}:bordercolor=black@0.95:"
-            "x=(w-text_w)/2:y=304[v3];"
-            f"[v3]drawbox=x=0:y=423:w={SHORTS_WIDTH}:h={SHORTS_CLIP_HEIGHT}:color=0x050505@1:t=fill[v3b];"
-            f"[v3b][clip]overlay=(W-w)/2:423+({SHORTS_CLIP_HEIGHT}-h)/2:shortest=1[v4c];"
         )
+        if browser_text_overlay_path:
+            filter_base += (
+                f"[v0]drawbox=x=0:y=423:w={SHORTS_WIDTH}:h={SHORTS_CLIP_HEIGHT}:color=0x050505@1:t=fill[v3b];"
+                f"[v3b][clip]overlay=(W-w)/2:423+({SHORTS_CLIP_HEIGHT}-h)/2:shortest=1[v4c];"
+            )
+        else:
+            filter_base += (
+                f"[v0]drawtext=fontfile='{font}':textfile='{title1_file}':"
+                f"fontcolor=white:fontsize={SHORTS_TEXT_SIZE}:borderw={SHORTS_TEXT_BORDER}:bordercolor=black@0.95:"
+                "x=(w-text_w)/2:y=64[v1];"
+                f"[v1]drawtext=fontfile='{font}':textfile='{title2_file}':"
+                f"fontcolor={SHORTS_TITLE_ACCENT_COLOR}:fontsize={SHORTS_TEXT_SIZE}:borderw={SHORTS_TEXT_BORDER}:bordercolor=black@0.95:"
+                "x=(w-text_w)/2:y=184[v2];"
+                f"[v2]drawtext=fontfile='{font}':textfile='{title3_file}':"
+                f"fontcolor=white:fontsize={SHORTS_TEXT_SIZE}:borderw={SHORTS_TEXT_BORDER}:bordercolor=black@0.95:"
+                "x=(w-text_w)/2:y=304[v3];"
+                f"[v3]drawbox=x=0:y=423:w={SHORTS_WIDTH}:h={SHORTS_CLIP_HEIGHT}:color=0x050505@1:t=fill[v3b];"
+                f"[v3b][clip]overlay=(W-w)/2:423+({SHORTS_CLIP_HEIGHT}-h)/2:shortest=1[v4c];"
+            )
         if avatar_path:
             avatar_x, channel_text_x = _channel_brand_layout(channel, has_avatar=True)
             avatar_input_index = len(input_video_paths)
@@ -1040,21 +1187,36 @@ async def render_shorts_from_final(
                 filter_base +
                 f"[{avatar_input_index}:v]scale={SHORTS_CHANNEL_AVATAR_SIZE}:{SHORTS_CHANNEL_AVATAR_SIZE},format=rgba[avatar];"
                 f"[v4c][avatar]overlay=x={avatar_x}:y={SHORTS_CHANNEL_AVATAR_Y}:format=auto[v5];"
-                f"[v5]drawtext=fontfile='{font}':textfile='{channel_file}':"
+            )
+            current_video_label = "v5"
+            next_input_index = avatar_input_index + 1
+        else:
+            filter_complex = filter_base
+            current_video_label = "v4c"
+            next_input_index = len(input_video_paths)
+        if browser_text_overlay_path:
+            overlay_input_index = next_input_index
+            filter_complex += (
+                f"[{overlay_input_index}:v]format=rgba[text_overlay];"
+                f"[{current_video_label}][text_overlay]overlay=x=0:y=0:format=auto[vtext];"
+                "[vtext]fps=30,format=yuv420p[vout]"
+            )
+            next_input_index = overlay_input_index + 1
+        elif avatar_path:
+            _, channel_text_x = _channel_brand_layout(channel, has_avatar=True)
+            filter_complex += (
+                f"[{current_video_label}]drawtext=fontfile='{font}':textfile='{channel_file}':"
                 f"fontcolor=white:fontsize={SHORTS_CHANNEL_TEXT_SIZE}:borderw={SHORTS_CHANNEL_TEXT_BORDER}:bordercolor=black@0.95:"
                 f"x={channel_text_x}:y={SHORTS_CHANNEL_Y}[v6];"
                 "[v6]fps=30,format=yuv420p[vout]"
             )
-            next_input_index = avatar_input_index + 1
         else:
-            filter_complex = (
-                filter_base +
-                f"[v4c]drawtext=fontfile='{font}':textfile='{channel_file}':"
+            filter_complex += (
+                f"[{current_video_label}]drawtext=fontfile='{font}':textfile='{channel_file}':"
                 f"fontcolor=white:fontsize={SHORTS_CHANNEL_TEXT_SIZE}:borderw={SHORTS_CHANNEL_TEXT_BORDER}:bordercolor=black@0.95:"
                 f"x=(w-text_w)/2:y={SHORTS_CHANNEL_Y}[v5];"
                 "[v5]fps=30,format=yuv420p[vout]"
             )
-            next_input_index = len(input_video_paths)
         cmd = [
             ffmpeg, "-y",
         ]
@@ -1064,6 +1226,8 @@ async def render_shorts_from_final(
             cmd.extend(["-ss", f"{start_sec:.3f}", "-i", str(final_video)])
         if avatar_path:
             cmd.extend(["-loop", "1", "-i", str(avatar_path)])
+        if browser_text_overlay_path:
+            cmd.extend(["-loop", "1", "-i", str(browser_text_overlay_path)])
         if bgm_file:
             bgm_index = next_input_index
             vol = max(0.0, min(1.0, float(bgm_volume) * float(BGM_VOLUME_MULTIPLIER)))
@@ -1127,6 +1291,7 @@ async def render_shorts_from_final(
         if rc != 0:
             err = (stderr or b"").decode(errors="replace")[-500:]
             raise RuntimeError(f"shorts render failed for short_{idx}: {err}")
+        await _validate_rendered_video(ffmpeg, out_path, f"short_{idx}")
         results.append({
             "index": idx,
             "path": str(out_path),

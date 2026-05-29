@@ -75,7 +75,7 @@ def _load_script_cut_map(project_id: str) -> dict[int, dict]:
 # v1.1.36 — 영상 제작 대상 선택
 # --------------------------------------------------------------------------- #
 #
-# 사용자가 "3컷당 1장 / 4컷당 1장 / 5컷당 1장 / 캐릭터만" 중 고를 수 있게 한다.
+# 사용자가 "전체 / 3컷당 1장 / 4컷당 1장 / 5컷당 1장" 중 고를 수 있게 한다.
 # 선택되지 않은 컷은 비용 0 인 폴백 서비스로 처리해 renderer 단계에서
 # concat 할 수 있는 cut_N.mp4 파일을 여전히 만들어둔다. 렌더는 모든 컷의 mp4 가
 # 존재해야 합성 가능한 구조이므로 **skip 은 쓸 수 없다** — 싸게 때우는 전략.
@@ -88,7 +88,7 @@ def _load_script_cut_map(project_id: str) -> dict[int, dict]:
 #   - "every_3"        : cut 1, 4, 7, 10 ...     ((n-1) % 3 == 0)
 #   - "every_4"        : cut 1, 5, 9, 13 ...     ((n-1) % 4 == 0)
 #   - "every_5"        : cut 1, 6, 11, 16 ...    ((n-1) % 5 == 0)
-#   - "character_only" : 기존 캐릭터 슬롯 기반 절약 모드 (현재는 every_5 와 동일)
+#   - "character_only" : legacy 저장값 호환. 현재는 every_5 와 동일
 
 VIDEO_TARGET_OPTIONS = {"all", "every_3", "every_4", "every_5", "character_only", "none"}
 
@@ -123,7 +123,7 @@ def should_generate_ai_video(cut_number: int, selection: str, ai_first_n: int = 
     if selection == "every_5":
         return (cut_number - 1) % 5 == 0
     if selection == "character_only":
-        # legacy 절약 모드 유지 — 현재는 every_5 와 동일
+        # legacy 저장값 호환 — 현재는 every_5 와 동일
         return (cut_number - 1) % 5 == 0
     return True
 

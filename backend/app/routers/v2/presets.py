@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
-from app.config import DATA_DIR
+from app.config import DATA_DIR, resolve_cut_video_duration
 from app.models.database import get_db
 from app.models.channel_preset import (
     ChannelPreset,
@@ -73,7 +73,7 @@ def _read_interlude_from_config(preset: ChannelPreset) -> dict:
         legacy_sec = inter.get("intermission_every_sec")
         if legacy_sec:
             try:
-                inter["intermission_every_cuts"] = max(1, int(round(float(legacy_sec) / 5.0)))
+                inter["intermission_every_cuts"] = max(1, int(round(float(legacy_sec) / resolve_cut_video_duration(cfg))))
             except (TypeError, ValueError):
                 inter["intermission_every_cuts"] = DEFAULT_INTERMISSION_EVERY
         else:
@@ -340,7 +340,7 @@ def update_preset_interlude_config(
     if body.intermission_every_cuts is not None:
         inter["intermission_every_cuts"] = body.intermission_every_cuts
     elif body.intermission_every_sec is not None:
-        inter["intermission_every_cuts"] = max(1, int(round(float(body.intermission_every_sec) / 5.0)))
+        inter["intermission_every_cuts"] = max(1, int(round(float(body.intermission_every_sec) / resolve_cut_video_duration(row.config or {}))))
     _save_interlude_to_config(row, inter, db)
 
     return InterludeStateOut(

@@ -12,11 +12,14 @@ from app.models.database import get_db
 from app.models.project import Project
 from app.models.cut import Cut
 from app.config import (
+    BASE_DIR,
     BGM_VOLUME_MULTIPLIER,
     CHANNELS_ROOT,
+    DATA_DIR,
     FIRST_CUT_FADE_IN_SECONDS,
     NARRATION_VOLUME_GAIN,
     SYSTEM_DIR,
+    get_channel_projects_root,
     infer_project_channel,
     resolve_cut_video_duration,
     resolve_project_dir,
@@ -78,10 +81,10 @@ def _is_channel_bgm_cache(path: str | Path) -> bool:
 def _intermission_every_cuts(project: Project) -> int:
     inter = (project.config or {}).get("interlude") or {}
     try:
-        if inter.get("intermission_every_cuts"):
-            every = int(inter.get("intermission_every_cuts"))
-        elif inter.get("intermission_every_sec"):
+        if inter.get("intermission_every_sec"):
             every = int(round(float(inter.get("intermission_every_sec")) / resolve_cut_video_duration(project.config or {})))
+        elif inter.get("intermission_every_cuts"):
+            every = int(inter.get("intermission_every_cuts"))
         else:
             every = DEFAULT_INTERMISSION_EVERY
     except (TypeError, ValueError):
@@ -559,24 +562,94 @@ def _resolution_for_aspect(aspect_ratio: str, target_resolution: str = "1080p") 
     return "1280x720"
 
 
+def _dedupe_dirs(paths: list[Path]) -> list[Path]:
+    seen: set[str] = set()
+    result: list[Path] = []
+    for path in paths:
+        try:
+            key = str(path.resolve())
+        except Exception:
+            key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(path)
+    return result
+
+
+def _linked_project_dirs(project_id: str, cfg: dict) -> list[Path]:
+    def candidates(pid: str, candidate_cfg: dict | None = None) -> list[Path]:
+        pid = str(pid or "").strip()
+        if not pid:
+            return []
+        found = [resolve_project_dir(pid, candidate_cfg, create=False)]
+        found.append(SYSTEM_DIR / "projects" / pid)
+        ch = infer_project_channel(pid, candidate_cfg)
+        if ch is not None:
+            found.append(get_channel_projects_root(ch) / pid)
+        return found
+
+    dirs = candidates(project_id, cfg)
+    for key in ("template_project_id", "source_project_id"):
+        linked_id = str(cfg.get(key) or "").strip()
+        if linked_id and linked_id != project_id:
+            dirs.extend(candidates(linked_id, None))
+    return _dedupe_dirs(dirs)
+
+
+def _channel_interlude_dirs(project_id: str, cfg: dict) -> list[Path]:
+    ch = infer_project_channel(project_id, cfg)
+    if ch is None:
+        return []
+    dirs = [
+        CHANNELS_ROOT / f"CH{ch}" / "interlude",
+        CHANNELS_ROOT / f"CH{ch}" / "interludes",
+    ]
+    data_root = Path(str(DATA_DIR))
+    for rebrand_root in _dedupe_dirs([
+        data_root / "channel_rebrand",
+        data_root.parent / "channel_rebrand",
+        BASE_DIR / "data" / "channel_rebrand",
+    ]):
+        try:
+            dirs.extend(sorted(rebrand_root.glob(f"ch{ch}_*/interlude")))
+            dirs.extend(sorted(rebrand_root.glob(f"ch{ch}_*/interludes")))
+        except Exception:
+            pass
+    return _dedupe_dirs(dirs)
+
+
 def _resolve_interlude_path(project_id: str, project: Project, kind: str) -> str | None:
-    """project.config['interlude'][kind].video_path 또는 실제 업로드 파일 경로."""
+    """Resolve project/template/channel-level interlude assets."""
+    cfg = project.config or {}
+    project_dirs = _linked_project_dirs(project_id, cfg)
     inter = (project.config or {}).get("interlude") or {}
     entry = inter.get(kind) or {}
-    vp = entry.get("video_path")
+    vp = entry if isinstance(entry, str) else entry.get("video_path")
     if vp:
         from pathlib import Path as _P
         p = _P(vp)
+        candidates = [p] if p.is_absolute() else []
         if not p.is_absolute():
-            p = resolve_project_dir(project_id, project.config or {}, create=False) / vp
-        if p.exists() and p.is_file():
-            return str(p)
+            for base_dir in project_dirs:
+                candidates.append(base_dir / vp)
+                candidates.append(base_dir / "interlude" / vp)
+                candidates.append(base_dir / "interludes" / vp)
+        for candidate in candidates:
+            if candidate.exists() and candidate.is_file():
+                return str(candidate)
 
-    fallback = existing_kind_path(
-        resolve_project_dir(project_id, project.config or {}, create=False) / "interlude",
-        kind,
-    )
-    return str(fallback) if fallback else None
+    for base_dir in project_dirs:
+        for folder in ("interlude", "interludes"):
+            fallback = existing_kind_path(base_dir / folder, kind)
+            if fallback:
+                return str(fallback)
+
+    for interlude_dir in _channel_interlude_dirs(project_id, cfg):
+        fallback = existing_kind_path(interlude_dir, kind)
+        if fallback:
+            return str(fallback)
+    return None
 
 
 def _resolve_bgm_path(project_id: str, project: Project) -> str | None:
@@ -887,7 +960,7 @@ async def _apply_narration_gain_to_video(
 
 @router.post("/{project_id}/render")
 async def render_video_with_subtitles(project_id: str, db: Session = Depends(get_db)):
-    """Render final video with subtitles + 5s min per cut + opening/ending fade.
+    """Render final video with subtitles + configured cut duration + opening/intermission/ending.
 
     파이프라인(v1.1.32 이후):
       1. 자막 ASS 자동 생성 (설정 기반)
@@ -1165,10 +1238,11 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
         # 복사하므로 프리셋에 오프닝이 있으면 여기까지 누락될 일이 없다.
         inter_cfg = (project.config or {}).get("interlude") or {}
         op_entry = inter_cfg.get("opening") or {}
-        if op_entry.get("video_path"):
+        op_path = op_entry if isinstance(op_entry, str) else op_entry.get("video_path")
+        if op_path:
             print(
                 f"[subtitle/render] ⚠ 오프닝 등록은 돼 있는데 파일을 찾지 못했습니다 "
-                f"(config={op_entry.get('video_path')!r}). 최종 영상에서 오프닝이 빠집니다."
+                f"(config={op_path!r}). 최종 영상에서 오프닝이 빠집니다."
             )
         else:
             print(
@@ -1282,11 +1356,13 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
 
     file_size = output_path.stat().st_size
     shorts_results = []
+    shorts_enabled = bool((project.config or {}).get("shorts_enabled", True))
     try:
-        shorts_enabled = bool((project.config or {}).get("shorts_enabled", True))
         if shorts_enabled:
             script_for_shorts = load_shorts_script(project_dir)
             shorts_segments = select_shorts_segments(script_for_shorts, count=4)
+            if len(shorts_segments) < 4:
+                raise RuntimeError(f"shorts segment selection returned {len(shorts_segments)}/4")
             cfg = project.config or {}
             if isinstance(script_for_shorts, dict) and not script_for_shorts.get("language"):
                 script_for_shorts["language"] = (
@@ -1310,13 +1386,13 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
                 1: "https://yt3.ggpht.com/lZRG--gQU8wZ5Gzeethzm6NBlG6FD9Jx4QxR4djz4kOgIj-LS9Dm1fO0ruuMEhrZE1AjEFeXQ3Q=s88-c-k-c0x00ffffff-no-rj",
                 2: "https://yt3.ggpht.com/NY92X-Yu-tgLBOvUtCPJBhqmuM47ZILmU33lPBSKiPEeC06imNtxH6Kdd1EVldLmBtPG590miA=s88-c-k-c0x00ffffff-no-rj",
                 3: "https://yt3.ggpht.com/lRHg7iB8VCuQYJPyiu6P4mKHK6jslowo8ZURRESjmTbiVYqvXCOn0draMc_XV_dGMS6tbjj8DJs=s88-c-k-c0x00ffffff-no-rj",
-                4: "https://yt3.ggpht.com/GmMBiNYytpUfw14ZP9SeX5kllM6j-uJcPhW0re1qcAz6n_FHUP1nTXKp_T2BmeFrxup9HYTm6Q=s88-c-k-c0x00ffffff-no-rj",
+                4: "https://yt3.ggpht.com/8mFhhpKQW1HpFEPyq0qziMmY26fDaaNTsUayMxnKWf65WuPzR_NQKB_pIb1ULR4lOqwbh_0=s88-c-k-c0x00ffffff-no-rj",
             }
             cached_channel_names = {
                 1: "10\ubd84\uc5ed\uacf5",
                 2: "Jerry's Archaeo",
                 3: "\u95c7\u89e3\u304d\u65e5\u672c\u53f2",
-                4: "10 \u092e\u093f\u0928\u091f \u092a\u0932\u091f\u0935\u093e\u0930",
+                4: "Empire Errors",
             }
             if not shorts_channel_name:
                 shorts_channel_name = cached_channel_names.get(shorts_channel_id)
@@ -1366,6 +1442,10 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
                 bgm_volume=float((_read_bgm_config(project.config or {})).get("volume") or DEFAULT_RENDER_BGM_VOLUME),
                 bgm_ducking_strength=str((_read_bgm_config(project.config or {})).get("ducking_strength") or "normal"),
             )
+            if len(shorts_results) != len(shorts_segments) or len(shorts_results) < 4:
+                raise RuntimeError(
+                    f"shorts render returned {len(shorts_results)}/{len(shorts_segments)}"
+                )
             shorts_meta_path = output_dir / "shorts" / "shorts.json"
             shorts_meta_path.parent.mkdir(parents=True, exist_ok=True)
             with open(shorts_meta_path, "w", encoding="utf-8") as fh:
@@ -1383,7 +1463,9 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
     except Exception as e:
         import traceback
         shorts_results = []
-        print(f"[subtitle/render] SHORTS FAILED (non-fatal): {e}\n{traceback.format_exc()}")
+        print(f"[subtitle/render] SHORTS FAILED: {e}\n{traceback.format_exc()}")
+        if shorts_enabled:
+            raise HTTPException(500, f"Shorts render failed: {type(e).__name__}: {e}")
 
     # tmp 파일 청소
     try:

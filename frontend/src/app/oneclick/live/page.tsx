@@ -306,7 +306,7 @@ function ActivityPanel({
           const isStaleHere = state === "active" && primaryActive?.key === s.key && staleSec >= 60;
           const canClear = stepNum >= 2 && stepNum <= 6;
           const canRerun = stepNum >= 2 && stepNum <= 6;
-          const canReupload = stepNum === 7;
+          const canReupload = stepNum === 7 && task ? isUploadRecoverableTask(task) : false;
           const isPendingLike = state === "pending";
           const isBusy =
             isRunningTask ||
@@ -437,7 +437,7 @@ function ActivityPanel({
                       className="inline-flex items-center gap-1.5 rounded-md border border-accent-primary/30 bg-accent-primary/10 px-2.5 py-1.5 text-xs font-semibold text-accent-primary transition-colors hover:bg-accent-primary/15 disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       <RotateCcw size={12} className={uploadingStep ? "animate-spin" : ""} />
-                      {uploadingStep ? "업로드 중..." : "다시 업로드"}
+                      {uploadingStep ? "업로드 중..." : "1회 업로드"}
                     </button>
                   )}
                 </div>
@@ -466,6 +466,59 @@ function StepIcon({ state }: { state: "done" | "active" | "pending" | "failed" }
 }
 
 const PRODUCTION_LOG_RETENTION_MS = 36 * 60 * 60 * 1000;
+
+const WORKBENCH_TERMINAL_STATUSES = new Set([
+  "completed",
+  "failed",
+  "cancelled",
+  "paused",
+  "upload_pending",
+  "uploading",
+  "upload_failed",
+]);
+
+function hasExplicitRecoveryTarget(item: OneClickQueueItem | null | undefined) {
+  return Boolean(
+    item &&
+      (
+        String(item.restored_from_project_id || "").trim() ||
+        String(item.project_id || "").trim() ||
+        String(item.task_id || "").trim() ||
+        String(item.requeued_from_task_id || "").trim()
+      ),
+  );
+}
+
+function isWorkbenchTerminalTask(item: OneClickTask | null | undefined) {
+  if (!item) return false;
+  const status = String(item.status || "").toLowerCase();
+  if (WORKBENCH_TERMINAL_STATUSES.has(status)) return true;
+  const states = item.step_states || {};
+  return states["6"] === "completed" && states["7"] !== "completed";
+}
+
+function dedupeQueueItemsForDisplay(items: OneClickQueueItem[]) {
+  const seen = new Set<string>();
+  const out: OneClickQueueItem[] = [];
+  for (const item of items || []) {
+    const taskId = String(item.task_id || "").trim();
+    const projectId = String(item.project_id || "").trim();
+    const resultDir = String(item.result_dir || "").trim();
+    const key = taskId
+      ? `task:${taskId}`
+      : projectId
+        ? `project:${projectId}`
+        : resultDir
+          ? `result:${resultDir}`
+          : "";
+    if (key) {
+      if (seen.has(key)) continue;
+      seen.add(key);
+    }
+    out.push(item);
+  }
+  return out;
+}
 
 export default function LivePage() {
   const [task, setTask] = useState<OneClickTask | null>(null);
@@ -523,6 +576,7 @@ export default function LivePage() {
   // v2.1.2: 서버 측 로그 동기화 카운터
   const serverLogCountRef = useRef<number>(0);
   const selectedTaskIdRef = useRef<string | null>(null);
+  const lastSafetyPollRef = useRef<number>(0);
   const uploadVerifiedReloadRef = useRef<boolean>(false);
 
   useEffect(() => {
@@ -561,11 +615,17 @@ export default function LivePage() {
   }, []);
 
   const isRetainedProductionLogTask = useCallback(
-    (item: OneClickTask | null | undefined) => Boolean(
-      item &&
+    (item: OneClickTask | null | undefined) => {
+      if (!item) return false;
+      const status = String(item.status || "").toLowerCase();
+      const states = item.step_states || {};
+      if (["upload_pending", "uploading", "upload_failed"].includes(status)) return false;
+      if (states["6"] === "completed" && states["7"] !== "completed") return false;
+      return (
         (item.logs?.length || 0) > 0 &&
-        Date.now() - latestProductionLogTime(item) <= PRODUCTION_LOG_RETENTION_MS,
-    ),
+        Date.now() - latestProductionLogTime(item) <= PRODUCTION_LOG_RETENTION_MS
+      );
+    },
     [latestProductionLogTime],
   );
 
@@ -759,6 +819,13 @@ export default function LivePage() {
   }, [isQueueItemLocked, pendingQueueItems]);
 
   useEffect(() => {
+    setPendingQueueItems((prev) => {
+      const next = dedupeQueueItemsForDisplay(prev);
+      return next.length === prev.length ? prev : next;
+    });
+  }, [pendingQueueItems]);
+
+  useEffect(() => {
     let cancelled = false;
     const topItem = pendingQueueItems[0] || null;
     const sourceProjectId =
@@ -853,7 +920,7 @@ export default function LivePage() {
           return selectedTask;
         }
         const topQueueItem = queueItems[0] || null;
-        if (topQueueItem?.id) {
+        if (topQueueItem?.id && hasExplicitRecoveryTarget(topQueueItem)) {
           try {
             const recovered = await oneclickApi.recoverExistingQueueItem(topQueueItem.id);
             markServerSync();
@@ -993,7 +1060,7 @@ export default function LivePage() {
       }
     };
     void watchNextTask();
-    const id = setInterval(watchNextTask, 2000);
+    const id = setInterval(watchNextTask, 10000);
     return () => {
       cancelled = true;
       clearInterval(id);
@@ -1011,7 +1078,7 @@ export default function LivePage() {
   const prevPctRef = useRef<number>(0);
   useEffect(() => {
     if (!task) return;
-    const done = ["completed", "failed", "cancelled"].includes(task.status);
+    const done = isWorkbenchTerminalTask(task);
     if (done) {
       syncLogsFromTask(task);
       maybeReloadAfterVerifiedUpload(task);
@@ -1031,6 +1098,15 @@ export default function LivePage() {
         if (task.error) {
           addLog(`[오류 원인] ${task.error}`, "error");
         }
+      } else if (task.status === "upload_failed") {
+        addLog(`[업로드 실패] ${task.topic}`, "error");
+        if (task.error || task.youtube_upload_error) {
+          addLog(`[오류 원인] ${task.error || task.youtube_upload_error}`, "error");
+        }
+      } else if (task.status === "upload_pending") {
+        addLog(`[업로드 대기] ${task.topic}`, "warn");
+      } else if (task.status === "uploading") {
+        addLog(`[업로드 중] ${task.topic}`, "warn");
       } else {
         addLog(`[취소됨] 사용자에 의해 제작 중단`, "warn");
       }
@@ -1043,7 +1119,11 @@ export default function LivePage() {
       try {
         const fresh = await resolveLiveTask(task);
         markServerSync();
-        void syncSafetyState().catch(() => {});
+        const now = Date.now();
+        if (now - lastSafetyPollRef.current > 10000) {
+          lastSafetyPollRef.current = now;
+          void syncSafetyState().catch(() => {});
+        }
         setPollFails(0); // 성공하면 리셋
 
         syncLogsFromTask(fresh);
@@ -1183,7 +1263,7 @@ export default function LivePage() {
       } finally {
         inFlight = false;
       }
-    }, 2000);
+    }, 3000);
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
@@ -1749,14 +1829,22 @@ export default function LivePage() {
 
   const handleRecoveryReupload = async (failed: OneClickTask) => {
     if (recoveryUploadingId || recoveryBulkUploading) return;
+    if (!isUploadRecoverableTask(failed)) {
+      addLog(`[오류] 업로드는 이미 1회 시도되어 재시도하지 않습니다: ${taskTitle(failed)}`, "error");
+      return;
+    }
     setRecoveryUploadingId(failed.task_id);
     try {
       const result = await oneclickApi.manualUpload(failed.task_id);
       markServerSync();
-      addLog(
-        `[시스템] 업로드 실패 항목 재시도 완료: ${taskTitle(failed)}${result.youtube_url ? ` — ${result.youtube_url}` : ""}`,
-        "success",
-      );
+      if (result.ok) {
+        addLog(
+          `[시스템] 1회 업로드 완료: ${taskTitle(failed)}${result.youtube_url ? ` — ${result.youtube_url}` : ""}`,
+          "success",
+        );
+      } else {
+        addLog(`[오류] 1회 업로드 실패: ${taskTitle(failed)} — ${result.message || "실패 처리됨"}`, "error");
+      }
       const fresh = await oneclickApi.get(failed.task_id);
       markServerSync();
       setTask(fresh);
@@ -1764,7 +1852,7 @@ export default function LivePage() {
       await loadRecoveryContent(recoveryChannel);
       await handleRefresh();
     } catch (e: any) {
-      addLog(`[오류] 업로드 재시도 실패: ${taskTitle(failed)} — ${e?.message || e}`, "error");
+      addLog(`[오류] 1회 업로드 실패: ${taskTitle(failed)} — ${e?.message || e}`, "error");
       await loadRecoveryContent(recoveryChannel);
     } finally {
       setRecoveryUploadingId(null);
@@ -1775,22 +1863,28 @@ export default function LivePage() {
     if (recoveryBulkUploading || recoveryUploadingId) return;
     const targets = failedTasks.filter(isUploadRecoverableTask);
     if (targets.length === 0) return;
-    if (!confirm(`업로드 실패 ${targets.length}건을 순서대로 다시 업로드합니다. 계속할까요?`)) return;
+    if (!confirm(`미시도 업로드 ${targets.length}건을 순서대로 1회 업로드합니다. 계속할까요?`)) return;
     setRecoveryBulkUploading(true);
     try {
       let ok = 0;
+      let fail = 0;
       for (const item of targets) {
         setRecoveryUploadingId(item.task_id);
         try {
           const result = await oneclickApi.manualUpload(item.task_id);
-          ok += 1;
-          addLog(
-            `[시스템] 업로드 재시도 완료 (${ok}/${targets.length}): ${taskTitle(item)}${result.youtube_url ? ` — ${result.youtube_url}` : ""}`,
-            "success",
-          );
+          if (result.ok) {
+            ok += 1;
+            addLog(
+              `[시스템] 1회 업로드 완료 (${ok + fail}/${targets.length}): ${taskTitle(item)}${result.youtube_url ? ` — ${result.youtube_url}` : ""}`,
+              "success",
+            );
+          } else {
+            fail += 1;
+            addLog(`[오류] 1회 업로드 실패 (${ok + fail}/${targets.length}): ${taskTitle(item)} — ${result.message || "실패 처리됨"}`, "error");
+          }
         } catch (e: any) {
-          addLog(`[오류] 업로드 재시도 실패: ${taskTitle(item)} — ${e?.message || e}`, "error");
-          break;
+          fail += 1;
+          addLog(`[오류] 1회 업로드 실패: ${taskTitle(item)} — ${e?.message || e}`, "error");
         }
       }
       markServerSync();
@@ -1839,7 +1933,7 @@ export default function LivePage() {
         // 네트워크 실패는 단일-task 폴링 쪽에서 이미 감지/로그. 여기선 조용히 무시.
       }
     };
-    const id = setInterval(tick, 15000);
+    const id = setInterval(tick, 30000);
     return () => {
       cancelled = true;
       clearInterval(id);
@@ -1848,8 +1942,12 @@ export default function LivePage() {
 
   const isRunning =
     task && ["prepared", "queued", "running"].includes(task.status);
-  const isFailed = task?.status === "failed" || task?.status === "cancelled" || task?.status === "paused";
-  const isFinished = task && ["completed", "failed", "cancelled", "paused"].includes(task.status);
+  const isFailed =
+    task?.status === "failed" ||
+    task?.status === "cancelled" ||
+    task?.status === "paused" ||
+    task?.status === "upload_failed";
+  const isFinished = task && isWorkbenchTerminalTask(task);
 
   // v1.1.55: 스텝별 재실행
   const [rerunningStep, setRerunningStep] = useState<number | null>(null);
@@ -1878,23 +1976,31 @@ export default function LivePage() {
   const [uploadingStep, setUploadingStep] = useState(false);
   const handleReupload = async () => {
     if (!task || uploadingStep) return;
-    if (!confirm("현재 최종 영상으로 YouTube 업로드를 다시 실행합니다. 계속하시겠습니까?")) return;
+    if (!isUploadRecoverableTask(task)) {
+      addLog(`[오류] 업로드는 이미 1회 시도되어 재시도하지 않습니다: ${taskTitle(task)}`, "error");
+      return;
+    }
+    if (!confirm("현재 최종 영상으로 YouTube 업로드를 1회 실행합니다. 계속하시겠습니까?")) return;
     setUploadingStep(true);
     try {
       const liveTask = await resolveLiveTask(task);
       const result = await oneclickApi.manualUpload(liveTask.task_id);
       markServerSync();
-      addLog(
-        `[시스템] 유튜브 업로드 완료${result.youtube_url ? ` — ${result.youtube_url}` : ""}`,
-        "success",
-      );
+      if (result.ok) {
+        addLog(
+          `[시스템] 유튜브 업로드 완료${result.youtube_url ? ` — ${result.youtube_url}` : ""}`,
+          "success",
+        );
+      } else {
+        addLog(`[오류] 유튜브 업로드 실패: ${result.message || "실패 처리됨"}`, "error");
+      }
       const fresh = await oneclickApi.get(liveTask.task_id);
       markServerSync();
       setTask(fresh);
       syncLogsFromTask(fresh);
       await handleRefresh();
     } catch (e: any) {
-      addLog(`[오류] 재업로드 실패: ${e?.message || e}`, "error");
+      addLog(`[오류] 유튜브 업로드 실패: ${e?.message || e}`, "error");
     } finally {
       setUploadingStep(false);
     }
@@ -3009,7 +3115,7 @@ export default function LivePage() {
                     className="inline-flex items-center gap-1.5 rounded-md border border-emerald-400/30 bg-emerald-400/10 px-2.5 py-1 text-[11px] font-semibold text-emerald-200 hover:bg-emerald-400/15 disabled:opacity-40"
                   >
                     <RotateCcw size={12} className={recoveryBulkUploading ? "animate-spin" : ""} />
-                    업로드 실패 {failedTasks.filter(isUploadRecoverableTask).length}건 재시도
+                    미시도 업로드 {failedTasks.filter(isUploadRecoverableTask).length}건
                   </button>
                   <button
                     type="button"
@@ -3084,7 +3190,7 @@ export default function LivePage() {
                                 disabled={Boolean(recoveryUploadingId) || recoveryBulkUploading || recoveryBulkQueuing}
                                 className="shrink-0 rounded-md border border-emerald-400/30 bg-emerald-400/10 px-2.5 py-1 text-xs font-semibold text-emerald-200 hover:bg-emerald-400/15 disabled:opacity-40"
                               >
-                                {recoveryUploadingId === item.task_id ? "업로드 중..." : "업로드 재시도"}
+                                {recoveryUploadingId === item.task_id ? "업로드 중..." : "1회 업로드"}
                               </button>
                             )}
                             <button

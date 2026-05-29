@@ -9,8 +9,16 @@ from typing import Any, Optional
 
 DEFAULT_CHANNELS = [1, 2, 3, 4]
 QUEUE_EPISODE_FALLBACK = 10**9
-QUEUE_ACTIVE_STATUSES = {"running", "uploading", "queued", "prepared"}
-QUEUE_TERMINAL_STATUSES = {"completed", "failed", "cancelled", "paused"}
+QUEUE_ACTIVE_STATUSES = {"running", "queued", "prepared"}
+QUEUE_TERMINAL_STATUSES = {
+    "completed",
+    "failed",
+    "cancelled",
+    "paused",
+    "upload_pending",
+    "uploading",
+    "upload_failed",
+}
 
 
 def normalized_queue_status(value: Any) -> str:
@@ -37,6 +45,9 @@ def task_rank_for_project_dedupe(task: dict[str, Any]) -> tuple[int, str]:
         "running": 5,
         "queued": 4,
         "prepared": 3,
+        "uploading": 3,
+        "upload_pending": 3,
+        "upload_failed": 2,
         "failed": 2,
         "paused": 2,
         "cancelled": 1,

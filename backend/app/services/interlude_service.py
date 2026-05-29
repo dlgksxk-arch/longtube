@@ -34,8 +34,8 @@ InterludeKind = Literal["opening", "intermission", "ending"]
 VALID_KINDS: tuple[str, ...] = ("opening", "intermission", "ending")
 """허용되는 3 가지 종류. 변경 시 프런트 UI 의 드롭다운도 맞춰야 한다."""
 
-DEFAULT_INTERMISSION_EVERY = 250  # cuts
-"""Default intermission interval, measured in body cuts."""
+DEFAULT_INTERMISSION_EVERY = 45  # cuts
+"""Default intermission interval, measured in body cuts. 45 cuts = 180s at 4s/cut."""
 
 INTERMISSION_CLIP_SECONDS = 3.0
 """Intermission clips are trimmed/standardized to this duration when inserted."""

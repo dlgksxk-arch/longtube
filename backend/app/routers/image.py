@@ -434,7 +434,7 @@ async def generate_all_images(project_id: str, db: Session = Depends(get_db)):
                     "total_cuts": len(cuts),
                 }
 
-            # v1.1.26: 3컷마다 1장 캐릭터 슬롯 (1, 4, 7, ...)
+            # 캐릭터 이미지/설명이 있으면 모든 컷에서 캐릭터 적용 가능.
             is_character_cut = cut_has_character(cut.cut_number) and (bool(char_images) or bool(character_description))
             prompt = _build_image_prompt(
                 normalize_cut_image_prompt(
@@ -450,7 +450,7 @@ async def generate_all_images(project_id: str, db: Session = Depends(get_db)):
             )
 
             # Reference images always attached (for style).
-            # Character images attached ONLY on character slots.
+            # Character images attached when a character anchor is active for the cut.
             all_refs = list(ref_images)
             if char_images and is_character_cut:
                 all_refs.extend(char_images)

@@ -331,7 +331,7 @@ async def build_interlude_sequence(
           "opening_used": True,
           "intermission_used": True,
           "ending_used": True,
-          "intermission_every_cuts": 250,
+          "intermission_every_cuts": 45,
         }
     """
     cuts = (

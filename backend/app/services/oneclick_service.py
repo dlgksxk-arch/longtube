@@ -74,6 +74,8 @@ if os.name == "nt":
     import msvcrt
 
 from app.config import (
+    BASE_DIR,
+    DATA_DIR,
     SYSTEM_DIR,
     RESULT_ARCHIVE_DIR,
     parse_v3_oneclick_project_id,
@@ -171,6 +173,23 @@ def _sync_queue_items_from_tasks_for_save(*, save: bool = True) -> bool:
                 for key in ("task_id", "project_id", "source_project_id", "result_dir", "title", "started_at", "finished_at"):
                     item.pop(key, None)
                 changed = True
+            if item.get("queued_note") in ("실행 중", "YouTube 업로드 쿼터 대기"):
+                item["queued_note"] = "대기"
+                changed = True
+            next_items.append(item)
+            continue
+
+        if not _task_matches_queue_item(task, item, None):
+            for key in ("task_id", "project_id", "source_project_id", "result_dir", "title", "started_at", "finished_at"):
+                if key in item:
+                    item.pop(key, None)
+                    changed = True
+            if item_status != "pending":
+                item["status"] = "pending"
+                changed = True
+            if item.get("queued_note") in (None, "", "실행 중", "YouTube 업로드 쿼터 대기"):
+                item["queued_note"] = "대기"
+                changed = True
             next_items.append(item)
             continue
 
@@ -193,10 +212,11 @@ def _sync_queue_items_from_tasks_for_save(*, save: bool = True) -> bool:
         if item.get("finished_at") not in (None, ""):
             item.pop("finished_at", None)
             changed = True
-        if queue_status == "running" and item.get("queued_note") != "실행 중":
-            item["queued_note"] = "실행 중"
+        desired_queue_note = "실행 중" if queue_status == "running" else "대기"
+        if queue_status == "running" and item.get("queued_note") != desired_queue_note:
+            item["queued_note"] = desired_queue_note
             changed = True
-        if queue_status != "running" and item.get("queued_note") in (None, "", "실행 중"):
+        if queue_status != "running" and item.get("queued_note") in (None, "", "실행 중", "YouTube 업로드 쿼터 대기"):
             item["queued_note"] = "대기"
             changed = True
         for key, value in linked.items():
@@ -211,7 +231,7 @@ def _sync_queue_items_from_tasks_for_save(*, save: bool = True) -> bool:
 
     for task in list(_TASKS.values()):
         status = str(task.get("status") or "").strip().lower()
-        if status not in ("running", "uploading", "queued", "prepared"):
+        if status not in ("running", "queued", "prepared"):
             continue
         task_id_for_status = str(task.get("task_id") or "").strip()
         queue_status = "running" if _is_active_queue_status(status) else "pending"
@@ -285,27 +305,6 @@ def _save_tasks_to_disk() -> None:
     """_TASKS 를 JSON 으로 영속화. running 태스크 중단 감지를 위해 상태 보존."""
     try:
         with _TASKS_SAVE_LOCK:
-            for task in _TASKS.values():
-                if not isinstance(task, dict) or task.get("youtube_url"):
-                    continue
-                monitor = task.get("upload_monitor")
-                if not isinstance(monitor, dict) or monitor.get("status") not in ("completed", "processed"):
-                    continue
-                main_video = next(
-                    (
-                        v for v in (monitor.get("videos") or [])
-                        if isinstance(v, dict)
-                        and str(v.get("kind") or "") == "main"
-                        and (v.get("url") or v.get("video_id"))
-                    ),
-                    None,
-                )
-                if main_video:
-                    video_id = str(main_video.get("video_id") or "").strip()
-                    task["youtube_url"] = str(
-                        main_video.get("url")
-                        or (f"https://www.youtube.com/watch?v={video_id}" if video_id else "")
-                    )
             _sync_queue_items_from_tasks_for_save()
             _TASKS_FILE.parent.mkdir(parents=True, exist_ok=True)
             for task in _TASKS.values():
@@ -471,9 +470,16 @@ def _restart_resume_step(task: dict[str, Any]) -> int:
 def _prepare_inflight_task_for_restart(task: dict[str, Any]) -> bool:
     """Convert a persisted in-flight task into a queued resume task."""
     status = str(task.get("status") or "")
-    if status not in ("running", "queued", "prepared", "uploading"):
+    if status not in ("running", "queued", "prepared"):
         return False
-
+    project_id = str(task.get("project_id") or "").strip()
+    if project_id and _complete_task_from_existing_upload(
+        task,
+        project_id,
+        task.get("config") if isinstance(task.get("config"), dict) else None,
+        log_prefix="서버 재시작 복구 중 기존 YouTube URL 확인",
+    ):
+        return True
     resume_step = _restart_resume_step(task)
     step_states = dict(task.get("step_states") or {})
     for _slug, step_num, _label in STEP_ORDER:
@@ -521,9 +527,11 @@ def _load_tasks_from_disk() -> None:
                 continue
             # running/queued 상태였으면 서버가 중간에 죽은 것 — 실패로 끝내지 않고
             # 실제 산출물 기준으로 첫 미완료 단계부터 자동 재개한다.
-            if task.get("status") in ("running", "queued", "prepared", "uploading"):
+            if task.get("status") in ("running", "queued", "prepared"):
                 _reconcile_task_outputs(task, clear_terminal_cursor=True, cleanup_broken=False)
                 _prepare_inflight_task_for_restart(task)
+            elif task.get("status") == "uploading":
+                pass
             elif task.get("status") in ("failed", "cancelled", "paused", "completed"):
                 _reconcile_task_outputs(task, clear_terminal_cursor=True, cleanup_broken=False)
                 _restore_executed_models_from_logs(task)
@@ -660,14 +668,22 @@ def _normalize_uploaded_title(title: str) -> str:
 
 
 def _project_has_uploaded_video(project: Optional[Project]) -> bool:
-    if not project or not str(project.youtube_url or "").strip():
+    if not project:
         return False
-    return True
+    return bool(_youtube_video_id_from_url(project.youtube_url))
+
+
+def _project_upload_step_complete(project: Optional[Project], config: Optional[dict[str, Any]] = None) -> bool:
+    if not _project_has_uploaded_video(project):
+        return False
+    cfg = dict(config or getattr(project, "config", None) or {})
+    shorts_state = _shorts_upload_completion(str(getattr(project, "id", "") or ""), cfg)
+    return not (shorts_state.get("enabled") and not shorts_state.get("complete"))
 
 
 def _mark_project_uploaded(db, project: Project) -> bool:
-    """업로드 단계가 실제 완료로 기록된 프로젝트만 완료 상태로 맞춘다."""
-    if not _project_has_uploaded_video(project):
+    """본편과 필수 쇼츠 업로드가 확인된 프로젝트를 완료 상태로 맞춘다."""
+    if not _project_upload_step_complete(project, dict(project.config or {})):
         return False
 
     changed = False
@@ -677,6 +693,12 @@ def _mark_project_uploaded(db, project: Project) -> bool:
         changed = True
     if (project.current_step or 0) < 7:
         project.current_step = 7
+        changed = True
+    if states.get("7") != "completed":
+        states["7"] = "completed"
+        project.step_states = states
+        from sqlalchemy.orm.attributes import flag_modified
+        flag_modified(project, "step_states")
         changed = True
     return changed
 
@@ -725,6 +747,18 @@ def _mark_task_completed(task: dict[str, Any], detected_states: dict[str, str]) 
         changed = True
     if task.get("current_step_label") is not None:
         task["current_step_label"] = None
+        changed = True
+    if task.get("current_step_progress_text") is not None:
+        task["current_step_progress_text"] = None
+        changed = True
+    if task.get("current_step_cut_progress_pct") is not None:
+        task["current_step_cut_progress_pct"] = None
+        changed = True
+    if task.get("current_step_active_cut") is not None:
+        task["current_step_active_cut"] = None
+        changed = True
+    if task.get("_existing_upload_missing_shorts_log_key") is not None:
+        task.pop("_existing_upload_missing_shorts_log_key", None)
         changed = True
     if task.get("resume_from_step") is not None:
         task.pop("resume_from_step", None)
@@ -782,7 +816,7 @@ def _reconcile_tasks_from_project_state() -> None:
             if not pid:
                 continue
             project = projects_by_id.get(pid)
-            if not _project_has_uploaded_video(project):
+            if not _project_upload_step_complete(project, dict((project.config if project else None) or {})):
                 continue
 
             detected = _detect_completed_steps(pid, dict((project.config if project else None) or {}))
@@ -812,7 +846,8 @@ _RUN_LOCK = asyncio.Lock()
 # 를 스케줄해서 _RUN_LOCK 에 영원히 갇히는 것을 막는다. 이전 인스턴스가 살아있으면
 # 새로 스케줄하지 않는다(또는 끝날 때까지 짧게 기다린 뒤 새로 시작한다).
 _ACTIVE_RUNS: dict[str, "asyncio.Task"] = {}
-_UPLOAD_MONITOR_RUNS: dict[str, "asyncio.Task"] = {}
+_UPLOAD_PENDING_RUN: Optional["asyncio.Task"] = None
+_UPLOAD_ACTIVE_TASK_IDS: set[str] = set()
 _EMERGENCY_STOP_UNTIL = 0.0
 _AUTO_PRODUCTION_PAUSED_UNTIL = 0.0
 _AUTO_NEXT_DELAY_SECONDS = 10
@@ -969,6 +1004,66 @@ def _refresh_task_safety(task: dict[str, Any], *, force: bool = False) -> bool:
     return changed
 
 
+def _complete_task_from_existing_upload(
+    task: dict[str, Any],
+    project_id: str,
+    config: Optional[dict[str, Any]] = None,
+    *,
+    log_prefix: str = "기존 YouTube URL 확인",
+) -> bool:
+    project_id = str(project_id or "").strip()
+    if not project_id:
+        return False
+
+    uploaded_project = _load_project(project_id)
+    uploaded_url = str(getattr(uploaded_project, "youtube_url", "") or "").strip() if uploaded_project else ""
+    if not _youtube_video_id_from_url(uploaded_url):
+        return False
+
+    effective_config = dict(config or getattr(uploaded_project, "config", None) or {})
+    shorts_state = _shorts_upload_completion(project_id, effective_config)
+    if shorts_state.get("enabled") and not shorts_state.get("complete"):
+        task["youtube_url"] = uploaded_url
+        key = (
+            f"{project_id}:"
+            f"{shorts_state.get('uploaded_count', 0)}:"
+            f"{shorts_state.get('file_count', 0)}:"
+            f"{shorts_state.get('required', 0)}"
+        )
+        if task.get("_existing_upload_missing_shorts_log_key") != key:
+            _add_log(
+                task,
+                f"↪ {log_prefix} — 본편 URL 확인, 쇼츠 업로드 미완료로 Step 7 유지: {uploaded_url} "
+                f"(쇼츠 기록 {shorts_state.get('uploaded_count', 0)}/{shorts_state.get('required', 0)})",
+                "warn",
+            )
+            task["_existing_upload_missing_shorts_log_key"] = key
+        return False
+
+    states = dict(task.get("step_states") or {})
+    states["7"] = "completed"
+    task["youtube_url"] = uploaded_url
+    _mark_task_completed(task, states)
+
+    db = SessionLocal()
+    try:
+        project = db.query(Project).filter(Project.id == project_id).first()
+        if project:
+            project.status = "completed"
+            project.current_step = 7
+            ss = dict(project.step_states or {})
+            ss["7"] = "completed"
+            project.step_states = ss
+            from sqlalchemy.orm.attributes import flag_modified
+            flag_modified(project, "step_states")
+            db.commit()
+    finally:
+        db.close()
+
+    _add_log(task, f"✓ {log_prefix} — 업로드 완료 처리: {uploaded_url}")
+    return True
+
+
 def register_spend_record(record: dict[str, Any]) -> None:
     """Called by spend_ledger after a positive-cost API ledger append.
 
@@ -1089,19 +1184,20 @@ def _task_has_live_runner(task_id: str, task: Optional[dict[str, Any]] = None) -
 
 
 def _has_running_task(*, exclude_task_id: Optional[str] = None) -> bool:
-    """지금 실행/업로드 확인 중인 작업이 있는지 확인."""
+    """지금 제작 작업이 실행 중인지 확인."""
     if _has_live_runner(exclude_task_id=exclude_task_id):
         return True
     for tid, task in _TASKS.items():
         if exclude_task_id is not None and tid == exclude_task_id:
             continue
-        if task.get("status") in ("running", "uploading"):
+        status = str(task.get("status") or "").strip().lower()
+        if status == "running":
             return True
     return False
 
 
 def _has_inflight_task(*, exclude_task_id: Optional[str] = None) -> bool:
-    """running/uploading/queued 태스크가 이미 있으면 새 작업을 끼워 넣지 않는다."""
+    """running/queued 제작 태스크가 이미 있으면 새 작업을 끼워 넣지 않는다."""
     if _has_running_task(exclude_task_id=exclude_task_id):
         return True
     for tid, task in _TASKS.items():
@@ -1204,9 +1300,16 @@ def resume_recovered_inflight_tasks_on_startup() -> Optional[str]:
 
 
 def _should_auto_dispatch_after_task(task: dict[str, Any] | None) -> bool:
-    """작업 완료 뒤 다음 큐 자동 연결은 수동 즉시 실행에만 허용."""
+    """렌더 완료 후 업로드 대기로 넘어간 작업은 다음 제작을 바로 연결한다."""
     if not task:
         return False
+    states = dict(task.get("step_states") or {})
+    if (
+        str(task.get("status") or "").strip().lower() in ("completed", "upload_pending", "uploading", "upload_failed")
+        and states.get("6") == "completed"
+        and states.get("7") != "completed"
+    ):
+        return True
     return str(task.get("triggered_by") or "").strip().lower() == "manual"
 
 
@@ -1238,7 +1341,7 @@ def _force_oneclick_main_length(config: dict, target_duration: Optional[int] = N
         duration = ONECLICK_MAIN_TARGET_DURATION
     config["target_duration"] = duration
     config["target_cuts"] = max(1, math.ceil(duration / ONECLICK_SECONDS_PER_CUT))
-    config["script_tts_target_sec"] = round(ONECLICK_SECONDS_PER_CUT * 1.25, 3)
+    config["script_tts_target_sec"] = round(ONECLICK_SECONDS_PER_CUT, 3)
     config.setdefault("script_tts_tolerance_sec", 0.2)
     return config
 
@@ -1537,7 +1640,7 @@ def _scan_project_outputs(
         try:
             proj = db.query(Project).filter(Project.id == project_id).first()
             proj_states = (proj.step_states or {}) if proj else {}
-            states["7"] = "completed" if (proj and proj.youtube_url) else "pending"
+            states["7"] = "completed" if _project_upload_step_complete(proj, config) else "pending"
         finally:
             db.close()
         return states, counts, 0, removed
@@ -1624,7 +1727,7 @@ def _scan_project_outputs(
     try:
         proj = db.query(Project).filter(Project.id == project_id).first()
         proj_states = (proj.step_states or {}) if proj else {}
-        states["7"] = "completed" if (proj and proj.youtube_url) else "pending"
+        states["7"] = "completed" if _project_upload_step_complete(proj, config) else "pending"
 
         if cleanup_broken and (broken_audio or broken_image or broken_video):
             for num in sorted(set(broken_audio + broken_image + broken_video)):
@@ -1719,9 +1822,7 @@ def _detect_completed_steps(project_id: str, config: Optional[dict] = None) -> d
     try:
         proj = db.query(Project).filter(Project.id == project_id).first()
         proj_states = (proj.step_states or {}) if proj else {}
-        states["7"] = "completed" if (
-            proj and proj.youtube_url and proj_states.get("7") == "completed"
-        ) else "pending"
+        states["7"] = "completed" if _project_upload_step_complete(proj, config) else "pending"
     finally:
         db.close()
 
@@ -1804,9 +1905,18 @@ def _reconcile_task_outputs(
         if task.get("resume_from_step") is not None:
             task.pop("resume_from_step", None)
             changed = True
-    elif task.get("resume_from_step") != first_pending:
-        task["resume_from_step"] = first_pending
-        changed = True
+    else:
+        if task.get("resume_from_step") != first_pending:
+            task["resume_from_step"] = first_pending
+            changed = True
+        if task.get("status") == "completed":
+            if first_pending == 7:
+                _mark_task_upload_pending(task, str(task.get("project_id") or ""))
+            else:
+                task["status"] = "failed"
+                task["error"] = f"완료 상태 정정: Step {first_pending} 미완료"
+                task["finished_at"] = _utcnow_iso()
+            changed = True
 
     if clear_terminal_cursor:
         if task.get("current_step") is not None:
@@ -2008,7 +2118,7 @@ def _sync_completed_projects_into_tasks() -> bool:
                 for name in ("final_with_subtitles.mp4", "final.mp4", "merged.mp4")
             ):
                 detected["6"] = "completed"
-            if project.youtube_url:
+            if _project_upload_step_complete(project, cfg):
                 detected["7"] = "completed"
             if not any(detected.get(step) == "completed" for step in ("2", "3", "4", "5", "6", "7")):
                 continue
@@ -2016,7 +2126,7 @@ def _sync_completed_projects_into_tasks() -> bool:
             existing_task = tasks_by_pid.get(pid)
             if existing_task is not None:
                 if existing_task.get("status") == "completed":
-                    if project.youtube_url and existing_task.get("youtube_url") != project.youtube_url:
+                    if _project_has_uploaded_video(project) and existing_task.get("youtube_url") != project.youtube_url:
                         existing_task["youtube_url"] = project.youtube_url
                         changed = True
                     if existing_task.get("step_states") != detected:
@@ -2563,7 +2673,7 @@ def _restore_orphan_v3_project_record_for_queue_item(item: dict[str, Any]) -> Op
     return project_id
 
 
-def _find_existing_project_for_queue_item(item: dict[str, Any]) -> Optional[str]:
+def _find_existing_project_for_queue_item(item: dict[str, Any], *, allow_implicit: bool = True) -> Optional[str]:
     """작업대 큐 항목과 같은 에피소드의 기존 산출물 프로젝트를 찾는다."""
     topic = str(item.get("topic") or "").strip()
     template_project_id = str(item.get("template_project_id") or "").strip() or None
@@ -2587,6 +2697,12 @@ def _find_existing_project_for_queue_item(item: dict[str, Any]) -> Optional[str]
         if pid:
             explicit_ids.append(pid)
 
+    has_explicit_id = bool(explicit_ids)
+    if not has_explicit_id and not allow_implicit:
+        return None
+    if not has_explicit_id and episode_number <= 0:
+        return None
+
     db = SessionLocal()
     try:
         candidates: list[Project] = []
@@ -2597,20 +2713,21 @@ def _find_existing_project_for_queue_item(item: dict[str, Any]) -> Optional[str]
                 .all()
             )
 
-        candidates.extend(
-            db.query(Project)
-            .filter(Project.id.like("딸깍_%"))
-            .order_by(Project.created_at.desc())
-            .limit(500)
-            .all()
-        )
-        candidates.extend(
-            db.query(Project)
-            .filter(Project.id.like("V3_CH%"))
-            .order_by(Project.created_at.desc())
-            .limit(500)
-            .all()
-        )
+        if allow_implicit:
+            candidates.extend(
+                db.query(Project)
+                .filter(Project.id.like("딸깍_%"))
+                .order_by(Project.created_at.desc())
+                .limit(500)
+                .all()
+            )
+            candidates.extend(
+                db.query(Project)
+                .filter(Project.id.like("V3_CH%"))
+                .order_by(Project.created_at.desc())
+                .limit(500)
+                .all()
+            )
 
         scored: list[tuple[int, str]] = []
         seen: set[str] = set()
@@ -2621,7 +2738,7 @@ def _find_existing_project_for_queue_item(item: dict[str, Any]) -> Optional[str]
             config = dict(project.config or {})
             if not config.get("__oneclick__"):
                 continue
-            if str(project.status or "").lower() == "completed" and project.youtube_url:
+            if str(project.status or "").lower() == "completed" and _project_upload_step_complete(project, config):
                 continue
             backup_dir: Optional[Path] = None
             cut_row_count = _project_cut_row_count(project.id)
@@ -2681,6 +2798,8 @@ def _find_existing_project_for_queue_item(item: dict[str, Any]) -> Optional[str]
             scored.append((score, project.id))
 
         if not scored:
+            if not allow_implicit:
+                return None
             return (
                 _restore_orphan_v3_project_record_for_queue_item(item)
                 or _restore_backup_project_record_for_queue_item(item)
@@ -2956,28 +3075,60 @@ def _copy_template_assets(tmpl_dir: Path, dest_dir: Path, config: dict):
     """
     import shutil
 
+    ch = _valid_channel(config.get("channel") or config.get("youtube_channel"))
+    if ch is None:
+        m = re.fullmatch(r"CH([1-9]\d*)", str(config.get("result_channel_dir") or ""), flags=re.IGNORECASE)
+        if m:
+            ch = _valid_channel(m.group(1))
+
+    def _dedupe_source_roots(paths: list[Path]) -> list[Path]:
+        seen: set[str] = set()
+        result: list[Path] = []
+        for path in paths:
+            try:
+                key = str(path.resolve())
+            except Exception:
+                key = str(path)
+            if key in seen:
+                continue
+            seen.add(key)
+            result.append(path)
+        return result
+
+    source_roots = [tmpl_dir, SYSTEM_DIR / "projects" / tmpl_dir.name]
+    if ch is not None:
+        source_roots.append(get_channel_projects_root(ch) / tmpl_dir.name)
+    source_roots = _dedupe_source_roots(source_roots)
+
     # 1) config 에 기록된 상대 경로 기반 에셋 복사
     for key in ("reference_images", "character_images", "logo_images"):
         for rel in config.get(key, []) or []:
-            src = tmpl_dir / rel
             dst = dest_dir / rel
-            if src.exists():
+            for source_root in source_roots:
+                src = source_root / rel
+                if not src.exists():
+                    continue
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 try:
                     shutil.copy2(str(src), str(dst))
                 except Exception as e:
                     print(f"[oneclick] 에셋 복사 실패 {rel}: {e}")
+                break
 
     bgm_rel = str(config.get("bgm_path") or "").strip()
     if bgm_rel:
-        src = tmpl_dir / bgm_rel
         dst = dest_dir / bgm_rel
-        if src.exists() and src.is_file():
+        src_candidates = [Path(bgm_rel)] if Path(bgm_rel).is_absolute() else []
+        src_candidates.extend(source_root / bgm_rel for source_root in source_roots)
+        for src in src_candidates:
+            if not src.exists() or not src.is_file():
+                continue
             dst.parent.mkdir(parents=True, exist_ok=True)
             try:
                 shutil.copy2(str(src), str(dst))
             except Exception as e:
                 print(f"[oneclick] BGM 복사 실패 {bgm_rel}: {e}")
+            break
 
     # 2) 간지(interlude)/BGM/사전작성 대본 디렉토리가 있으면 통째로 복사
     for dirname, label in (
@@ -2987,14 +3138,53 @@ def _copy_template_assets(tmpl_dir: Path, dest_dir: Path, config: dict):
         ("prepared_scripts", "사전작성 대본"),
         ("대본", "사전작성 대본"),
     ):
-        tmpl_interlude = tmpl_dir / dirname
-        if not tmpl_interlude.is_dir():
-            continue
-        dest_interlude = dest_dir / dirname
-        try:
-            shutil.copytree(str(tmpl_interlude), str(dest_interlude), dirs_exist_ok=True)
-        except Exception as e:
-            print(f"[oneclick] {label} 복사 실패: {e}")
+        for source_root in source_roots:
+            tmpl_interlude = source_root / dirname
+            if not tmpl_interlude.is_dir():
+                continue
+            dest_interlude = dest_dir / dirname
+            try:
+                shutil.copytree(str(tmpl_interlude), str(dest_interlude), dirs_exist_ok=True)
+            except Exception as e:
+                print(f"[oneclick] {label} 복사 실패: {e}")
+
+    # 채널 공통 리브랜딩 인터루드가 있으면 다음 생성 프로젝트에도 기본 제공한다.
+    if ch is not None:
+        data_root = Path(str(DATA_DIR))
+        rebrand_roots = [
+            data_root / "channel_rebrand",
+            data_root.parent / "channel_rebrand",
+            BASE_DIR / "data" / "channel_rebrand",
+        ]
+        source_dirs: list[Path] = []
+        seen_rebrand_dirs: set[str] = set()
+        for rebrand_root in rebrand_roots:
+            try:
+                candidates = [
+                    p for p in sorted(rebrand_root.glob(f"ch{ch}_*/interludes"))
+                    if p.is_dir()
+                ]
+            except Exception:
+                candidates = []
+            for candidate in candidates:
+                key = str(candidate)
+                if key not in seen_rebrand_dirs:
+                    seen_rebrand_dirs.add(key)
+                    source_dirs.append(candidate)
+        if source_dirs:
+            dest_interlude = dest_dir / "interlude"
+            dest_interlude.mkdir(parents=True, exist_ok=True)
+            for source_dir in source_dirs:
+                for src in source_dir.iterdir():
+                    if not src.is_file():
+                        continue
+                    dst = dest_interlude / src.name
+                    if dst.exists():
+                        continue
+                    try:
+                        shutil.copy2(str(src), str(dst))
+                    except Exception as e:
+                        print(f"[oneclick] 채널 공통 간지 복사 실패 {src.name}: {e}")
 
     # 3) v1.1.55 hotfix: 프리셋에 연결된 YouTube 토큰을 클론으로 복사.
     # 프리셋(예: "무서운이야기")에 OAuth 인증한 youtube_token.json 이
@@ -3448,6 +3638,167 @@ def _compute_progress_pct(task: dict) -> float:
 # Step 7: 썸네일 생성 + 유튜브 업로드
 # --------------------------------------------------------------------------- #
 
+ONECLICK_REQUIRED_SHORTS_UPLOAD_COUNT = 4
+
+
+def _bool_config(value: Any, default: bool = True) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in {"0", "false", "no", "off", "disabled"}:
+            return False
+        if text in {"1", "true", "yes", "on", "enabled"}:
+            return True
+    return bool(value)
+
+
+def _required_shorts_count(config: Optional[dict]) -> int:
+    raw = (config or {}).get("shorts_required_count")
+    try:
+        return max(1, int(raw or ONECLICK_REQUIRED_SHORTS_UPLOAD_COUNT))
+    except (TypeError, ValueError):
+        return ONECLICK_REQUIRED_SHORTS_UPLOAD_COUNT
+
+
+def _youtube_video_id_from_url(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    m = re.search(r"(?:v=|youtu\.be/|embed/|shorts/)([A-Za-z0-9_-]{6,})", text)
+    if m:
+        return m.group(1)
+    if re.fullmatch(r"[A-Za-z0-9_-]{6,}", text):
+        return text
+    return ""
+
+
+def _is_youtube_upload_quota_error(exc: BaseException) -> bool:
+    text = str(exc or "").lower()
+    return any(
+        marker in text
+        for marker in (
+            "uploadlimitexceeded",
+            "exceeded the number of videos",
+            "video uploads per day",
+            "quota metric 'video uploads'",
+            'quota metric "video uploads"',
+            "videouploadsperday",
+            "youtube 영상 업로드 일일 제한",
+        )
+    )
+
+
+def _shorts_upload_completion(project_id: str, config: Optional[dict] = None) -> dict[str, Any]:
+    cfg = dict(config or {})
+    if not _bool_config(cfg.get("shorts_enabled"), True):
+        return {
+            "enabled": False,
+            "required": 0,
+            "file_count": 0,
+            "uploaded_count": 0,
+            "complete": True,
+        }
+
+    required = _required_shorts_count(cfg)
+    try:
+        project_dir = resolve_project_dir(project_id, cfg, create=False)
+        shorts_dir = project_dir / "output" / "shorts"
+        shorts_files = sorted(p for p in shorts_dir.glob("short_*.mp4") if p.is_file()) if shorts_dir.exists() else []
+        uploads_path = shorts_dir / "shorts_uploads.json"
+        uploads: dict[str, Any] = {}
+        if uploads_path.exists():
+            loaded = json.loads(uploads_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                uploads = loaded
+        uploaded_names = {
+            str(name)
+            for name, item in uploads.items()
+            if isinstance(item, dict) and str(item.get("url") or "").strip()
+        }
+        uploaded_count = sum(1 for path in shorts_files if path.name in uploaded_names)
+        return {
+            "enabled": True,
+            "required": required,
+            "file_count": len(shorts_files),
+            "uploaded_count": uploaded_count,
+            "complete": len(shorts_files) >= required and uploaded_count >= required,
+            "shorts_dir": str(shorts_dir),
+        }
+    except Exception as exc:
+        return {
+            "enabled": True,
+            "required": required,
+            "file_count": 0,
+            "uploaded_count": 0,
+            "complete": False,
+            "error": str(exc),
+        }
+
+
+def _render_outputs_ready_for_upload(project_id: str, config: Optional[dict] = None) -> tuple[bool, str]:
+    """Validate rendered main/shorts files before entering YouTube upload."""
+    from app.services.youtube_service import _validate_upload_media_file
+
+    cfg = dict(config or {})
+    project_dir = resolve_project_dir(project_id, cfg, create=False)
+    output_dir = project_dir / "output"
+    final_video = next(
+        (
+            p
+            for p in (
+                output_dir / "final_with_subtitles.mp4",
+                output_dir / "final.mp4",
+                output_dir / "merged.mp4",
+            )
+            if p.exists() and p.is_file()
+        ),
+        None,
+    )
+    if final_video is None:
+        return False, "최종 영상 파일 없음"
+    final_error = _validate_upload_media_file(final_video)
+    if final_error:
+        return False, f"최종 영상 디코딩 실패: {final_video.name} ({final_error[:300]})"
+
+    if not _bool_config(cfg.get("shorts_enabled"), True):
+        return True, ""
+
+    required = _required_shorts_count(cfg)
+    shorts_dir = output_dir / "shorts"
+    shorts_files = sorted(shorts_dir.glob("short_*.mp4")) if shorts_dir.exists() else []
+    if len(shorts_files) < required:
+        return False, f"쇼츠 렌더 결과 부족: {len(shorts_files)}/{required}"
+    for short_path in shorts_files[:required]:
+        short_error = _validate_upload_media_file(short_path)
+        if short_error:
+            return False, f"쇼츠 디코딩 실패: {short_path.name} ({short_error[:300]})"
+    return True, ""
+
+
+def _mark_project_steps_pending(project_id: str, from_step: int) -> None:
+    db = SessionLocal()
+    try:
+        project = db.query(Project).filter(Project.id == project_id).first()
+        if not project:
+            return
+        states = dict(project.step_states or {})
+        for _slug, step_num, _label in STEP_ORDER:
+            if step_num >= from_step:
+                states[str(step_num)] = "pending"
+        project.step_states = states
+        if project.status in ("completed", "failed", "cancelled"):
+            project.status = "draft"
+        try:
+            from sqlalchemy.orm.attributes import flag_modified
+            flag_modified(project, "step_states")
+        except Exception:
+            pass
+        db.commit()
+    finally:
+        db.close()
+
+
 async def _step_youtube_upload(
     project_id: str,
     config: dict,
@@ -3673,61 +4024,40 @@ async def _step_youtube_upload(
             task["progress_pct"] = _compute_progress_pct(task)
             _save_tasks_to_disk()
 
-        result = await asyncio.to_thread(
-            uploader.upload,
-            str(final_video),
-            title,
-            description,
-            tags,
-            str(thumb_path) if use_thumb else None,
-            privacy,
-            config.get("language") or "ko",
-            None,   # category_id
-            False,  # made_for_kids
-            _upload_progress_callback,   # progress_callback
-        )
-
-        video_url = result.get("url")
-        if video_url:
-            print(f"[oneclick] YouTube uploaded: {video_url}")
+        existing_video_url = str(project.youtube_url or "").strip()
+        existing_video_id = _youtube_video_id_from_url(existing_video_url)
+        if existing_video_url and existing_video_id:
+            video_url = existing_video_url
+            main_video_id = existing_video_id
+            main_state = {"processed": False}
+            main_visible = {"verification_method": "existing_url"}
+            print(f"[oneclick] YouTube main already uploaded, skip main upload: {video_url}")
         else:
-            raise RuntimeError(f"업로드 성공했으나 URL 이 비어있습니다: {result!r}")
+            result = await asyncio.to_thread(
+                uploader.upload,
+                str(final_video),
+                title,
+                description,
+                tags,
+                str(thumb_path) if use_thumb else None,
+                privacy,
+                config.get("language") or "ko",
+                None,   # category_id
+                False,  # made_for_kids
+                _upload_progress_callback,   # progress_callback
+            )
 
-        main_video_id = str(result.get("video_id") or "").strip()
-        if not main_video_id:
-            raise YouTubeUploadError("본편 업로드 응답에 video_id가 없습니다.")
-        try:
-            main_state = await asyncio.to_thread(
-                uploader.confirm_upload_processed_in_studio,
-                video_id=main_video_id,
-                title=title,
-                timeout_seconds=1200,
-                interval_seconds=20,
-            )
-            main_visible = main_state
-            if main_state.get("terminal_failure"):
-                raise YouTubeUploadError(
-                    "본편 업로드 직후 YouTube 실패 상태 확인: "
-                    f"video_id={main_video_id} "
-                    f"uploadStatus={main_state.get('upload_status')} "
-                    f"processingStatus={main_state.get('processing_status')} "
-                    f"reason={main_state.get('failed_reason') or '-'}"
-                )
-        except Exception as verify_error:
-            recovered = await asyncio.to_thread(
-                _recover_youtube_upload_by_exact_title,
-                uploader,
-                title=title,
-                failed_video_id=main_video_id,
-            )
-            if not recovered:
-                raise verify_error
-            old_video_id = main_video_id
-            main_video_id = str(recovered.get("video_id") or "").strip()
-            video_url = recovered.get("url") or f"https://www.youtube.com/watch?v={main_video_id}"
-            main_visible = recovered
-            main_state = recovered
-            print(f"[oneclick] YouTube main upload id recovered: {old_video_id} -> {main_video_id}")
+            video_url = result.get("url")
+            if video_url:
+                print(f"[oneclick] YouTube uploaded: {video_url}")
+            else:
+                raise RuntimeError(f"업로드 성공했으나 URL 이 비어있습니다: {result!r}")
+
+            main_video_id = str(result.get("video_id") or "").strip()
+            if not main_video_id:
+                raise YouTubeUploadError("본편 업로드 응답에 video_id가 없습니다.")
+            main_state = {"processed": False}
+            main_visible = {"verification_method": "videos.insert_response"}
 
         main_playlist_result = None
         main_playlist_id = str(
@@ -3754,20 +4084,18 @@ async def _step_youtube_upload(
             "title": title,
             "url": video_url,
             "video_id": main_video_id,
-            "processing_verified": bool(main_state.get("processed")),
-            "upload_status": main_state.get("upload_status"),
-            "processing_status": main_state.get("processing_status"),
-            "processed": bool(main_state.get("processed")),
+            "processing_verified": False,
+            "processed": False,
             "terminal_failure": False,
             "failed_reason": None,
-            "studio_verified": True,
+            "studio_verified": False,
             "verification_method": main_visible.get("verification_method"),
             "playlist_id": main_playlist_id or None,
             "playlist_item_id": (main_playlist_result or {}).get("item_id"),
             "playlist_already_present": bool((main_playlist_result or {}).get("already_present")),
             "last_checked_at": _utcnow_iso(),
         }]
-        print(f"[oneclick] YouTube upload processed: {video_url}")
+        print(f"[oneclick] YouTube upload accepted: {video_url}")
         project.youtube_url = video_url
         db.commit()
 
@@ -3775,9 +4103,15 @@ async def _step_youtube_upload(
         # 최종 렌더 단계(render_video_with_subtitles)가 output/shorts/short_*.mp4 를
         # 생성한다. 딸깍 업로드는 본편만 올리고 끝나면 사용자가 기대한 자동화와 다르므로,
         # 같은 채널/프라이버시로 숏츠도 이어서 업로드한다.
-        shorts_enabled = bool(config.get("shorts_enabled", True))
+        shorts_enabled = _bool_config(config.get("shorts_enabled"), True)
         shorts_dir = thumb_dir / "shorts"
         shorts_files = sorted(shorts_dir.glob("short_*.mp4")) if shorts_enabled and shorts_dir.exists() else []
+        required_shorts = _required_shorts_count(config)
+        if shorts_enabled and len(shorts_files) < required_shorts:
+            raise RuntimeError(
+                f"숏츠 렌더 결과 부족: {len(shorts_files)}/{required_shorts} "
+                f"({shorts_dir})"
+            )
         if shorts_files:
             shorts_uploads_path = shorts_dir / "shorts_uploads.json"
             shorts_meta_by_file: dict[str, dict[str, Any]] = {}
@@ -3925,331 +4259,22 @@ async def _step_youtube_upload(
             print(f"[oneclick] YouTube Shorts uploaded count: {len(uploaded_items)}")
 
         cfg = dict(project.config or {})
-        cfg["youtube_upload_processing"] = {
-            "status": "uploading",
+        cfg["youtube_upload_result"] = {
+            "status": "completed",
             "channel": ch_int,
             "uploader_token_source": uploader_token_source,
             "uploader_project_id": uploader_project_id,
             "uploader_channel_id": uploader_channel_id,
-            "started_at": _utcnow_iso(),
-            "last_checked_at": None,
+            "completed_at": _utcnow_iso(),
             "videos": uploaded_videos,
         }
         project.config = cfg
         from sqlalchemy.orm.attributes import flag_modified
         flag_modified(project, "config")
         db.commit()
-        return cfg["youtube_upload_processing"]
+        return cfg["youtube_upload_result"]
     finally:
         db.close()
-
-
-def _upload_monitor_payload(task: dict[str, Any], upload_state: dict[str, Any]) -> dict[str, Any]:
-    payload = dict(upload_state or {})
-    payload["status"] = "uploading"
-    payload["task_id"] = task.get("task_id")
-    payload["project_id"] = task.get("project_id")
-    payload["channel"] = payload.get("channel") or task.get("channel")
-    payload.setdefault("last_checked_at", None)
-    payload.setdefault("videos", [])
-    return payload
-
-
-def _recover_youtube_upload_by_exact_title(
-    uploader: Any,
-    *,
-    title: str,
-    failed_video_id: str = "",
-) -> Optional[dict[str, Any]]:
-    """Find a same-title upload on the same authenticated channel after YouTube returns a bad id."""
-    existing = uploader.find_existing_upload_by_title(title, max_results=50)
-    if not existing:
-        return None
-    recovered_id = str(existing.get("video_id") or "").strip()
-    if not recovered_id or recovered_id == str(failed_video_id or "").strip():
-        return None
-    state = uploader.get_video_processing_state(recovered_id)
-    if state.get("terminal_failure"):
-        return None
-    return {
-        **existing,
-        **state,
-        "video_id": recovered_id,
-        "url": existing.get("url") or state.get("url") or f"https://www.youtube.com/watch?v={recovered_id}",
-        "studio_verified": True,
-        "verification_method": "exact_title_recovery",
-        "recovered_from_video_id": str(failed_video_id or "").strip() or None,
-    }
-
-
-def _check_upload_processing_once(task_id: str) -> bool:
-    """Return True when upload monitoring reached a terminal state."""
-    task = _TASKS.get(task_id)
-    if not task:
-        return True
-    monitor = task.get("upload_monitor")
-    if not isinstance(monitor, dict):
-        return True
-    videos = [v for v in (monitor.get("videos") or []) if isinstance(v, dict)]
-    if not videos:
-        task["status"] = "failed"
-        task["step_states"]["7"] = "failed"
-        task["error"] = "업로드 확인 대상 video_id가 없습니다."
-        task["finished_at"] = _utcnow_iso()
-        _save_tasks_to_disk()
-        return True
-
-    try:
-        from app.services.youtube_service import YouTubeUploader
-
-        token_source = str(monitor.get("uploader_token_source") or "").strip()
-        uploader_project_id = str(monitor.get("uploader_project_id") or "").strip()
-        uploader_channel_id = monitor.get("uploader_channel_id")
-        channel = monitor.get("channel") or task.get("channel")
-        if token_source == "project" and uploader_project_id:
-            uploader = YouTubeUploader(project_id=uploader_project_id)
-        elif token_source == "channel" and uploader_channel_id:
-            uploader = YouTubeUploader(channel_id=int(uploader_channel_id))
-        else:
-            # Legacy monitors created before token-source tracking must be
-            # checked with the same priority that upload used: template project
-            # token -> generated project token -> channel token.
-            project_id = str(task.get("project_id") or "")
-            legacy_uploader = None
-            if project_id:
-                db = SessionLocal()
-                try:
-                    project = db.query(Project).filter(Project.id == project_id).first()
-                    cfg = dict(project.config or {}) if project else {}
-                    template_project_id = cfg.get("template_project_id")
-                    if template_project_id:
-                        candidate = YouTubeUploader(project_id=str(template_project_id))
-                        if candidate.is_authenticated():
-                            legacy_uploader = candidate
-                    if legacy_uploader is None:
-                        candidate = YouTubeUploader(project_id=project_id)
-                        if candidate.is_authenticated():
-                            legacy_uploader = candidate
-                finally:
-                    db.close()
-            if legacy_uploader is not None:
-                uploader = legacy_uploader
-            elif channel:
-                uploader = YouTubeUploader(channel_id=int(channel))
-            else:
-                uploader = YouTubeUploader(project_id=task.get("project_id"))
-        all_processed = True
-        checked: list[dict[str, Any]] = []
-        for video in videos:
-            vid = str(video.get("video_id") or "").strip()
-            if not vid:
-                all_processed = False
-                checked.append({**video, "processing_verified": False, "error": "missing video_id"})
-                continue
-            try:
-                state = uploader.get_video_processing_state(vid)
-            except Exception:
-                recovered = _recover_youtube_upload_by_exact_title(
-                    uploader,
-                    title=str(video.get("title") or ""),
-                    failed_video_id=vid,
-                )
-                if not recovered:
-                    raise
-                state = recovered
-                vid = str(recovered.get("video_id") or vid)
-                video = {
-                    **video,
-                    "video_id": vid,
-                    "url": recovered.get("url") or video.get("url"),
-                    "recovered_from_video_id": recovered.get("recovered_from_video_id"),
-                    "studio_verified": True,
-                    "verification_method": recovered.get("verification_method"),
-                }
-                _add_log(task, f"↪ YouTube video_id 복구: {recovered.get('recovered_from_video_id')} → {vid}", "warn")
-            merged = {**video, **state, "last_checked_at": _utcnow_iso()}
-            if state.get("terminal_failure"):
-                recovered = _recover_youtube_upload_by_exact_title(
-                    uploader,
-                    title=str(video.get("title") or ""),
-                    failed_video_id=vid,
-                )
-                if recovered:
-                    vid = str(recovered.get("video_id") or vid)
-                    video = {
-                        **video,
-                        "video_id": vid,
-                        "url": recovered.get("url") or video.get("url"),
-                        "recovered_from_video_id": recovered.get("recovered_from_video_id"),
-                        "studio_verified": True,
-                        "verification_method": recovered.get("verification_method"),
-                    }
-                    state = recovered
-                    merged = {**video, **state, "last_checked_at": _utcnow_iso()}
-                    _add_log(task, f"↪ YouTube 실패 video_id 복구: {recovered.get('recovered_from_video_id')} → {vid}", "warn")
-                else:
-                    checked.append(merged)
-                    task["status"] = "failed"
-                    task["step_states"]["7"] = "failed"
-                    task["error"] = (
-                        "YouTube 처리 실패: "
-                        f"{vid} uploadStatus={state.get('upload_status')} "
-                        f"processingStatus={state.get('processing_status')} "
-                        f"reason={state.get('failed_reason') or '-'}"
-                    )
-                    task["finished_at"] = _utcnow_iso()
-                    task["upload_monitor"] = {
-                        **monitor,
-                        "status": "failed",
-                        "last_checked_at": _utcnow_iso(),
-                        "videos": checked,
-                    }
-                    _update_project_status(str(task.get("project_id") or ""), "failed")
-                    _add_log(task, f"✗ YouTube 처리 실패: {vid}", "error")
-                    _save_tasks_to_disk()
-                    return True
-            checked.append(merged)
-            if not state.get("processed"):
-                all_processed = False
-
-        now = _utcnow_iso()
-        task["upload_monitor"] = {
-            **monitor,
-            "status": "processing" if not all_processed else "processed",
-            "last_checked_at": now,
-            "videos": checked,
-        }
-        task["current_step"] = 7
-        task["current_step_name"] = "유튜브 업로드 중"
-        task["current_step_label"] = "유튜브 업로드 중"
-        task["sub_status"] = "uploading"
-        task["step_states"]["7"] = "running"
-
-        project_id = str(task.get("project_id") or "")
-        if project_id:
-            db = SessionLocal()
-            try:
-                project = db.query(Project).filter(Project.id == project_id).first()
-                if project:
-                    cfg = dict(project.config or {})
-                    cfg["youtube_upload_processing"] = task["upload_monitor"]
-                    main_video = next((v for v in checked if str(v.get("kind") or "") == "main" and v.get("url")), None)
-                    if main_video:
-                        main_url = str(main_video.get("url") or "")
-                        task["youtube_url"] = main_url
-                        project.youtube_url = main_url
-                    project.config = cfg
-                    from sqlalchemy.orm.attributes import flag_modified
-                    flag_modified(project, "config")
-                    db.commit()
-            finally:
-                db.close()
-
-        if not all_processed:
-            pending = [
-                v.get("video_id") for v in checked
-                if not v.get("processed")
-            ]
-            _add_log(task, f"⏳ YouTube 처리 대기 중: {', '.join([p for p in pending if p])}", "info")
-            _save_tasks_to_disk()
-            return False
-
-        states = dict(task.get("step_states") or {})
-        states["7"] = "completed"
-        task["step_states"] = states
-        task["status"] = "completed"
-        task["current_step"] = None
-        task["current_step_name"] = None
-        task["current_step_label"] = None
-        task["sub_status"] = None
-        task["finished_at"] = now
-        task["upload_monitor"]["status"] = "completed"
-        _add_log(task, "✓ YouTube 처리 완료 확인")
-        _add_log(task, "🎉 제작 완료!")
-
-        if project_id:
-            db = SessionLocal()
-            try:
-                project = db.query(Project).filter(Project.id == project_id).first()
-                if project:
-                    project.status = "completed"
-                    main_video = next((v for v in checked if str(v.get("kind") or "") == "main" and v.get("url")), None)
-                    if main_video:
-                        main_url = str(main_video.get("url") or "")
-                        task["youtube_url"] = main_url
-                        project.youtube_url = main_url
-                    ss = dict(project.step_states or {})
-                    ss["7"] = "completed"
-                    project.step_states = ss
-                    cfg = dict(project.config or {})
-                    cfg["youtube_upload_processing"] = task["upload_monitor"]
-                    project.config = cfg
-                    from sqlalchemy.orm.attributes import flag_modified
-                    flag_modified(project, "step_states")
-                    flag_modified(project, "config")
-                    db.commit()
-            finally:
-                db.close()
-        _save_tasks_to_disk()
-        return True
-    except Exception as e:
-        _add_log(task, f"⚠ YouTube 처리 확인 실패: {type(e).__name__}: {e}", "warn")
-        monitor = task.setdefault("upload_monitor", monitor)
-        err_text = f"{type(e).__name__}: {e}"
-        now = _utcnow_iso()
-        monitor["last_error"] = err_text
-        monitor["last_checked_at"] = now
-        if "video not found:" in str(e).lower():
-            monitor["not_found_count"] = int(monitor.get("not_found_count") or 0) + 1
-            monitor.setdefault("first_not_found_at", now)
-            age = _utc_age_seconds(monitor.get("started_at") or monitor.get("first_not_found_at"))
-            if age is not None and age >= 1800:
-                task["status"] = "failed"
-                task["step_states"]["7"] = "failed"
-                task["error"] = (
-                    "YouTube 업로드 확인 실패: 30분 이상 video_id를 조회하지 못했습니다. "
-                    f"last_error={err_text}"
-                )
-                task["finished_at"] = now
-                task["sub_status"] = None
-                task["current_step_name"] = None
-                task["current_step_label"] = None
-                monitor["status"] = "failed"
-                _update_project_status(str(task.get("project_id") or ""), "failed")
-                _add_log(task, "✗ YouTube 업로드 확인 실패: video_id 조회 불가", "error")
-                _save_tasks_to_disk()
-                return True
-        _save_tasks_to_disk()
-        return False
-
-
-def _schedule_upload_monitor(task_id: str) -> None:
-    existing = _UPLOAD_MONITOR_RUNS.get(task_id)
-    if existing is not None and not existing.done():
-        return
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        return
-
-    async def _monitor() -> None:
-        try:
-            while True:
-                done = await asyncio.to_thread(_check_upload_processing_once, task_id)
-                if done:
-                    return
-                await asyncio.sleep(60)
-        finally:
-            if _UPLOAD_MONITOR_RUNS.get(task_id) is asyncio.current_task():
-                _UPLOAD_MONITOR_RUNS.pop(task_id, None)
-
-    _UPLOAD_MONITOR_RUNS[task_id] = loop.create_task(_monitor())
-
-
-def _schedule_existing_upload_monitors() -> None:
-    for task_id, task in list(_TASKS.items()):
-        if task.get("status") == "uploading" and isinstance(task.get("upload_monitor"), dict):
-            _schedule_upload_monitor(task_id)
 
 
 # --------------------------------------------------------------------------- #
@@ -5554,31 +5579,18 @@ def _ensure_thumbnail_generated(project_id: str, config: dict) -> bool:
 def _schedule_oneclick_run(task_id: str) -> None:
     """v1.1.58: _run_oneclick_task 를 안전하게 스케줄한다.
 
-    같은 task_id 의 이전 인스턴스가 아직 살아있으면(예: 사용자가 중지를 눌렀지만
-    내부 LLM/TTS 호출이 끝나지 않아 _RUN_LOCK 을 들고 있는 경우), 그것을 cancel
-    하고 새 인스턴스를 띄운다. 이 가드가 없으면 새 _run_oneclick_task 가 _RUN_LOCK
-    에서 영원히 대기해 UI 가 "queued" 로 멎는다.
+    같은 task_id 의 이전 인스턴스가 아직 살아있으면 새 인스턴스를 띄우지 않는다.
+    LLM 호출은 취소 신호와 실제 provider 연결 종료 사이에 시차가 있을 수 있으므로,
+    여기서 재스케줄하면 같은 대본 호출이 중복 발생할 수 있다.
     """
     prev = _ACTIVE_RUNS.get(task_id)
     if prev is not None and not prev.done():
-        # 1) 백그라운드 스레드(_run_sync_pipeline) 가 다음 체크포인트에서 종료되도록
-        #    Redis cancel 플래그를 세운다. asyncio Task 만 cancel 하면 thread 는
-        #    살아남아 새 인스턴스와 동시에 같은 프로젝트를 건드릴 수 있다.
         task = _TASKS.get(task_id)
-        pid = task.get("project_id") if task else None
-        if pid:
-            try:
-                from app.tasks.pipeline_tasks import _redis_set
-                _redis_set(f"pipeline:cancel:{pid}", "1")
-            except Exception:
-                pass
-            _cancel_studio_task_manager_steps(pid)
-        # 2) 코루틴을 cancel — `async with _RUN_LOCK` 블록이 풀리며 락이 즉시 반환된다.
-        try:
-            prev.cancel()
-            print(f"[oneclick] 이전 _run_oneclick_task({task_id}) 를 취소합니다 — 새 실행 스케줄")
-        except Exception as e:
-            print(f"[oneclick] 이전 task 취소 실패: {e}")
+        if task is not None:
+            _add_log(task, "ℹ 이미 실행 중인 작업 유지 — 중복 호출 차단", "muted")
+            _save_tasks_to_disk()
+        print(f"[oneclick] duplicate _run_oneclick_task({task_id}) blocked")
+        return
     task = _TASKS.get(task_id)
     try:
         loop = asyncio.get_running_loop()
@@ -5590,21 +5602,6 @@ def _schedule_oneclick_run(task_id: str) -> None:
         return
 
     async def _delayed_start():
-        # 3) 잠깐 대기 후 cancel 플래그를 비우고 본 작업 시작 — 잔존 스레드가
-        #    새 작업의 cancel 플래그를 자기 것으로 오인하지 않게 한다.
-        if prev is not None:
-            try:
-                await asyncio.sleep(1.0)
-            except Exception:
-                pass
-            task = _TASKS.get(task_id)
-            pid = task.get("project_id") if task else None
-            if pid:
-                try:
-                    from app.tasks.pipeline_tasks import _redis_set
-                    _redis_set(f"pipeline:cancel:{pid}", "")
-                except Exception:
-                    pass
         await _run_oneclick_task(task_id)
 
     new_task = loop.create_task(_delayed_start())
@@ -5614,7 +5611,7 @@ def _schedule_oneclick_run(task_id: str) -> None:
         global _AUTO_NEXT_DISPATCH_NOT_BEFORE, _AUTO_NEXT_DISPATCH_TASK
 
         finished = _TASKS.get(finished_task_id) or {}
-        if finished.get("status") not in ("completed", "failed", "uploading"):
+        if finished.get("status") not in ("completed", "failed", "uploading", "upload_pending", "upload_failed"):
             return
         if _emergency_stop_active():
             return
@@ -5781,6 +5778,24 @@ async def _run_oneclick_task(task_id: str) -> None:
 
         # --- Step 6: 최종 렌더링 (router handler 직접 호출) ---
         # v1.1.49: resume 모드에서 이미 완료된 6단계는 건너뛴다.
+        if task["step_states"].get("6") == "completed" and task["step_states"].get("7") != "completed":
+            render_ready, render_reason = await asyncio.to_thread(
+                _render_outputs_ready_for_upload,
+                project_id,
+                config,
+            )
+            if not render_ready:
+                task["step_states"]["6"] = "pending"
+                task["step_states"]["7"] = "pending"
+                task["resume_from_step"] = 6
+                _mark_project_steps_pending(project_id, 6)
+                _add_log(
+                    task,
+                    f"↻ 렌더 산출물 업로드 검증 실패 — Step 6 재생성: {render_reason}",
+                    "warn",
+                )
+                _save_tasks_to_disk()
+
         if task["step_states"].get("6") == "completed":
             if task["step_states"].get("7") == "completed":
                 task["current_step"] = None
@@ -5828,8 +5843,9 @@ async def _run_oneclick_task(task_id: str) -> None:
 
             task["step_states"]["6"] = "completed"
 
-        # --- Step 7: 썸네일 생성 + 유튜브 업로드 ---
-        # v1.1.49: resume 모드에서 이미 완료된 7단계는 건너뛴다.
+        # --- Step 7: 업로드 대기 이관 ---
+        # 최종 렌더링 이후에는 제작 runner 를 점유하지 않는다. 업로드는 별도
+        # upload-pending worker 가 1회만 시도하고, 실패 시 실패로 남긴다.
         if task.get("status") == "cancelled":
             task["step_states"]["7"] = "cancelled"
             task["error"] = task.get("error") or "사용자 취소"
@@ -5847,89 +5863,19 @@ async def _run_oneclick_task(task_id: str) -> None:
 
         uploaded_project = _load_project(project_id)
         uploaded_url = str(getattr(uploaded_project, "youtube_url", "") or "").strip() if uploaded_project else ""
-        if uploaded_url:
-            states = dict(task.get("step_states") or {})
-            states["7"] = "completed"
-            task["youtube_url"] = uploaded_url
-            _mark_task_completed(task, states)
-            if uploaded_project:
-                db = SessionLocal()
-                try:
-                    project = db.query(Project).filter(Project.id == project_id).first()
-                    if project:
-                        project.status = "completed"
-                        ss = dict(project.step_states or {})
-                        ss["7"] = "completed"
-                        project.step_states = ss
-                        from sqlalchemy.orm.attributes import flag_modified
-                        flag_modified(project, "step_states")
-                        db.commit()
-                finally:
-                    db.close()
-            _add_log(task, f"✓ 기존 YouTube URL 확인 — 업로드 완료 처리: {uploaded_url}")
+        if _youtube_video_id_from_url(uploaded_url) and _complete_task_from_existing_upload(
+            task,
+            project_id,
+            dict(getattr(uploaded_project, "config", None) or config or {}),
+        ):
             _save_tasks_to_disk()
             return
 
-        task["current_step"] = 7
-        task["current_step_name"] = "유튜브 업로드"
-        task["step_states"]["7"] = "running"
-        _ch = task.get("channel") or 1
-        _privacy = config.get("youtube_privacy", "private")
-        _add_log(task, f"▶ 유튜브 업로드 시작 [CH{_ch}, {_privacy}]")
-        try:
-            upload_state = await asyncio.to_thread(
-                lambda: run_async(_step_youtube_upload(project_id, config, channel=task.get("channel"), task_id=task_id))
-            )
-            upload_monitor = _upload_monitor_payload(task, upload_state if isinstance(upload_state, dict) else {})
-            task["upload_monitor"] = upload_monitor
-            task["status"] = "uploading"
-            task["current_step"] = 7
-            task["current_step_name"] = "유튜브 업로드 중"
-            task["current_step_label"] = "유튜브 업로드 중"
-            task["sub_status"] = "uploading"
-            task["step_states"]["7"] = "running"
-            task["finished_at"] = None
-            _update_project_status(project_id, "uploading")
-            _add_log(task, "⏳ 유튜브 업로드 대기 등록: 1분마다 처리 완료 확인")
-            _save_tasks_to_disk()
-            _schedule_upload_monitor(task_id)
-            return
-        except PipelineCancelled as e:
-            print(f"[oneclick] step 유튜브 업로드 CANCELLED by user: {e}")
-            _add_log(task, f"⏹ 유튜브 업로드 취소: {e}", "warn")
-            task["step_states"]["7"] = "cancelled"
-            task["status"] = "cancelled"
-            task["error"] = task.get("error") or "사용자 취소"
-            task["finished_at"] = _utcnow_iso()
-            _update_project_status(project_id, "cancelled")
-            return
-        except Exception as e:
-            tb = traceback.format_exc()
-            print(f"[oneclick] step 유튜브 업로드 FAILED: {e}\n{tb}")
-            _add_log(task, f"✗ 유튜브 업로드 실패: {type(e).__name__}: {e}", "error")
-            task["step_states"]["7"] = "failed"
-            task["status"] = "failed"
-            task["error"] = f"유튜브 업로드 실패: {type(e).__name__}: {e}"
-            task["finished_at"] = _utcnow_iso()
-            _update_project_status(project_id, "failed")
-            return
-
-        task["step_states"]["7"] = "completed"
-        task["current_step"] = None
-        task["current_step_name"] = None
-        task["status"] = "completed"
-        task["finished_at"] = _utcnow_iso()
-        # v2.1.2: 전체 소요시간 계산
-        try:
-            from datetime import datetime as _dt
-            _started = _dt.fromisoformat(task.get("started_at", ""))
-            _finished = _dt.fromisoformat(task["finished_at"])
-            _total_sec = (_finished - _started).total_seconds()
-            _add_log(task, f"🎉 제작 완료! 총 {_total_sec/60:.1f}분 소요")
-        except Exception:
-            _add_log(task, "🎉 제작 완료!")
-        _update_project_status(project_id, "completed")
+        _mark_task_upload_pending(task, project_id)
+        _add_log(task, "✓ 최종 렌더링 완료 — 업로드 대기로 이관")
         _save_tasks_to_disk()
+        _schedule_upload_pending_worker()
+        return
 
 
 def _update_project_status(project_id: str, status: str) -> None:
@@ -5941,6 +5887,64 @@ def _update_project_status(project_id: str, status: str) -> None:
             db.commit()
     finally:
         db.close()
+
+
+def _update_project_upload_step_state(
+    project_id: str,
+    *,
+    status: str,
+    current_step: Optional[int],
+    step7_state: str,
+) -> None:
+    db = SessionLocal()
+    try:
+        p = db.query(Project).filter(Project.id == project_id).first()
+        if not p:
+            return
+        states = dict(p.step_states or {})
+        states["6"] = "completed"
+        states["7"] = step7_state
+        p.status = status
+        p.current_step = current_step
+        p.step_states = states
+        try:
+            from sqlalchemy.orm.attributes import flag_modified
+            flag_modified(p, "step_states")
+        except Exception:
+            pass
+        db.commit()
+    finally:
+        db.close()
+
+
+def _mark_task_upload_pending(task: dict[str, Any], project_id: str) -> None:
+    states = dict(task.get("step_states") or {})
+    states["6"] = "completed"
+    states["7"] = "pending"
+    task["step_states"] = states
+    task["status"] = "upload_pending"
+    task["current_step"] = None
+    task["current_step_name"] = None
+    task["current_step_label"] = None
+    task["current_step_completed"] = 0
+    task["current_step_total"] = 0
+    task["current_step_progress_text"] = None
+    task["current_step_cut_progress_pct"] = None
+    task["current_step_active_cut"] = None
+    task["sub_status"] = None
+    task.pop("resume_from_step", None)
+    task["error"] = None
+    now = _utcnow_iso()
+    task["finished_at"] = task.get("finished_at") or now
+    task["upload_pending_at"] = task.get("upload_pending_at") or task["finished_at"]
+    task.setdefault("youtube_upload_attempt_count", 0)
+    task["progress_pct"] = _compute_progress_pct(task)
+    _update_project_upload_step_state(
+        project_id,
+        status="upload_pending",
+        current_step=6,
+        step7_state="pending",
+    )
 
 
 def _reset_project_steps_for_resume(project_id: str, resume_step: int) -> None:
@@ -8178,8 +8182,115 @@ def get_task_detail(task_id: str) -> dict:
     }
 
 
-async def manual_youtube_upload(task_id: str) -> dict:
-    """완성작을 수동으로 YouTube 에 업로드."""
+def _upload_attempt_count(task: dict[str, Any]) -> int:
+    try:
+        return max(0, int(task.get("youtube_upload_attempt_count") or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _mark_task_upload_started(task: dict[str, Any], project_id: str, *, mode: str) -> None:
+    states = dict(task.get("step_states") or {})
+    states["6"] = "completed"
+    states["7"] = "running"
+    task["step_states"] = states
+    task["status"] = "uploading"
+    task["current_step"] = 7
+    task["current_step_name"] = "유튜브 업로드"
+    task["current_step_label"] = "유튜브 업로드"
+    task["sub_status"] = "uploading"
+    task["finished_at"] = None
+    task.pop("resume_from_step", None)
+    task["error"] = None
+    task["youtube_upload_attempt_count"] = _upload_attempt_count(task) + 1
+    now = _utcnow_iso()
+    task.setdefault("youtube_upload_first_attempt_at", now)
+    task["youtube_upload_last_attempt_at"] = now
+    task["youtube_upload_mode"] = mode
+    _update_project_upload_step_state(
+        project_id,
+        status="uploading",
+        current_step=7,
+        step7_state="running",
+    )
+
+
+def _mark_task_upload_failed(task: dict[str, Any], project_id: str, message: str) -> None:
+    states = dict(task.get("step_states") or {})
+    states["6"] = "completed"
+    states["7"] = "failed"
+    task["step_states"] = states
+    task["status"] = "upload_failed"
+    task["current_step"] = None
+    task["current_step_name"] = None
+    task["current_step_label"] = None
+    task["current_step_completed"] = 0
+    task["current_step_total"] = 0
+    task["current_step_progress_text"] = None
+    task["current_step_cut_progress_pct"] = None
+    task["current_step_active_cut"] = None
+    task["sub_status"] = None
+    task.pop("resume_from_step", None)
+    task["error"] = message
+    task["youtube_upload_error"] = message
+    task["youtube_upload_failed_at"] = _utcnow_iso()
+    task["finished_at"] = task["youtube_upload_failed_at"]
+    task["progress_pct"] = _compute_progress_pct(task)
+    _update_project_upload_step_state(
+        project_id,
+        status="upload_failed",
+        current_step=7,
+        step7_state="failed",
+    )
+
+
+def _upload_attempt_already_used(task: dict[str, Any]) -> bool:
+    if _upload_attempt_count(task) > 0:
+        return True
+    states = dict(task.get("step_states") or {})
+    return (
+        str(task.get("status") or "").strip().lower() == "upload_failed"
+        or states.get("7") == "failed"
+    )
+
+
+def _restore_unattempted_upload_pending_tasks() -> bool:
+    """Render-complete tasks with no upload attempt must stay upload_pending."""
+    changed = False
+    for task in list(_TASKS.values()):
+        status = str(task.get("status") or "").strip().lower()
+        if status not in ("completed", "failed"):
+            continue
+        states = dict(task.get("step_states") or {})
+        if states.get("6") != "completed" or states.get("7") != "pending":
+            continue
+        if _upload_attempt_already_used(task):
+            continue
+        project_id = str(task.get("project_id") or "").strip()
+        if not project_id:
+            continue
+        if _complete_task_from_existing_upload(
+            task,
+            project_id,
+            task.get("config") if isinstance(task.get("config"), dict) else None,
+            log_prefix="업로드 대기 복구 중 기존 YouTube URL 확인",
+        ):
+            changed = True
+            continue
+        if status == "failed" and "유튜브 본편 업로드 URL 미확인" not in str(task.get("error") or ""):
+            continue
+        _mark_task_upload_pending(task, project_id)
+        task["youtube_upload_attempt_count"] = 0
+        task["youtube_upload_error"] = None
+        task["youtube_upload_failed_at"] = None
+        _add_log(task, "↻ 미시도 업로드 대기 상태 복구", "warn")
+        changed = True
+    return changed
+
+
+async def manual_youtube_upload(task_id: str, *, automatic: bool = False, force_retry: bool = False) -> dict:
+    """완성작을 YouTube 에 1회만 업로드."""
+    _ensure_state_loaded()
     task = _TASKS.get(task_id)
     if not task:
         raise KeyError("task not found")
@@ -8190,59 +8301,209 @@ async def manual_youtube_upload(task_id: str) -> dict:
         raise RuntimeError("프로젝트를 찾을 수 없습니다")
 
     config = dict(project.config or {})
-    states = dict(task.get("step_states") or {})
-    states["7"] = "running"
-    task["step_states"] = states
-    task["status"] = "uploading"
-    task["current_step"] = 7
-    task["current_step_name"] = "유튜브 수동 업로드"
-    task["current_step_label"] = "유튜브 수동 업로드"
-    task["sub_status"] = "manual-uploading"
-    task["finished_at"] = None
-    task["resume_from_step"] = 7
-    task["error"] = None
-    _add_log(task, "▶ 유튜브 수동 업로드 시작")
+    if _complete_task_from_existing_upload(
+        task,
+        project_id,
+        config,
+        log_prefix="수동 업로드 처리 중 기존 YouTube URL 확인",
+    ):
+        _save_tasks_to_disk()
+        return {
+            "ok": True,
+            "status": "completed",
+            "youtube_url": task.get("youtube_url"),
+        }
+
+    if _upload_attempt_already_used(task) and not force_retry:
+        if _upload_attempt_count(task) <= 0:
+            task["youtube_upload_attempt_count"] = 1
+        if str(task.get("status") or "") != "upload_failed":
+            _mark_task_upload_failed(
+                task,
+                project_id,
+                "유튜브 업로드는 이미 1회 시도되어 재시도하지 않습니다.",
+            )
+        _save_tasks_to_disk()
+        return {
+            "ok": False,
+            "status": "upload_failed",
+            "message": task.get("error") or "유튜브 업로드는 이미 1회 시도되어 재시도하지 않습니다.",
+            "youtube_url": task.get("youtube_url"),
+        }
+
+    if _UPLOAD_ACTIVE_TASK_IDS and task_id not in _UPLOAD_ACTIVE_TASK_IDS:
+        return {
+            "ok": False,
+            "status": "upload_pending",
+            "message": "다른 업로드가 진행 중입니다.",
+            "youtube_url": task.get("youtube_url"),
+        }
+
+    if force_retry:
+        states = dict(task.get("step_states") or {})
+        states["6"] = "completed"
+        states["7"] = "pending"
+        task["step_states"] = states
+        task["status"] = "completed"
+        task["error"] = None
+        task["youtube_upload_error"] = None
+        task["youtube_upload_failed_at"] = None
+
+    mode = "automatic" if automatic else ("manual-retry" if force_retry else "manual")
+    _UPLOAD_ACTIVE_TASK_IDS.add(task_id)
+    _mark_task_upload_started(task, project_id, mode=mode)
+    _add_log(task, "▶ 업로드 대기 1회 업로드 시작" if automatic else "▶ 유튜브 수동 업로드 시작")
     _save_tasks_to_disk()
 
     try:
         upload_state = await _step_youtube_upload(project_id, config, channel=task.get("channel"), task_id=task_id)
     except Exception as e:
-        states = dict(task.get("step_states") or {})
-        states["7"] = "failed"
-        task["step_states"] = states
-        task["status"] = "failed"
-        task["current_step"] = None
-        task["current_step_name"] = None
-        task["resume_from_step"] = 7
-        task["error"] = f"유튜브 업로드 실패: {type(e).__name__}: {e}"
-        _add_log(task, f"✗ 유튜브 수동 업로드 실패: {type(e).__name__}: {e}", "error")
+        if _complete_task_from_existing_upload(
+            task,
+            project_id,
+            config,
+            log_prefix="업로드 실패 응답 후 기존 본편 URL 확인",
+        ):
+            _save_tasks_to_disk()
+            _UPLOAD_ACTIVE_TASK_IDS.discard(task_id)
+            return {
+                "ok": True,
+                "status": "completed",
+                "youtube_url": task.get("youtube_url"),
+            }
+        prefix = "유튜브 업로드 제한" if _is_youtube_upload_quota_error(e) else "유튜브 업로드 실패"
+        message = f"{prefix}: {type(e).__name__}: {e}"
+        _mark_task_upload_failed(task, project_id, message)
+        _add_log(task, f"✗ {message}", "error")
         _save_tasks_to_disk()
-        raise
+        _UPLOAD_ACTIVE_TASK_IDS.discard(task_id)
+        return {
+            "ok": False,
+            "status": "upload_failed",
+            "message": message,
+            "youtube_url": task.get("youtube_url"),
+        }
 
-    upload_monitor = _upload_monitor_payload(task, upload_state if isinstance(upload_state, dict) else {})
-    task["upload_monitor"] = upload_monitor
-    task["status"] = "uploading"
-    task["current_step"] = 7
-    task["current_step_name"] = "유튜브 업로드 중"
-    task["current_step_label"] = "유튜브 업로드 중"
-    task["sub_status"] = "uploading"
     states = dict(task.get("step_states") or {})
-    states["7"] = "running"
+    states["7"] = "completed"
     task["step_states"] = states
-    task["finished_at"] = None
-    task["error"] = None
-    _update_project_status(project_id, "uploading")
-    _add_log(task, "⏳ 유튜브 수동 업로드 대기 등록: 1분마다 처리 완료 확인")
+    if isinstance(upload_state, dict):
+        main_video = next(
+            (
+                v for v in (upload_state.get("videos") or [])
+                if isinstance(v, dict)
+                and str(v.get("kind") or "") == "main"
+                and str(v.get("url") or "").strip()
+            ),
+            None,
+        )
+        if main_video:
+            task["youtube_url"] = str(main_video.get("url") or "").strip()
+    _mark_task_completed(task, states)
+    task["youtube_upload_completed_at"] = task.get("finished_at") or _utcnow_iso()
+    _update_project_status(project_id, "completed")
+    _add_log(task, "✓ 유튜브 업로드 응답 완료 — 처리 모니터링 없이 완료 처리")
     _save_tasks_to_disk()
-    _schedule_upload_monitor(task_id)
 
     project = _load_project(project_id)
+    _UPLOAD_ACTIVE_TASK_IDS.discard(task_id)
     return {
         "ok": True,
-        "status": "uploading",
+        "status": "completed",
         "youtube_url": project.youtube_url if project else None,
-        "upload_monitor": upload_monitor,
     }
+
+
+def _recover_stale_uploading_tasks() -> bool:
+    changed = False
+    for task in list(_TASKS.values()):
+        task_id = str(task.get("task_id") or "").strip()
+        if task_id in _UPLOAD_ACTIVE_TASK_IDS:
+            continue
+        if str(task.get("status") or "").strip().lower() != "uploading":
+            continue
+        project_id = str(task.get("project_id") or "").strip()
+        if not project_id:
+            continue
+        _mark_task_upload_failed(
+            task,
+            project_id,
+            "유튜브 업로드 1회 시도 중 서버가 중단되어 재시도하지 않습니다.",
+        )
+        _add_log(task, "✗ 업로드 1회 시도 중단 감지 — 재시도 없이 실패 처리", "error")
+        changed = True
+    return changed
+
+
+def _pick_next_upload_pending_task_id() -> Optional[str]:
+    candidates: list[tuple[str, str]] = []
+    for task_id, task in _TASKS.items():
+        status = str(task.get("status") or "").strip().lower()
+        if status != "upload_pending":
+            continue
+        states = dict(task.get("step_states") or {})
+        if states.get("6") != "completed" or states.get("7") != "pending":
+            continue
+        if _upload_attempt_already_used(task):
+            continue
+        ts = (
+            str(task.get("upload_pending_at") or "")
+            or str(task.get("finished_at") or "")
+            or str(task.get("created_at") or "")
+        )
+        candidates.append((ts, task_id))
+    candidates.sort(key=lambda item: item[0])
+    return candidates[0][1] if candidates else None
+
+
+async def _upload_pending_worker_once() -> None:
+    _ensure_state_loaded()
+    changed = _recover_stale_uploading_tasks()
+    if _restore_unattempted_upload_pending_tasks():
+        changed = True
+    task_id = _pick_next_upload_pending_task_id()
+    if changed:
+        _save_tasks_to_disk()
+    if not task_id:
+        return
+    try:
+        await manual_youtube_upload(task_id, automatic=True)
+    except Exception as exc:
+        task = _TASKS.get(task_id)
+        project_id = str((task or {}).get("project_id") or "").strip()
+        if task and project_id:
+            _mark_task_upload_failed(
+                task,
+                project_id,
+                f"유튜브 업로드 실패: {type(exc).__name__}: {exc}",
+            )
+            _add_log(task, f"✗ 유튜브 업로드 실패: {type(exc).__name__}: {exc}", "error")
+            _save_tasks_to_disk()
+
+
+def _schedule_upload_pending_worker() -> bool:
+    global _UPLOAD_PENDING_RUN
+    if _emergency_stop_active():
+        return False
+    if _UPLOAD_ACTIVE_TASK_IDS:
+        return False
+    if _UPLOAD_PENDING_RUN is not None and not _UPLOAD_PENDING_RUN.done():
+        return False
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+
+    async def _runner() -> None:
+        global _UPLOAD_PENDING_RUN
+        try:
+            await _upload_pending_worker_once()
+        finally:
+            if _UPLOAD_PENDING_RUN is asyncio.current_task():
+                _UPLOAD_PENDING_RUN = None
+
+    _UPLOAD_PENDING_RUN = loop.create_task(_runner())
+    return True
 
 def bulk_delete_tasks(task_ids: list[str]) -> dict:
     """여러 태스크 일괄 삭제 + 디스크 정리."""
@@ -8320,7 +8581,7 @@ def get_library_stats() -> dict:
             has_url = False
             try:
                 proj = _load_project(pid) if pid else None
-                if proj and getattr(proj, "youtube_url", None):
+                if _project_has_uploaded_video(proj):
                     has_url = True
             except Exception:
                 pass
@@ -8485,6 +8746,15 @@ def _queue_item_identity_values(item: dict[str, Any]) -> set[str]:
     work_key = _queue_item_work_key(item or {})
     if work_key is not None:
         values.add(f"work:{work_key[0]}:{work_key[1]}:{work_key[2]}")
+    else:
+        try:
+            ch = int((item or {}).get("channel") or 1)
+        except Exception:
+            ch = 1
+        topic = re.sub(r"\s+", " ", str((item or {}).get("topic") or "").strip().lower())
+        preset = str((item or {}).get("template_project_id") or (item or {}).get("source_project_id") or "").strip()
+        if topic:
+            values.add(f"work-noep:{ch}:{preset}:{topic}")
     return values
 
 
@@ -8506,7 +8776,6 @@ def _normalize_queue_runtime_state(*, save: bool = True) -> bool:
     before = _queue_items_snapshot((_QUEUE or {}).get("items") or [])
     changed = _sync_queue_items_from_tasks_for_save(save=save)
     _dedupe_queue_state_in_place(_QUEUE)
-    _sort_queue_state_in_place(_QUEUE)
     after = _queue_items_snapshot((_QUEUE or {}).get("items") or [])
     if before != after:
         changed = True
@@ -8531,7 +8800,6 @@ def _queue_normalize(raw: Any) -> dict[str, Any]:
         load_project=_load_project,
     )
     _dedupe_queue_state_in_place(normalized)
-    _sort_queue_state_in_place(normalized)
     return normalized
 
 
@@ -8561,7 +8829,6 @@ def _ensure_state_loaded() -> None:
 def _save_queue_to_disk() -> None:
     try:
         _dedupe_queue_state_in_place(_QUEUE)
-        _sort_queue_state_in_place(_QUEUE)
         _QUEUE_FILE.parent.mkdir(parents=True, exist_ok=True)
         _QUEUE_FILE.write_text(
             json.dumps(_QUEUE, ensure_ascii=False, indent=2),
@@ -8628,7 +8895,6 @@ def set_queue(new_state: dict[str, Any]) -> dict[str, Any]:
         ]
         normalized["items"] = locked_items + incoming_items
         _dedupe_queue_state_in_place(normalized)
-        _sort_queue_state_in_place(normalized)
     # last_run_dates 는 사용자가 바꿀 값이 아니므로 기존 값 유지.
     if not isinstance(new_state.get("last_run_dates"), dict):
         normalized["last_run_dates"] = dict(_QUEUE.get("last_run_dates") or {})
@@ -8653,7 +8919,7 @@ def recover_existing_for_queue_item(item_id: str) -> dict[str, Any]:
             return {"ok": True, "task": None, "queue": get_queue()}
 
         item = dict(items[idx] or {})
-        project_id = _find_existing_project_for_queue_item(item)
+        project_id = _find_existing_project_for_queue_item(item, allow_implicit=False)
         if not project_id:
             return {"ok": True, "task": None, "queue": get_queue()}
 
@@ -8783,16 +9049,19 @@ def _task_matches_queue_item(task: dict[str, Any], item: dict[str, Any], preset_
 
 
 def _task_has_uploaded_result(task: dict[str, Any]) -> bool:
-    if task.get("youtube_url"):
-        return True
     pid = str(task.get("project_id") or "").strip()
     if not pid:
         return False
     try:
         project = _load_project(pid)
-        return bool(project and project.youtube_url and (project.step_states or {}).get("7") == "completed")
+        return _project_upload_step_complete(project, dict((project.config if project else None) or {}))
     except Exception:
         return False
+
+
+def _task_has_rendered_upload_work(task: dict[str, Any]) -> bool:
+    states = dict((task or {}).get("step_states") or {})
+    return states.get("6") == "completed" and states.get("7") != "completed"
 
 
 def _find_existing_task_for_queue_item(
@@ -8805,9 +9074,11 @@ def _find_existing_task_for_queue_item(
         if not _task_matches_queue_item(task, item, preset_id):
             continue
         status = str(task.get("status") or "").strip().lower()
-        if status in ("running", "uploading", "queued", "prepared"):
+        if status in ("running", "queued", "prepared"):
             active.append(task)
         elif status == "completed" and _task_has_uploaded_result(task):
+            completed.append(task)
+        elif status in ("completed", "upload_pending", "uploading", "upload_failed", "failed") and _task_has_rendered_upload_work(task):
             completed.append(task)
     if active:
         active.sort(key=lambda task: str(task.get("started_at") or task.get("created_at") or ""), reverse=True)
@@ -8999,6 +9270,7 @@ async def _queue_loop() -> None:
                 now = datetime.now()
                 today = _today_iso()
                 _normalize_queue_runtime_state()
+                _schedule_upload_pending_worker()
                 items = list(_QUEUE.get("items") or [])
                 if _auto_production_paused():
                     await asyncio.sleep(min(30, max(1, _auto_production_pause_remaining())))
@@ -9095,20 +9367,25 @@ def start_queue_scheduler() -> bool:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
     _QUEUE_TASK = loop.create_task(_queue_loop())
-    _schedule_existing_upload_monitors()
+    _schedule_upload_pending_worker()
     return True
 
 
 def stop_queue_scheduler() -> None:
     """v1.1.43: FastAPI lifespan shutdown 훅에서 호출."""
-    global _QUEUE_TASK
-    if _QUEUE_TASK is None:
-        return
-    try:
-        _QUEUE_TASK.cancel()
-    except Exception as e:
-        print(f"[oneclick.queue] cancel error: {e}")
+    global _QUEUE_TASK, _UPLOAD_PENDING_RUN
+    if _QUEUE_TASK is not None:
+        try:
+            _QUEUE_TASK.cancel()
+        except Exception as e:
+            print(f"[oneclick.queue] cancel error: {e}")
+    if _UPLOAD_PENDING_RUN is not None and not _UPLOAD_PENDING_RUN.done():
+        try:
+            _UPLOAD_PENDING_RUN.cancel()
+        except Exception as e:
+            print(f"[oneclick.upload] cancel error: {e}")
     _QUEUE_TASK = None
+    _UPLOAD_PENDING_RUN = None
 
 async def run_queue_top_now(channel=None):
     """v1.2.12: 큐 맨 위 1건을 즉시 실행. 큐가 비어 있으면 None 반환.

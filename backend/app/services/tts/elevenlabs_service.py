@@ -26,8 +26,9 @@ class ElevenLabsService(BaseTTSService):
 
     @property
     def headers(self) -> dict:
-        # v1.1.63: UI 에서 바꾼 키가 즉시 반영되도록 매 접근마다 최신 키를 읽음.
-        return {"xi-api-key": config.ELEVENLABS_API_KEY}
+        # Read the current .env/env/config value on every call. Long-running
+        # workbench jobs must not keep using a stale in-memory key.
+        return {"xi-api-key": config.get_runtime_api_key("ELEVENLABS_API_KEY")}
 
     async def generate(self, text: str, voice_id: str, output_path: str, speed: float = 1.0, voice_settings: Optional[dict] = None) -> dict:
         vs = dict(voice_settings or {"stability": 0.5, "similarity_boost": 0.75})

@@ -215,10 +215,10 @@ def is_running(project_id: str, step: str) -> bool:
         state.finished_at = time.time()
         _async_tasks.pop(key, None)
         return False
-    # Hard ceiling safety net: 6 hours. Only kicks in for genuinely stuck tasks.
-    # Normal long video generation (1~4h) runs well within this window.
+    # Hard ceiling safety net: 6 hours. Script generation intentionally has no
+    # ceiling; duplicate calls are blocked by the script generation lock instead.
     elapsed = time.time() - state.started_at
-    if elapsed > 6 * 3600:
+    if step != "script" and elapsed > 6 * 3600:
         state.status = "failed"
         state.error = "Task timed out (exceeded 6 hours)"
         state.finished_at = time.time()
