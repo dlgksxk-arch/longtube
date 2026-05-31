@@ -861,7 +861,7 @@ class InterludeStabilityTests(unittest.TestCase):
         self.assertIn("def get_system_prompt", prompt_source)
         self.assertIn("def _build_user_prompt", prompt_source)
         self.assertIn("SCRIPT_SYSTEM_PROMPT_TEMPLATE", prompt_source)
-        self.assertIn("수익창출이 최우선 목표인 유튜브 자동화 파이프라인용 대본 생성기", prompt_source)
+        self.assertIn("시청자를 끌어들이고 끝까지 시청하게 만드는 유튜브 자동화 파이프라인용 대본 생성기", prompt_source)
         self.assertIn("고정 도입부 구조", prompt_source)
         self.assertIn("대본 강도 계약", prompt_source)
         self.assertIn("반복 금지 계약", prompt_source)
