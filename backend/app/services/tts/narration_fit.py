@@ -280,6 +280,67 @@ def _fit_audio_duration_in_place(path: str, current_duration: float, config: dic
             pass
 
 
+def apply_tts_tail_polish(path: str, current_duration: float, config: dict | None = None, log=None) -> float:
+    """Smooth the generated TTS tail and append a short natural pause."""
+    if current_duration <= 0 or not os.path.exists(path):
+        return current_duration
+    fade, silence = app_config.resolve_tts_tail_polish(config)
+    if fade <= 0 and silence <= 0:
+        return current_duration
+
+    fade = min(fade, max(0.0, current_duration / 4.0))
+    filters: list[str] = []
+    if fade > 0:
+        filters.append(f"afade=t=out:st={max(0.0, current_duration - fade):.3f}:d={fade:.3f}")
+    if silence > 0:
+        filters.append(f"apad=pad_dur={silence:.3f}")
+    if not filters:
+        return current_duration
+
+    target_duration = current_duration + silence
+    tmp = str(Path(path).with_name(f"{Path(path).stem}.tailpolish{Path(path).suffix or '.mp3'}"))
+    try:
+        ffmpeg, _ = _resolve_bins()
+        proc = subprocess.run(
+            [
+                ffmpeg,
+                "-y",
+                "-i",
+                path,
+                "-filter:a",
+                ",".join(filters),
+                "-t",
+                f"{target_duration:.3f}",
+                "-vn",
+                tmp,
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=90,
+            check=False,
+        )
+        if proc.returncode != 0 or not os.path.exists(tmp) or os.path.getsize(tmp) <= 100:
+            if log:
+                log(f"tail polish failed: {proc.stderr[-300:] if proc.stderr else proc.returncode}")
+            return current_duration
+        os.replace(tmp, path)
+        measured = _probe_audio_duration(path) or target_duration
+        if log:
+            log(
+                f"tail polish: {current_duration:.2f}s -> {measured:.2f}s "
+                f"(fade={fade:.2f}s, silence={silence:.2f}s)"
+            )
+        return measured
+    finally:
+        try:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        except OSError:
+            pass
+
+
 def ensure_audio_duration_window(path: str, current_duration: float, config: dict | None = None, log=None) -> float:
     """Final no-credit guard before saving a cut audio file.
 
@@ -495,6 +556,8 @@ async def generate_tts_with_auto_narration_fit(
     final_narration = str(chosen.get("narration") or current)
     spoken_duration = float(chosen.get("duration") or final_result.get("duration") or 0.0)
     final_duration = ensure_audio_duration_window(chosen_path, spoken_duration, config=config, log=log)
+    if not app_config.should_fit_tts_audio_to_cut(config):
+        final_duration = apply_tts_tail_polish(chosen_path, final_duration, config=config, log=log)
     fitted_spoken_duration = spoken_duration
     _, max_sec, _ = app_config.resolve_tts_timing_window(config)
     if spoken_duration > min(max_sec, _hard_max_duration(config)):

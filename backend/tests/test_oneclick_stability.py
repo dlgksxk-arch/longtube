@@ -1979,6 +1979,17 @@ class InterludeStabilityTests(unittest.TestCase):
             4.0,
         )
 
+    def test_japanese_tts_input_removes_word_spacing(self):
+        from app.services.tts.pronunciation_normalizer import prepare_spoken_narration_for_tts
+
+        self.assertEqual(
+            prepare_spoken_narration_for_tts(
+                "みなさん こんにちは にほん の れきし の ひみつ を さぐる じかん です。",
+                "ja",
+            ),
+            "みなさんこんにちはにほんのれきしのひみつをさぐるじかんです。",
+        )
+
 
 class ShortsStabilityTests(unittest.TestCase):
     def test_shorts_keeps_marked_cut_clip_speed(self):

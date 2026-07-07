@@ -278,6 +278,8 @@ CUT_VIDEO_DURATION = 4.0
 CUT_AUDIO_LEAD_IN_SECONDS = 0.3
 CUT_AUDIO_TAIL_SECONDS = 0.3
 MIN_TTS_DRIVEN_CUT_DURATION = 4.0
+TTS_TAIL_FADE_SECONDS = 0.06
+TTS_TAIL_SILENCE_SECONDS = 0.20
 TTS_DRIVEN_CUT_DURATION_DEFAULT = True
 TTS_AUDIO_TIMING_FIT_DEFAULT = False
 
@@ -317,6 +319,24 @@ def resolve_cut_video_duration(config: dict | None = None, default: float | None
 def should_fit_tts_audio_to_cut(config: dict | None = None) -> bool:
     """Return whether generated TTS files should be time-fit to fixed cut slots."""
     return _config_bool(config, "tts_audio_timing_fit", TTS_AUDIO_TIMING_FIT_DEFAULT)
+
+
+def resolve_tts_tail_polish(config: dict | None = None) -> tuple[float, float]:
+    """Return (fade_sec, tail_silence_sec) for generated TTS files."""
+    fade = TTS_TAIL_FADE_SECONDS
+    silence = TTS_TAIL_SILENCE_SECONDS
+    if isinstance(config, dict):
+        if _config_bool(config, "tts_tail_polish", True) is False:
+            return 0.0, 0.0
+        try:
+            fade = float(config.get("tts_tail_fade_sec", fade))
+        except (TypeError, ValueError):
+            fade = TTS_TAIL_FADE_SECONDS
+        try:
+            silence = float(config.get("tts_tail_silence_sec", silence))
+        except (TypeError, ValueError):
+            silence = TTS_TAIL_SILENCE_SECONDS
+    return max(0.0, min(0.5, fade)), max(0.0, min(2.0, silence))
 
 
 def use_tts_driven_cut_duration(config: dict | None = None) -> bool:

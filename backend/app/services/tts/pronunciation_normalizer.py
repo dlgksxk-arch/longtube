@@ -209,7 +209,11 @@ def normalize_japanese_pronunciation_for_tts(text: str) -> str:
     source = str(text or "")
     result = normalize_japanese_readings(source, _JA_PRONUNCIATION_REPLACEMENTS)
     log_unresolved_japanese_readings(source, result)
-    return _SPACE_RE.sub(" ", result).strip()
+    result = _SPACE_RE.sub(" ", result).strip()
+    # Japanese TTS reads unnatural pauses when every word is space-separated.
+    result = re.sub(r"(?<=[\u3040-\u30ff\u3400-\u9fff々ー])\s+(?=[\u3040-\u30ff\u3400-\u9fff々ー])", "", result)
+    result = re.sub(r"\s+([。、！？!?])", r"\1", result)
+    return result
 
 
 def prepare_spoken_narration_for_tts(text: str, language: str = "ko") -> str:
