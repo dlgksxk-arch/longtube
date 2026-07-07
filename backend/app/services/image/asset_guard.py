@@ -85,7 +85,7 @@ def _tokens(text: str) -> set[str]:
 
 
 def prompt_hash(text: str) -> str:
-    normalized = " ".join(sorted(_tokens(text)))
+    normalized = re.sub(r"\s+", " ", text or "").strip()
     normalized = f"{_PROMPT_POLICY_VERSION}|{normalized}"
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
@@ -113,6 +113,7 @@ def write_prompt_sidecar(
         "narration": narration or "",
     }
     if comfyui_positive_prompt:
+        payload["comfyui_positive_prompt_hash"] = prompt_hash(comfyui_positive_prompt)
         payload["comfyui_positive_prompt"] = comfyui_positive_prompt
     if comfyui_negative_prompt:
         payload["comfyui_negative_prompt"] = comfyui_negative_prompt
@@ -179,8 +180,10 @@ def image_matches_prompt(
     if meta:
         if image_model and meta.get("image_model") and meta.get("image_model") != image_model:
             return False, "sidecar_model_mismatch"
-        if final_prompt and meta.get("final_prompt_hash") == prompt_hash(final_prompt):
-            return True, "sidecar_final_prompt_match"
+        if final_prompt:
+            if meta.get("final_prompt_hash") == prompt_hash(final_prompt):
+                return True, "sidecar_final_prompt_match"
+            return False, "sidecar_final_prompt_mismatch"
         if source_prompt and meta.get("source_prompt_hash") == prompt_hash(source_prompt):
             return True, "sidecar_source_prompt_match"
         return False, "sidecar_prompt_mismatch"

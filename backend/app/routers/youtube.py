@@ -42,7 +42,7 @@ from app.services.thumbnail_service import (
 from app.services.image.factory import DEFAULT_THUMBNAIL_MODEL, resolve_image_model
 from app.services.llm.factory import get_llm_service
 from app.services.llm.base import BaseLLMService
-from app.services.title_utils import with_episode_prefix
+from app.services.title_utils import strong_main_upload_title
 from app.services.youtube_metadata import DEFAULT_MAX_TAGS, clean_tags, expand_tags, format_description
 from app.services.multilingual_caption_service import should_upload_youtube_captions, upload_multilingual_captions
 
@@ -911,13 +911,13 @@ async def recommend_metadata(
     hook_clean = _strip_episode_prefix(hook_raw)
 
     if body.episode_number is not None and hook_clean:
-        final_title = with_episode_prefix(hook_clean, body.episode_number)
+        final_title = strong_main_upload_title(hook_clean, body.episode_number)
     elif body.episode_number is not None:
         # LLM 이 hook 을 못 줬을 때 폴백: 기존 프로젝트 title 이나 topic 사용
         fallback_hook = _strip_episode_prefix(title_hint or topic or "Untitled")[:48]
-        final_title = with_episode_prefix(fallback_hook, body.episode_number)
+        final_title = strong_main_upload_title(fallback_hook, body.episode_number)
     else:
-        final_title = hook_clean or title_hint or "Untitled"
+        final_title = strong_main_upload_title(hook_clean or title_hint or "Untitled", None)
 
     final_description = (result.get("description") or "").strip()
     final_tags_raw = result.get("tags") or []
@@ -1061,7 +1061,7 @@ async def upload_to_youtube(
     if body.privacy not in VALID_PRIVACY:
         raise HTTPException(422, f"privacy 는 {sorted(VALID_PRIVACY)} 중 하나여야 합니다.")
 
-    title = with_episode_prefix(
+    title = strong_main_upload_title(
         (body.title or project.title or "Untitled").strip(),
         (project.config or {}).get("episode_number"),
     )

@@ -270,4 +270,4 @@
 - 편집 화면 실구현: `frontend/src/app/v2/presets/[id]/page.tsx`
 - 저장 엔드포인트: `PATCH /api/v2/presets/{id}` (body: `{ name?, config? }`)
 - 응답 모델: `backend/app/routers/v2/presets.py::PresetDetailOut`
-- 기획서: `docs/v2-plan.md` §10.3
+- 기획서: `docs/archive/v2/v2-plan.md` §10.3

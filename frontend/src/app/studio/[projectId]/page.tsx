@@ -21,14 +21,16 @@ import LocalServiceStatus from "@/components/common/LocalServiceStatus";
 
 // v1.1.32 이후: 자막 스텝 제거. 자막 스타일은 설정(Step 1)에서 관리하고,
 // 번인은 Step 6(렌더링) 에서 한 번에 처리한다.
-const STEPS = [
-  { num: 1, name: "설정" },
-  { num: 2, name: "대본" },
-  { num: 3, name: "음성" },
-  { num: 4, name: "이미지" },
-  { num: 5, name: "영상" },
-  { num: 6, name: "렌더링" },
-  { num: 7, name: "유튜브" },
+type StudioStep = { key: string; num: number; name: string; pipelineStep?: number };
+
+const STEPS: StudioStep[] = [
+  { key: "1", num: 1, name: "설정" },
+  { key: "2", num: 2, name: "대본", pipelineStep: 2 },
+  { key: "3", num: 3, name: "음성", pipelineStep: 3 },
+  { key: "4", num: 4, name: "이미지", pipelineStep: 4 },
+  { key: "5", num: 5, name: "영상", pipelineStep: 5 },
+  { key: "6", num: 6, name: "렌더링", pipelineStep: 6 },
+  { key: "7", num: 7, name: "유튜브", pipelineStep: 7 },
 ];
 
 function formatETA(seconds: number): string {
@@ -95,7 +97,7 @@ export default function StudioPage() {
   const projectId = params.projectId as string;
   const [project, setProject] = useState<Project | null>(null);
   const [cuts, setCuts] = useState<Cut[]>([]);
-  const [activeStep, setActiveStep] = useState(1);
+  const [activeStep, setActiveStep] = useState("1");
   const [isRunning, setIsRunning] = useState(false);
   const [stepProgress, setStepProgress] = useState<Record<string, StepProgress>>({});
   // v1.1.55: 설정 탭 미저장 경고
@@ -177,7 +179,7 @@ export default function StudioPage() {
   };
 
   const resetStep = async (step: number) => {
-    const name = STEPS.find((s) => s.num === step)?.name || "";
+    const name = STEPS.find((s) => s.pipelineStep === step || s.key === String(step))?.name || "";
     if (!confirm(`"${name}" 단계를 초기화하시겠습니까?\n생성된 데이터가 삭제됩니다.`)) return;
     try {
       await pipelineApi.resetStep(projectId, step);
@@ -239,13 +241,13 @@ export default function StudioPage() {
 
   const renderStepContent = () => {
     switch (activeStep) {
-      case 1: return <StepSettings project={project} onUpdate={handleUpdate} onNextStep={() => setActiveStep(2)} onDirtyChange={setSettingsDirty} />;
-      case 2: return <StepScript project={project} onUpdate={handleUpdate} onCutsChange={(c) => setCuts(c)} />;
-      case 3: return <StepVoice project={project} cuts={cuts} onUpdate={handleUpdate} />;
-      case 4: return <StepImage project={project} cuts={cuts} onUpdate={handleUpdate} />;
-      case 5: return <StepVideo project={project} cuts={cuts} onUpdate={handleUpdate} />;
-      case 6: return <StepRender project={project} cuts={cuts} onUpdate={handleUpdate} />;
-      case 7: return <StepYouTube project={project} cuts={cuts} onUpdate={handleUpdate} />;
+      case "1": return <StepSettings project={project} onUpdate={handleUpdate} onNextStep={() => setActiveStep("2")} onDirtyChange={setSettingsDirty} />;
+      case "2": return <StepScript project={project} onUpdate={handleUpdate} onCutsChange={(c) => setCuts(c)} />;
+      case "3": return <StepVoice project={project} cuts={cuts} onUpdate={handleUpdate} />;
+      case "4": return <StepImage project={project} cuts={cuts} onUpdate={handleUpdate} />;
+      case "5": return <StepVideo project={project} cuts={cuts} onUpdate={handleUpdate} />;
+      case "6": return <StepRender project={project} cuts={cuts} onUpdate={handleUpdate} />;
+      case "7": return <StepYouTube project={project} cuts={cuts} onUpdate={handleUpdate} />;
       default: return null;
     }
   };
@@ -382,20 +384,20 @@ export default function StudioPage() {
             </h2>
             <div className="relative">
               {STEPS.map((step, i) => {
-                const state = stepStates[String(step.num)] || "pending";
-                const progress = stepProgress[String(step.num)];
+                const state = stepStates[step.key] || "pending";
+                const progress = step.pipelineStep ? stepProgress[String(step.pipelineStep)] : undefined;
                 const pct = progress?.progress_pct || 0;
                 const eta = progress?.eta_seconds || 0;
-                const isActive = activeStep === step.num;
+                const isActive = activeStep === step.key;
                 const isLast = i === STEPS.length - 1;
                 // 파이프라인 스텝(2~5)만 일시정지/진행률/ETA UI 표시.
                 // 1(설정), 6(렌더링), 7(유튜브)은 수동 단계라 컨트롤 UI 가 필요 없음.
                 // v1.1.32 이후 자막 스텝 제거. 자막은 설정에서 관리하고 렌더링에서 번인.
                 // v1.1.49: 렌더링(6)도 백그라운드 실행 지원 — 일시정지/진행률 UI 표시
-                const isPipelineStep = step.num >= 2 && step.num <= 6;
+                const isPipelineStep = !!step.pipelineStep && step.pipelineStep >= 2 && step.pipelineStep <= 6;
 
                 return (
-                  <div key={step.num} className="relative">
+                  <div key={step.key} className="relative">
                     {/* Connector line between circles */}
                     {!isLast && (
                       <div
@@ -407,11 +409,11 @@ export default function StudioPage() {
 
                     <button
                       onClick={() => {
-                        if (activeStep === 1 && settingsDirty && step.num !== 1) {
+                        if (activeStep === "1" && settingsDirty && step.key !== "1") {
                           if (!confirm("설정에 저장되지 않은 변경사항이 있습니다.\n저장하지 않고 이동하시겠습니까?")) return;
                           setSettingsDirty(false);
                         }
-                        setActiveStep(step.num);
+                        setActiveStep(step.key);
                       }}
                       className={`w-full text-left rounded-lg transition-colors mb-2 relative z-10 ${
                         isActive
@@ -439,7 +441,7 @@ export default function StudioPage() {
                               >
                                 {state === "running" && (
                                   <button
-                                    onClick={() => pauseStep(step.num)}
+                                    onClick={() => step.pipelineStep && pauseStep(step.pipelineStep)}
                                     className="p-1 rounded hover:bg-accent-warning/20 text-gray-500 hover:text-accent-warning"
                                     title="일시정지"
                                   >
@@ -448,7 +450,7 @@ export default function StudioPage() {
                                 )}
                                 {state === "paused" && (
                                   <button
-                                    onClick={() => resumeStep(step.num)}
+                                    onClick={() => step.pipelineStep && resumeStep(step.pipelineStep)}
                                     className="p-1 rounded hover:bg-accent-primary/20 text-gray-500 hover:text-accent-primary"
                                     title="이어하기"
                                   >
@@ -457,7 +459,7 @@ export default function StudioPage() {
                                 )}
                                 {(state === "completed" || state === "failed" || state === "paused") && (
                                   <button
-                                    onClick={() => resetStep(step.num)}
+                                    onClick={() => step.pipelineStep && resetStep(step.pipelineStep)}
                                     className="p-1 rounded hover:bg-accent-danger/20 text-gray-500 hover:text-accent-danger"
                                     title="초기화"
                                   >
@@ -505,14 +507,14 @@ export default function StudioPage() {
                           )}
 
                           {/* 렌더링 단계 보조 라벨 (progress bar 아래) */}
-                          {step.num === 6 && stepStates["6"] !== "running" && stepStates["6"] !== "completed" && stepStates["6"] !== "failed" && (
+                          {step.key === "6" && stepStates["6"] !== "running" && stepStates["6"] !== "completed" && stepStates["6"] !== "failed" && (
                             <div className="mt-1 text-[10px] text-gray-500">
                               자막 + 오프닝/엔딩 합성
                             </div>
                           )}
 
                           {/* YouTube 수동 단계 상태 라벨 */}
-                          {step.num === 7 && (
+                          {step.key === "7" && (
                             <div className="mt-1 text-[10px] text-gray-500">
                               {state === "completed" ? "업로드 완료" : "수동 업로드"}
                             </div>

@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.models.database import get_db
+from app.models.database import SessionLocal, get_db
 from app.models.project import Project
 from app.models.cut import Cut
 from app.config import resolve_project_dir
@@ -14,6 +14,12 @@ from app.services.tts.factory import get_tts_service
 from app.services.tts.narration_fit import (
     ensure_audio_duration_window,
     generate_tts_with_auto_narration_fit,
+)
+from app.services.tts.narration_source import (
+    get_cut_tts_narration,
+    tts_input_marker_matches,
+    uses_cut_tts_narration,
+    write_tts_input_marker,
 )
 from app.services.tts.pronunciation_normalizer import prepare_spoken_narration_for_tts
 from app.services.tts.voice_profile import (
@@ -25,9 +31,21 @@ from app.services.tts.voice_profile import (
 router = APIRouter()
 
 
+def _project_dir(project_id: str, *, create: bool = False) -> Path:
+    config: dict = {}
+    db = SessionLocal()
+    try:
+        project = db.query(Project).filter(Project.id == project_id).first()
+        if project and isinstance(project.config, dict):
+            config = dict(project.config or {})
+    finally:
+        db.close()
+    return resolve_project_dir(project_id, config, create=create)
+
+
 def _load_script(project_id: str) -> dict:
     """Load script.json from disk"""
-    script_path = resolve_project_dir(project_id, create=False) / "script.json"
+    script_path = _project_dir(project_id, create=False) / "script.json"
     if not script_path.exists():
         return {"cuts": []}
     with open(script_path, "r", encoding="utf-8") as f:
@@ -35,7 +53,7 @@ def _load_script(project_id: str) -> dict:
 
 
 def _save_script(project_id: str, script: dict):
-    script_path = resolve_project_dir(project_id, create=True) / "script.json"
+    script_path = _project_dir(project_id, create=True) / "script.json"
     script_path.parent.mkdir(parents=True, exist_ok=True)
     with open(script_path, "w", encoding="utf-8") as f:
         json.dump(script, f, ensure_ascii=False, indent=2)
@@ -46,7 +64,7 @@ def _audio_file_exists(project_id: str, audio_path: str | None) -> bool:
         return False
     path = Path(audio_path)
     if not path.is_absolute():
-        path = resolve_project_dir(project_id, create=False) / audio_path
+        path = _project_dir(project_id, create=False) / audio_path
     try:
         return path.exists() and path.stat().st_size > 100
     except OSError:
@@ -84,13 +102,13 @@ def _resolve_audio_path(project_id: str, audio_path: str | None) -> Path | None:
         return None
     path = Path(audio_path)
     if not path.is_absolute():
-        path = resolve_project_dir(project_id, create=False) / audio_path
+        path = _project_dir(project_id, create=False) / audio_path
     return path
 
 
 def _relative_audio_path(project_id: str, path: Path) -> str:
     try:
-        return path.relative_to(resolve_project_dir(project_id, create=False)).as_posix()
+        return path.relative_to(_project_dir(project_id, create=False)).as_posix()
     except ValueError:
         return path.as_posix()
 
@@ -103,6 +121,8 @@ def _fit_existing_audio_without_api(
     config: dict,
     fallback_path: str | Path,
     expected_narration: str | None = None,
+    expected_tts_narration: str | None = None,
+    tts_narration_marker_enabled: bool = False,
     log_prefix: str = "[Voice]",
 ) -> dict | None:
     """Return existing audio metadata after local FFmpeg fit, without TTS API calls."""
@@ -129,7 +149,15 @@ def _fit_existing_audio_without_api(
     audio_path = None
     for candidate in candidates:
         try:
-            if candidate.exists() and candidate.stat().st_size > 100:
+            if (
+                candidate.exists()
+                and candidate.stat().st_size > 100
+                and tts_input_marker_matches(
+                    candidate,
+                    expected_tts_narration or "",
+                    enabled=tts_narration_marker_enabled,
+                )
+            ):
                 audio_path = candidate
                 break
         except OSError:
@@ -205,7 +233,7 @@ def _sync_cut_narration_after_fit(project_id: str, cut: Cut, cut_data: dict, nar
         Path("videos") / f"cut_{cut.cut_number}.mp4",
     ):
         try:
-            (resolve_project_dir(project_id, create=False) / rel).unlink(missing_ok=True)
+            (_project_dir(project_id, create=False) / rel).unlink(missing_ok=True)
         except OSError:
             pass
     return True
@@ -242,6 +270,8 @@ async def generate_all_voices(project_id: str, db: Session = Depends(get_db)):
     for cut_data in script_cuts:
         cut_number = cut_data["cut_number"]
         narration = cut_data.get("narration", "")
+        tts_narration = get_cut_tts_narration(cut_data, project.config, narration)
+        tts_narration_marker_enabled = uses_cut_tts_narration(cut_data, project.config)
 
         if not narration:
             results.append({
@@ -267,6 +297,8 @@ async def generate_all_voices(project_id: str, db: Session = Depends(get_db)):
                 config=project.config,
                 fallback_path=audio_path,
                 expected_narration=narration,
+                expected_tts_narration=tts_narration,
+                tts_narration_marker_enabled=tts_narration_marker_enabled,
             )
             if result is not None:
                 db.commit()
@@ -281,7 +313,7 @@ async def generate_all_voices(project_id: str, db: Session = Depends(get_db)):
                 continue
 
             spoken_narration = prepare_spoken_narration_for_tts(
-                narration,
+                tts_narration,
                 project.config.get("language", "ko"),
             )
             spoken_cut_data = dict(cut_data)
@@ -316,6 +348,11 @@ async def generate_all_voices(project_id: str, db: Session = Depends(get_db)):
             cut.audio_duration = result.get("duration", 0.0)
             cut.audio_original_duration = result.get("original_duration") or cut.audio_duration
             cut.status = "completed"
+            write_tts_input_marker(
+                audio_path,
+                tts_narration,
+                enabled=tts_narration_marker_enabled,
+            )
             db.commit()
             if script_dirty:
                 _save_script(project_id, script)
@@ -431,6 +468,8 @@ async def generate_all_voices_async(project_id: str, db: Session = Depends(get_d
                     break
                 cut_number = cut_data["cut_number"]
                 narration = cut_data.get("narration", "")
+                tts_narration = get_cut_tts_narration(cut_data, proj.config, narration)
+                tts_narration_marker_enabled = uses_cut_tts_narration(cut_data, proj.config)
                 if not narration:
                     update_task(project_id, "voice", i + 1)
                     continue
@@ -451,6 +490,8 @@ async def generate_all_voices_async(project_id: str, db: Session = Depends(get_d
                         config=proj.config,
                         fallback_path=audio_path,
                         expected_narration=narration,
+                        expected_tts_narration=tts_narration,
+                        tts_narration_marker_enabled=tts_narration_marker_enabled,
                     )
                     if result is not None:
                         local_db.commit()
@@ -460,7 +501,7 @@ async def generate_all_voices_async(project_id: str, db: Session = Depends(get_d
                         continue
 
                     spoken_narration = prepare_spoken_narration_for_tts(
-                        narration,
+                        tts_narration,
                         proj.config.get("language", "ko"),
                     )
                     spoken_cut_data = dict(cut_data)
@@ -494,11 +535,16 @@ async def generate_all_voices_async(project_id: str, db: Session = Depends(get_d
                     cut.audio_duration = result.get("duration", 0.0)
                     cut.audio_original_duration = result.get("original_duration") or cut.audio_duration
                     cut.status = "completed"
+                    write_tts_input_marker(
+                        audio_path,
+                        tts_narration,
+                        enabled=tts_narration_marker_enabled,
+                    )
                     # v1.1.55-fix: 스튜디오 TTS 비용 기록
                     try:
                         from app.services import spend_ledger
                         spend_ledger.record_tts(
-                            tts_model, chars=len(narration),
+                            tts_model, chars=len(tts_narration),
                             project_id=project_id, note=f"studio cut_{cut_number}",
                         )
                     except Exception as _le:
@@ -597,13 +643,35 @@ async def resume_voices_async(project_id: str, db: Session = Depends(get_db)):
     if is_running(project_id, "voice"):
         return {"status": "already_running", "step": "voice"}
 
-    # Find cuts missing audio
+    script = _load_script(project_id)
+    cut_list = script.get("cuts", [])
+    script_cut_map = {
+        int(cut_data.get("cut_number")): cut_data
+        for cut_data in cut_list
+        if isinstance(cut_data, dict) and str(cut_data.get("cut_number") or "").isdigit()
+    }
+
+    # Find cuts missing audio, or Japanese TTS-input cuts whose sidecar no longer matches.
     cuts = db.query(Cut).filter(Cut.project_id == project_id).order_by(Cut.cut_number).all()
-    pending_cuts = [
-        c
-        for c in cuts
-        if (c.narration or "").strip() and not _audio_file_exists(project_id, c.audio_path)
-    ]
+    pending_cuts = []
+    for c in cuts:
+        if not (c.narration or "").strip():
+            continue
+        audio_exists = _audio_file_exists(project_id, c.audio_path)
+        cut_data = script_cut_map.get(int(c.cut_number))
+        marker_stale = False
+        if audio_exists and cut_data and uses_cut_tts_narration(cut_data, project.config):
+            audio_path = _resolve_audio_path(project_id, c.audio_path)
+            marker_stale = bool(
+                audio_path
+                and not tts_input_marker_matches(
+                    audio_path,
+                    get_cut_tts_narration(cut_data, project.config, c.narration),
+                    enabled=True,
+                )
+            )
+        if not audio_exists or marker_stale:
+            pending_cuts.append(c)
     if not pending_cuts:
         completed = _mark_voice_completed_if_ready(project_id, project, db)
         return {
@@ -612,8 +680,6 @@ async def resume_voices_async(project_id: str, db: Session = Depends(get_db)):
             "total": 0,
         }
 
-    script = _load_script(project_id)
-    cut_list = script.get("cuts", [])
     # Filter cut_list to only pending ones
     pending_numbers = {c.cut_number for c in pending_cuts}
     pending_cut_list = [cd for cd in cut_list if cd["cut_number"] in pending_numbers]
@@ -664,6 +730,8 @@ async def resume_voices_async(project_id: str, db: Session = Depends(get_db)):
                     break
                 cut_number = cut_data["cut_number"]
                 narration = cut_data.get("narration", "")
+                tts_narration = get_cut_tts_narration(cut_data, proj.config, narration)
+                tts_narration_marker_enabled = uses_cut_tts_narration(cut_data, proj.config)
                 cut = cut_dict.get(cut_number)
                 if not cut or not narration:
                     update_task(project_id, "voice", i + 1)
@@ -680,6 +748,8 @@ async def resume_voices_async(project_id: str, db: Session = Depends(get_db)):
                         config=proj.config,
                         fallback_path=audio_path,
                         expected_narration=narration,
+                        expected_tts_narration=tts_narration,
+                        tts_narration_marker_enabled=tts_narration_marker_enabled,
                         log_prefix="[VoiceResume]",
                     )
                     if result is not None:
@@ -690,7 +760,7 @@ async def resume_voices_async(project_id: str, db: Session = Depends(get_db)):
                         continue
 
                     spoken_narration = prepare_spoken_narration_for_tts(
-                        narration,
+                        tts_narration,
                         proj.config.get("language", "ko"),
                     )
                     spoken_cut_data = dict(cut_data)
@@ -724,6 +794,11 @@ async def resume_voices_async(project_id: str, db: Session = Depends(get_db)):
                     cut.audio_duration = result.get("duration", 0.0)
                     cut.audio_original_duration = result.get("original_duration") or cut.audio_duration
                     cut.status = "completed"
+                    write_tts_input_marker(
+                        audio_path,
+                        tts_narration,
+                        enabled=tts_narration_marker_enabled,
+                    )
                     local_db.commit()
                     if script_dirty:
                         _save_script(project_id, script)
@@ -840,9 +915,11 @@ async def generate_one_voice(
                 "scene_type": cut.scene_type,
             },
         )
+        tts_narration = get_cut_tts_narration(cut_data, project.config, cut.narration)
+        tts_narration_marker_enabled = uses_cut_tts_narration(cut_data, project.config)
 
         spoken_narration = prepare_spoken_narration_for_tts(
-            cut.narration,
+            tts_narration,
             project.config.get("language", "ko"),
         )
         spoken_cut_data = dict(cut_data)
@@ -876,11 +953,16 @@ async def generate_one_voice(
         cut.audio_duration = result.get("duration", 0.0)
         cut.audio_original_duration = result.get("original_duration") or cut.audio_duration
         cut.status = "completed"
+        write_tts_input_marker(
+            audio_path,
+            tts_narration,
+            enabled=tts_narration_marker_enabled,
+        )
         # v1.1.55-fix: 단건 TTS 비용 기록
         try:
             from app.services import spend_ledger
             spend_ledger.record_tts(
-                tts_model, chars=len(cut.narration or ""),
+                tts_model, chars=len(tts_narration or ""),
                 project_id=project_id, note=f"studio single cut_{cut_number}",
             )
         except Exception as _le:

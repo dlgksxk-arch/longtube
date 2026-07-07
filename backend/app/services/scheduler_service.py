@@ -444,12 +444,12 @@ async def _run_episode(episode: ScheduledEpisode) -> None:
 
 
 def _fallback_title(topic: Optional[str], episode_number: int) -> str:
-    from app.services.title_utils import with_episode_prefix
+    from app.services.title_utils import strong_main_upload_title
 
     base = (topic or "Untitled").strip()
     if len(base) > 48:
         base = base[:48]
-    return with_episode_prefix(base, episode_number)
+    return strong_main_upload_title(base, episode_number)
 
 
 async def _generate_metadata(
@@ -501,7 +501,7 @@ async def _generate_metadata(
 
     hook_clean = _strip_episode_prefix(hook_raw)
     if hook_clean:
-        final_title = with_episode_prefix(hook_clean, episode_number)
+        final_title = strong_main_upload_title(hook_clean, episode_number)
     else:
         final_title = _fallback_title(topic, episode_number)
 

@@ -227,6 +227,7 @@ export default function V2PresetEditPage() {
     signature_phrase: "",
   });
   const [models, setModels] = useState({
+    story_model: "",
     script_model: "",
     image_model: "",
     tts_model: "",
@@ -361,10 +362,12 @@ export default function V2PresetEditPage() {
         signature_phrase: pickStr(cObj, "signature_phrase"),
       });
       const mObj = pickObj(cfg, "models");
+      const mStory = pickObj(mObj, "story");
       const mScript = pickObj(mObj, "script");
       const mImage = pickObj(mObj, "image");
       const mTts = pickObj(mObj, "tts");
       setModels({
+        story_model: pickStr(mStory, "model_id") || pickStr(mScript, "model_id"),
         script_model: pickStr(mScript, "model_id"),
         image_model: pickStr(mImage, "model_id"),
         tts_model: pickStr(mTts, "model_id"),
@@ -506,6 +509,7 @@ export default function V2PresetEditPage() {
         signature_phrase: pickStr(cObj, "signature_phrase"),
       },
       models: {
+        story_model: pickStr(pickObj(mObj, "story"), "model_id") || pickStr(mScript, "model_id"),
         script_model: pickStr(mScript, "model_id"),
         image_model: pickStr(mImage, "model_id"),
         tts_model: pickStr(mTts, "model_id"),
@@ -694,6 +698,7 @@ export default function V2PresetEditPage() {
       };
       nextConfig.models = {
         ...(pickObj(detail.config ?? {}, "models")),
+        story: { model_id: models.story_model || models.script_model },
         script: { model_id: models.script_model },
         image: { model_id: models.image_model },
         tts: { model_id: models.tts_model, voice_id: models.tts_voice_id },
@@ -1315,6 +1320,7 @@ function SuggestField({
 /* ========================================================================= */
 
 interface ModelsState {
+  story_model: string;
   script_model: string;
   image_model: string;
   tts_model: string;
@@ -1369,6 +1375,13 @@ function ModelsSection({
         </p>
       )}
 
+      <ModelSelect
+        idp={`${idp}-story`}
+        label="스토리 설계 모델"
+        value={value.story_model || value.script_model}
+        onChange={(v) => patch("story_model", v)}
+        models={llm}
+      />
       <ModelSelect
         idp={`${idp}-script`}
         label="대본 모델"

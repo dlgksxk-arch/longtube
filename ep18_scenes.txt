@@ -1,0 +1,150 @@
+001 [completed] A dark, blood-stained map of East Asia, gritty and cinematic
+002 [completed] A shattered Chinese war helmet resting in deep mud, dark clouds
+003 [completed] Exhausted soldiers collapsing in a freezing, dark swamp
+004 [completed] An arrogant emperor wearing heavy gold robes, smirking, detailed
+005 [completed] A massive, dark storm cloud gathering over a stone fortress
+006 [completed] Emperor Yang of Sui gripping his throne, a cold glare in his eyes
+007 [completed] A massive military strategy board covered with thousands of pieces
+008 [completed] A sharp dagger aggressively stabbed into the center of a map
+009 [completed] Endless rows of heavily armored infantry stretching to the horizon
+010 [completed] A massive convoy of supply wagons moving through a dusty plain
+011 [completed] A bird's-eye view of a gargantuan army covering the entire landscape
+012 [failed] Changing seasons over an endless marching column of soldiers
+013 [completed] A long line of troops stretching across a harsh mountain range
+014 [failed] A high-angle shot of a dense, endless army covering the ground
+015 [failed] Goguryeo citizens looking terrified at the dark, looming horizon
+016 [completed] A small group of defenders looking at an impossibly large enemy wave
+017 [completed] King Yeongyang holding a sword, giving a stern command, dark lighting
+018 [completed] A burning wheat field near a massive, solid stone fortress
+019 [completed] Scorched earth with thick black smoke rising into the sky
+020 [completed] Villagers running inside a massive, dark stone fort, closing the gates
+021 [completed] Sui soldiers dragging heavy wooden carts through thick mud
+022 [completed] The massive Sui army standing before a wide, freezing river
+023 [failed] Strong Goguryeo warriors holding spears on the opposite bank
+024 [failed] Chinese engineers frantically building floating wooden bridges
+025 [completed] A wooden bridge ending abruptly before reaching the opposite shore
+026 [completed] Heavily armored soldiers falling into deep, muddy water
+027 [failed] A dark cloud of arrows raining down on the struggling soldiers
+028 [completed] The river water turning dark red, filled with floating bodies
+029 [completed] Heaps of corpses on the riverbank, the army behind is endless
+030 [failed] Thousands of soldiers finally charging across the completed bridge
+031 [completed] Emperor Yang glaring forward from his ornate chariot
+032 [failed] The imposing Yodong fortress standing tall on a high cliff
+033 [completed] A massive map showing Yodong as a critical chokepoint
+034 [failed] The fortress completely surrounded by countless enemy tents and banners
+035 [failed] An extremely tall and sturdy granite stone wall, heavily fortified
+036 [completed] The massive wooden gates of the fortress being barred shut
+037 [completed] Countless ancient siege machines being assembled in the camps
+038 [completed] A monstrously tall folding ladder reaching the top of the fortress
+039 [completed] An armored wooden vehicle digging into the dirt like a mole
+040 [failed] Multiple catapults launching massive boulders through the air
+041 [failed] A massive wooden battering ram moving toward thick wooden gates
+042 [completed] The fortress under heavy bombardment, dust and fire everywhere
+043 [failed] The stone walls remaining completely sturdy despite the attacks
+044 [completed] Sparks flying as an iron tool strikes solid granite rock
+045 [completed] Goguryeo soldiers using thick ropes with hooks to topple a ladder
+046 [failed] Fire arrows bouncing off a wet, mud-covered siege weapon
+047 [completed] Boiling oil pouring down from the battlements onto the attackers
+048 [completed] A gruesome pile of broken weapons and bodies at the wall's base
+049 [completed] Blood seeping deeply into the rough texture of the stone wall
+050 [completed] Emperor Yang pointing his sword in frustration at the unbroken wall
+051 [completed] The sun setting over a heavily battered but unbroken fortress
+052 [failed] Millions of troops blocked by a massive, cold stone structure
+053 [failed] A large pile of bodies covered in dirt and arrows
+054 [completed] Exhausted Sui soldiers sitting in the mud, looking defeated
+055 [completed] The emperor clenching his fist, his face red, looking furious
+056 [completed] An empty grain sack lying in the mud, soldiers looking hungry
+057 [completed] The emperor pointing fiercely toward the east on a map
+058 [completed] A red arrow drawn on a map bypassing Yodong and pointing to Pyongyang
+059 [pending] Elite, heavily armored cavalry forming up, leaving the main camp
+060 [pending] Two Chinese generals, Yu Zhongwen and Yuwen Shu, looking determined
+061 [pending] A massive fortress in the distance, viewed through a thick fog
+062 [pending] A close-up of a soldier's heavy, overburdened backpack
+063 [pending] Soldiers struggling under the weight of massive sacks of grain
+064 [pending] Sweat pouring down a soldier's face as he carries heavy gear
+065 [pending] A soldier collapsing under the weight of his armor and supplies
+066 [pending] The sun beating down on a marching column in a dry landscape
+067 [pending] A soldier secretly digging a hole and burying a sack of grain
+068 [pending] A close-up of a buried grain sack covered hastily with dirt
+069 [pending] An empty supply wagon, soldiers looking desperate and hungry
+070 [pending] Elite soldiers looking emaciated, their armor covered in dirt
+071 [pending] The starving vanguard arriving at a wide, calm river
+072 [pending] A shadowy figure standing confidently on a hill
+073 [pending] Eulji Mundeok, a rugged, highly intelligent Goguryeo general
+074 [pending] Eulji riding alone towards the massive enemy camp
+075 [pending] Eulji pretending to bow, but his eyes scanning the camp sharply
+076 [pending] The emperor's secret order written on a scroll, marked with a red seal
+077 [pending] Yu Zhongwen signaling his guards to surround the tent
+078 [pending] Liu Shirong stepping in, holding up a hand to stop the guards
+079 [pending] A tense standoff inside the command tent, swords half-drawn
+080 [pending] Eulji walking out of the camp calmly, guards watching him
+081 [pending] Yu Zhongwen looking angry, sending riders to chase him
+082 [pending] Eulji Mundeok already across the river, looking back with a smirk
+083 [pending] A close-up of Eulji's eyes, reflecting a cold, calculating plan
+084 [pending] A dark chessboard, a single piece moving forward
+085 [pending] Goguryeo flags appearing on distant hills, luring the enemy
+086 [pending] Goguryeo cavalry clashing briefly, then turning to run away
+087 [pending] Seven broken weapons stuck in the ground, marking multiple retreats
+088 [pending] Yuwen Shu looking triumphant, urging his troops forward
+089 [pending] The Sui army marching deeper into a dark, foreboding valley
+090 [pending] A completely burned village, absolutely nothing left but ash
+091 [pending] Soldiers eating grass and roots, collapsing in the dirt
+092 [pending] The emaciated army looking at the distant walls of Pyongyang
+093 [pending] The generals looking anxiously towards the ocean horizon
+094 [pending] A massive fleet of Sui warships sailing up a wide river
+095 [pending] General Laihu'er standing on the deck, looking greedy and ambitious
+096 [pending] Thousands of sailors disembarking and running toward a fortress
+097 [pending] Sui soldiers dropping their weapons and looting a seemingly empty temple
+098 [pending] The heavy wooden doors of the temple suddenly bursting open
+099 [pending] Prince Geonmu leading fully armored heavy cavalry out of the shadows
+100 [pending] Armored horses violently trampling over the unarmored Sui sailors
+101 [pending] Absolute chaos, sailors falling backward, completely overwhelmed
+102 [pending] A few survivors scrambling onto small boats and rowing away frantically
+103 [pending] A massive pile of grain sacks burning on the riverbank
+104 [pending] A messenger bringing the news, Yuwen Shu looking completely devastated
+105 [pending] The Sui generals sitting in their tent, heads in their hands
+106 [pending] A wide shot of the trapped army, surrounded by dark mountains
+107 [pending] A Goguryeo messenger riding into the camp, holding a white flag
+108 [pending] A letter being handed over, stalling for time
+109 [pending] Sui generals looking at the letter, their faces gaunt and desperate
+110 [pending] A close-up of a soldier's hollow, terrified, and starving eyes
+111 [pending] Another arrow striking the ground, carrying a final letter
+112 [pending] The famous five-word poem unrolled on a wooden table
+113 [pending] A glowing, sarcastic illustration of a tactical genius in the sky
+114 [pending] A sarcastic illustration of a master of the earth
+115 [pending] A massive mountain of gold and trophies, looking mocking
+116 [pending] Eulji Mundeok's face, cold and unyielding, staring straight ahead
+117 [pending] The Sui generals reading the poem, their eyes wide with realization
+118 [pending] A crumpled piece of paper falling into the mud
+119 [pending] The massive army turning around, looking defeated and miserable
+120 [pending] Goguryeo banners suddenly appearing everywhere on the horizon
+121 [pending] Red flags waving under a dark, stormy sky
+122 [pending] A rain of black arrows falling on the retreating soldiers
+123 [pending] Soldiers dropping their heavy armor and running in sheer terror
+124 [pending] Goguryeo cavalry ruthlessly chasing down the fleeing enemies
+125 [pending] A brutal, one-sided slaughter in a muddy valley
+126 [pending] Blood splattering across the cold, rocky landscape
+127 [pending] A broken Chinese dragon banner resting in a pool of blood
+128 [pending] The battered, bleeding survivors reaching a wide river
+129 [pending] The fast-flowing river, the only obstacle between them and home
+130 [pending] Soldiers desperately wading into the cold, deep water
+131 [pending] A dark, ominous shadow lurking upstream
+132 [pending] A massive, temporary dam made of dirt and logs holding back a lake
+133 [pending] The dam bulging under the immense pressure of the water
+134 [pending] Thousands of soldiers vulnerable in the middle of the river
+135 [pending] Eulji Mundeok standing on a high cliff, raising his sword
+136 [pending] The massive dam shattering completely, exploding outward
+137 [pending] A gargantuan wave of dark water crashing down the river valley
+138 [pending] Soldiers being swept away, swallowed by the massive flood
+139 [pending] The river turning dark red, filled with bodies and broken armor
+140 [pending] Goguryeo infantry waiting on the banks with sharp spears
+141 [pending] General Xin Shixiong falling under the crushing wave and spears
+142 [pending] A tiny handful of survivors staggering onto the northern bank
+143 [pending] A wide shot of the completely devastated river, full of wreckage
+144 [pending] Emperor Yang covering his face, his grand carriage turning around
+145 [pending] The word 'Salsu' carved deeply into a bloody stone monument
+146 [pending] A massive dirt mountain being built next to a high stone wall
+147 [pending] Thousands of laborers digging dirt under a dark, oppressive sky
+148 [pending] Goguryeo warriors charging out of a dust cloud with weapons raised
+149 [pending] The Chinese emperor's carriage stuck in deep, freezing mud
+150 [pending] A heavy iron gate slamming shut, plunging the screen into total darkness

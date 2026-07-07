@@ -160,9 +160,11 @@ export const modelsApi = {
 export interface ProjectConfig {
   aspect_ratio: string;
   target_duration: number;
+  target_cuts?: number;
   cut_video_duration?: number;
   cut_transition: string;
   style: string;
+  story_model?: string;
   script_model: string;
   image_model: string;
   thumbnail_model?: string;
@@ -243,6 +245,7 @@ export interface ProjectEstimate {
   days_per_month?: number;
   estimated_seconds: number;
   cost_breakdown: {
+    story_plan?: number;
     llm_script: number;
     image_generation: number;
     thumbnail?: number;
@@ -251,6 +254,7 @@ export interface ProjectEstimate {
     video: number;
   };
   time_breakdown: {
+    story_plan?: number;
     llm_script: number;
     image_generation: number;
     tts: number;
@@ -258,6 +262,7 @@ export interface ProjectEstimate {
     post_process: number;
   };
   models_used: {
+    story?: string;
     script: string;
     image: string;
     thumbnail?: string;
@@ -289,6 +294,7 @@ export interface Project {
 
 export interface Cut {
   cut_number: number;
+  scene_block_id?: number;
   narration: string;
   image_prompt: string;
   motion_prompt?: string;
@@ -303,6 +309,72 @@ export interface Cut {
   video_model?: string;
   status?: string;
   is_custom_image?: boolean;
+}
+
+export interface StoryCore {
+  story_axis?: string;
+  episode_scope?: string;
+  central_question?: string;
+  central_answer?: string;
+  protagonist?: string;
+  goal?: string;
+  obstacle?: string;
+  first_turn?: string;
+  mid_crisis?: string;
+  cost?: string;
+  ending_memory?: string;
+}
+
+export interface StoryCharacter {
+  name?: string;
+  identity?: string;
+  side_or_interest?: string;
+  first_appearance_block?: string | number;
+  first_appearance_cut?: string;
+  first_appearance_explanation?: string;
+  choice_or_action?: string;
+  story_function?: string;
+}
+
+export interface StorySceneBlock {
+  block_id?: number;
+  cut_range?: string;
+  block_role?: string;
+  block_goal?: string;
+  mini_question?: string;
+  new_information?: string;
+  key_facts?: string[];
+  character_focus?: string[];
+  continuity_from_previous?: string;
+  tension?: string;
+  turn?: string;
+  required_script_moves?: string[];
+  turn_to_next?: string;
+  visual_rhythm?: string;
+  must_include?: string[];
+  must_avoid?: string[];
+}
+
+export interface StoryPlan {
+  script_version?: string;
+  story_model?: string;
+  source_fingerprint?: string;
+  visual_world?: Record<string, unknown>;
+  story_core?: StoryCore;
+  character_map?: StoryCharacter[];
+  causality_chain?: string[];
+  fact_ledger?: Record<string, unknown>;
+  visual_plan?: Record<string, unknown>;
+  scene_blocks?: StorySceneBlock[];
+  script_checklist?: Record<string, unknown>;
+}
+
+export interface StoryPlanResponse {
+  project_id: string;
+  exists: boolean;
+  story_model: string;
+  path: string;
+  story_plan: StoryPlan | null;
 }
 
 export const projectsApi = {
@@ -350,6 +422,10 @@ export const pipelineApi = {
 export const scriptApi = {
   listCuts: (id: string): Promise<{ project_id: string; total: number; cuts: Cut[] }> =>
     api.get(`/script/${id}/cuts`),
+  getStoryPlan: (id: string): Promise<StoryPlanResponse> =>
+    api.get(`/script/${id}/story-plan`),
+  generateStoryPlanAsync: (id: string) =>
+    api.post(`/script/${id}/story-plan/generate-async`),
   generate: (id: string): Promise<{ cuts: Cut[]; total_duration_estimate: number }> =>
     api.post(`/script/${id}/generate`),
   generateAsync: (id: string) => api.post(`/script/${id}/generate-async`),
@@ -360,6 +436,239 @@ export const scriptApi = {
   deleteCut: (id: string, cutNumber: number) => api.delete(`/script/${id}/cuts/${cutNumber}`),
   reorderCuts: (id: string, order: number[]) => api.put(`/script/${id}/cuts/reorder`, { order }),
   clearStep: (id: string, step: string) => api.post(`/script/${id}/clear/${step}`),
+};
+
+// ─── Script Studio ───
+export interface ScriptStudioSource {
+  id: string;
+  title: string;
+  topic: string;
+  language: string;
+  target_cuts: number;
+  story_model?: string;
+  script_model?: string;
+  updated_at?: string;
+}
+
+export interface ScriptStudioQueueTopic {
+  id: string;
+  channel: number;
+  topic: string;
+  title?: string;
+  episode_number?: number | null;
+  status?: string;
+  queued_source?: string;
+  queued_note?: string;
+  queued_at?: string | null;
+  template_project_id?: string | null;
+  resolved_project_id?: string | null;
+  resolved_project_title?: string;
+  target_duration?: number | null;
+  target_cuts?: number | null;
+  core_content?: string;
+  openings?: string[];
+  endings?: string[];
+  next_episode_preview?: string;
+  has_existing_script?: boolean;
+  existing_script_path?: string;
+}
+
+export interface ScriptStudioQueueChannel {
+  channel: number;
+  preset_project_id?: string | null;
+  preset_project_title?: string;
+  items: ScriptStudioQueueTopic[];
+}
+
+export interface ScriptStudioQueueResponse {
+  channel_times: Record<string, string | null>;
+  channel_presets: Record<string, string | null>;
+  channels: ScriptStudioQueueChannel[];
+  total: number;
+}
+
+export interface ScriptStudioValidationIssue {
+  level: "error" | "warn" | string;
+  cut_number?: number;
+  block_id?: number | null;
+  cut_range?: string;
+  message: string;
+}
+
+export interface ScriptStudioValidationReport {
+  ok: boolean;
+  issue_count: number;
+  issues: ScriptStudioValidationIssue[];
+  validation_pipeline?: Array<{
+    stage?: string;
+    model?: string;
+    passed?: boolean;
+    score?: number;
+    attempt?: number;
+    patch_count?: number;
+    applied_patch_count?: number;
+    ignored_patch_count?: number;
+    fix_plan?: Array<{
+      cut_number?: number | null;
+      block_id?: number | null;
+      cut_range?: string;
+      affected_cuts?: number[];
+      instruction?: string;
+    }>;
+    patches?: Array<{
+      cut_number?: number;
+      fields?: Record<string, unknown>;
+      reason?: string;
+    }>;
+    summary?: string;
+    checked_at?: string;
+  }>;
+  final_model?: string;
+  final_stage?: string;
+  checked_at?: string;
+}
+
+export interface ScriptStudioDraft {
+  id: string;
+  source_project_id?: string | null;
+  source_project_title?: string;
+  source_queue_item_id?: string | null;
+  source_queue_channel?: number | null;
+  source_queue_status?: string | null;
+  title: string;
+  topic: string;
+  config: Partial<ProjectConfig>;
+  status: string;
+  story_status: string;
+  script_status: string;
+  last_error?: string;
+  generation_progress?: {
+    stage?: string;
+    status?: string;
+    completed?: number;
+    total?: number;
+    progress_pct?: number;
+    message?: string;
+    model?: string;
+    job_id?: string;
+    started_at?: string;
+    finished_at?: string;
+    elapsed_seconds?: number;
+    updated_at?: string;
+    block_progress?: {
+      total_blocks?: number;
+      current_block?: number;
+      blocks?: Record<string, {
+        block_index?: number;
+        cut_range?: string;
+        generation_status?: string;
+        validation_status?: string;
+        generation_model?: string;
+        validation_model?: string;
+        generation_failures?: number;
+        validation_failures?: number;
+        fallback_used?: boolean;
+        message?: string;
+        updated_at?: string;
+      }>;
+    };
+  } | null;
+  job_history?: Array<{
+    job_id?: string;
+    stage?: string;
+    status?: string;
+    model?: string;
+    message?: string;
+    started_at?: string;
+    finished_at?: string;
+    elapsed_seconds?: number;
+  }>;
+  job_stats?: Record<string, {
+    count?: number;
+    avg_elapsed_seconds?: number;
+    last_elapsed_seconds?: number;
+  }>;
+  created_at: string;
+  updated_at: string;
+  story_exists?: boolean;
+  script_exists?: boolean;
+  script_partial_exists?: boolean;
+  script_is_partial?: boolean;
+  cut_count?: number;
+  path?: string;
+  story_plan?: StoryPlan | null;
+  script?: { title?: string; description?: string; cuts?: Cut[]; [key: string]: any } | null;
+  validation_report?: ScriptStudioValidationReport | null;
+  last_applied_project_id?: string | null;
+  last_applied_at?: string | null;
+}
+
+export const scriptStudioApi = {
+  sources: (): Promise<{ projects: ScriptStudioSource[] }> =>
+    api.get("/script-studio/sources"),
+  models: (): Promise<{ models: ModelInfo[] }> =>
+    api.get("/script-studio/models"),
+  queueTopics: (): Promise<ScriptStudioQueueResponse> =>
+    api.get("/script-studio/queue-topics"),
+  createDraftFromQueue: (
+    itemId: string,
+    body?: { config_overrides?: Record<string, unknown> | null; replace_existing?: boolean },
+  ): Promise<ScriptStudioDraft> =>
+    api.post(`/script-studio/queue-topics/${encodeURIComponent(itemId)}/draft`, body || {}),
+  listDrafts: (): Promise<{ drafts: ScriptStudioDraft[] }> =>
+    api.get("/script-studio/drafts"),
+  getDraft: (draftId: string): Promise<ScriptStudioDraft> =>
+    api.get(`/script-studio/drafts/${encodeURIComponent(draftId)}`),
+  deleteDraft: (draftId: string): Promise<{ ok: boolean; draft_id: string }> =>
+    api.delete(`/script-studio/drafts/${encodeURIComponent(draftId)}`),
+  createDraft: (body: {
+    source_project_id?: string | null;
+    topic?: string | null;
+    title?: string | null;
+    config_overrides?: Record<string, unknown> | null;
+  }): Promise<ScriptStudioDraft> => api.post("/script-studio/drafts", body),
+  updateDraft: (
+    draftId: string,
+    body: { topic?: string; title?: string; config?: Record<string, unknown> },
+  ): Promise<ScriptStudioDraft> =>
+    api.put(`/script-studio/drafts/${encodeURIComponent(draftId)}`, body),
+  generateStory: (draftId: string): Promise<ScriptStudioDraft> =>
+    api.postWithTimeout(`/script-studio/drafts/${encodeURIComponent(draftId)}/story-plan`, undefined, 30 * 60_000),
+  generateStoryWithSignal: (draftId: string, signal: AbortSignal): Promise<ScriptStudioDraft> =>
+    api.postWithTimeout(`/script-studio/drafts/${encodeURIComponent(draftId)}/story-plan`, undefined, 30 * 60_000, signal),
+  startStory: (draftId: string): Promise<ScriptStudioDraft> =>
+    api.post(`/script-studio/drafts/${encodeURIComponent(draftId)}/story-plan/start`),
+  generateScript: (draftId: string): Promise<ScriptStudioDraft> =>
+    api.postWithTimeout(`/script-studio/drafts/${encodeURIComponent(draftId)}/script`, undefined, 60 * 60_000),
+  generateScriptWithSignal: (draftId: string, signal: AbortSignal): Promise<ScriptStudioDraft> =>
+    api.postWithTimeout(`/script-studio/drafts/${encodeURIComponent(draftId)}/script`, undefined, 60 * 60_000, signal),
+  startScript: (
+    draftId: string,
+    body?: { mode?: "new" | "resume" | "block"; block_index?: number },
+  ): Promise<ScriptStudioDraft> =>
+    api.post(`/script-studio/drafts/${encodeURIComponent(draftId)}/script/start`, body || { mode: "new" }),
+  validate: (draftId: string): Promise<ScriptStudioDraft> =>
+    api.post(`/script-studio/drafts/${encodeURIComponent(draftId)}/validate`),
+  startValidate: (draftId: string): Promise<ScriptStudioDraft> =>
+    api.post(`/script-studio/drafts/${encodeURIComponent(draftId)}/validate/start`),
+  export: (draftId: string): Promise<{ ok: boolean; path: string; script: Record<string, unknown> }> =>
+    api.get(`/script-studio/drafts/${encodeURIComponent(draftId)}/export`),
+  applyToProject: (
+    draftId: string,
+    targetProjectId?: string | null,
+  ): Promise<{ ok: boolean; project_id: string; script_path: string; cut_count: number }> =>
+    api.post(`/script-studio/drafts/${encodeURIComponent(draftId)}/apply-to-project`, {
+      target_project_id: targetProjectId ?? null,
+    }),
+  startApplyToProject: (
+    draftId: string,
+    targetProjectId?: string | null,
+  ): Promise<ScriptStudioDraft> =>
+    api.post(`/script-studio/drafts/${encodeURIComponent(draftId)}/apply-to-project/start`, {
+      target_project_id: targetProjectId ?? null,
+    }),
+  cancelJob: (draftId: string): Promise<ScriptStudioDraft> =>
+    api.post(`/script-studio/drafts/${encodeURIComponent(draftId)}/cancel`),
 };
 
 // ─── Voice ───
@@ -857,6 +1166,7 @@ export interface LocalSystemStatus {
 export interface LocalServicesStatus {
   backend: LocalServiceInfo;
   comfyui: LocalServiceInfo;
+  script_server?: LocalServiceInfo;
   system?: LocalSystemStatus;
 }
 
@@ -1009,6 +1319,7 @@ export interface OneClickTask {
   episode_number?: number | null;
   // v1.1.52: 각 스텝에서 사용하는 AI 모델명
   models?: {
+    story?: string;
     script?: string;
     tts?: string;
     tts_voice?: string;

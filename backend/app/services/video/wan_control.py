@@ -1,8 +1,7 @@
 """Wan local motion-control helpers.
 
-The goal is not to create a new subject, but to give WanMove a small set of
-tracks that nudge already-visible pixels/objects. This keeps motion local and
-reduces the "new person/new object" failure mode.
+The goal is to give WanMove a small set of tracks that nudge already-visible
+pixels/objects. This keeps motion local and reduces subject/object drift.
 """
 from __future__ import annotations
 

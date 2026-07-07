@@ -194,6 +194,12 @@ function buildRows(
       tone: backendFailed ? "fail" : toneFromStatus(data?.backend?.status),
     },
     {
+      name: "대본",
+      label: backendFailed ? "확인불가" : labelFromStatus(data?.script_server?.status),
+      detail: backendFailed ? "백엔드 연결 필요" : data?.script_server?.balance || data?.script_server?.detail || "Ollama 확인 전",
+      tone: backendFailed ? "idle" : toneFromStatus(data?.script_server?.status),
+    },
+    {
       name: "Comfy",
       label: backendFailed ? "확인불가" : labelFromStatus(data?.comfyui?.status),
       detail: backendFailed ? "백엔드 연결 필요" : comfyDetail(data?.comfyui),
@@ -431,7 +437,7 @@ export default function LocalServiceStatus({ variant = "sidebar", className = ""
             <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
           </button>
         </div>
-        <div className="grid grid-cols-3 gap-1.5 p-2">
+        <div className="grid grid-cols-4 gap-1.5 p-2">
           {rows.map((row) => (
             <div
               key={row.name}
@@ -469,7 +475,7 @@ export default function LocalServiceStatus({ variant = "sidebar", className = ""
           </button>
         </div>
         <div className="mb-2">{renderServiceControls()}</div>
-        <div className="grid grid-cols-3 gap-1.5">
+        <div className="grid grid-cols-4 gap-1.5">
           {rows.map((row) => (
             <div
               key={row.name}

@@ -34,6 +34,89 @@ _GENERIC_TAGS = {
     "\ub9dd\ud55c", "\uc5b4\ub514\uc11c", "\ub2e4\uc2dc", "\uc2dc\uc791\ub410\uc744\uae4c",
     "\uc65c\ub294", "\uc65c\uc758", "\uc655\uc871\uacfc", "\ubc14\ub2e4\ub97c", "\ud568\ub300\uac00",
 }
+_SHORTS_TITLE_HASHTAG_BLOCK_RE = re.compile(
+    r"(결말을바꿔버린|운명을바꾼|판을뒤집은|이장면|진짜이유|"
+    r"momentit|choice|ruinedeverything|uglytruth|horriblywrong)",
+    re.IGNORECASE,
+)
+_SHORTS_TITLE_WORD_BLOCK = {
+    "ko": {
+        "반격의", "고구려의", "낙랑공주의", "비극의", "사랑의", "장면", "순간", "진짜", "결말",
+        "엎어진", "흔들린", "바꿔버린", "바꾼", "숨겨진", "놓친", "끝났습니다", "터졌습니다",
+    },
+    "en": {
+        "wall", "price", "choice", "moment", "truth", "mistake", "story", "deal",
+        "forced", "look", "give", "away", "longing", "said", "most", "like", "great",
+        "make", "made", "take", "took", "come", "came", "goes", "went",
+    },
+    "ja": {"瞬間", "本当", "選択"},
+    "hi": set(),
+}
+
+
+def _shorts_title_hashtag_too_noisy(body: str, *, title: str, topic: str, lang: str) -> bool:
+    compact = re.sub(r"[^0-9A-Za-z가-힣\u0900-\u097Fぁ-んァ-ン一-龥]+", "", body or "")
+    if not compact:
+        return True
+    if compact.casefold() in {"ep", "episode", "episodes"}:
+        return True
+    if _SHORTS_TITLE_HASHTAG_BLOCK_RE.search(compact):
+        return True
+    if re.search(r"[가-힣ぁ-んァ-ン一-龥]", compact):
+        if len(compact) > 8:
+            return True
+    elif len(compact) > 16:
+        return True
+    title_compact = re.sub(r"[^0-9A-Za-z가-힣\u0900-\u097Fぁ-んァ-ン一-龥]+", "", title or "").casefold()
+    topic_compact = re.sub(r"[^0-9A-Za-z가-힣\u0900-\u097Fぁ-んァ-ン一-龥]+", "", topic or "").casefold()
+    key = compact.casefold()
+    if len(key) >= 8 and title_compact and key in title_compact:
+        return True
+    if lang == "ko" and key in {"역사쇼츠", "역사이야기"}:
+        return False
+    if topic_compact and len(key) >= 10 and key == topic_compact:
+        return True
+    if key in {w.casefold() for w in _SHORTS_TITLE_WORD_BLOCK.get(lang, set())}:
+        return True
+    return False
+
+
+def _shorts_title_priority_hashtags(*, title: str, topic: str, narration: str, lang: str, max_count: int) -> list[str]:
+    source = " ".join([topic or "", title or "", narration[:800] or ""])
+    out: list[str] = []
+    seen: set[str] = set()
+    stop = _STOPWORDS.get(lang, set()) | _SHORTS_TITLE_WORD_BLOCK.get(lang, set())
+    for raw in _tokens(source):
+        word = str(raw or "").strip()
+        if lang == "ko":
+            word = re.sub(r"(에게|으로|에서|부터|까지|은|는|이|가|을|를|의|와|과|에|도|만|로)$", "", word)
+            if not (2 <= len(word) <= 5):
+                continue
+        elif lang == "ja":
+            if not (2 <= len(word) <= 8):
+                continue
+        elif lang == "hi":
+            if not (3 <= len(word) <= 14):
+                continue
+        else:
+            if not (4 <= len(word) <= 14):
+                continue
+        if word in stop or word.lower() in stop or word.casefold() in {w.casefold() for w in stop}:
+            continue
+        tag = _compact_hashtag(word, max_len=12 if lang in {"ko", "ja"} else 16)
+        if not tag:
+            continue
+        body = tag.lstrip("#")
+        if _shorts_title_hashtag_too_noisy(body, title=title, topic=topic, lang=lang):
+            continue
+        key = tag.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(tag)
+        if len(out) >= max_count:
+            break
+    return out
 
 
 def detect_metadata_language(text: str, fallback: str = "ko") -> str:
@@ -204,24 +287,146 @@ def _sentences(text: str, limit: int = 8) -> list[str]:
     return out
 
 
-def _hashtags(title: str, topic: str, narration: str, lang: str, *, shorts: bool = False) -> str:
-    tags = expand_tags(
+def _compact_hashtag(tag: str, *, max_len: int = 24) -> str:
+    compact = re.sub(r"[^0-9A-Za-z가-힣\u0900-\u097Fぁ-んァ-ン一-龥]+", "", str(tag or ""))
+    compact = re.sub(r"(?:EP|Episode|에피소드)0*\d+$", "", compact, flags=re.IGNORECASE)
+    if compact.casefold() in {"ep", "episode", "episodes"}:
+        return ""
+    if 2 <= len(compact) <= max_len and not compact.isdigit():
+        return f"#{compact}"
+    return ""
+
+
+def recommended_hashtags(
+    *,
+    title: str = "",
+    topic: str = "",
+    narration: str = "",
+    language: str | None = None,
+    shorts: bool = False,
+    max_count: int = 14,
+    max_len: int = 24,
+) -> list[str]:
+    lang = (language or detect_metadata_language(" ".join([title, topic, narration]))).lower()
+    candidates: list[str] = []
+    candidates.extend(_phrase_candidates(title, topic, narration))
+    candidates.extend(expand_tags(
         [],
         title=title,
         topic=topic,
         narration=narration,
         language=lang,
-        max_tags=12,
+        max_tags=max(24, max_count * 2),
         shorts=shorts,
-    )
-    clean: list[str] = []
-    for tag in tags:
-        compact = re.sub(r"[^0-9A-Za-z가-힣\u0900-\u097Fぁ-んァ-ン一-龥]+", "", tag)
-        if 2 <= len(compact) <= 24:
-            clean.append(f"#{compact}")
-        if len(clean) >= 10:
+    ))
+    out: list[str] = []
+    seen: set[str] = set()
+    for tag in candidates:
+        hashtag = _compact_hashtag(tag, max_len=max_len)
+        if not hashtag:
+            continue
+        key = hashtag.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(hashtag)
+        if len(out) >= max_count:
             break
-    return " ".join(clean)
+    return out
+
+
+def recommended_shorts_title_hashtags(
+    *,
+    title: str = "",
+    topic: str = "",
+    narration: str = "",
+    language: str | None = None,
+    max_count: int = 3,
+) -> list[str]:
+    blocked = {"#shorts", "#쇼츠", "#youtubeshorts", "#ショート"}
+    lang = (language or detect_metadata_language(" ".join([title, topic, narration]))).lower()
+    priority = _shorts_title_priority_hashtags(
+        title=title,
+        topic=topic,
+        narration=narration,
+        lang=lang,
+        max_count=max_count,
+    )
+    tags = recommended_hashtags(
+        title=title,
+        topic=topic,
+        narration=narration,
+        language=lang,
+        shorts=True,
+        max_count=max_count + 4,
+        max_len=16,
+    )
+    out: list[str] = []
+    for tag in [*priority, *tags]:
+        if tag.casefold() in blocked:
+            continue
+        body = tag.lstrip("#")
+        if _shorts_title_hashtag_too_noisy(body, title=title, topic=topic, lang=lang):
+            continue
+        if lang == "ja" and re.search(r"[가-힣\u0900-\u097F]", body):
+            continue
+        if lang == "ko" and re.search(r"[\u3040-\u30ff\u0900-\u097F]", body):
+            continue
+        if lang == "en" and re.search(r"[가-힣\u0900-\u097F\u3040-\u30ff]", body):
+            continue
+        if lang == "hi" and re.search(r"[가-힣\u3040-\u30ff]", body):
+            continue
+        out.append(tag)
+        if len(out) >= max_count:
+            break
+    fallback_by_lang = {
+        "ja": ["#歴史", "#日本史", "#歴史解説"],
+        "ko": ["#역사", "#역사쇼츠", "#역사이야기"],
+        "en": ["#history", "#historyshorts", "#documentary"],
+        "hi": ["#history", "#Hindi", "#documentary"],
+    }
+    for tag in fallback_by_lang.get(lang, ["#history"]):
+        if len(out) >= max_count:
+            break
+        key = tag.casefold()
+        if key in blocked or any(existing.casefold() == key for existing in out):
+            continue
+        out.append(tag)
+    return out
+
+
+def _hashtags(
+    title: str,
+    topic: str,
+    narration: str,
+    lang: str,
+    *,
+    shorts: bool = False,
+    max_count: int = 14,
+) -> str:
+    return " ".join(recommended_hashtags(
+        title=title,
+        topic=topic,
+        narration=narration,
+        language=lang,
+        shorts=shorts,
+        max_count=max_count,
+    ))
+
+
+def _hashtag_block(title: str, topic: str, narration: str, lang: str, *, shorts: bool = False) -> str:
+    tags = _hashtags(title, topic, narration, lang, shorts=shorts, max_count=18 if shorts else 16)
+    if not tags:
+        return ""
+    if lang == "hi":
+        label = "सुझाए गए हैशटैग:"
+    elif lang == "en":
+        label = "Recommended hashtags:"
+    elif lang == "ja":
+        label = "おすすめハッシュタグ:"
+    else:
+        label = "추천 해시태그:"
+    return f"{label}\n{tags}"
 
 
 def format_description(
@@ -239,13 +444,14 @@ def format_description(
     if shorts:
         marker = "#Shorts" if lang != "ko" else "#Shorts #쇼츠"
         seed = text or topic or title
+        hashtags = _hashtag_block(title, topic, narration, lang, shorts=True)
         if lang == "hi":
             body = "\n\n".join([
                 seed,
                 f"{topic or title} से जुड़ा यह छोटा हिस्सा कहानी के उस मोड़ पर ध्यान देता है जहां सब कुछ बदलना शुरू होता है.",
                 "पूरी पृष्ठभूमि, घटनाक्रम और असर समझने के लिए मुख्य एपिसोड देखें.",
                 marker,
-                _hashtags(title, topic, narration, lang, shorts=True),
+                hashtags,
             ])
         elif lang == "en":
             body = "\n\n".join([
@@ -253,7 +459,7 @@ def format_description(
                 f"A condensed moment from {topic or title}, focused on the turn that makes the full story worth watching.",
                 "Watch the main episode for the full setup, timeline, and aftermath.",
                 marker,
-                _hashtags(title, topic, narration, lang, shorts=True),
+                hashtags,
             ])
         elif lang == "ja":
             body = "\n\n".join([
@@ -261,15 +467,16 @@ def format_description(
                 f"「{topic or title}」から、流れが変わる場面だけを短くまとめました。",
                 "本編では背景、経緯、その後の意味まで詳しく追っています。",
                 marker,
-                _hashtags(title, topic, narration, lang, shorts=True),
+                hashtags,
             ])
         else:
             body = "\n\n".join([
                 seed,
                 f"{topic or title} 중에서 흐름이 확 바뀌는 장면만 짧게 잘라 담았습니다.",
                 "본편에서는 배경, 전개, 이후에 남은 의미까지 더 자세히 따라갑니다.",
+                "짧은 장면이지만 본편의 핵심 감정, 갈등, 반전 포인트가 드러나도록 골라낸 클립입니다.",
                 marker,
-                _hashtags(title, topic, narration, lang, shorts=True),
+                hashtags,
             ])
         return body.strip()[:5000]
 
@@ -290,6 +497,9 @@ def format_description(
     text = "\n".join(normalized).strip()
 
     if len(text) >= 1100 and "\n\n" in text and ("Key points" in text or "핵심" in text or "主な" in text):
+        hashtags = _hashtag_block(title, topic, narration, lang)
+        if hashtags and "#" not in text[-700:]:
+            text = f"{text}\n\n{hashtags}"
         return text[:5000]
 
     seed = text or topic or title
@@ -366,32 +576,36 @@ def format_description(
         extra_title = "왜 볼 만한가:"
 
     bullet_block = "\n".join(f"- {item.strip()}" for item in bullets if item.strip())
-    hashtag_block = _hashtags(title, topic, narration, lang)
-    rich = "\n\n".join(
-        part for part in [
-            hook,
-            summary,
-            context,
-            bullet_title,
-            bullet_block,
-            extra_title,
-            why,
-            closing,
-            hashtag_block,
-        ]
-        if part
-    )
-    if len(rich) < 950 and lang == "ko":
-        rich += (
-            "\n\n짧게 지나가는 장면들도 그냥 배경으로 넘기지 않고, 이야기의 흐름 안에서 왜 중요한지 "
+    hashtag_block = _hashtag_block(title, topic, narration, lang)
+    rich_parts = [
+        hook,
+        summary,
+        context,
+        bullet_title,
+        bullet_block,
+        extra_title,
+        why,
+        closing,
+    ]
+    rich_probe = "\n\n".join(part for part in rich_parts if part)
+    if len(rich_probe) < 950 and lang == "ko":
+        rich_parts.append(
+            "짧게 지나가는 장면들도 그냥 배경으로 넘기지 않고, 이야기의 흐름 안에서 왜 중요한지 "
             "살펴봅니다. 처음 보면 단순한 사건처럼 보이지만, 끝까지 따라가면 권력, 선택, 기억이 "
             "서로 어떻게 연결되는지 더 분명하게 보입니다."
         )
-    elif len(rich) < 950 and lang == "en":
-        rich += (
-            "\n\nSmall details are not treated as decoration here. Each one is tied back to the "
+    elif len(rich_probe) < 950 and lang == "en":
+        rich_parts.append(
+            "Small details are not treated as decoration here. Each one is tied back to the "
             "larger chain of decisions, consequences, fear, memory, and cause-and-effect that "
             "shaped what happened next. The episode is paced for viewers who want a clear story, "
             "but also want enough detail to understand why the ending lands the way it does."
         )
+    rich_parts.append(hashtag_block)
+    rich = "\n\n".join(
+        part for part in [
+            *rich_parts,
+        ]
+        if part
+    )
     return rich[:5000]

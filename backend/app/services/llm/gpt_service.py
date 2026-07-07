@@ -1,10 +1,8 @@
 """OpenAI GPT LLM service"""
 import json
-import math
 from openai import AsyncOpenAI
-from app.config import resolve_cut_video_duration
 from app.services.llm.base import BaseLLMService
-from app.services.llm.script_quality import assert_script_quality
+from app.services.llm.script_quality import assert_script_quality, assert_story_plan
 from app.services.cancel_ctx import OperationCancelled, raise_if_cancelled
 from app import config
 
@@ -127,62 +125,114 @@ class GPTService(BaseLLMService):
         except Exception:
             pass
 
-    async def generate_script(self, topic: str, config: dict) -> dict:
-        # v1.1.32: target_duration 기반 동적 max_tokens (롱폼 truncation 방지)
-        try:
-            estimated_cuts = int(config.get("target_cuts") or 0)
-        except (TypeError, ValueError):
-            estimated_cuts = 0
-        if estimated_cuts <= 0:
-            try:
-                target_duration = int(config.get("target_duration") or 300)
-            except (TypeError, ValueError):
-                target_duration = 300
-            estimated_cuts = max(1, math.ceil(target_duration / resolve_cut_video_duration(config)))
-        dynamic_max = max(8192, estimated_cuts * 220 + 2048)
-        dynamic_max = min(dynamic_max, 128000)
+    async def generate_story_plan(self, topic: str, config: dict) -> dict:
+        cached = self._load_cached_story_plan(topic, config)
+        if cached is not None:
+            return cached
+
+        target_cuts = self._expected_cut_count(config)
+        max_tokens = 18000 if target_cuts >= 100 else 7000
         if self._is_latest_gpt():
-            dynamic_max = self._latest_gpt_output_budget(dynamic_max)
-        raise_if_cancelled("gpt generate_script")
+            max_tokens = self._latest_gpt_output_budget(max_tokens)
+        raise_if_cancelled("gpt story_plan")
         async with self._client() as client:
-            response = await self._create_json_chat_completion(
-                client,
-                messages=[
-                    {"role": "system", "content": self._get_system_prompt(config)},
-                    {"role": "user", "content": self._build_user_prompt(topic, config)},
+            kwargs = {
+                "model": self.model_id,
+                "messages": [
+                    {"role": "system", "content": self._build_story_plan_text_system_prompt(config)},
+                    {"role": "user", "content": self._build_story_plan_text_user_prompt(topic, config)},
                 ],
-                temperature=0.8,
-                max_tokens=dynamic_max,
-                timeout=None,
-            )
-        raise_if_cancelled("gpt generate_script")
-        self._record_usage(response, "script", config.get("__project_id"))
+                "timeout": None,
+            }
+            if self._is_latest_gpt():
+                kwargs["max_completion_tokens"] = max_tokens
+            else:
+                kwargs["max_tokens"] = max_tokens
+                kwargs["temperature"] = 0.4
+            response = await client.chat.completions.create(**kwargs)
+        raise_if_cancelled("gpt story_plan")
+        self._record_usage(response, "story_plan", config.get("__project_id"))
         project_id = config.get("__project_id")
-        self._save_raw_response(project_id, "script_response", response)
+        self._save_raw_response(project_id, "story_plan_response", response)
         raw = self._message_content_text(response).strip()
         if not raw:
             raise RuntimeError(
-                "OpenAI script response was empty "
+                "OpenAI story plan response was empty "
                 f"(model={self.model_id}, finish_reason={self._finish_reason(response)}, "
                 f"usage={self._usage_summary(response)})"
             )
-        try:
-            parsed = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise RuntimeError(
-                "OpenAI script response was not valid JSON "
-                f"(model={self.model_id}, finish_reason={self._finish_reason(response)}, "
-                f"error={exc})"
-            ) from exc
-        cuts = parsed.get("cuts") or []
-        if len(cuts) != estimated_cuts:
-            raise ValueError(
-                f"script generation returned {len(cuts)} cuts, expected {estimated_cuts}"
-            )
-        parsed = self.strengthen_visual_context(parsed, config)
-        assert_script_quality(parsed, topic)
-        self.assert_script_timing(parsed, config)
+        parsed = self._parse_story_plan_text_response(raw, topic=topic, config=config)
+        parsed = self._normalize_story_plan_structure(parsed)
+        assert_story_plan(parsed, target_cuts, topic, config)
+        self._save_story_plan(topic, config, parsed)
         return parsed
+
+    async def generate_script(self, topic: str, config: dict) -> dict:
+        # v1.1.32: target_duration 기반 동적 max_tokens (롱폼 truncation 방지)
+        estimated_cuts = self._expected_cut_count(config)
+        dynamic_max = max(8192, estimated_cuts * 360 + 8192)
+        dynamic_max = min(dynamic_max, 128000)
+        if self._is_latest_gpt():
+            dynamic_max = self._latest_gpt_output_budget(dynamic_max)
+        story_plan = await self._ensure_story_plan_for_script(topic, config)
+        script_config = dict(config or {})
+        script_config["story_plan"] = story_plan
+        project_id = config.get("__project_id")
+        timing_issues: list[dict] = []
+        max_attempts = int(script_config.get("script_timing_retry_attempts") or 3)
+        max_attempts = max(1, min(5, max_attempts))
+        for attempt in range(1, max_attempts + 1):
+            attempt_config = dict(script_config)
+            if timing_issues:
+                attempt_config["__script_timing_retry_instruction"] = self._script_timing_retry_instruction(
+                    script_config,
+                    timing_issues,
+                )
+            raise_if_cancelled("gpt generate_script")
+            async with self._client() as client:
+                response = await self._create_json_chat_completion(
+                    client,
+                    messages=[
+                        {"role": "system", "content": self._get_system_prompt(attempt_config)},
+                        {"role": "user", "content": self._build_user_prompt(topic, attempt_config)},
+                    ],
+                    temperature=0.8 if attempt == 1 else 0.35,
+                    max_tokens=dynamic_max,
+                    timeout=None,
+                )
+            raise_if_cancelled("gpt generate_script")
+            self._record_usage(response, "script", project_id)
+            raw_label = "script_response" if attempt == 1 else f"script_timing_retry_{attempt}_response"
+            self._save_raw_response(project_id, raw_label, response)
+            raw = self._message_content_text(response).strip()
+            if not raw:
+                raise RuntimeError(
+                    "OpenAI script response was empty "
+                    f"(model={self.model_id}, finish_reason={self._finish_reason(response)}, "
+                    f"usage={self._usage_summary(response)})"
+                )
+            try:
+                parsed = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                raise RuntimeError(
+                    "OpenAI script response was not valid JSON "
+                    f"(model={self.model_id}, finish_reason={self._finish_reason(response)}, "
+                    f"error={exc})"
+                ) from exc
+            cuts = parsed.get("cuts") or []
+            if len(cuts) != estimated_cuts:
+                raise ValueError(
+                    f"script generation returned {len(cuts)} cuts, expected {estimated_cuts}"
+                )
+            parsed = self.strengthen_visual_context(parsed, config)
+            parsed = self.normalize_v31_story_contract(parsed, config, topic)
+            assert_script_quality(parsed, topic)
+            timing_issues = self.validate_script_timing(parsed, config)
+            if timing_issues and attempt < max_attempts:
+                continue
+            self.assert_script_timing(parsed, config)
+            return parsed
+        raise RuntimeError("OpenAI script generation did not return a valid script")
 
     async def generate_tags(
         self,

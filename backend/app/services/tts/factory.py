@@ -4,8 +4,8 @@ from app.services.tts.elevenlabs_service import ElevenLabsService
 from app.services.tts.openai_tts_service import OpenAITTSService
 
 TTS_REGISTRY: dict[str, dict] = {
-    "elevenlabs": {"name": "ElevenLabs", "provider": "elevenlabs", "default": True,
-                   "cost_per_unit": "~$0.30/1K chars", "cost_value": 0.30},
+    "elevenlabs": {"name": "ElevenLabs v3", "provider": "elevenlabs", "default": True,
+                   "cost_per_unit": "$0.10/1K chars", "cost_value": 0.10},
     "openai-tts": {"name": "OpenAI TTS", "provider": "openai", "default": False,
                    "cost_per_unit": "~$0.03/1K chars", "cost_value": 0.03},
 }

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Plus, Play, Trash2, ExternalLink, RefreshCw, CheckCircle, XCircle, AlertCircle, MinusCircle, Key, Clock, DollarSign, LayoutDashboard, Zap, Info, ListTodo, Activity, Film, Upload, MessageSquare } from "lucide-react";
+import { Plus, Play, Trash2, ExternalLink, RefreshCw, CheckCircle, XCircle, AlertCircle, MinusCircle, Key, Clock, DollarSign, LayoutDashboard, Zap, Info, ListTodo, Activity, Film, Upload, MessageSquare, FilePenLine } from "lucide-react";
 import { api, apiStatusApi, type ApiStatusInfo, type ProjectEstimate } from "@/lib/api";
 import { APP_VERSION } from "@/lib/version";
 import { formatDurationKo, formatKrw, costTierClasses } from "@/lib/format";
@@ -21,6 +21,7 @@ const SIDEBAR_NAV = [
 
 const ONECLICK_SUBNAV = [
   { href: "/oneclick", label: "제작 큐", icon: ListTodo },
+  { href: "/oneclick/script-studio", label: "대본실", icon: FilePenLine },
   { href: "/oneclick/upload-pending", label: "업로드 대기", icon: Upload },
   { href: "/oneclick/live", label: "작업대", icon: Activity },
   { href: "/oneclick/channel-ops", label: "채널운영", icon: MessageSquare },
@@ -138,6 +139,8 @@ export default function Dashboard() {
             const active =
               href === "/"
                 ? pathname === "/"
+                : href === "/oneclick"
+                  ? pathname === "/oneclick"
                 : pathname === href || pathname.startsWith(`${href}/`);
 
             return (

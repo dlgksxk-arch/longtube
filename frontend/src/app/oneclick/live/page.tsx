@@ -2109,8 +2109,12 @@ export default function LivePage() {
       isActive
         ? String(displayTask?.current_step_progress_text || displayTask?.sub_status || "").trim()
         : "";
+    const stepNumber = Number(step.key);
+    const isNumericStep = Number.isFinite(stepNumber);
     return {
       ...step,
+      stepNumber,
+      isNumericStep,
       state,
       isActive,
       api: stepApiName(step.key, stageModelTask),
@@ -3485,7 +3489,8 @@ export default function LivePage() {
                       <div className="font-mono text-xs font-bold text-amber-200" title={row.seconds}>{row.seconds}</div>
                       <button
                         type="button"
-                        onClick={() => handleRerunFromStep(Number(row.key))}
+                        onClick={() => row.isNumericStep && handleRerunFromStep(row.stepNumber)}
+                        disabled={!row.isNumericStep}
                         className="justify-self-end rounded border border-accent-primary/25 bg-accent-primary/10 px-1.5 py-1 text-[10px] font-bold text-accent-primary"
                         title="이 단계부터 재개"
                       >
@@ -3493,23 +3498,26 @@ export default function LivePage() {
                       </button>
                       <button
                         type="button"
-                        onClick={() => handleClearStep(Number(row.key), row.label)}
+                        onClick={() => row.isNumericStep && handleClearStep(row.stepNumber, row.label)}
                         disabled={
-                          Number(row.key) > 6 ||
+                          !row.isNumericStep ||
+                          row.stepNumber > 6 ||
                           row.state === "pending" ||
-                          clearing === Number(row.key) ||
+                          clearing === row.stepNumber ||
                           ["running", "queued", "prepared"].includes(displayTask?.status || "")
                         }
                         className="justify-self-end rounded border border-red-400/30 bg-red-400/10 px-1.5 py-1 text-[10px] font-bold text-red-300 hover:bg-red-400/20 disabled:cursor-not-allowed disabled:opacity-35"
                         title={
                           ["running", "queued", "prepared"].includes(displayTask?.status || "")
                             ? "작업 중에는 결과물을 삭제할 수 없습니다. 먼저 중단하세요."
-                            : Number(row.key) > 6
+                            : !row.isNumericStep
+                              ? "이 단계는 작업대에서 직접 삭제할 수 없습니다."
+                            : row.stepNumber > 6
                               ? "업로드 단계는 삭제 대상 결과물이 없습니다."
                               : "이 단계 결과물 삭제"
                         }
                       >
-                        {clearing === Number(row.key) ? "삭제중" : "삭제"}
+                        {clearing === row.stepNumber ? "삭제중" : "삭제"}
                       </button>
                     </div>
                     <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-bg-primary">

@@ -74,7 +74,6 @@ export function inferLiveStepKey(task: OneClickTask | null): string | null {
   if (/ffmpeg|\.mp4|video/i.test(text)) return "5";
   if (/comfyui|ksampler|saveimage|dreamshaper|\.png|cut_\d+/i.test(text)) return "4";
   if (/elevenlabs|tts|audio|\.mp3/i.test(text)) return "3";
-
   const current = task.current_step ? String(task.current_step) : null;
   if ((current === "2" || !current) && Number(cuts["5"] || 0) > 0) return "5";
   if ((current === "2" || !current) && Number(cuts["4"] || 0) > 0) return "4";
@@ -118,7 +117,7 @@ export function getEffectiveTask(task: OneClickTask | null): OneClickTask | null
   const parsedTotal = cutMatch ? Number(cutMatch[2]) : 0;
   return {
     ...task,
-    current_step: Number(activeKey),
+    current_step: Number.isFinite(Number(activeKey)) ? Number(activeKey) : task.current_step,
     current_step_name: stepLabel || task.current_step_name,
     current_step_label: stepLabel || task.current_step_label,
     current_step_completed: hasCutProgress

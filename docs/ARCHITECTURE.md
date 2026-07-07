@@ -18,7 +18,7 @@
 | 경로 / 스택 / 주의사항 | [../CONTEXT.md](../CONTEXT.md) |
 | 버전별 변경사항 | [../CHANGELOG.md](../CHANGELOG.md) |
 | 날짜별 개발 노트 | [../DEVLOG.md](../DEVLOG.md) |
-| 세션 인수인계 | [../HANDOFF.md](../HANDOFF.md) |
+| 세션 인수인계 | [../SESSION_HANDOFF.md](../SESSION_HANDOFF.md) |
 
 ### 이 문서와 현재 구현의 주요 갭 (v1.1.63 기준)
 

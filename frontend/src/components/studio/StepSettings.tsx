@@ -651,6 +651,7 @@ export default function StepSettings({ project, onUpdate, onNextStep, onDirtyCha
       <div className="bg-bg-secondary border border-border rounded-lg p-5 space-y-4">
         <h3 className="text-sm font-medium text-gray-300">AI 모델 선택</h3>
         <div className="grid grid-cols-2 gap-4">
+          <ModelSelector label="스토리 설계 모델 (LLM)" models={llmModels} value={config.story_model || config.script_model} onChange={(v) => updateConfig("story_model", v)} />
           <ModelSelector label="대본 모델 (LLM)" models={llmModels} value={config.script_model} onChange={(v) => updateConfig("script_model", v)} />
           <ModelSelector label="이미지 모델" models={imageModels} value={config.image_model} onChange={(v) => updateConfig("image_model", v)} />
           <ModelSelector label="썸네일 모델" models={imageModels} value={config.thumbnail_model || config.image_model} onChange={(v) => updateConfig("thumbnail_model", v)} />

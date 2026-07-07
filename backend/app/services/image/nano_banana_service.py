@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Optional
 
 import httpx
+from PIL import Image
 
 from app.services.image.base import BaseImageService
 from app.services.cancel_ctx import raise_if_cancelled  # v1.2.25 cancel 방어
@@ -51,6 +52,32 @@ _DISPLAY_NAMES = {
     "nano-banana-3":   "Nano Banana 3",
     "nano-banana-pro": "Nano Banana Pro",
 }
+
+
+def _fit_output_to_requested_size(image_path: str, width: int, height: int) -> None:
+    """Normalize provider output to the requested canvas size for video cuts."""
+    if width <= 0 or height <= 0:
+        return
+    path = Path(image_path)
+    if not path.exists():
+        return
+    with Image.open(path) as img:
+        if img.size == (width, height):
+            return
+        img = img.convert("RGB")
+        src_w, src_h = img.size
+        target_ratio = width / height
+        src_ratio = src_w / src_h if src_h else target_ratio
+        if src_ratio > target_ratio:
+            crop_w = int(src_h * target_ratio)
+            left = max((src_w - crop_w) // 2, 0)
+            box = (left, 0, left + crop_w, src_h)
+        else:
+            crop_h = int(src_w / target_ratio)
+            top = max((src_h - crop_h) // 2, 0)
+            box = (0, top, src_w, top + crop_h)
+        img = img.crop(box).resize((width, height), Image.Resampling.LANCZOS)
+        img.save(path)
 
 # 레퍼런스 이미지 최대 개수 (payload 크기 방어)
 _MAX_REFS = 4
@@ -207,6 +234,7 @@ class NanoBananaService(BaseImageService):
                 img_resp.raise_for_status()
                 with open(output_path, "wb") as f:
                     f.write(img_resp.content)
+                _fit_output_to_requested_size(output_path, width, height)
             return output_path
         except Exception as e:
             # v1.2.20: 폴백 제거. Flux Dev 로 갈아치우지 않고 그대로 raise.

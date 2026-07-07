@@ -12,6 +12,18 @@ from app import config
 
 
 GPT_IMAGE_MODELS = {"gpt-image-1", "gpt-image-2", "gpt-image-1-mini"}
+OPENAI_IMAGE_PROMPT_MAX_CHARS = 31900
+
+
+def _trim_openai_image_prompt(prompt: str) -> str:
+    text = str(prompt or "").strip()
+    if len(text) <= OPENAI_IMAGE_PROMPT_MAX_CHARS:
+        return text
+    head_budget = 26000
+    tail_budget = OPENAI_IMAGE_PROMPT_MAX_CHARS - head_budget - 80
+    head = text[:head_budget].rstrip()
+    tail = text[-tail_budget:].lstrip() if tail_budget > 0 else ""
+    return f"{head}\n\n[Prompt trimmed to fit OpenAI image prompt limit.]\n\n{tail}".strip()
 
 
 class OpenAIImageService(BaseImageService):
@@ -60,6 +72,7 @@ class OpenAIImageService(BaseImageService):
         self, prompt: str, size: str, output_path: str, openai_model: str
     ) -> str:
         """Standard text-to-image generation."""
+        prompt = _trim_openai_image_prompt(prompt)
         headers = {
             "Authorization": f"Bearer {config.OPENAI_API_KEY}",
             "Content-Type": "application/json",
@@ -130,6 +143,7 @@ class OpenAIImageService(BaseImageService):
 
         v1.1.54: 재시도 로직 추가 + /edits 3회 실패 시 표준 생성 폴백.
         """
+        prompt = _trim_openai_image_prompt(prompt)
         headers = {
             "Authorization": f"Bearer {config.OPENAI_API_KEY}",
         }

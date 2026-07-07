@@ -176,10 +176,15 @@ NEXT_PUBLIC_ASSET_BASE=http://192.168.0.10:8000
 
 ```
 longtube/
-├── CONTEXT.md, DEVLOG.md, CHANGELOG.md, HANDOFF.md, README.md
+├── CONTEXT.md, DEVLOG.md, CHANGELOG.md, README.md, SESSION_HANDOFF.md
 ├── .env.example, .gitignore, docker-compose.yml
 ├── start.bat, git-push.bat
-├── docs/ARCHITECTURE.md
+├── docs/
+│   ├── SESSION_PROTOCOL.md
+│   ├── ARCHITECTURE.md
+│   ├── handoffs/
+│   ├── research/
+│   └── archive/v2/
 ├── backend/
 │   ├── .env, requirements.txt
 │   ├── workflows/comfyui/*.json
@@ -207,10 +212,10 @@ longtube/
 | 결정 | 이유 |
 |------|------|
 | 대본 기본 = Claude Sonnet 4.6 | 비용 대비 품질 |
-| 이미지 기본 = OpenAI gpt-image-1 | 레퍼런스 이미지 참조 지원 (`/edits`) |
-| 영상 기본 = FFmpeg Ken Burns | 무료, 빠름, API 비용 0 |
-| 컷 길이 = 5.0초 고정 (`CUT_VIDEO_DURATION`) | 시간 계산 단순화, fal.ai 5초 클립과 1:1 매칭 |
-| 음성 4.3~4.8초 목표 (`TTS_MIN/MAX_DURATION`) | 5초 컷 안에 여유 확보 |
+| 이미지 기본 = `comfyui-dreamshaper-xl-longtube` | 로컬 ComfyUI 기본 이미지 경로 |
+| 영상 기본 = `ffmpeg-static` | 무료, 빠름, API 비용 0 |
+| 컷 길이 = 4.0초 기본 (`CUT_VIDEO_DURATION`) | 150컷 = 600초 롱폼 기준 |
+| 음성 5.0~6.0초 목표 (`TTS_MIN/MAX_DURATION`) | TTS 단계에서 컷 슬롯에 맞게 보정 |
 | asyncio + 인메모리 TaskManager | Celery/Redis 없이 간단한 비동기 처리 |
 | SQLite 로컬 | 1인 사용, 별도 DB 서버 불필요 |
 | 에셋은 `data/outputs`, DB 는 로컬 | 대용량 출력과 DB 분리 |
@@ -247,9 +252,10 @@ longtube/
 
 - 버전별 변경사항: [CHANGELOG.md](./CHANGELOG.md)
 - 날짜별 개발 노트 (문제 진단 + 수정 내역): [DEVLOG.md](./DEVLOG.md)
-- 세션 인수인계 메모: [HANDOFF.md](./HANDOFF.md)
+- 현재 세션 원장: [SESSION_HANDOFF.md](./SESSION_HANDOFF.md)
+- 날짜별 세션 보관본: [docs/handoffs](./docs/handoffs)
 - 초기 설계 문서 (현재 구현과 갭 있음): [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)
 
 ---
 
-> 새 세션 시작 시: `docs/SESSION_PROTOCOL.md` → `SESSION_HANDOFF.md` → `CONTEXT.md` 순서로 확인한다.
+> 새 세션 시작 시: `docs/SESSION_PROTOCOL.md` → `SESSION_HANDOFF.md` → `docs/handoffs/SESSION_QA_V3_2026-05-08.md` → `CONTEXT.md` 순서로 확인한다.

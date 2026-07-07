@@ -48,6 +48,7 @@ class PrepareRequest(BaseModel):
     core_content: Optional[str] = None
     # v1.2.10: 시리즈 연속성.
     episode_number: Optional[int] = None
+    series: Optional[str] = None
     next_episode_preview: Optional[str] = None
     # v1.2.29: 채널 번호(1-4). 지정되면 project_id 에 CH{n} prefix 가 박히고
     # config["channel"] 에도 기록된다. None 이면 레거시 동작.
@@ -69,6 +70,7 @@ def prepare(req: PrepareRequest):
             episode_endings=req.endings,
             episode_core_content=req.core_content,
             episode_number=req.episode_number,
+            series=req.series,
             next_episode_preview=req.next_episode_preview,
             channel=req.channel,
         )
@@ -308,9 +310,13 @@ def get_thumbnail_prompt(task_id: str):
 
     project_id = task["project_id"]
     from app.tasks.pipeline_tasks import load_script, build_thumbnail_prompt
+    from app.services.oneclick_service import _load_project
+
+    project = _load_project(project_id)
+    config = dict((project.config if project else None) or {})
 
     try:
-        script = load_script(project_id)
+        script = load_script(project_id, config)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="script.json not found")
 
@@ -340,12 +346,12 @@ def update_thumbnail_prompt(task_id: str, body: ThumbnailPromptRequest):
         raise HTTPException(status_code=404, detail="project not found")
 
     try:
-        script = load_script(project_id)
+        script = load_script(project_id, project.config or {})
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="script.json not found")
 
     script["thumbnail_prompt"] = prompt
-    save_script(project_id, script, (project.config or {}).get("language", "ko"))
+    save_script(project_id, script, (project.config or {}).get("language", "ko"), project.config or {})
     return {"ok": True, "prompt": prompt}
 
 
@@ -378,14 +384,14 @@ async def regenerate_thumbnail(task_id: str, body: ThumbnailRegenRequest = Thumb
     from app.config import resolve_project_dir
     import re
 
-    script = load_script(project_id)
+    script = load_script(project_id, config)
     if body.prompt is not None:
         prompt = (body.prompt or "").strip()
         if not prompt:
             raise HTTPException(status_code=400, detail="thumbnail prompt is empty")
         from app.tasks.pipeline_tasks import save_script
         script["thumbnail_prompt"] = prompt
-        save_script(project_id, script, config.get("language", "ko"))
+        save_script(project_id, script, config.get("language", "ko"), config)
     thumb_prompt = build_thumbnail_prompt(script)
 
     from app.services.image.factory import DEFAULT_THUMBNAIL_MODEL, resolve_image_model
@@ -598,6 +604,9 @@ class QueueItemModel(BaseModel):
     core_content: Optional[str] = None
     # v1.2.10: 시리즈 연속성.
     episode_number: Optional[int] = None
+    series: Optional[str] = None
+    episode_code: Optional[str] = None
+    episode_id: Optional[str] = None
     next_episode_preview: Optional[str] = None
     # v1.2.30: 큐 등록 경로/시각 메타. UI 에서 "자동 실행 HH:MM",
     # "수동 등록", "복구" 같은 대기 사유를 표시할 때 쓴다.

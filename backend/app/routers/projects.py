@@ -37,6 +37,7 @@ DEFAULT_CONFIG = {
     "cut_video_duration": 4.0,
     "cut_transition": "slow",
     "style": "news_explainer",
+    "story_model": "claude-sonnet-4-6",
     "script_model": "claude-sonnet-4-6",
     "image_model": DEFAULT_IMAGE_MODEL,
     "thumbnail_model": DEFAULT_THUMBNAIL_MODEL,
@@ -80,6 +81,8 @@ DEFAULT_CONFIG = {
 
 def normalize_default_config(config: dict) -> dict:
     cfg = dict(config or {})
+    if not cfg.get("story_model"):
+        cfg["story_model"] = cfg.get("script_model") or DEFAULT_CONFIG["script_model"]
     try:
         target_duration = float(cfg.get("target_duration") or 0)
     except (TypeError, ValueError):
@@ -197,7 +200,7 @@ def update_project(project_id: str, body: ProjectUpdate, db: Session = Depends(g
                 _new_models = _t.get("models") or {}
                 _changes = [
                     f"{k}: {_old_models.get(k, '') or '(없음)'} → {_new_models.get(k, '') or '(없음)'}"
-                    for k in ("script", "tts", "tts_voice", "image", "video", "thumbnail")
+                    for k in ("story", "script", "tts", "tts_voice", "image", "video", "thumbnail")
                     if _old_models.get(k, "") != _new_models.get(k, "")
                 ]
                 if _changes:

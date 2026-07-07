@@ -12,12 +12,15 @@
 ## Source Of Truth
 
 - 현재 세션 시작 원장: `SESSION_HANDOFF.md`
-- V3 작업대/스튜디오 문답 원문: `SESSION_QA_V3_2026-05-08.md`
-- 최신 상세 보관본: `SESSION_HANDOFF_YYYY-MM-DD.md`
+- V3 작업대/스튜디오 문답 원문: `docs/handoffs/SESSION_QA_V3_2026-05-08.md`
+- 최신 상세 보관본: `docs/handoffs/SESSION_HANDOFF_YYYY-MM-DD*.md`
 - 실행/경로/스택 기준: `CONTEXT.md`
 - 사용자용 실행 기준: `README.md`
 - 변경 이력: `CHANGELOG.md`, `DEVLOG.md`
 - 초기 설계 기록: `docs/ARCHITECTURE.md`
+- 보관 인계: `docs/handoffs/`
+- 폐기된 v2 기획/패리티 문서: `docs/archive/v2/`
+- 연구 메모: `docs/research/`
 
 `docs/ARCHITECTURE.md`는 현재 구현 기준 문서가 아닙니다.
 
@@ -27,13 +30,13 @@
 
 1. `docs/SESSION_PROTOCOL.md`
 2. `SESSION_HANDOFF.md`
-3. `SESSION_QA_V3_2026-05-08.md` 전체 원문
+3. `docs/handoffs/SESSION_QA_V3_2026-05-08.md` 전체 원문
 4. `CONTEXT.md`
 5. 현재 요청과 직접 관련된 코드 파일
 
-`SESSION_QA_V3_2026-05-08.md`는 1,000줄이 넘는 긴 원문 파일입니다. 한 번의 출력이 잘리면 파일이 잘린 것이 아니므로, 줄 범위를 나눠서 EOF까지 직접 읽습니다. 요약, 일부 발췌, 출력 제한으로 잘린 내용만 읽은 상태로 작업을 시작하지 않습니다.
+`SESSION_QA_V3_2026-05-08.md`는 긴 원문 파일입니다. 한 번의 출력이 잘리면 파일이 잘린 것이 아니므로, 줄 범위를 나눠서 EOF까지 직접 읽습니다. 요약, 일부 발췌, 출력 제한으로 잘린 내용만 읽은 상태로 작업을 시작하지 않습니다.
 
-날짜별 `SESSION_HANDOFF_YYYY-MM-DD.md`는 `SESSION_HANDOFF.md`가 가리키는 경우에만 상세 보관본으로 읽습니다.
+날짜별 `docs/handoffs/SESSION_HANDOFF_YYYY-MM-DD*.md`는 `SESSION_HANDOFF.md`가 가리키는 경우에만 상세 보관본으로 읽습니다.
 
 ## Required Checks
 
@@ -65,7 +68,7 @@ npx tsc --noEmit
 - dirty worktree의 기존 변경을 되돌리지 않습니다.
 - 토큰/OAuth/DB/로그/캐시는 커밋하지 않습니다.
 - `SESSION_HANDOFF.md`만 현재 세션 시작 원장으로 갱신합니다.
-- 날짜별 handoff는 보관본입니다. 시작 기준을 여러 파일로 분산하지 않습니다.
+- 날짜별 handoff는 `docs/handoffs/` 보관본입니다. 시작 기준을 여러 파일로 분산하지 않습니다.
 - 압축요약으로 기존 사실을 재해석하지 않습니다.
 - V3 작업은 `SESSION_QA_V3_2026-05-08.md` 원문 지시를 요약으로 대체하지 않습니다.
 - 앞으로의 버전 명명은 사용자 지시대로 V3를 사용합니다.

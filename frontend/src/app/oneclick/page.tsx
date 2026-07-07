@@ -176,6 +176,83 @@ function parseChannelTimeCell(value: unknown): string | null {
   return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
 }
 
+function excelCellText(row: unknown[], col: number): string {
+  return col >= 0 ? String(row?.[col] ?? "").trim() : "";
+}
+
+function buildImportedCoreContent(parts: { label: string; value: string }[], legacyCore: string): string {
+  const lines = parts
+    .map(({ label, value }) => ({ label, value: value.trim() }))
+    .filter(({ value }) => value)
+    .map(({ label, value }) => `[${label}] ${value}`);
+  if (legacyCore.trim()) {
+    lines.push(`[핵심내용] ${legacyCore.trim()}`);
+  }
+  return lines.join("\n");
+}
+
+const QUEUE_EXCEL_HEADERS = [
+  "에피소드번호",
+  "주제",
+  "연도",
+  "배경",
+  "핵심인물",
+  "주요인물1",
+  "주요인물2",
+  "주요인물3",
+  "사건의출발",
+  "주요사건",
+  "갈림길/반전",
+  "핵심내용",
+  "결과/의미",
+] as const;
+
+function parseRegisteredCoreContent(coreContent?: string | null): Record<string, string> {
+  const out: Record<string, string> = {};
+  const raw = String(coreContent || "").trim();
+  if (!raw) return out;
+  const lines = raw.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  let matched = false;
+  for (const line of lines) {
+    const match = /^\[([^\]]+)\]\s*(.*)$/.exec(line);
+    if (!match) continue;
+    matched = true;
+    out[match[1].trim()] = match[2].trim();
+  }
+  if (!matched) out["핵심내용"] = raw;
+  return out;
+}
+
+function queueItemsToExcelRows(items: OneClickQueueItem[]): (string | number | null)[][] {
+  return items.map((item) => {
+    const parts = parseRegisteredCoreContent(item.core_content);
+    const people = [parts["주요인물1"], parts["주요인물2"], parts["주요인물3"]]
+      .map((value) => String(value || "").trim())
+      .filter(Boolean);
+    if (!people.length) {
+      people.push(...String(parts["주요인물"] || "")
+        .split("/")
+        .map((value) => value.trim())
+        .filter(Boolean));
+    }
+    return [
+      item.episode_number ?? "",
+      item.title || item.topic || "",
+      parts["연도"] || "",
+      parts["배경"] || "",
+      parts["핵심인물"] || "",
+      people[0] || "",
+      people[1] || "",
+      people[2] || "",
+      parts["사건의출발"] || "",
+      parts["주요사건"] || "",
+      parts["갈림길/반전"] || "",
+      parts["핵심내용"] || "",
+      parts["결과/의미"] || "",
+    ];
+  });
+}
+
 function parseExcelQueueFile(
   workbook: XLSX.WorkBook,
   channel: number,
@@ -225,6 +302,14 @@ function parseExcelQueueFile(
   const presetNameCol = findCol("프리셋", "프리셋명", "preset", "template");
   const durationCol = findCol("길이", "duration", "targetduration", "seconds", "초");
   const coreContentCol = findCol("핵심내용", "핵심콘텐츠", "본문", "내용", "corecontent");
+  const yearCol = findCol("연도", "시기", "year");
+  const backgroundCol = findCol("배경", "시대배경", "background", "setting");
+  const corePersonCol = findCol("핵심인물", "핵심대상", "maincharacter", "protagonist");
+  const majorPersonCols = [1, 2, 3].map((i) => findCol(`주요인물${i}`, `person${i}`, `character${i}`));
+  const eventStartCol = findCol("사건의출발", "사건출발", "출발", "eventstart");
+  const mainEventCol = findCol("주요사건", "mainevent", "event");
+  const turnCol = findCol("갈림길반전", "갈림길", "반전", "turn", "twist");
+  const resultCol = findCol("결과의미", "결과", "의미", "resultmeaning", "result");
   const nextPreviewCol = findCol("다음화예고", "nextepisodepreview", "nextpreview");
   const openingCols = [1, 2, 3, 4, 5].map((i) => findCol(`오프닝${i}`, `opening${i}`));
   const endingCols = [1, 2, 3, 4, 5].map((i) => findCol(`엔딩${i}`, `ending${i}`));
@@ -254,6 +339,21 @@ function parseExcelQueueFile(
 
     const importedTime = timeCol >= 0 ? parseChannelTimeCell(row?.[timeCol]) : null;
     if (importedTime) importedTimes.add(importedTime);
+    const coreContent = buildImportedCoreContent(
+      [
+        { label: "연도", value: excelCellText(row, yearCol) },
+        { label: "배경", value: excelCellText(row, backgroundCol) },
+        { label: "핵심인물", value: excelCellText(row, corePersonCol) },
+        { label: "주요인물1", value: excelCellText(row, majorPersonCols[0]) },
+        { label: "주요인물2", value: excelCellText(row, majorPersonCols[1]) },
+        { label: "주요인물3", value: excelCellText(row, majorPersonCols[2]) },
+        { label: "사건의출발", value: excelCellText(row, eventStartCol) },
+        { label: "주요사건", value: excelCellText(row, mainEventCol) },
+        { label: "갈림길/반전", value: excelCellText(row, turnCol) },
+        { label: "결과/의미", value: excelCellText(row, resultCol) },
+      ],
+      coreContentCol >= 0 ? String(row?.[coreContentCol] ?? "").trim() : "",
+    );
 
     importedItems.push({
       id: Math.random().toString(36).slice(2, 10),
@@ -263,7 +363,7 @@ function parseExcelQueueFile(
       channel,
       openings,
       endings,
-      core_content: coreContentCol >= 0 ? String(row?.[coreContentCol] ?? "").trim() : "",
+      core_content: coreContent,
       episode_number: epCol >= 0 ? parsePositiveInt(row?.[epCol]) : null,
       next_episode_preview: nextPreviewCol >= 0 ? String(row?.[nextPreviewCol] ?? "").trim() : "",
       queued_source: "import",
@@ -862,6 +962,37 @@ export default function QueuePage() {
     }
   }, [channelTimes, channelPresets, openChannel, projects, queue, tasks, buildChannelPresetPayload]);
 
+  const handleOpenRegisteredExcel = useCallback((channel: number) => {
+    const items = queue
+      .filter((item) => (item.channel || 1) === channel)
+      .sort((a, b) => {
+        const ae = Number(a.episode_number || 0);
+        const be = Number(b.episode_number || 0);
+        if (ae && be && ae !== be) return ae - be;
+        return String(a.topic || "").localeCompare(String(b.topic || ""), "ko");
+      });
+    const rows: (string | number | null)[][] = [[...QUEUE_EXCEL_HEADERS], ...queueItemsToExcelRows(items)];
+    const sheet = XLSX.utils.aoa_to_sheet(rows);
+    sheet["!cols"] = [
+      { wch: 12 },
+      { wch: 42 },
+      { wch: 18 },
+      { wch: 46 },
+      { wch: 16 },
+      { wch: 16 },
+      { wch: 16 },
+      { wch: 18 },
+      { wch: 46 },
+      { wch: 52 },
+      { wch: 48 },
+      { wch: 54 },
+      { wch: 48 },
+    ];
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, sheet, "topics");
+    XLSX.writeFile(workbook, `CH${channel}_registered_queue.xlsx`);
+  }, [queue]);
+
   // v1.1.53: 큐 변경 시 자동저장 (2초 디바운스)
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
@@ -1454,6 +1585,15 @@ export default function QueuePage() {
                       )}
                       엑셀 업로드
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => handleOpenRegisteredExcel(n)}
+                      disabled={chQueue.length === 0}
+                      className="text-sm bg-emerald-400/10 text-emerald-400 border border-emerald-400/30 rounded-lg px-3 py-2 hover:bg-emerald-400/20 transition-colors flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      <Download size={12} />
+                      등록 엑셀 열기
+                    </button>
                     <a
                       href={oneclickApi.queueTemplateUrl()}
                       target="_blank"
@@ -1464,7 +1604,7 @@ export default function QueuePage() {
                       템플릿
                     </a>
                     <span className="text-[11px] text-gray-600">
-                      `에피소드번호` / `주제` / `핵심내용` / `오프닝1~5` / `엔딩1~5` 형식을 읽습니다. 시간 열이 있으면 채널 시간도 같이 반영합니다.
+                      `에피소드번호` / `주제` / `연도` / `배경` / `핵심인물` / `주요사건` / `갈림길/반전` / `핵심내용` 형식을 읽습니다. 시간 열이 있으면 채널 시간도 같이 반영합니다.
                     </span>
                   </div>
                   <div className="text-[11px] text-gray-500 mt-2">

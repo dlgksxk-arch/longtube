@@ -74,6 +74,100 @@ DUMMY_SCRIPT = {
 
 
 class DummyLLMService:
+    async def generate_story_plan(self, topic, config):
+        print(f"  [GHOST-LLM] generate_story_plan({topic!r}) → 더미 스토리 설계")
+        return {
+            "script_version": "3.1",
+            "visual_world": {
+                "time_range": "Ghost test time",
+                "place_scope": "Ghost test workspace",
+                "culture_scope": "Synthetic pipeline test context",
+                "material_culture": "Simple test objects and neutral interface-like props",
+                "continuity_rule": "Every scene stays inside the same synthetic test world",
+            },
+            "story_core": {
+                "story_axis": "고스트 테스트가 전체 파이프라인을 한 번 통과하는 흐름",
+                "episode_scope": "고스트 테스트 시작부터 더미 대본 생성 직전까지",
+                "central_question": "고스트 테스트 중심 질문",
+                "central_answer": "고스트 테스트 중심 답변",
+                "protagonist": "고스트 테스트",
+                "goal": "파이프라인 검증",
+                "obstacle": "외부 API 없이 실행",
+                "first_turn": "더미 서비스로 대체",
+                "mid_crisis": "단계 연결 확인",
+                "cost": "비용 없음",
+                "ending_memory": "고스트 테스트가 통과했다",
+            },
+            "character_map": [
+                {
+                    "name": "고스트 테스트",
+                    "identity": "외부 API 없이 파이프라인을 검증하는 더미 대상",
+                    "side_or_interest": "생성 단계 연결 확인",
+                    "first_appearance_cut": "1",
+                    "first_appearance_explanation": "고스트 테스트가 무엇을 검증하는지 설명",
+                    "choice_or_action": "더미 서비스로 스토리와 대본을 반환",
+                    "story_function": "전체 단계 연결 검증",
+                }
+            ],
+            "causality_chain": [
+                "고스트 테스트가 시작된다",
+                "더미 스토리 설계가 반환된다",
+                "더미 대본 생성으로 이어진다",
+                "외부 API 없이 단계 연결을 확인한다",
+            ],
+            "fact_ledger": {
+                "confirmed_facts": ["고스트 테스트는 외부 API 없이 실행된다"],
+                "careful_inferences": ["더미 서비스로 단계 연결을 확인할 수 있다"],
+                "unknown_or_debated": ["실제 모델 품질은 이 테스트에서 판단하지 않는다"],
+                "forbidden_claims": ["실제 API가 호출됐다고 말하지 않는다"],
+            },
+            "visual_plan": {
+                "overall_ratio": {"character_closeup": 10, "intense_action": 10},
+                "five_cut_rhythm": ["wide situation", "test object", "transition"],
+                "avoid": ["external API scene"],
+            },
+            "story_beats": [
+                {
+                    "beat_id": 1,
+                    "act": 1,
+                    "cut_range": f"1-{GHOST_CUTS}",
+                    "beat_role": "hook",
+                    "scene_goal": "고스트 테스트의 목적을 이해시킨다",
+                    "viewer_question": "외부 API 없이 파이프라인이 이어지는가",
+                    "key_facts": ["더미 스토리 설계 반환", "더미 대본 생성 연결"],
+                    "character_focus": ["고스트 테스트"],
+                    "first_appearance": "고스트 테스트",
+                    "causality_from_previous": "테스트 시작",
+                    "story_purpose": "고스트 파이프라인 검증",
+                    "tension": "외부 API 호출 없이 전체 단계가 이어지는지 확인",
+                    "turn_or_reveal": "더미 서비스로 실제 호출을 대체",
+                    "required_script_moves": ["테스트 목적 설명", "다음 단계 연결"],
+                    "turn_to_next": "더미 대본 생성으로 이어짐",
+                }
+            ],
+            "scene_blocks": [
+                {
+                    "block_id": 1,
+                    "cut_range": f"1-{GHOST_CUTS}",
+                    "beat_id": 1,
+                    "block_role": "hook",
+                    "mini_question": "더미 파이프라인이 이어지는가",
+                    "new_information": "외부 API 없이 스토리와 대본 단계를 연결한다",
+                    "tension": "단계 누락 없이 진행되는지 확인한다",
+                    "turn": "더미 대본 생성으로 넘어간다",
+                    "visual_rhythm": "wide test scene -> simple object -> bridge",
+                    "must_include": ["고스트 테스트", "더미 대본"],
+                    "must_avoid": ["실제 API 호출 단정"],
+                }
+            ],
+            "script_checklist": {
+                "story": ["중심 질문 제시"],
+                "continuity": ["단계 연결"],
+                "facts": ["외부 API 호출 금지"],
+                "visual": ["동일 테스트 세계 유지"],
+            },
+        }
+
     async def generate_script(self, topic, config):
         print(f"  [GHOST-LLM] generate_script({topic!r}) → {GHOST_CUTS}컷 더미 대본")
         return DUMMY_SCRIPT
@@ -453,7 +547,9 @@ def run_resume_test():
     class TrackingImageService(DummyImageService):
         async def generate(self, prompt, width, height, output_path, **kw):
             nonlocal img_call_count
-            img_call_count += 1
+            out_name = Path(output_path).name
+            if out_name.startswith("cut_"):
+                img_call_count += 1
             return await _original_img_gen(self, prompt, width, height, output_path, **kw)
 
     patches = [

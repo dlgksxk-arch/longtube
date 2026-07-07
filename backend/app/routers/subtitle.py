@@ -8,7 +8,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
-from app.models.database import get_db
+from app.models.database import SessionLocal, get_db
 from app.models.project import Project
 from app.models.cut import Cut
 from app.config import (
@@ -31,6 +31,8 @@ from app.services.subtitle_service import (
     generate_srt,
 )
 from app.services.shorts_service import (
+    SHORTS_MIN_SEGMENT_COUNT,
+    SHORTS_SEGMENT_COUNT,
     load_script as load_shorts_script,
     render_shorts_from_final,
     select_shorts_segments,
@@ -50,6 +52,18 @@ FIRST_INTERMISSION_AFTER_CUTS = 3
 DEFAULT_RENDER_BGM_VOLUME = 0.21
 DEFAULT_RENDER_BGM_DUCKING = "low"
 DEFAULT_RENDER_BGM_START_OFFSET_SEC = 60.0
+
+
+def _project_dir(project_id: str, *, create: bool = False) -> Path:
+    config: dict = {}
+    db = SessionLocal()
+    try:
+        project = db.query(Project).filter(Project.id == project_id).first()
+        if project and isinstance(project.config, dict):
+            config = dict(project.config or {})
+    finally:
+        db.close()
+    return resolve_project_dir(project_id, config, create=create)
 
 
 def _effective_bgm_volume(volume: float) -> float:
@@ -163,7 +177,7 @@ async def _prepare_interlude_timeline_clip(
 
 def _load_script(project_id: str) -> dict:
     """Load script.json from disk"""
-    script_path = resolve_project_dir(project_id, create=False) / "script.json"
+    script_path = _project_dir(project_id, create=False) / "script.json"
     if not script_path.exists():
         return {"cuts": []}
     with open(script_path, "r", encoding="utf-8") as f:
@@ -250,7 +264,7 @@ def _abs_cut_path(project_id: str, rel_path: str) -> str:
     p = _P(rel_path)
     if p.is_absolute():
         return str(p)
-    return str(resolve_project_dir(project_id, create=False) / rel_path)
+    return str(_project_dir(project_id, create=False) / rel_path)
 
 
 def _safe_audio_ext(filename: str) -> str:
@@ -1360,9 +1374,21 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
     try:
         if shorts_enabled:
             script_for_shorts = load_shorts_script(project_dir)
-            shorts_segments = select_shorts_segments(script_for_shorts, count=4)
-            if len(shorts_segments) < 4:
-                raise RuntimeError(f"shorts segment selection returned {len(shorts_segments)}/4")
+            shorts_segments = select_shorts_segments(
+                script_for_shorts,
+                count=SHORTS_SEGMENT_COUNT,
+                min_count=SHORTS_MIN_SEGMENT_COUNT,
+            )
+            if len(shorts_segments) < SHORTS_MIN_SEGMENT_COUNT:
+                raise RuntimeError(
+                    f"shorts segment selection returned {len(shorts_segments)}/"
+                    f"{SHORTS_SEGMENT_COUNT}, minimum {SHORTS_MIN_SEGMENT_COUNT}"
+                )
+            if len(shorts_segments) < SHORTS_SEGMENT_COUNT:
+                print(
+                    "[subtitle/render] shorts segment selection accepted partial result: "
+                    f"{len(shorts_segments)}/{SHORTS_SEGMENT_COUNT}"
+                )
             cfg = project.config or {}
             if isinstance(script_for_shorts, dict) and not script_for_shorts.get("language"):
                 script_for_shorts["language"] = (
@@ -1442,7 +1468,10 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
                 bgm_volume=float((_read_bgm_config(project.config or {})).get("volume") or DEFAULT_RENDER_BGM_VOLUME),
                 bgm_ducking_strength=str((_read_bgm_config(project.config or {})).get("ducking_strength") or "normal"),
             )
-            if len(shorts_results) != len(shorts_segments) or len(shorts_results) < 4:
+            if (
+                len(shorts_results) != len(shorts_segments)
+                or len(shorts_results) < SHORTS_MIN_SEGMENT_COUNT
+            ):
                 raise RuntimeError(
                     f"shorts render returned {len(shorts_results)}/{len(shorts_segments)}"
                 )

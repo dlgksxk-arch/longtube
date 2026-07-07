@@ -49,7 +49,7 @@ class ElevenLabsService(BaseTTSService):
                         headers={**self.headers, "Content-Type": "application/json"},
                         json={
                             "text": text,
-                            "model_id": "eleven_multilingual_v2",
+                            "model_id": "eleven_v3",
                             "voice_settings": vs,
                         },
                     )

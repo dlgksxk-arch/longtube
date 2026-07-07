@@ -42,7 +42,7 @@ from app.models.database import init_db
 # v1.1.43: oneclick_service 에 "주제 큐 + 매일 HH:MM" 형태의 새 스케줄러가
 # 다시 붙었다 (구 17 행 그리드 와는 완전히 다른 모델). startup/shutdown 에서
 # `start_queue_scheduler` / `stop_queue_scheduler` 를 호출한다.
-from app.routers import projects, pipeline, script, voice, image, video, subtitle, interlude, youtube, downloads, models, api_status, api_keys, api_balances, tasks, oneclick, assets, auth, channel_ops
+from app.routers import projects, pipeline, script, script_studio, voice, image, video, subtitle, interlude, youtube, downloads, models, api_status, api_keys, api_balances, tasks, oneclick, assets, auth, channel_ops
 # v2.1.0 병렬 라우터. 구 라우터와 독립적으로 /api/v2/* 에 마운트된다.
 from app.routers.v2 import (
     keys as v2_keys,
@@ -147,7 +147,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="LongTube",
     description="YouTube longform video automation pipeline",
-    version="V3",
+    version="V3.1",
     lifespan=lifespan,
 )
 
@@ -218,6 +218,7 @@ app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(projects.router, prefix="/api/projects", tags=["projects"])
 app.include_router(pipeline.router, prefix="/api/pipeline", tags=["pipeline"])
 app.include_router(script.router, prefix="/api/script", tags=["script"])
+app.include_router(script_studio.router, prefix="/api/script-studio", tags=["script-studio"])
 app.include_router(voice.router, prefix="/api/voice", tags=["voice"])
 app.include_router(image.router, prefix="/api/image", tags=["image"])
 app.include_router(video.router, prefix="/api/video", tags=["video"])
@@ -252,4 +253,4 @@ app.mount("/assets", StaticFiles(directory=str(DATA_DIR)), name="assets")
 @app.get("/api/health")
 async def health():
     from app.config import COMFYUI_BASE_URL as _CU
-    return {"status": "ok", "version": "V3", "comfyui_base_url": _CU or None}
+    return {"status": "ok", "version": "V3.1", "comfyui_base_url": _CU or None}

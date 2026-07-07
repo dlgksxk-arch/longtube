@@ -291,27 +291,41 @@ def resolve_cut_video_duration(config: dict | None = None, default: float | None
         return fallback
     return max(1.0, min(30.0, value))
 
-# Default TTS timing window. Project configs resolve this from
-# cut_video_duration, so 4s cuts target 4s narration.
+# Default script narration timing window. Video cuts stay fixed, while narration
+# must be authored inside this spoken-duration window before TTS.
 TTS_SCRIPT_TARGET_MULTIPLIER = 1.0
-TTS_TARGET_DURATION = CUT_VIDEO_DURATION * TTS_SCRIPT_TARGET_MULTIPLIER
-TTS_MIN_DURATION = TTS_TARGET_DURATION - 0.2
-TTS_MAX_DURATION = TTS_TARGET_DURATION + 0.2
+TTS_MIN_DURATION = 4.0
+TTS_TARGET_DURATION = 5.0
+TTS_MAX_DURATION = 6.0
 
 
 def resolve_tts_timing_window(config: dict | None = None) -> tuple[float, float, float]:
     """Return (min_sec, max_sec, target_sec) for narration/TTS timing."""
-    target = resolve_cut_video_duration(config) * TTS_SCRIPT_TARGET_MULTIPLIER
-    raw_tolerance = None
+    raw_min = raw_max = raw_target = None
     if isinstance(config, dict):
-        raw_tolerance = config.get("script_tts_tolerance_sec")
+        raw_min = config.get("script_tts_min_sec")
+        raw_max = config.get("script_tts_max_sec")
+        raw_target = config.get("script_tts_target_sec")
     try:
-        tolerance = float(raw_tolerance)
+        min_sec = float(raw_min)
     except (TypeError, ValueError):
-        tolerance = 0.2
-    tolerance = max(0.05, min(1.0, tolerance))
-    min_sec = max(0.1, target - tolerance)
-    max_sec = target + tolerance
+        min_sec = TTS_MIN_DURATION
+    try:
+        max_sec = float(raw_max)
+    except (TypeError, ValueError):
+        max_sec = TTS_MAX_DURATION
+    try:
+        target = float(raw_target)
+    except (TypeError, ValueError):
+        target = TTS_TARGET_DURATION
+    min_sec = max(TTS_MIN_DURATION, min(TTS_MAX_DURATION, min_sec))
+    max_sec = max(TTS_MIN_DURATION, min(TTS_MAX_DURATION, max_sec))
+    if max_sec <= min_sec:
+        min_sec = TTS_MIN_DURATION
+        max_sec = TTS_MAX_DURATION
+    if target < min_sec or target > max_sec:
+        target = TTS_TARGET_DURATION
+    target = max(min_sec, min(max_sec, target))
     return min_sec, max_sec, target
 
 # Anthropic safety brake.  The automation can start multiple 600s scripts in a
@@ -319,8 +333,7 @@ def resolve_tts_timing_window(config: dict | None = None) -> tuple[float, float,
 # Set ANTHROPIC_DAILY_LIMIT_USD=0 to disable deliberately.
 ANTHROPIC_DAILY_LIMIT_USD = float(os.getenv("ANTHROPIC_DAILY_LIMIT_USD", "1.00"))
 
-# Absolute default safety ceiling. Project configs use the resolved TTS target +
-# script_tts_tolerance_sec as their ceiling.
+# Absolute default safety ceiling. Project configs use the resolved TTS window.
 TTS_HARD_MAX_DURATION = TTS_MAX_DURATION
 
 

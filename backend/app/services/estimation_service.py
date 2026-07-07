@@ -38,6 +38,9 @@ LLM_CHUNK_SIZE = 40
 LLM_CHUNK_INPUT_TOKENS = 6000
 LLM_CHUNK_OUTPUT_TOKENS_PER_CUT = 225
 LLM_CHUNK_OUTPUT_OVERHEAD = 700
+STORY_INPUT_TOKENS = 5500
+STORY_LONG_OUTPUT_TOKENS = 15000
+STORY_SHORT_OUTPUT_TOKENS = 6500
 
 # 컷당 TTS 문자수. 실제 ElevenLabs 원장 기준 평균 약 31자.
 TTS_CHARS_PER_CUT = 32
@@ -96,6 +99,7 @@ VIDEO_DEFAULT_SEC = 30.0
 
 # LLM 스크립트 생성 자체 소요 (단일 호출, 토큰 길이와 거의 무관)
 LLM_BASE_SEC = 45.0
+STORY_BASE_SEC = 30.0
 
 # 자막 + 최종 합성 고정 비용 (초)
 POST_PROCESS_SEC = 30.0
@@ -195,6 +199,16 @@ def _estimate_llm_cost_usd(model_id: str, cuts: int) -> float:
     return (input_tokens * cost_input + output_tokens * cost_output) / 1_000_000.0
 
 
+def _estimate_story_cost_usd(model_id: str, cuts: int) -> float:
+    meta = LLM_REGISTRY.get(model_id)
+    if not meta:
+        return 0.0
+    output_tokens = STORY_LONG_OUTPUT_TOKENS if cuts >= 100 else STORY_SHORT_OUTPUT_TOKENS
+    cost_input = float(meta.get("cost_input") or 0.0)
+    cost_output = float(meta.get("cost_output") or 0.0)
+    return (STORY_INPUT_TOKENS * cost_input + output_tokens * cost_output) / 1_000_000.0
+
+
 def _estimate_image_cost_usd(model_id: str, cuts: int) -> float:
     meta = IMAGE_REGISTRY.get(model_id)
     if not meta:
@@ -266,6 +280,7 @@ def estimate_project(config: dict | None) -> dict:
     target_duration = int(round(cuts * seconds_per_cut)) if _safe_int(cfg.get("target_cuts"), 0) > 0 else _safe_int(cfg.get("target_duration"), int(round(cuts * seconds_per_cut)))
 
     script_model = cfg.get("script_model") or "claude-sonnet-4-6"
+    story_model = cfg.get("story_model") or script_model
     image_model = resolve_image_model(cfg.get("image_model"))
     thumbnail_model = resolve_image_model(cfg.get("thumbnail_model") or DEFAULT_THUMBNAIL_MODEL)
     tts_model = cfg.get("tts_model") or "openai-tts"
@@ -277,6 +292,7 @@ def estimate_project(config: dict | None) -> dict:
     fallback_video_cuts = max(0, cuts - ai_video_cuts)
 
     # ---- 비용 ----
+    story_cost = _estimate_story_cost_usd(story_model, cuts)
     llm_cost = _estimate_llm_cost_usd(script_model, cuts)
     image_cost = _estimate_image_cost_usd(image_model, cuts)
     thumbnail_cost = _estimate_image_cost_usd(thumbnail_model, 1)
@@ -290,9 +306,10 @@ def estimate_project(config: dict | None) -> dict:
     # ElevenLabs는 구독/보유 크레딧으로 운영하므로 "편당 추가 결제 예상비" 합계에서는 제외한다.
     # breakdown에는 남겨 사용량 규모는 볼 수 있게 한다.
     tts_billable_cost = 0.0 if tts_model == "elevenlabs" else tts_cost
-    total_cost = llm_cost + image_cost + thumbnail_cost + tts_billable_cost + video_cost
+    total_cost = story_cost + llm_cost + image_cost + thumbnail_cost + tts_billable_cost + video_cost
 
     # ---- 시간 ----
+    story_sec = STORY_BASE_SEC
     llm_sec = LLM_BASE_SEC
     image_sec = _estimate_image_seconds(image_model, cuts)
     tts_sec = _estimate_tts_seconds(tts_model, cuts)
@@ -302,7 +319,7 @@ def estimate_project(config: dict | None) -> dict:
         + _estimate_video_seconds("ffmpeg-static", fallback_video_cuts)
     )
     post_sec = POST_PROCESS_SEC
-    total_sec = llm_sec + image_sec + tts_sec + video_sec + post_sec
+    total_sec = story_sec + llm_sec + image_sec + tts_sec + video_sec + post_sec
 
     # ---- v1.1.35: 원화 환산 + 월 예상 + 경고 tier ----
     cost_krw = total_cost * USD_TO_KRW
@@ -329,6 +346,7 @@ def estimate_project(config: dict | None) -> dict:
         "days_per_month": DAYS_PER_MONTH,
         "estimated_seconds": round(total_sec, 1),
         "cost_breakdown": {
+            "story_plan": round(story_cost, 4),
             "llm_script": round(llm_cost, 4),
             "image_generation": round(image_cost, 4),
             "thumbnail": round(thumbnail_cost, 4),
@@ -337,6 +355,7 @@ def estimate_project(config: dict | None) -> dict:
             "video": round(video_cost, 4),
         },
         "time_breakdown": {
+            "story_plan": round(story_sec, 1),
             "llm_script": round(llm_sec, 1),
             "image_generation": round(image_sec, 1),
             "tts": round(tts_sec, 1),
@@ -344,6 +363,7 @@ def estimate_project(config: dict | None) -> dict:
             "post_process": round(post_sec, 1),
         },
         "models_used": {
+            "story": story_model,
             "script": script_model,
             "image": image_model,
             "thumbnail": thumbnail_model,

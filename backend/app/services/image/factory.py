@@ -28,6 +28,24 @@ IMAGE_REGISTRY: dict[str, dict] = {
         "cost_per_unit": "Free (local GPU, ~7GB)",
         "cost_value": 0.0,
     },
+    "comfyui-z-image-turbo": {
+        "name": "Z-Image Turbo",
+        "provider": "comfyui",
+        "cost_per_unit": "Free (local GPU)",
+        "cost_value": 0.0,
+    },
+    "comfyui-flux2-klein-4b": {
+        "name": "Flux.2 Klein 4B",
+        "provider": "comfyui",
+        "cost_per_unit": "Free (local GPU)",
+        "cost_value": 0.0,
+    },
+    "comfyui-flux2-klein-9b": {
+        "name": "Flux.2 Klein 9B FP8",
+        "provider": "comfyui",
+        "cost_per_unit": "Free (local GPU)",
+        "cost_value": 0.0,
+    },
     "openai-image-1": {
         "name": "GPT Image 1 (gpt-image-1)",
         "provider": "openai",

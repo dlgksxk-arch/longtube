@@ -20,7 +20,7 @@ from app.services.tts.factory import get_tts_service
 
 CACHE_PATH = app_config.BASE_DIR / "data" / "tts_voice_profiles.json"
 ARTIFACT_ROOT = app_config.BASE_DIR / "data" / "_voice_profiles"
-ELEVENLABS_TTS_MODEL_ID = "eleven_multilingual_v2"
+ELEVENLABS_TTS_MODEL_ID = "eleven_v3"
 DEFAULT_SAMPLE_COUNT = 4
 
 KO_PROFILE_SAMPLES = [

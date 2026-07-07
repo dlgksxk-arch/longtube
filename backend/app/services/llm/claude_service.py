@@ -1,12 +1,10 @@
 """Claude (Anthropic) LLM service"""
 from datetime import datetime, timedelta, timezone
 import json
-import math
 import re
 import anthropic
-from app.config import resolve_cut_video_duration
 from app.services.llm.base import BaseLLMService
-from app.services.llm.script_quality import assert_script_quality
+from app.services.llm.script_quality import assert_script_quality, assert_story_plan
 from app.services.cancel_ctx import OperationCancelled, raise_if_cancelled
 from app import config
 
@@ -44,6 +42,31 @@ class ClaudeService(BaseLLMService):
         except Exception:
             pass
 
+    @staticmethod
+    def _response_to_jsonable(response) -> dict:
+        try:
+            return response.model_dump(mode="json")
+        except Exception:
+            try:
+                return json.loads(response.model_dump_json())
+            except Exception:
+                return {"repr": repr(response)}
+
+    def _save_raw_response(self, project_id: str | None, label: str, response) -> None:
+        if not project_id:
+            return
+        try:
+            project_dir = config.resolve_project_dir(str(project_id), create=True)
+            raw_dir = project_dir / "llm_raw"
+            raw_dir.mkdir(parents=True, exist_ok=True)
+            safe = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in label).strip("_") or "response"
+            (raw_dir / f"{safe}.json").write_text(
+                json.dumps(self._response_to_jsonable(response), ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
+
     def _enforce_daily_budget(self):
         limit = float(getattr(config, "ANTHROPIC_DAILY_LIMIT_USD", 0.0) or 0.0)
         if limit <= 0:
@@ -62,48 +85,95 @@ class ClaudeService(BaseLLMService):
                 "Set ANTHROPIC_DAILY_LIMIT_USD=0 only if you intentionally want to disable this guard."
             )
 
-    async def generate_script(self, topic: str, config: dict) -> dict:
-        model = self._model_map.get(self.model_id, self.model_id)
+    async def generate_story_plan(self, topic: str, config: dict) -> dict:
+        cached = self._load_cached_story_plan(topic, config)
+        if cached is not None:
+            return cached
 
-        # v1.1.32: target_duration 기반 동적 max_tokens.
-        # 컷당 ~180 토큰 (나레이션+image_prompt+메타) + title/description/tags 여유
-        # 고정 8192 는 600초 롱폼 대본에서 mid-JSON truncation → 파싱 실패 유발
-        target_cuts = self._safe_int(config.get("target_cuts"), 0)
-        if target_cuts > 0:
-            estimated_cuts = target_cuts
-        else:
-            target_duration = self._safe_int(config.get("target_duration"), 300)
-            estimated_cuts = max(1, math.ceil(target_duration / resolve_cut_video_duration(config)))
-        dynamic_max = max(8192, estimated_cuts * 220 + 2048)
-        # Claude Sonnet 4.6 상한 안전치
-        dynamic_max = min(dynamic_max, 64000)
-        raise_if_cancelled("claude generate_script")
+        model = self._model_map.get(self.model_id, self.model_id)
+        target_cuts = self._expected_cut_count(config)
+        max_tokens = 18000 if target_cuts >= 100 else 7000
+        raise_if_cancelled("claude story_plan")
         self._enforce_daily_budget()
         async with self._client() as client:
             response = await client.messages.create(
                 model=model,
-                max_tokens=dynamic_max,
-                system=self._get_system_prompt(config),
+                max_tokens=max_tokens,
+                system=self._build_story_plan_text_system_prompt(config),
                 messages=[{
                     "role": "user",
-                    "content": self._build_user_prompt(topic, config),
+                    "content": self._build_story_plan_text_user_prompt(topic, config),
                 }],
                 timeout=None,
             )
 
-        raise_if_cancelled("claude generate_script")
-        self._record_usage(response, "script", config.get("__project_id"))
-        raw = response.content[0].text
-        parsed = self._parse_json(raw)
-        cuts = parsed.get("cuts") or []
-        if len(cuts) != estimated_cuts:
-            raise ValueError(
-                f"script generation returned {len(cuts)} cuts, expected {estimated_cuts}"
-            )
-        parsed = self.strengthen_visual_context(parsed, config)
-        assert_script_quality(parsed, topic)
-        self.assert_script_timing(parsed, config)
+        raise_if_cancelled("claude story_plan")
+        self._record_usage(response, "story_plan", config.get("__project_id"))
+        self._save_raw_response(config.get("__project_id"), "story_plan_response", response)
+        raw = response.content[0].text if response.content else ""
+        parsed = self._parse_story_plan_text_response(raw, topic=topic, config=config)
+        parsed = self._normalize_story_plan_structure(parsed)
+        assert_story_plan(parsed, target_cuts, topic, config)
+        self._save_story_plan(topic, config, parsed)
         return parsed
+
+    async def generate_script(self, topic: str, config: dict) -> dict:
+        model = self._model_map.get(self.model_id, self.model_id)
+
+        # v1.1.32: target_duration 기반 동적 max_tokens.
+        # 컷당 ~360 토큰 (나레이션+visual_*+V3.1 story meta) + title/description/tags 여유
+        # 고정 8192 는 600초 롱폼 대본에서 mid-JSON truncation → 파싱 실패 유발
+        estimated_cuts = self._expected_cut_count(config)
+        dynamic_max = max(8192, estimated_cuts * 360 + 8192)
+        # Claude 상한 안전치
+        dynamic_max = min(dynamic_max, 64000)
+        story_plan = await self._ensure_story_plan_for_script(topic, config)
+        script_config = dict(config or {})
+        script_config["story_plan"] = story_plan
+        timing_issues: list[dict] = []
+        max_attempts = int(script_config.get("script_timing_retry_attempts") or 3)
+        max_attempts = max(1, min(5, max_attempts))
+        for attempt in range(1, max_attempts + 1):
+            attempt_config = dict(script_config)
+            if timing_issues:
+                attempt_config["__script_timing_retry_instruction"] = self._script_timing_retry_instruction(
+                    script_config,
+                    timing_issues,
+                )
+            raise_if_cancelled("claude generate_script")
+            self._enforce_daily_budget()
+            async with self._client() as client:
+                response = await client.messages.create(
+                    model=model,
+                    max_tokens=dynamic_max,
+                    system=self._get_system_prompt(attempt_config),
+                    messages=[{
+                        "role": "user",
+                        "content": self._build_user_prompt(topic, attempt_config),
+                    }],
+                    timeout=None,
+                )
+
+            raise_if_cancelled("claude generate_script")
+            self._record_usage(response, "script", config.get("__project_id"))
+            raw_label = "script_response" if attempt == 1 else f"script_timing_retry_{attempt}_response"
+            self._save_raw_response(config.get("__project_id"), raw_label, response)
+            raw = response.content[0].text
+            parsed = self._parse_json(raw)
+            cuts = parsed.get("cuts") or []
+            if len(cuts) != estimated_cuts:
+                raise ValueError(
+                    f"script generation returned {len(cuts)} cuts, expected {estimated_cuts}"
+                )
+            parsed = self.strengthen_visual_context(parsed, config)
+            parsed = self.normalize_v31_story_contract(parsed, config, topic)
+            assert_script_quality(parsed, topic)
+            timing_issues = self.validate_script_timing(parsed, config)
+            if timing_issues and attempt < max_attempts:
+                continue
+            self.assert_script_timing(parsed, config)
+            return parsed
+        raise RuntimeError("Claude script generation did not return a valid script")
 
     @staticmethod
     def _safe_int(value, default: int) -> int:

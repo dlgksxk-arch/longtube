@@ -345,6 +345,44 @@ async def _check_comfyui_queue(base: str) -> dict:
         return {"queue_running": None, "queue_pending": None}
 
 
+async def _check_script_server() -> dict:
+    """Ollama/Qwen local script server status for the sidebar."""
+    base = (_key("OLLAMA_BASE_URL") or "http://127.0.0.1:11434").rstrip("/")
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(3.0, connect=1.5)) as client:
+            resp = await client.get(f"{base}/api/tags")
+        if resp.status_code != 200:
+            return {
+                "provider": "Ollama Script Server",
+                "status": "error",
+                "balance": None,
+                "detail": f"Ollama HTTP {resp.status_code} @ {base}",
+            }
+        data = resp.json()
+        names = [str(item.get("name") or item.get("model") or "") for item in (data.get("models") or [])]
+        qwen = next((name for name in names if name.startswith("qwen3:32b")), "")
+        return {
+            "provider": "Ollama Script Server",
+            "status": "active",
+            "balance": "Qwen 32B" if qwen else f"{len(names)} models",
+            "detail": f"Ollama OK @ {base}" + (f" · {qwen}" if qwen else ""),
+        }
+    except httpx.TimeoutException:
+        return {
+            "provider": "Ollama Script Server",
+            "status": "timeout",
+            "balance": None,
+            "detail": f"Ollama timeout @ {base}",
+        }
+    except Exception as e:
+        return {
+            "provider": "Ollama Script Server",
+            "status": "error",
+            "balance": None,
+            "detail": f"{type(e).__name__}: {str(e)[:100]}",
+        }
+
+
 def _run_status_command(args: list[str], timeout: float = 1.5) -> str:
     """Run a tiny local status command without popping a console window."""
     startupinfo = None
@@ -753,9 +791,10 @@ async def check_local_services():
                 "detail": f"{type(e).__name__}: {str(e)[:120]}",
             }
 
-    comfy, queue, system = await asyncio.gather(
+    comfy, queue, script_server, system = await asyncio.gather(
         _safe_comfy_status(),
         _check_comfyui_queue(base),
+        _check_script_server(),
         _safe_local_system_status(),
     )
     if not isinstance(comfy, dict):
@@ -774,6 +813,11 @@ async def check_local_services():
             "detail": "FastAPI OK",
         },
         "comfyui": comfy,
+        "script_server": script_server if isinstance(script_server, dict) else {
+            "provider": "Ollama Script Server",
+            "status": "error",
+            "detail": "script server probe failed",
+        },
         "system": system if isinstance(system, dict) else {"provider": "Local PC", "status": "error"},
     }
 

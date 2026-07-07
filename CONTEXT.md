@@ -31,10 +31,15 @@
 ## 폴더 구조
 ```
 longtube/
-├── CONTEXT.md, DEVLOG.md, CHANGELOG.md, README.md, HANDOFF.md
+├── CONTEXT.md, DEVLOG.md, CHANGELOG.md, README.md, SESSION_HANDOFF.md
 ├── .env.example, .gitignore, docker-compose.yml
 ├── start.bat, git-push.bat
-├── docs/ARCHITECTURE.md
+├── docs/
+│   ├── SESSION_PROTOCOL.md
+│   ├── ARCHITECTURE.md
+│   ├── handoffs/ (날짜별 세션 인계 보관본)
+│   ├── research/ (모델/프롬프트 연구 메모)
+│   └── archive/v2/ (폐기된 v2 기획 문서)
 ├── backend/
 │   ├── .env (API 키 — git 제외)
 │   ├── requirements.txt
@@ -65,11 +70,11 @@ longtube/
 ```
 
 ## 핵심 설계 상수 (backend/app/config.py)
-- `CUT_VIDEO_DURATION = 5.0` — 모든 컷은 정확히 5초 (fal.ai 5초 클립과 1:1 매칭, 시간 계산 단순화)
-- `TTS_TARGET_DURATION = 4.5`
-- `TTS_MIN_DURATION = 4.3`
-- `TTS_MAX_DURATION = 4.8`
-- `TTS_HARD_MAX_DURATION = 4.8`
+- `CUT_VIDEO_DURATION = 4.0` — 기본 컷 길이는 4초. 프로젝트 config의 `cut_video_duration`으로 재정의 가능.
+- `TTS_TARGET_DURATION = 5.5`
+- `TTS_MIN_DURATION = 5.0`
+- `TTS_MAX_DURATION = 6.0`
+- `TTS_HARD_MAX_DURATION = TTS_MAX_DURATION`
 
 ## 주의
 - Midjourney 는 공식 API 없음 → `NotImplementedError` (프록시 서비스 연동 TODO)
@@ -78,4 +83,4 @@ longtube/
 - API 키는 `backend/.env` 에 저장, UI (`/api/api-keys`) 로 교체 시 v1.1.63 부터 즉시 반영
 - `client_secret.json`, `token.json`, `*.db`, `data/`, `backend/logs/` 는 git 제외
 
-> 업데이트: 2026-05-08 (V3)
+> 업데이트: 2026-07-02 (V3)

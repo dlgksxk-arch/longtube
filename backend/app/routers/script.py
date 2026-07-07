@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from typing import Optional, List
 from sqlalchemy.orm import Session
 
-from app.models.database import get_db
+from app.models.database import SessionLocal, get_db
 from app.models.project import Project
 from app.models.cut import Cut
 from app.config import resolve_project_dir
@@ -20,8 +20,26 @@ from app.services.llm.visual_policy import (
 from app.services.shorts_service import annotate_script_shorts
 from app.services.title_utils import script_title_for_language, with_episode_prefix
 from app.services.tts.voice_profile import ensure_voice_profile_from_config
+from app.services.story_plan_stage import (
+    STORY_STEP_KEY,
+    generate_story_plan_for_project,
+    mark_story_step_state,
+    story_plan_response,
+)
 
 router = APIRouter()
+
+
+def _project_dir(project_id: str, *, create: bool = False) -> Path:
+    config: dict = {}
+    db = SessionLocal()
+    try:
+        project = db.query(Project).filter(Project.id == project_id).first()
+        if project and isinstance(project.config, dict):
+            config = dict(project.config or {})
+    finally:
+        db.close()
+    return resolve_project_dir(project_id, config, create=create)
 
 
 def _asset_exists(project_dir: Path, asset_path: str) -> bool:
@@ -36,7 +54,7 @@ def _normalize_path(project_id: str, asset_path: str) -> str:
     """Convert absolute path to relative path from project dir. Fix legacy data."""
     if not asset_path:
         return asset_path
-    project_dir = str(resolve_project_dir(project_id, create=False))
+    project_dir = str(_project_dir(project_id, create=False))
     p = str(asset_path).replace("\\", "/")
     pd = project_dir.replace("\\", "/")
     if p.startswith(pd):
@@ -63,7 +81,7 @@ class CutReorder(BaseModel):
 
 def _load_script(project_id: str) -> dict:
     """Load script.json from disk"""
-    script_path = resolve_project_dir(project_id, create=False) / "script.json"
+    script_path = _project_dir(project_id, create=False) / "script.json"
     if not script_path.exists():
         return {"cuts": []}
     with open(script_path, "r", encoding="utf-8") as f:
@@ -81,10 +99,42 @@ def _strip_script_motion_prompts(script: dict) -> dict:
 def _save_script(project_id: str, script: dict, language: str = "ko"):
     """Save script.json to disk"""
     script = _strip_script_motion_prompts(script)
-    script_path = resolve_project_dir(project_id, create=True) / "script.json"
+    script_path = _project_dir(project_id, create=True) / "script.json"
     script_path.parent.mkdir(parents=True, exist_ok=True)
     with open(script_path, "w", encoding="utf-8") as f:
         json.dump(script, f, ensure_ascii=False, indent=2)
+
+
+def _persist_script_cuts(db: Session, project: Project, script: dict) -> None:
+    project_id = project.id
+    for cut_data in script.get("cuts", []):
+        existing = db.query(Cut).filter(
+            Cut.project_id == project_id,
+            Cut.cut_number == cut_data["cut_number"],
+        ).first()
+
+        if existing:
+            existing.narration = cut_data.get("narration")
+            existing.image_prompt = normalize_image_prompt(cut_data.get("image_prompt") or "")
+            existing.scene_type = cut_data.get("scene_type")
+            existing.audio_path = None
+            existing.audio_duration = None
+            existing.audio_original_duration = None
+            existing.image_path = None
+            existing.image_model = None
+            existing.video_path = None
+            existing.status = "pending"
+        else:
+            db.add(Cut(
+                project_id=project_id,
+                cut_number=cut_data["cut_number"],
+                narration=cut_data.get("narration"),
+                image_prompt=normalize_image_prompt(cut_data.get("image_prompt") or ""),
+                scene_type=cut_data.get("scene_type"),
+                status="pending",
+            ))
+
+    project.total_cuts = len(script.get("cuts", []))
 
 
 def _load_prepared_script_for_router(project_id: str, config: dict, topic: str) -> Optional[dict]:
@@ -115,10 +165,14 @@ def _finalize_script(
     project_title: str,
     topic: str,
     config: dict,
+    validate_timing: bool = True,
 ) -> dict:
     script = apply_script_visual_policy(script)
     script = annotate_script_shorts(script)
-    BaseLLMService.assert_script_timing(script, config)
+    if validate_timing:
+        BaseLLMService.assert_script_timing(script, config)
+    else:
+        print("[Script] prepared script timing precheck skipped")
     script["title"] = script_title_for_language(
         generated_title=script.get("title"),
         project_title=project_title,
@@ -127,6 +181,71 @@ def _finalize_script(
         language=config.get("language", "ko"),
     )
     return _strip_script_motion_prompts(script)
+
+
+@router.get("/{project_id}/story-plan")
+def get_story_plan(project_id: str, db: Session = Depends(get_db)):
+    """Return the visible story-plan stage output."""
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(404, "Project not found")
+    return story_plan_response(project_id, project.config or {})
+
+
+@router.post("/{project_id}/story-plan/generate-async")
+async def generate_story_plan_async(project_id: str, db: Session = Depends(get_db)):
+    """Generate the story-plan stage in the background."""
+    import asyncio
+    from app.services.task_manager import (
+        start_task, complete_task, fail_task, register_async_task, is_running,
+    )
+
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(404, "Project not found")
+
+    prepared_config = dict(project.config or {})
+    prepared_config["__project_id"] = project_id
+    prepared_script = _load_prepared_script_for_router(project_id, prepared_config, project.topic)
+    if prepared_script is not None:
+        mark_story_step_state(db, project_id, "completed")
+        return {
+            "status": "skipped",
+            "step": STORY_STEP_KEY,
+            "reason": "prepared_script_available",
+            "cuts": len(prepared_script.get("cuts", [])),
+        }
+
+    if is_running(project_id, STORY_STEP_KEY):
+        return {"status": "already_running", "step": STORY_STEP_KEY}
+
+    state = start_task(project_id, STORY_STEP_KEY, 1, estimated_total_seconds=30)
+    mark_story_step_state(db, project_id, "running")
+
+    topic = project.topic
+    config = dict(project.config or {})
+    config["__project_id"] = project_id
+
+    async def _run():
+        from app.models.database import SessionLocal
+
+        local_db = SessionLocal()
+        try:
+            await generate_story_plan_for_project(topic, config)
+            mark_story_step_state(local_db, project_id, "completed")
+            complete_task(project_id, STORY_STEP_KEY)
+        except Exception as e:
+            fail_task(project_id, STORY_STEP_KEY, str(e))
+            try:
+                mark_story_step_state(local_db, project_id, "failed")
+            except Exception:
+                pass
+        finally:
+            local_db.close()
+
+    task = asyncio.create_task(_run())
+    register_async_task(project_id, STORY_STEP_KEY, task)
+    return {"status": "started", "step": STORY_STEP_KEY, "task": state.to_dict()}
 
 
 @router.post("/{project_id}/generate")
@@ -141,6 +260,7 @@ async def generate_script(project_id: str, db: Session = Depends(get_db)):
     try:
         llm_config = dict(project.config or {})
         llm_config["__project_id"] = project_id
+        llm_config["skip_story_plan_generation"] = True
         guard = ScriptGenerationGuard(
             project_id,
             llm_config,
@@ -149,9 +269,13 @@ async def generate_script(project_id: str, db: Session = Depends(get_db)):
         )
         existing_script = await guard.acquire_async()
         if existing_script is not None:
+            _persist_script_cuts(db, project, existing_script)
+            db.commit()
+            _save_script(project_id, existing_script, (project.config or {}).get("language", "ko"))
             return existing_script
 
         script = _load_prepared_script_for_router(project_id, llm_config, project.topic)
+        prepared_script_used = script is not None
         if script is None:
             _assert_script_provider_key(model_id)
             try:
@@ -165,43 +289,16 @@ async def generate_script(project_id: str, db: Session = Depends(get_db)):
             project_title=project.title,
             topic=project.topic,
             config=llm_config,
+            validate_timing=not prepared_script_used,
         )
 
-        for cut_data in script.get("cuts", []):
-            existing = db.query(Cut).filter(
-                Cut.project_id == project_id,
-                Cut.cut_number == cut_data["cut_number"]
-            ).first()
-
-            if existing:
-                existing.narration = cut_data.get("narration")
-                existing.image_prompt = normalize_image_prompt(cut_data.get("image_prompt") or "")
-                existing.scene_type = cut_data.get("scene_type")
-                # Reset generated assets — new script means re-generation needed
-                existing.audio_path = None
-                existing.audio_duration = None
-                existing.audio_original_duration = None
-                existing.image_path = None
-                existing.image_model = None
-                existing.video_path = None
-                existing.status = "pending"
-            else:
-                cut = Cut(
-                    project_id=project_id,
-                    cut_number=cut_data["cut_number"],
-                    narration=cut_data.get("narration"),
-                    image_prompt=normalize_image_prompt(cut_data.get("image_prompt") or ""),
-                    scene_type=cut_data.get("scene_type"),
-                    status="pending"
-                )
-                db.add(cut)
-
+        _persist_script_cuts(db, project, script)
         db.commit()
-        project.total_cuts = len(script.get("cuts", []))
 
         # Mark script step as completed, reset subsequent steps
         # v1.1.26 스텝 순서: 2 대본 · 3 음성 · 4 간지 · 5 이미지 · 6 영상 · 7 자막
         step_states = dict(project.step_states or {})
+        step_states.pop(STORY_STEP_KEY, None)
         step_states["2"] = "completed"
         step_states.pop("3", None)  # voice
         step_states.pop("5", None)  # image
@@ -258,6 +355,7 @@ async def generate_script_async(project_id: str, db: Session = Depends(get_db)):
     project_title = project.title
     config = dict(project.config or {})
     config["__project_id"] = project_id
+    config["skip_story_plan_generation"] = True
 
     async def _run():
         from app.models.database import SessionLocal
@@ -273,17 +371,19 @@ async def generate_script_async(project_id: str, db: Session = Depends(get_db)):
             if existing_script is not None:
                 proj = local_db.query(Project).filter(Project.id == project_id).first()
                 if proj:
-                    proj.total_cuts = len(existing_script.get("cuts", []))
+                    _persist_script_cuts(local_db, proj, existing_script)
                     ss = dict(proj.step_states or {})
                     ss["2"] = "completed"
                     proj.step_states = ss
                     if proj.current_step < 2:
                         proj.current_step = 2
                     local_db.commit()
+                    _save_script(project_id, existing_script, (proj.config or {}).get("language", "ko"))
                 complete_task(project_id, "script")
                 return
 
             script = _load_prepared_script_for_router(project_id, config, topic)
+            prepared_script_used = script is not None
             if script is None:
                 _assert_script_provider_key(model_id)
                 try:
@@ -297,42 +397,18 @@ async def generate_script_async(project_id: str, db: Session = Depends(get_db)):
                 project_title=project_title,
                 topic=topic,
                 config=config,
+                validate_timing=not prepared_script_used,
             )
 
             proj = local_db.query(Project).filter(Project.id == project_id).first()
             if not proj:
                 raise ValueError("Project not found")
 
-            for cut_data in script.get("cuts", []):
-                existing = local_db.query(Cut).filter(
-                    Cut.project_id == project_id,
-                    Cut.cut_number == cut_data["cut_number"],
-                ).first()
-                if existing:
-                    existing.narration = cut_data.get("narration")
-                    existing.image_prompt = normalize_image_prompt(cut_data.get("image_prompt") or "")
-                    existing.scene_type = cut_data.get("scene_type")
-                    existing.audio_path = None
-                    existing.audio_duration = None
-                    existing.audio_original_duration = None
-                    existing.image_path = None
-                    existing.image_model = None
-                    existing.video_path = None
-                    existing.status = "pending"
-                else:
-                    local_db.add(Cut(
-                        project_id=project_id,
-                        cut_number=cut_data["cut_number"],
-                        narration=cut_data.get("narration"),
-                        image_prompt=normalize_image_prompt(cut_data.get("image_prompt") or ""),
-                        scene_type=cut_data.get("scene_type"),
-                        status="pending",
-                    ))
-
+            _persist_script_cuts(local_db, proj, script)
             local_db.commit()
-            proj.total_cuts = len(script.get("cuts", []))
 
             ss = dict(proj.step_states or {})
+            ss.pop(STORY_STEP_KEY, None)
             ss["2"] = "completed"
             ss.pop("3", None)
             ss.pop("5", None)
@@ -658,6 +734,7 @@ def clear_step_results(project_id: str, step: str, db: Session = Depends(get_db)
             pass
 
     step_num_map = {
+        "story": STORY_STEP_KEY,
         "script": "2",
         "voice": "3",
         "image": "4",
@@ -669,11 +746,16 @@ def clear_step_results(project_id: str, step: str, db: Session = Depends(get_db)
     if not step_num:
         raise HTTPException(
             400,
-            f"Invalid step: {step}. Use script, voice, image, video, subtitle, or youtube.",
+            f"Invalid step: {step}. Use story, script, voice, image, video, subtitle, or youtube.",
         )
 
-    if step == "script":
-        for name in ("script", "voice", "image", "video", "render"):
+    if step == "story":
+        _cancel_task(STORY_STEP_KEY)
+        _safe_unlink(project_dir / "story_plan.json")
+        _safe_unlink(project_dir / "llm_raw" / "story_plan_response.json")
+
+    elif step == "script":
+        for name in (STORY_STEP_KEY, "script", "voice", "image", "video", "render"):
             _cancel_task(name)
         for c in cuts:
             db.delete(c)

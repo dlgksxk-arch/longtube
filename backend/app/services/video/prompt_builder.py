@@ -41,8 +41,8 @@ def _is_wan_ti2v_prompt_model(config: dict | None) -> bool:
 VIDEO_NEGATIVE_PROMPT = (
     "low quality, blurry, watermark, text, logo, subtitles, flicker, jitter, "
     "camera shake, sudden cut, scene change, object popping, geometry warping, "
-    "new object, new subject, new person, new character, new prop, appearing object, "
-    "spawned object, hallucinated object, extra object, extra person, invented prop, "
+    "new object, new subject, new prop, appearing object, "
+    "spawned object, hallucinated object, extra object, invented prop, "
     "new light source, new smoke, new dust cloud, new particles, new vehicle, new animal, "
     "person appearing, character appearing, face appearing, added face, new face, "
     "floating head, head-shaped glow, face in abstract pattern, face-like pattern, accidental face, pareidolia, "
@@ -61,11 +61,11 @@ VIDEO_NEGATIVE_PROMPT = (
     "morphing architecture, bending roof lines, distorted windows, warped doors, "
     "unstable perspective, background swimming, texture crawling, deformed hands, "
     "extra fingers, extra limbs, face morphing, identity drift, motion blur, "
-    "afterimage, ghosting, double exposure, transparent duplicate, duplicate people, "
+    "afterimage, ghosting, double exposure, transparent duplicate, "
     "duplicate silhouette, translucent clone, frame echo, long exposure, speed lines, "
     "optical flow artifacts, temporal interpolation artifacts, frame blending, "
     "motion trails, trailing silhouette, smeared edges, smeared body, smeared hands, "
-    "stretched limbs, multiple heads, multiple bodies"
+    "stretched limbs"
 )
 
 
@@ -80,9 +80,9 @@ CARTOON_FACELESS_VIDEO_DIRECTIVE = (
 NO_PERSON_SOURCE_LOCK = (
     "SOURCE PRESERVATION LOCK: the input image is the only allowed visual inventory. "
     "Preserve every already-visible source element exactly, including any faceless cartoon "
-    "figure that the source image may already contain. Do not add, remove, replace, or "
-    "reinterpret subjects. Object count, character count, object identity, character identity, "
-    "and scene layout must remain identical to frame one. Existing blank heads stay blank. "
+    "figure that the source image may already contain. Do not replace or "
+    "reinterpret subjects. Object identity, character identity, "
+    "and scene layout should remain close to frame one. Existing blank heads stay blank. "
     "Animate only an already-visible light, node, line, screen, paper, cloth, machine part, "
     "water surface, smoke, dust, or foreground object with local shimmer, pulse, rotation, "
     "tilt, or sway. If no clearly visible existing element can move safely, keep the clip "
@@ -331,7 +331,7 @@ def _build_generic_video_motion_prompt(
             opener,
             f"Follow the scripted motion cue: {script_motion}.",
             "Preserve the source image's main subject, style, and composition.",
-            "Natural coherent motion, no sudden scene change, no extra people or props unless already visible in the source image.",
+            "Natural coherent motion, no sudden scene change.",
         ]
         if image_context:
             parts.append(f"Keep the motion consistent with the source image content: {image_context}.")
@@ -424,8 +424,7 @@ def _build_wan_ti2v_motion_prompt(
             "Do not rely on camera push-in as the main motion."
         )
     parts.append(
-        "Do not invent a new scene from text. No new people, no new characters, no new faces, "
-        "no new props, no scene replacement, no identity change, no sudden composition change. "
+        "Do not invent a new scene from text. No scene replacement, no identity change, no sudden composition change. "
         "Move only already visible pixels and objects. Keep the source image recognizable in every frame. "
         "For Wan local generation, avoid gait animation; prefer planted-feet upper-body and prop motion."
     )
@@ -542,7 +541,7 @@ def build_video_motion_prompt(
             parts.append(
                 "Script-planned motion based on this cut's image prompt, narration, "
                 f"and episode mood: {script_motion_clause}. Apply it as existing prop, light, screen, machinery, paper, cloth, smoke, or glow motion only. "
-                "Keep the visible inventory unchanged: same people, same props, same scene, same identities, same composition. "
+                "Keep the visible inventory stable: same props, same scene, same identities, same composition. "
                 "Keep any visible person completely source-locked: exact pose, solid opaque body, crisp black outline, same body silhouette, same head shape, same clothing, same hands, and same seated/standing position for every frame. "
                 "Use motion only on existing nearby props, light sources, screens, machinery, paper, cloth, smoke, or glow. "
                 "Keep the face, head shape, and expression frozen exactly as in the source image: no smile, no frown, no mouth movement, no blinking, no eye movement. "
@@ -587,8 +586,7 @@ def build_video_motion_prompt(
     else:
         if has_visible_person:
             parts.append(
-                "Choose only existing prop, light, screen, machinery, paper, cloth, smoke, or glow motion while all visible people remain still. "
-                "If the actual input image does not visibly contain a person, do not create one; animate one existing non-human foreground object instead. "
+                "Choose prop, light, screen, machinery, paper, cloth, smoke, or glow motion while visible people remain visually stable. "
                 "Keep every visible person completely source-locked: exact pose, solid opaque body, crisp black outline, same body silhouette, same head shape, same clothing, same hands, and same seated/standing position for every frame. "
                 "Use motion only on existing nearby props, light, screens, machinery, paper, cloth, smoke, or glow. "
                 "Keep face and expression frozen: "
@@ -597,7 +595,7 @@ def build_video_motion_prompt(
         else:
             parts.append(
                 "Source-preserving animation. Use only the existing source elements and keep the "
-                "background locked. Do not add or remove any visible subject. If the source already "
+                "background locked. If the source already "
                 "contains a faceless cartoon figure, keep that exact figure faceless, unchanged in identity, "
                 "and mostly still. Animate one already visible source element "
                 "with local motion through most of the 5-second clip: an existing light "
@@ -614,10 +612,9 @@ def build_video_motion_prompt(
     if has_visible_person:
         parts.append(
             "I2V source-image lock: animate only existing pixels/objects from the input image. "
-            "If a person is mentioned in text but is not visibly present in the actual input image, do not create that person. "
-            "No new people, no new faces, no new silhouettes, no new bodies, no new characters, no new props, no new vehicles, no new animals, no new symbols, no added text, "
-            "no new lights, no new smoke, no new dust, no extra silhouettes, no newly appearing objects. "
-            "Every visible person remains exactly one solid opaque body with a crisp black outline and stable frame-to-frame silhouette. "
+            "No new props, no new vehicles, no new animals, no new symbols, no added text, "
+            "no new lights, no new smoke, no new dust, no newly appearing objects. "
+            "Every visible person remains a solid opaque body with a crisp black outline and stable frame-to-frame silhouette. "
             "Faces and facial expressions must remain unchanged and frozen. No blinking, no eye movement, no mouth movement, no smile, no frown. "
             "For cartoon/simple characters, do not generate facial features: no eyes, no nose, no mouth, no eyebrows, no expression. "
             f"{PERSON_FACE_FREEZE_LOCK} "
@@ -633,7 +630,7 @@ def build_video_motion_prompt(
             "I2V source-image lock: the source image inventory is complete, and only existing pixels/objects may animate. "
             f"Source inventory: {source_inventory}. "
             "All circles, orbs, lights, stones, monitors, boards, symbols, shadows, glows, lines, nodes, and abstract patterns remain their original object type. "
-            "Object count, object identity, and scene layout must stay identical to frame one. "
+            "Object identity and scene layout should stay close to frame one. "
             "No anthropomorphic transformation and no scene reinterpretation. "
             "Prefer a readable local motion arc only on one already visible source element "
             "from the first second to the last, while the background remains locked. "

@@ -222,12 +222,15 @@ def _build_image_prompt(
     has_character_slot: bool = False,
     character_description: str = "",
     enable_historical_guard: bool = False,
+    image_model: str = "",
 ) -> str:
     """Build final prompt for image generation.
 
     v1.1.58: prompt_builder.build_image_prompt 으로 위임.
     라우터와 파이프라인이 동일한 로직을 사용하도록 통일.
     """
+    if resolve_image_model(image_model) == "comfyui-flux2-klein-9b":
+        return (image_prompt or "").strip()
     from app.services.image.prompt_builder import build_image_prompt
     return build_image_prompt(
         image_prompt,
@@ -447,6 +450,7 @@ async def generate_all_images(project_id: str, db: Session = Depends(get_db)):
                 has_character_slot=is_character_cut,
                 character_description=character_description,
                 enable_historical_guard=enable_historical_guard,
+                image_model=image_model,
             )
 
             # Reference images always attached (for style).
@@ -622,6 +626,7 @@ async def generate_all_images_async(project_id: str, db: Session = Depends(get_d
                         has_character_slot=is_character_cut,
                         character_description=character_description,
                         enable_historical_guard=enable_historical_guard,
+                        image_model=image_model,
                     )
                     all_refs = list(ref_images)
                     if char_images and is_character_cut:
@@ -749,6 +754,9 @@ async def resume_images_async(project_id: str, db: Session = Depends(get_db)):
     import asyncio
     from app.services.task_manager import start_task, update_task, complete_task, fail_task, register_async_task, is_running
 
+    def _truthy(value) -> bool:
+        return value is True or str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
     _ilog(f">>> resume-async ENDPOINT HIT project={project_id}")
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
@@ -763,6 +771,9 @@ async def resume_images_async(project_id: str, db: Session = Depends(get_db)):
     project_dir = resolve_project_dir(project_id, project.config, create=False)
     image_model = resolve_image_model(project.config.get("image_model"))
     global_style = project.config.get("image_global_prompt", "")
+    regenerate_stale_on_resume = _truthy(project.config.get("regenerate_stale_images_on_resume")) or _truthy(
+        project.config.get("force_stale_image_regenerate")
+    )
     ref_images = _collect_reference_images(project_id, project.config)
     char_images = _collect_character_images(project_id, project.config)
     character_description = (project.config.get("character_description") or "").strip()
@@ -792,6 +803,7 @@ async def resume_images_async(project_id: str, db: Session = Depends(get_db)):
             has_character_slot=is_character_cut,
             character_description=character_description,
             enable_historical_guard=enable_historical_guard,
+            image_model=image_model,
         )
         matches, _reason = image_matches_prompt(
             existing,
@@ -800,7 +812,12 @@ async def resume_images_async(project_id: str, db: Session = Depends(get_db)):
             image_model=image_model,
         )
         if not matches:
-            pending_cuts.append(c)
+            if regenerate_stale_on_resume:
+                pending_cuts.append(c)
+            else:
+                _ilog(f"resume keep existing image cut={c.cut_number} despite prompt mismatch reason={_reason}")
+                c.image_path = _to_relative(project_id, str(existing), project.config)
+                c.status = "completed"
     if not pending_cuts:
         _ilog(f"resume-async nothing_to_resume project={project_id} cuts={len(cuts)}")
         return {"status": "nothing_to_resume", "step": "image", "total": 0}
@@ -842,6 +859,9 @@ async def resume_images_async(project_id: str, db: Session = Depends(get_db)):
             ref_images = _collect_reference_images(project_id, proj.config)
             char_images = _collect_character_images(project_id, proj.config)
             character_description = (proj.config.get("character_description") or "").strip()
+            regenerate_stale_on_resume = _truthy(proj.config.get("regenerate_stale_images_on_resume")) or _truthy(
+                proj.config.get("force_stale_image_regenerate")
+            )
             from app.services.image.prompt_builder import should_enable_historical_guard_for_context
             enable_historical_guard = should_enable_historical_guard_for_context(
                 proj.config, project_id, proj.title, proj.topic
@@ -876,6 +896,7 @@ async def resume_images_async(project_id: str, db: Session = Depends(get_db)):
                     has_character_slot=is_character_cut,
                     character_description=character_description,
                     enable_historical_guard=enable_historical_guard,
+                    image_model=image_model,
                 )
                 matches, reason = image_matches_prompt(
                     existing,
@@ -884,10 +905,15 @@ async def resume_images_async(project_id: str, db: Session = Depends(get_db)):
                     image_model=image_model,
                 )
                 if not matches:
-                    _ilog(f"resume stale image cut={c.cut_number} reason={reason}")
-                    c.image_path = None
-                    c.status = "pending"
-                    pending.append(c)
+                    if regenerate_stale_on_resume:
+                        _ilog(f"resume stale image cut={c.cut_number} reason={reason}")
+                        c.image_path = None
+                        c.status = "pending"
+                        pending.append(c)
+                    else:
+                        _ilog(f"resume keep existing image cut={c.cut_number} despite prompt mismatch reason={reason}")
+                        c.image_path = _to_relative(project_id, str(existing), proj.config)
+                        c.status = "completed"
             _ilog(f"resume _run pending={len(pending)} refs={len(ref_images)} chars={len(char_images)}")
 
             semaphore = asyncio.Semaphore(CONCURRENT_IMAGES)
@@ -920,6 +946,7 @@ async def resume_images_async(project_id: str, db: Session = Depends(get_db)):
                         has_character_slot=is_character_cut,
                         character_description=character_description,
                         enable_historical_guard=enable_historical_guard,
+                        image_model=image_model,
                     )
                     all_refs = list(ref_images)
                     if char_images and is_character_cut:
@@ -1090,6 +1117,7 @@ async def generate_one_image(
             has_character_slot=is_character_cut,
             character_description=character_description,
             enable_historical_guard=enable_historical_guard,
+            image_model=image_model,
         )
 
         all_refs = list(ref_images)

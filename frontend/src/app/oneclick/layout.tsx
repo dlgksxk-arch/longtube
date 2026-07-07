@@ -16,6 +16,7 @@ import {
   MessageSquare,
   LayoutDashboard,
   Key,
+  FilePenLine,
 } from "lucide-react";
 import {
   oneclickApi,
@@ -23,6 +24,9 @@ import {
   type OneClickQueueState,
 } from "@/lib/api";
 import LocalServiceStatus from "@/components/common/LocalServiceStatus";
+
+const SCRIPT_STUDIO_ACTIVE_CALLS_KEY = "longtube.scriptStudio.activeCalls";
+const SCRIPT_STUDIO_ACTIVE_CALLS_EVENT = "longtube-script-studio-active-calls";
 
 const NAV = [
   { href: "/oneclick", label: "제작 큐", icon: ListTodo },
@@ -92,20 +96,51 @@ function activeModelNameForStep(task: OneClickTask, step: number) {
   return task.current_step_name || "처리 중";
 }
 
+interface ActiveCallItem {
+  key: string;
+  label: string;
+  model: string;
+  title: string;
+  detail: string;
+}
+
 function activeModelEntries(task: OneClickTask) {
   const states = task.step_states || {};
   const steps = [2, 3, 4, 5, 6, 7].filter((step) => states[String(step)] === "running");
   const activeSteps = steps.length ? steps : [Number(task.current_step || 0)].filter(Boolean);
   return activeSteps.map((step) => ({
-    task,
-    step,
+    key: `${task.task_id}-${step}`,
     label: activeStepLabel(step),
     model: activeModelNameForStep(task, step),
+    title: taskDisplayTitle(task),
+    detail: `CH${task.channel || "-"} ${episodePrefix(task.episode_number) || ""} · ${Math.round(task.progress_pct || 0)}%`,
   }));
+}
+
+function readScriptStudioActiveCalls(): ActiveCallItem[] {
+  if (typeof window === "undefined") return [];
+  const now = Date.now();
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(SCRIPT_STUDIO_ACTIVE_CALLS_KEY) || "[]");
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((item) => Number(item?.expires_at || 0) > now)
+      .map((item) => ({
+        key: String(item.id || "script-studio"),
+        label: String(item.label || "대본실"),
+        model: String(item.model || ""),
+        title: String(item.title || "대본실"),
+        detail: String(item.detail || "생성 중"),
+      }))
+      .filter((item) => item.model);
+  } catch {
+    return [];
+  }
 }
 
 const ONECLICK_SUBNAV = [
   { href: "/oneclick", label: "제작 큐", icon: ListTodo },
+  { href: "/oneclick/script-studio", label: "대본실", icon: FilePenLine },
   { href: "/oneclick/upload-pending", label: "업로드 대기", icon: Upload },
   { href: "/oneclick/live", label: "작업대", icon: Activity },
   { href: "/oneclick/channel-ops", label: "채널운영", icon: MessageSquare },
@@ -121,6 +156,7 @@ export default function OneClickLayout({
   const [queue, setQueue] = useState<OneClickQueueState | null>(null);
   const [task, setTask] = useState<OneClickTask | null>(null);
   const [activeTasks, setActiveTasks] = useState<OneClickTask[]>([]);
+  const [scriptStudioActiveCalls, setScriptStudioActiveCalls] = useState<ActiveCallItem[]>([]);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // 큐 + 활성 태스크 로드
@@ -153,6 +189,19 @@ export default function OneClickLayout({
     void load();
   }, [load]);
 
+  useEffect(() => {
+    const refresh = () => setScriptStudioActiveCalls(readScriptStudioActiveCalls());
+    refresh();
+    const timer = setInterval(refresh, 1000);
+    window.addEventListener(SCRIPT_STUDIO_ACTIVE_CALLS_EVENT, refresh);
+    window.addEventListener("storage", refresh);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener(SCRIPT_STUDIO_ACTIVE_CALLS_EVENT, refresh);
+      window.removeEventListener("storage", refresh);
+    };
+  }, []);
+
   // 사이드바 상태/호출 모델 실시간 폴링
   useEffect(() => {
     pollRef.current = setInterval(() => {
@@ -169,7 +218,10 @@ export default function OneClickLayout({
     ["prepared", "queued", "running"].includes(task.status);
   const pct = Math.max(0, Math.min(100, task?.progress_pct || 0));
 
-  const activeCallItems = activeTasks.flatMap(activeModelEntries).slice(0, 4);
+  const activeCallItems = [
+    ...scriptStudioActiveCalls,
+    ...activeTasks.flatMap(activeModelEntries),
+  ].slice(0, 4);
   const flatSidebarNav = [
     TOP_NAV[0],
     ...ONECLICK_SUBNAV,
@@ -204,6 +256,8 @@ export default function OneClickLayout({
             const active =
               href === "/"
                 ? pathname === "/"
+                : href === "/oneclick"
+                  ? pathname === "/oneclick"
                 : pathname === href || pathname.startsWith(`${href}/`);
             return (
               <Link
@@ -237,11 +291,11 @@ export default function OneClickLayout({
             </div>
             {activeCallItems.length ? (
               <div className="space-y-1.5">
-                {activeCallItems.map(({ task: item, step, label, model }) => (
+                {activeCallItems.map(({ key, label, model, title, detail }) => (
                   <div
-                    key={`${item.task_id}-${step}`}
+                    key={key}
                     className="rounded-md border border-border/80 bg-bg-secondary/80 px-2 py-1.5"
-                    title={`${taskDisplayTitle(item)} · ${model}`}
+                    title={`${title} · ${model}`}
                   >
                     <div className="flex items-center gap-1.5">
                       <span className="shrink-0 rounded border border-accent-primary/30 bg-accent-primary/10 px-1.5 py-0.5 text-[10px] font-black text-accent-primary">
@@ -250,7 +304,7 @@ export default function OneClickLayout({
                       <span className="min-w-0 truncate text-xs font-bold text-white">{model}</span>
                     </div>
                     <div className="mt-1 truncate text-[10px] text-gray-500">
-                      CH{item.channel || "-"} {episodePrefix(item.episode_number) || ""} · {Math.round(item.progress_pct || 0)}%
+                      {detail}
                     </div>
                   </div>
                 ))}

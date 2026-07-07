@@ -21,7 +21,7 @@ def _vlog(msg: str) -> None:
         pass
 from sqlalchemy.orm import Session
 
-from app.models.database import get_db
+from app.models.database import SessionLocal, get_db
 from app.models.project import Project
 from app.models.cut import Cut
 from app.config import CHANNELS_ROOT, RESULT_ARCHIVE_DIR, SYSTEM_PROJECTS_ROOT, resolve_cut_video_duration, resolve_project_dir
@@ -32,9 +32,21 @@ from app.services.subtitle_service import burn_cut_subtitle_file
 router = APIRouter()
 
 
+def _project_dir(project_id: str, *, create: bool = False) -> Path:
+    config: dict = {}
+    db = SessionLocal()
+    try:
+        project = db.query(Project).filter(Project.id == project_id).first()
+        if project and isinstance(project.config, dict):
+            config = dict(project.config or {})
+    finally:
+        db.close()
+    return resolve_project_dir(project_id, config, create=create)
+
+
 def _to_relative(project_id: str, abs_path: str) -> str:
     """Convert absolute path to relative path from project dir for DB storage."""
-    project_dir = str(resolve_project_dir(project_id, create=False))
+    project_dir = str(_project_dir(project_id, create=False))
     p = str(abs_path).replace("\\", "/")
     pd = project_dir.replace("\\", "/")
     if p.startswith(pd):
@@ -48,11 +60,11 @@ def _to_absolute(project_id: str, rel_path: str) -> str:
     p = Path(rel_path)
     if p.is_absolute():
         return rel_path
-    return str(resolve_project_dir(project_id, create=False) / rel_path)
+    return str(_project_dir(project_id, create=False) / rel_path)
 
 
 def _load_script_cut_map(project_id: str) -> dict[int, dict]:
-    script_path = resolve_project_dir(project_id, create=False) / "script.json"
+    script_path = _project_dir(project_id, create=False) / "script.json"
     if not script_path.exists():
         return {}
     try:

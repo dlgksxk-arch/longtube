@@ -54,8 +54,11 @@ def _cut_score(cut: dict[str, Any], index: int, total: int) -> int:
 
 
 SHORTS_SEGMENT_COUNT = 4
+SHORTS_MIN_SEGMENT_COUNT = 3
 SHORTS_CUT_COUNT = 15
+SHORTS_EXPLICIT_MARKED_MIN_CUT_COUNT = 10
 SHORTS_TOTAL_CANDIDATE_CUT_COUNT = SHORTS_SEGMENT_COUNT * SHORTS_CUT_COUNT
+SHORTS_MIN_CANDIDATE_CUT_COUNT = SHORTS_MIN_SEGMENT_COUNT * SHORTS_CUT_COUNT
 SHORTS_GROUP_PURPOSES = {
     1: "논쟁 질문",
     2: "충격 사실",
@@ -106,9 +109,33 @@ async def _validate_rendered_video(ffmpeg: str, path: Path, label: str, *, timeo
         capture_stdout=False,
         capture_stderr=True,
     )
+    err_text = (stderr or b"").decode(errors="replace")
     if rc != 0:
-        err = (stderr or b"").decode(errors="replace")[-800:]
+        err = err_text[-800:]
         raise RuntimeError(f"{label} validation failed: {err}")
+
+
+def _temp_render_path(final_path: Path) -> Path:
+    final_path.parent.mkdir(parents=True, exist_ok=True)
+    handle = tempfile.NamedTemporaryFile(
+        prefix=f".{final_path.stem}.",
+        suffix=final_path.suffix,
+        dir=final_path.parent,
+        delete=False,
+    )
+    try:
+        return Path(handle.name)
+    finally:
+        handle.close()
+
+
+def _discard_temp_render(path: Path | None) -> None:
+    if not path:
+        return
+    try:
+        path.unlink(missing_ok=True)
+    except Exception:
+        pass
 
 
 def _cut_duration(cut: dict[str, Any]) -> float:
@@ -153,7 +180,12 @@ def _expand_segment(
     return start, end
 
 
-def select_shorts_segments(script: dict[str, Any], *, count: int = SHORTS_SEGMENT_COUNT) -> list[dict[str, Any]]:
+def select_shorts_segments(
+    script: dict[str, Any],
+    *,
+    count: int = SHORTS_SEGMENT_COUNT,
+    min_count: int = SHORTS_MIN_SEGMENT_COUNT,
+) -> list[dict[str, Any]]:
     """Return shorts segments using script-marked cuts first."""
     cuts = [c for c in script.get("cuts", []) or [] if isinstance(c, dict)]
     if not cuts:
@@ -180,6 +212,34 @@ def select_shorts_segments(script: dict[str, Any], *, count: int = SHORTS_SEGMEN
 
     segments: list[dict[str, Any]] = []
     used: set[int] = set()
+    explicit_groups = [
+        group for group in sorted(by_group)
+        if 1 <= group <= count and len(by_group[group]) >= SHORTS_EXPLICIT_MARKED_MIN_CUT_COUNT
+    ]
+    if len(explicit_groups) >= min_count:
+        for group in explicit_groups[:count]:
+            nums = sorted(
+                int(c["cut_number"])
+                for c in by_group[group]
+                if c.get("cut_number")
+            )[:SHORTS_CUT_COUNT]
+            span = set(nums)
+            if not nums or used.intersection(span):
+                continue
+            used.update(span)
+            first_cut = sorted(by_group[group], key=lambda c: int(c.get("cut_number") or 0))[0]
+            segments.append({
+                "group": group,
+                "start_cut": nums[0],
+                "end_cut": nums[-1],
+                "cut_numbers": nums,
+                "reason": first_cut.get("shorts_reason") or SHORTS_GROUP_PURPOSES.get(group) or "script-marked shorts cuts",
+                "title": first_cut.get("shorts_title") or first_cut.get("headline") or "",
+                "purpose": SHORTS_GROUP_PURPOSES.get(group) or "",
+            })
+        if len(segments) >= min_count:
+            return segments
+
     for group in sorted(by_group):
         group_cuts = sorted(
             by_group[group],
@@ -193,7 +253,7 @@ def select_shorts_segments(script: dict[str, Any], *, count: int = SHORTS_SEGMEN
             for c in group_cuts[:SHORTS_CUT_COUNT]
             if c.get("cut_number")
         )
-        if not nums:
+        if len(nums) < SHORTS_CUT_COUNT:
             continue
         span = set(nums)
         if used.intersection(span):
@@ -211,6 +271,8 @@ def select_shorts_segments(script: dict[str, Any], *, count: int = SHORTS_SEGMEN
         })
         if len(segments) >= count:
             return segments
+    if len(segments) >= max(1, min(count, min_count)):
+        return segments
 
     ranked = sorted(
         (
@@ -267,7 +329,12 @@ def select_shorts_segments(script: dict[str, Any], *, count: int = SHORTS_SEGMEN
     return segments
 
 
-def annotate_script_shorts(script: dict[str, Any], *, count: int = SHORTS_SEGMENT_COUNT) -> dict[str, Any]:
+def annotate_script_shorts(
+    script: dict[str, Any],
+    *,
+    count: int = SHORTS_SEGMENT_COUNT,
+    min_count: int = SHORTS_MIN_SEGMENT_COUNT,
+) -> dict[str, Any]:
     """Ensure script cuts contain deterministic shorts metadata."""
     cuts = [c for c in script.get("cuts", []) or [] if isinstance(c, dict)]
     for cut in cuts:
@@ -290,6 +357,24 @@ def annotate_script_shorts(script: dict[str, Any], *, count: int = SHORTS_SEGMEN
         group: sum(1 for cut in existing_marked if int(cut.get("shorts_group") or 0) == group)
         for group in range(1, SHORTS_SEGMENT_COUNT + 1)
     }
+    explicit_groups = [
+        group for group in range(1, SHORTS_SEGMENT_COUNT + 1)
+        if group_counts[group] >= SHORTS_EXPLICIT_MARKED_MIN_CUT_COUNT
+    ]
+    if len(explicit_groups) >= min_count:
+        keep_groups = set(explicit_groups[:count])
+        for cut in cuts:
+            group = int(cut.get("shorts_group") or 0)
+            if cut.get("shorts_candidate") is True and group in keep_groups:
+                cut["shorts_group"] = group
+                cut["shorts_score"] = max(int(cut.get("shorts_score") or 0), 7)
+                if not cut.get("shorts_reason"):
+                    cut["shorts_reason"] = SHORTS_GROUP_PURPOSES.get(group) or "script-marked shorts cuts"
+            else:
+                cut["shorts_candidate"] = False
+                cut["shorts_group"] = 0
+        return script
+
     if all(group_counts[group] >= SHORTS_CUT_COUNT for group in range(1, SHORTS_SEGMENT_COUNT + 1)):
         keep: set[int] = set()
         for group in range(1, SHORTS_SEGMENT_COUNT + 1):
@@ -324,7 +409,7 @@ def annotate_script_shorts(script: dict[str, Any], *, count: int = SHORTS_SEGMEN
                 cut["shorts_group"] = 0
         return script
 
-    segments = select_shorts_segments(script, count=count)
+    segments = select_shorts_segments(script, count=count, min_count=min_count)
     for cut in cuts:
         cut["shorts_candidate"] = False
         cut["shorts_group"] = 0
@@ -1101,49 +1186,71 @@ async def render_shorts_from_final(
         start_sec = 0.0
         concat_source = shorts_dir / f"_cut_concat_short_{idx}.mp4"
         concat_list = shorts_dir / f"_cut_concat_short_{idx}.txt"
-        concat_list.write_text(
-            "\n".join(
-                f"file '{str(path).replace(chr(39), chr(39) + '\\\\' + chr(39) + chr(39))}'"
-                for path in cut_video_paths
-                if path is not None
-            ),
-            encoding="utf-8",
-        )
-        concat_cmd = [
-            ffmpeg, "-y",
-            "-fflags", "+genpts",
-            "-f", "concat",
-            "-safe", "0",
-            "-i", str(concat_list),
-            "-vf", "fps=30,format=yuv420p",
-            "-af", "aresample=async=1:first_pts=0",
-            "-c:v", "libx264",
-            "-preset", SHORTS_VIDEO_PRESET,
-            "-crf", SHORTS_VIDEO_CRF,
-            "-pix_fmt", "yuv420p",
-            "-profile:v", "high",
-            "-level", "4.2",
-            "-r", "30",
-            "-c:a", "aac",
-            "-b:a", "192k",
-            "-ar", "48000",
-            "-movflags", "+faststart",
-            str(concat_source),
-        ]
-        rc, _, stderr = await run_subprocess(
-            concat_cmd,
-            timeout=300.0,
-            capture_stdout=False,
-            capture_stderr=True,
-        )
-        if rc != 0:
-            err = (stderr or b"").decode(errors="replace")[-500:]
-            raise RuntimeError(f"shorts cut concat failed for short_{idx}: {err}")
-        await _validate_rendered_video(ffmpeg, concat_source, f"short_{idx} concat")
-        input_video_paths = [concat_source]
-        source_prefix = ""
-        video_source = "[0:v]"
-        audio_source = "[0:a]"
+        concat_tmp: Path | None = None
+        try:
+            concat_list.write_text(
+                "\n".join(
+                    f"file '{str(path).replace(chr(39), chr(39) + '\\\\' + chr(39) + chr(39))}'"
+                    for path in cut_video_paths
+                    if path is not None
+                ),
+                encoding="utf-8",
+            )
+            concat_tmp = _temp_render_path(concat_source)
+            concat_cmd = [
+                ffmpeg, "-y",
+                "-fflags", "+genpts",
+                "-f", "concat",
+                "-safe", "0",
+                "-i", str(concat_list),
+                "-vf", "fps=30,format=yuv420p",
+                "-af", "aresample=async=1:first_pts=0",
+                "-c:v", "libx264",
+                "-preset", SHORTS_VIDEO_PRESET,
+                "-crf", SHORTS_VIDEO_CRF,
+                "-pix_fmt", "yuv420p",
+                "-profile:v", "high",
+                "-level", "4.2",
+                "-r", "30",
+                "-c:a", "aac",
+                "-b:a", "192k",
+                "-ar", "48000",
+                "-movflags", "+faststart",
+                str(concat_tmp),
+            ]
+            rc, _, stderr = await run_subprocess(
+                concat_cmd,
+                timeout=300.0,
+                capture_stdout=False,
+                capture_stderr=True,
+            )
+            if rc != 0:
+                err = (stderr or b"").decode(errors="replace")[-500:]
+                raise RuntimeError(f"shorts cut concat failed for short_{idx}: {err}")
+            await _validate_rendered_video(ffmpeg, concat_tmp, f"short_{idx} concat")
+            os.replace(concat_tmp, concat_source)
+            concat_tmp = None
+            input_video_paths = [concat_source]
+            source_prefix = ""
+            video_source = "[0:v]"
+            audio_source = "[0:a]"
+        except Exception as concat_exc:
+            print(f"[shorts] cut concat fallback to timeline trim for short_{idx}: {concat_exc}")
+            use_cut_files = False
+            first_cut = cut_numbers[0] if cut_numbers else start_cut
+            if timeline:
+                start_sec = timeline.get(first_cut, (0.0, float(CUT_VIDEO_DURATION)))[0]
+                duration = sum(
+                    timeline.get(num, (0.0, float(CUT_VIDEO_DURATION)))[1]
+                    for num in cut_numbers
+                )
+                render_duration = duration
+            input_video_paths = [final_video]
+            source_prefix = ""
+            video_source = "[0:v]"
+            audio_source = "[0:a]"
+        finally:
+            _discard_temp_render(concat_tmp)
 
         browser_text_overlay_path = await _render_browser_text_overlay(
             output_path=text_dir / f"short_{idx}_text_overlay.png",
@@ -1217,6 +1324,7 @@ async def render_shorts_from_final(
                 f"x=(w-text_w)/2:y={SHORTS_CHANNEL_Y}[v5];"
                 "[v5]fps=30,format=yuv420p[vout]"
             )
+        out_tmp = _temp_render_path(out_path)
         cmd = [
             ffmpeg, "-y",
         ]
@@ -1280,18 +1388,23 @@ async def render_shorts_from_final(
             "-r", "30",
             "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
             "-movflags", "+faststart",
-            str(out_path),
+            str(out_tmp),
         ])
-        rc, _, stderr = await run_subprocess(
-            cmd,
-            timeout=600.0,
-            capture_stdout=False,
-            capture_stderr=True,
-        )
-        if rc != 0:
-            err = (stderr or b"").decode(errors="replace")[-500:]
-            raise RuntimeError(f"shorts render failed for short_{idx}: {err}")
-        await _validate_rendered_video(ffmpeg, out_path, f"short_{idx}")
+        try:
+            rc, _, stderr = await run_subprocess(
+                cmd,
+                timeout=600.0,
+                capture_stdout=False,
+                capture_stderr=True,
+            )
+            if rc != 0:
+                err = (stderr or b"").decode(errors="replace")[-500:]
+                raise RuntimeError(f"shorts render failed for short_{idx}: {err}")
+            await _validate_rendered_video(ffmpeg, out_tmp, f"short_{idx}")
+            os.replace(out_tmp, out_path)
+            out_tmp = None
+        finally:
+            _discard_temp_render(out_tmp)
         results.append({
             "index": idx,
             "path": str(out_path),
