@@ -64,6 +64,7 @@ class KlingService(BaseVideoService):
         output_path: str = "",
         aspect_ratio: str = "16:9",
         prompt: str = "",
+        audio_start_offset: float = 0.0,
     ) -> str:
         ak = os.environ.get("KLING_ACCESS_KEY", "") or getattr(cfg, "KLING_ACCESS_KEY", "")
         sk = os.environ.get("KLING_SECRET_KEY", "") or getattr(cfg, "KLING_SECRET_KEY", "")
@@ -92,7 +93,7 @@ class KlingService(BaseVideoService):
                     "model_name": "kling-v2",
                     "image": image_b64,
                     "prompt": prompt or "smooth cinematic camera motion",
-                    "duration": "5",
+                    "duration": str(max(1, int(round(float(duration or 5.0))))),
                     "mode": "std",
                     "aspect_ratio": kling_ratio,
                 },
@@ -133,14 +134,22 @@ class KlingService(BaseVideoService):
                         if not ffmpeg_bin:
                             mux_rc, mux_err = -1, b"ffmpeg not found"
                         else:
+                            try:
+                                offset_ms = max(0, int(round(float(audio_start_offset or 0.0) * 1000)))
+                            except (TypeError, ValueError):
+                                offset_ms = 0
+                            audio_filter = "apad"
+                            if offset_ms > 0:
+                                audio_filter = f"adelay={offset_ms}:all=1,apad"
                             # Non-blocking ffmpeg mux
                             cmd = [
                                 ffmpeg_bin, "-y",
                                 "-i", temp_path,
                                 "-i", audio_path,
                                 "-map", "0:v", "-map", "1:a",
+                                "-af", audio_filter,
                                 "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
-                                "-shortest",
+                                "-t", str(duration),
                                 output_path,
                             ]
                             try:

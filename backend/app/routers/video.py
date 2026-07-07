@@ -24,7 +24,15 @@ from sqlalchemy.orm import Session
 from app.models.database import SessionLocal, get_db
 from app.models.project import Project
 from app.models.cut import Cut
-from app.config import CHANNELS_ROOT, RESULT_ARCHIVE_DIR, SYSTEM_PROJECTS_ROOT, resolve_cut_video_duration, resolve_project_dir
+from app.config import (
+    CHANNELS_ROOT,
+    RESULT_ARCHIVE_DIR,
+    SYSTEM_PROJECTS_ROOT,
+    resolve_cut_audio_start_offset,
+    resolve_cut_video_duration,
+    resolve_cut_video_duration_for_audio,
+    resolve_project_dir,
+)
 from app.services.video.factory import DEFAULT_VIDEO_MODEL, get_video_service, resolve_video_model
 from app.services.video.ffmpeg_service import FFmpegService
 from app.services.subtitle_service import burn_cut_subtitle_file
@@ -61,6 +69,39 @@ def _to_absolute(project_id: str, rel_path: str) -> str:
     if p.is_absolute():
         return rel_path
     return str(_project_dir(project_id, create=False) / rel_path)
+
+
+def _timeline_for_audio(
+    config: dict,
+    audio_duration: float | int | None,
+    fallback_duration: float,
+    audio_path: str | None = None,
+) -> tuple[float, float, float]:
+    speech_duration = float(audio_duration or 0.0)
+    if speech_duration <= 0 and audio_path:
+        speech_duration = _probe_media_seconds(audio_path)
+    clip_duration = resolve_cut_video_duration_for_audio(config, speech_duration, default=fallback_duration)
+    return (
+        float(clip_duration),
+        float(speech_duration or fallback_duration),
+        float(resolve_cut_audio_start_offset(config)),
+    )
+
+
+def _probe_media_seconds(path: str) -> float:
+    try:
+        import subprocess as _sp
+        from app.services.video.subprocess_helper import find_ffmpeg
+        ffprobe = find_ffmpeg().replace("ffmpeg", "ffprobe")
+        out = _sp.check_output(
+            [ffprobe, "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", path],
+            timeout=10,
+        )
+        return float((out or b"0").decode().strip() or 0.0)
+    except Exception as exc:
+        _vlog(f"media duration probe failed path={path}: {exc}")
+        return 0.0
 
 
 def _load_script_cut_map(project_id: str) -> dict[int, dict]:
@@ -355,6 +396,7 @@ async def _generate_one_cut_safe(
     motion_prompt: str,
     cut_number: int = 0,
     force_safe_motion: bool = False,
+    audio_start_offset: float = 0.0,
     is_cancelled=None,
 ) -> tuple[str, str]:
     """단일 컷을 생성한다. Primary 가 실패하면 자동으로 ffmpeg-kenburns 로 폴백.
@@ -396,6 +438,7 @@ async def _generate_one_cut_safe(
             output_path=output_path,
             aspect_ratio=aspect_ratio,
             prompt=motion_prompt,
+            audio_start_offset=audio_start_offset,
         )
         return output_path, "ffmpeg_safe_motion"
 
@@ -408,6 +451,7 @@ async def _generate_one_cut_safe(
             output_path=output_path,
             aspect_ratio=aspect_ratio,
             prompt=motion_prompt,
+            audio_start_offset=audio_start_offset,
         )
         return output_path, "ffmpeg_selection"
 
@@ -438,6 +482,7 @@ async def _generate_one_cut_safe(
                 output_path=output_path,
                 aspect_ratio=aspect_ratio,
                 prompt=motion_prompt,
+                audio_start_offset=audio_start_offset,
             )
             _vlog(f"_gen_safe cut={cut_number} attempt={attempt} PRIMARY SUCCESS")
             return output_path, "ai"
@@ -733,14 +778,22 @@ async def generate_all_videos(project_id: str, db: Session = Depends(get_db)):
             else:
                 svc = primary_service if use_ai else fallback_service
                 used_model = video_model if use_ai else "ffmpeg-static"
+            cut_audio_abs = _to_absolute(project_id, cut.audio_path)
+            clip_duration, speech_duration, audio_start_offset = _timeline_for_audio(
+                project.config or {},
+                cut.audio_duration,
+                cut_duration,
+                cut_audio_abs,
+            )
 
             result_path = await svc.generate(
                 image_path=_to_absolute(project_id, cut.image_path),
-                audio_path=_to_absolute(project_id, cut.audio_path),
-                duration=cut_duration,
+                audio_path=cut_audio_abs,
+                duration=clip_duration,
                 output_path=video_path,
                 aspect_ratio=aspect_ratio,
                 prompt=motion_prompt,
+                audio_start_offset=audio_start_offset,
             )
             narration = (
                 (script_cut_map.get(int(cut.cut_number), {}) or {}).get("narration")
@@ -752,7 +805,8 @@ async def generate_all_videos(project_id: str, db: Session = Depends(get_db)):
                 narration,
                 aspect_ratio=aspect_ratio,
                 style_config=(project.config or {}).get("subtitle_style") or {},
-                duration=cut_duration,
+                duration=float(speech_duration),
+                start_offset=audio_start_offset,
             )
 
             cut.video_path = _to_relative(project_id, result_path)
@@ -953,7 +1007,7 @@ async def generate_all_videos_async(project_id: str, db: Session = Depends(get_d
                     "cut_number": c.cut_number,
                     "image_path": c.image_path,
                     "audio_path": c.audio_path,
-                    "audio_duration": c.audio_duration or cut_duration,
+                    "audio_duration": c.audio_duration,
                     "narration": c.narration or "",
                     "script_cut": script_cut_map.get(int(c.cut_number), {}),
                 })
@@ -1046,9 +1100,15 @@ async def generate_all_videos_async(project_id: str, db: Session = Depends(get_d
                         proj_config,
                         video_model,
                     )
+                    clip_duration, speech_duration, audio_start_offset = _timeline_for_audio(
+                        proj_config,
+                        spec.get("audio_duration"),
+                        cut_duration,
+                        aud_abs,
+                    )
                     print(
                         f"[video-async] cut {cut_number}/{total} START "
-                        f"duration={cut_duration} "
+                        f"duration={clip_duration:.3f} "
                         f"model={'ffmpeg-safe-motion' if force_safe_motion else (video_model if use_ai else 'ffmpeg-static')} ai={use_ai} "
                         f"motion={motion_prompt[:60]}..."
                     )
@@ -1068,11 +1128,12 @@ async def generate_all_videos_async(project_id: str, db: Session = Depends(get_d
                                 primary_disabled=primary_disabled,
                                 img_abs=img_abs,
                                 aud_abs=aud_abs,
-                                duration=cut_duration,
+                                duration=clip_duration,
                                 output_path=video_path_out,
                                 aspect_ratio=aspect_ratio,
                                 motion_prompt=motion_prompt,
                                 cut_number=cut_number,
+                                audio_start_offset=audio_start_offset,
                                 is_cancelled=lambda: state.status != "running",
                             ),
                             timeout=720,  # 12분
@@ -1089,7 +1150,8 @@ async def generate_all_videos_async(project_id: str, db: Session = Depends(get_d
                             narration,
                             aspect_ratio=aspect_ratio,
                             style_config=(proj_config or {}).get("subtitle_style") or {},
-                            duration=cut_duration,
+                            duration=float(speech_duration),
+                            start_offset=audio_start_offset,
                         )
                         counts[source] += 1
                         cut_results[cut_number] = result_path
@@ -1377,12 +1439,28 @@ async def resume_videos_async(project_id: str, db: Session = Depends(get_db)):
 
             pending_specs = []
             for c in db_cuts:
-                if not c.video_path and c.image_path and c.audio_path:
+                should_generate = not c.video_path
+                if c.video_path:
+                    existing_video = _to_absolute(project_id, c.video_path)
+                    expected_duration, _, _ = _timeline_for_audio(
+                        proj_config,
+                        c.audio_duration,
+                        cut_duration,
+                        _to_absolute(project_id, c.audio_path) if c.audio_path else None,
+                    )
+                    actual_duration = _probe_media_seconds(existing_video) if _os.path.exists(existing_video) else 0.0
+                    should_generate = actual_duration <= 0 or abs(actual_duration - expected_duration) > 0.08
+                    if should_generate:
+                        print(
+                            f"[video-resume] cut {c.cut_number} 기존 영상 길이 불일치 "
+                            f"actual={actual_duration:.3f}s target={expected_duration:.3f}s — 재생성"
+                        )
+                if should_generate and c.image_path and c.audio_path:
                     pending_specs.append({
                         "cut_number": c.cut_number,
                         "image_path": c.image_path,
                         "audio_path": c.audio_path,
-                        "audio_duration": c.audio_duration or cut_duration,
+                        "audio_duration": c.audio_duration,
                         "narration": c.narration or "",
                         "script_cut": script_cut_map.get(int(c.cut_number), {}),
                     })
@@ -1452,9 +1530,15 @@ async def resume_videos_async(project_id: str, db: Session = Depends(get_db)):
                         proj_config,
                         video_model,
                     )
+                    clip_duration, speech_duration, audio_start_offset = _timeline_for_audio(
+                        proj_config,
+                        spec.get("audio_duration"),
+                        cut_duration,
+                        aud_abs,
+                    )
                     print(
                         f"[video-resume] cut {cut_number} START "
-                        f"duration={cut_duration} "
+                        f"duration={clip_duration:.3f} "
                         f"model={'ffmpeg-safe-motion' if force_safe_motion else (video_model if use_ai else 'ffmpeg-static')} ai={use_ai}"
                     )
                     _s = _t.time()
@@ -1472,11 +1556,12 @@ async def resume_videos_async(project_id: str, db: Session = Depends(get_db)):
                                 primary_disabled=primary_disabled,
                                 img_abs=img_abs,
                                 aud_abs=aud_abs,
-                                duration=cut_duration,
+                                duration=clip_duration,
                                 output_path=video_path_out,
                                 aspect_ratio=aspect_ratio,
                                 motion_prompt=motion_prompt,
                                 cut_number=cut_number,
+                                audio_start_offset=audio_start_offset,
                                 is_cancelled=lambda: state.status != "running",
                             ),
                             timeout=720,
@@ -1493,7 +1578,8 @@ async def resume_videos_async(project_id: str, db: Session = Depends(get_db)):
                             narration,
                             aspect_ratio=aspect_ratio,
                             style_config=(proj_config or {}).get("subtitle_style") or {},
-                            duration=cut_duration,
+                            duration=float(speech_duration),
+                            start_offset=audio_start_offset,
                         )
                         counts[source] += 1
                         cut_results[cut_number] = result_path

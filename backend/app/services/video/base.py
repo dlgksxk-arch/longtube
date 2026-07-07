@@ -16,6 +16,7 @@ class BaseVideoService(ABC):
         output_path: str = "",
         aspect_ratio: str = "16:9",
         prompt: str = "",
+        audio_start_offset: float = 0.0,
     ) -> str:
         """이미지 (+ 오디오) → 영상 클립 생성. Returns output_path"""
         pass

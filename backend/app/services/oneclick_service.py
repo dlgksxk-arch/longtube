@@ -1460,6 +1460,11 @@ ONECLICK_MAIN_TARGET_DURATION = int(ONECLICK_MAIN_CUT_COUNT * ONECLICK_SECONDS_P
 def _force_oneclick_main_length(config: dict, target_duration: Optional[int] = None) -> dict:
     """Apply OneClick clip timing and derive cut count from the configured duration."""
     config["cut_video_duration"] = ONECLICK_SECONDS_PER_CUT
+    config["cut_duration_mode"] = "tts_audio"
+    config["tts_driven_cut_duration"] = True
+    config["tts_audio_timing_fit"] = False
+    config["cut_audio_lead_in_sec"] = 0.3
+    config["cut_audio_tail_sec"] = 0.3
     try:
         duration = int(float(target_duration if target_duration is not None else config.get("target_duration") or 0))
     except (TypeError, ValueError):
@@ -2645,6 +2650,11 @@ def _restore_backup_project_record_for_queue_item(item: dict[str, Any]) -> Optio
         "__oneclick_v3__": True,
         "template_project_id": item.get("template_project_id") or None,
         "cut_video_duration": ONECLICK_SECONDS_PER_CUT,
+        "cut_duration_mode": "tts_audio",
+        "tts_driven_cut_duration": True,
+        "tts_audio_timing_fit": False,
+        "cut_audio_lead_in_sec": 0.3,
+        "cut_audio_tail_sec": 0.3,
         "target_duration": ONECLICK_MAIN_TARGET_DURATION,
         "target_cuts": ONECLICK_MAIN_CUT_COUNT,
         "result_dir": str(resolve_project_dir(project_id, create=False)),
@@ -2798,6 +2808,11 @@ def _restore_orphan_v3_project_record_for_queue_item(item: dict[str, Any]) -> Op
         "template_project_id": source_project_id or item.get("template_project_id") or None,
         "source_project_id": source_project_id or item.get("template_project_id") or None,
         "cut_video_duration": ONECLICK_SECONDS_PER_CUT,
+        "cut_duration_mode": "tts_audio",
+        "tts_driven_cut_duration": True,
+        "tts_audio_timing_fit": False,
+        "cut_audio_lead_in_sec": 0.3,
+        "cut_audio_tail_sec": 0.3,
         "target_duration": ONECLICK_MAIN_TARGET_DURATION,
         "target_cuts": ONECLICK_MAIN_CUT_COUNT,
         "result_dir": str(result_dir),
@@ -4810,6 +4825,11 @@ _ONECLICK_CLONE_PRESERVE_KEYS = (
     "episode_core_content",
     "next_episode_preview",
     "cut_video_duration",
+    "cut_duration_mode",
+    "tts_driven_cut_duration",
+    "tts_audio_timing_fit",
+    "cut_audio_lead_in_sec",
+    "cut_audio_tail_sec",
     "script_tts_target_sec",
     "script_tts_tolerance_sec",
     "target_duration",

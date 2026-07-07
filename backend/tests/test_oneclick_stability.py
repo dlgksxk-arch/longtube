@@ -115,6 +115,11 @@ class OneClickQueueStabilityTests(unittest.TestCase):
         self.assertEqual(svc.ONECLICK_SECONDS_PER_CUT, 4.0)
         self.assertEqual(svc.ONECLICK_MAIN_TARGET_DURATION, 600)
         self.assertEqual(cfg["cut_video_duration"], 4.0)
+        self.assertEqual(cfg["cut_duration_mode"], "tts_audio")
+        self.assertTrue(cfg["tts_driven_cut_duration"])
+        self.assertFalse(cfg["tts_audio_timing_fit"])
+        self.assertEqual(cfg["cut_audio_lead_in_sec"], 0.3)
+        self.assertEqual(cfg["cut_audio_tail_sec"], 0.3)
         self.assertEqual(cfg["target_cuts"], 150)
         self.assertEqual(cfg["target_duration"], 600)
         self.assertEqual(cfg["script_tts_min_sec"], 4.0)
@@ -216,6 +221,8 @@ class OneClickQueueStabilityTests(unittest.TestCase):
     def test_default_script_generation_uses_150_four_second_cuts(self):
         self.assertEqual(app_config.CUT_VIDEO_DURATION, 4.0)
         self.assertEqual(DEFAULT_CONFIG["cut_video_duration"], 4.0)
+        self.assertEqual(DEFAULT_CONFIG["cut_duration_mode"], "tts_audio")
+        self.assertFalse(DEFAULT_CONFIG["tts_audio_timing_fit"])
         self.assertEqual(DEFAULT_CONFIG["target_duration"], 600)
 
         prompt = get_system_prompt("ko", DEFAULT_CONFIG)
@@ -1934,13 +1941,39 @@ class InterludeStabilityTests(unittest.TestCase):
                 "cut_video_duration": 4.0,
             })
 
-    def test_tts_duration_status_treats_over_slot_audio_as_long(self):
+    def test_tts_duration_status_uses_four_to_six_second_window(self):
         cfg = {"cut_video_duration": 4.0}
 
         self.assertEqual(narration_fit._duration_status(3.7, cfg), "short")
-        self.assertEqual(narration_fit._duration_status(4.0, cfg), "target_fit")
+        self.assertEqual(narration_fit._duration_status(4.0, cfg), "window_fit")
         self.assertEqual(narration_fit._duration_status(4.2, cfg), "window_fit")
-        self.assertEqual(narration_fit._duration_status(4.21, cfg), "too_long")
+        self.assertEqual(narration_fit._duration_status(4.21, cfg), "window_fit")
+        self.assertEqual(narration_fit._duration_status(6.2, cfg), "too_long")
+
+    def test_tts_audio_is_not_time_fit_by_default_in_v32(self):
+        self.assertFalse(app_config.should_fit_tts_audio_to_cut({}))
+        self.assertEqual(
+            narration_fit.ensure_audio_duration_window("missing.mp3", 7.25, config={}),
+            7.25,
+        )
+
+    def test_tts_driven_cut_duration_adds_front_and_tail_padding(self):
+        cfg = {}
+
+        self.assertTrue(app_config.use_tts_driven_cut_duration(cfg))
+        self.assertEqual(app_config.resolve_cut_audio_start_offset(cfg), 0.3)
+        self.assertAlmostEqual(
+            app_config.resolve_cut_video_duration_for_audio(cfg, 6.2, default=4.0),
+            6.8,
+        )
+        self.assertAlmostEqual(
+            app_config.resolve_cut_video_duration_for_audio(cfg, 72.0, default=4.0),
+            72.6,
+        )
+        self.assertEqual(
+            app_config.resolve_cut_video_duration_for_audio({"cut_duration_mode": "fixed"}, 6.2, default=4.0),
+            4.0,
+        )
 
 
 class ShortsStabilityTests(unittest.TestCase):
@@ -2531,7 +2564,7 @@ class TTSPronunciationStabilityTests(unittest.TestCase):
 class SubtitleStyleStabilityTests(unittest.TestCase):
     def test_default_subtitle_size_is_ten_points_larger(self):
         self.assertEqual(subtitle_service.DEFAULT_SUBTITLE_STYLE["size"], 68)
-        self.assertEqual(subtitle_service.CUT_SUBTITLE_MARKER_VERSION, 4)
+        self.assertEqual(subtitle_service.CUT_SUBTITLE_MARKER_VERSION, 5)
 
     def test_saved_subtitle_size_is_bumped_by_ten_on_render(self):
         normalized = subtitle_service.normalize_subtitle_style({"preset": "current", "size": 58})

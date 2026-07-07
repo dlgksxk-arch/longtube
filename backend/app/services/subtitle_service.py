@@ -10,7 +10,7 @@ from app.config import CUT_VIDEO_DURATION
 
 CUT_SUBTITLE_START_SEC = 0.2
 CUT_SUBTITLE_END_SEC = 4.8
-CUT_SUBTITLE_MARKER_VERSION = 4
+CUT_SUBTITLE_MARKER_VERSION = 5
 LEGACY_SUBTITLE_SIZE_MAP = {
     49: 59,
     53: 63,
@@ -410,8 +410,9 @@ def generate_single_cut_ass(
     duration: float,
     style_config: dict,
     aspect_ratio: str = "16:9",
+    start_offset: float = 0.0,
 ) -> str:
-    """단일 컷용 ASS — 시작 0초, 끝 = `duration` (= 실제 오디오 길이).
+    """단일 컷용 ASS — 기본은 기존 컷 자막 범위, offset 모드는 실제 음성 구간.
 
     v1.1.55: 컷별 영상 생성 직후 자막을 바로 입히기 위한 헬퍼. 머지 전에
     각 mp4 가 자기 대사를 0~duration 구간에 정확히 표시하므로 이후 concat 에서
@@ -480,8 +481,16 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     if not sentences:
         return header
 
-    start_sec = min(max(0.0, CUT_SUBTITLE_START_SEC), dur)
-    end_sec = min(max(start_sec, CUT_SUBTITLE_END_SEC), dur)
+    try:
+        offset = max(0.0, float(start_offset or 0.0))
+    except (TypeError, ValueError):
+        offset = 0.0
+    if offset > 0:
+        start_sec = offset
+        end_sec = offset + dur
+    else:
+        start_sec = min(max(0.0, CUT_SUBTITLE_START_SEC), dur)
+        end_sec = min(max(start_sec, CUT_SUBTITLE_END_SEC), dur)
     if end_sec <= start_sec:
         return header
 
@@ -502,6 +511,7 @@ def _cut_subtitle_marker_payload(
     aspect_ratio: str,
     style_config: dict | None,
     duration: float,
+    start_offset: float = 0.0,
 ) -> dict:
     return {
         "version": CUT_SUBTITLE_MARKER_VERSION,
@@ -511,6 +521,7 @@ def _cut_subtitle_marker_payload(
         "duration": round(float(duration or CUT_VIDEO_DURATION), 3),
         "start": CUT_SUBTITLE_START_SEC,
         "end": CUT_SUBTITLE_END_SEC,
+        "start_offset": round(float(start_offset or 0.0), 3),
     }
 
 
@@ -525,8 +536,9 @@ async def burn_cut_subtitle_file(
     aspect_ratio: str = "16:9",
     style_config: dict | None = None,
     duration: float = CUT_VIDEO_DURATION,
+    start_offset: float = 0.0,
 ) -> bool:
-    """Burn fixed 0.2s~4.8s cut subtitles directly into one mp4."""
+    """Burn one cut subtitle directly into one mp4."""
     narration = (narration or "").strip()
     if not narration:
         return False
@@ -539,7 +551,7 @@ async def burn_cut_subtitle_file(
     if dur <= 0:
         dur = float(CUT_VIDEO_DURATION)
 
-    payload = _cut_subtitle_marker_payload(narration, aspect_ratio, style_config, dur)
+    payload = _cut_subtitle_marker_payload(narration, aspect_ratio, style_config, dur, start_offset)
     digest = _cut_subtitle_digest(payload)
     marker_p = cut_p.with_suffix(".subtitle.json")
     try:
@@ -557,7 +569,13 @@ async def burn_cut_subtitle_file(
 
     from app.services.video.ffmpeg_service import FFmpegService
 
-    ass_text = generate_single_cut_ass(narration, dur, style_config or {}, aspect_ratio)
+    ass_text = generate_single_cut_ass(
+        narration,
+        dur,
+        style_config or {},
+        aspect_ratio,
+        start_offset=start_offset,
+    )
     ass_p = cut_p.with_suffix(".cut.ass")
     tmp_out = cut_p.with_suffix(".sub.mp4")
     ass_p.write_text(ass_text, encoding="utf-8")

@@ -294,6 +294,7 @@ class ComfyUIVideoService(BaseVideoService):
         output_path: str = "",
         aspect_ratio: str = "16:9",
         prompt: str = "",
+        audio_start_offset: float = 0.0,
     ) -> str:
         if not output_path:
             raise ValueError("output_path required")

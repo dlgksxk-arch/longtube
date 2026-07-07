@@ -1,9 +1,7 @@
-"""TTS generation wrapper with local duration fitting.
+"""TTS generation wrapper with optional local duration fitting.
 
-The saved cut audio must be exactly the fixed video slot length. Spoken audio
-over the video slot is long and gets time-compressed into the slot; audio over
-the configured hard ceiling is too long. No extra TTS API calls are made for
-timing repair.
+V3.2 keeps generated cut audio at its measured TTS duration by default. Legacy
+fixed-slot fitting is still available with ``tts_audio_timing_fit=True``.
 """
 from __future__ import annotations
 
@@ -285,9 +283,11 @@ def _fit_audio_duration_in_place(path: str, current_duration: float, config: dic
 def ensure_audio_duration_window(path: str, current_duration: float, config: dict | None = None, log=None) -> float:
     """Final no-credit guard before saving a cut audio file.
 
-    Returns the final file duration, which should match the configured cut window.
+    Returns the saved file duration. V3.2 keeps generated TTS at its natural
+    duration by default; legacy fixed-slot fitting remains available through
+    ``tts_audio_timing_fit=True``.
     """
-    if config and config.get("tts_audio_timing_fit", True) is False:
+    if not app_config.should_fit_tts_audio_to_cut(config):
         return current_duration
     final_target = _final_cut_audio_duration(config)
     if abs(current_duration - final_target) <= 0.02:

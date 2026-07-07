@@ -268,13 +268,34 @@ SYSTEM_PROJECTS_ROOT.mkdir(parents=True, exist_ok=True)
 DATA_DIR = _DataDirProxy(_RAW_DATA_DIR)
 
 # --------------------------------------------------------------------------- #
-# v1.1.45 — 컷당 고정 영상 길이
+# v1.1.45 / V3.2 — 컷 길이 기본값 및 TTS 기반 가변 컷
 # --------------------------------------------------------------------------- #
-# 모든 컷은 정확히 이 길이(초)로 렌더링된다. 시간 계산과 자막 싱크가 단순해지고,
-# 150컷 × 4초 = 600초 롱폼 구성을 기본으로 맞춘다.
-# 음성이 이 길이보다 짧으면 끝에 무음으로 패딩되고, 길면 잘린다(경고 로그).
-# 값을 바꾸면 영상/자막/병합 전 파이프라인이 일괄로 따라간다.
+# CUT_VIDEO_DURATION은 고정 모드와 fallback 기본값이다. V3.2 기본 모드는
+# 실제 TTS 길이에 앞/뒤 여백을 더한 컷별 가변 길이를 사용한다.
 CUT_VIDEO_DURATION = 4.0
+
+
+CUT_AUDIO_LEAD_IN_SECONDS = 0.3
+CUT_AUDIO_TAIL_SECONDS = 0.3
+TTS_DRIVEN_CUT_DURATION_DEFAULT = True
+TTS_AUDIO_TIMING_FIT_DEFAULT = False
+
+
+def _config_bool(config: dict | None, key: str, default: bool) -> bool:
+    if not isinstance(config, dict) or key not in config:
+        return bool(default)
+    value = config.get(key)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    return bool(default)
 
 
 def resolve_cut_video_duration(config: dict | None = None, default: float | None = None) -> float:
@@ -291,8 +312,69 @@ def resolve_cut_video_duration(config: dict | None = None, default: float | None
         return fallback
     return max(1.0, min(30.0, value))
 
-# Default script narration timing window. Video cuts stay fixed, while narration
-# must be authored inside this spoken-duration window before TTS.
+
+def should_fit_tts_audio_to_cut(config: dict | None = None) -> bool:
+    """Return whether generated TTS files should be time-fit to fixed cut slots."""
+    return _config_bool(config, "tts_audio_timing_fit", TTS_AUDIO_TIMING_FIT_DEFAULT)
+
+
+def use_tts_driven_cut_duration(config: dict | None = None) -> bool:
+    """Return whether each video cut should follow its own measured TTS duration."""
+    mode = None
+    if isinstance(config, dict):
+        mode = config.get("cut_duration_mode")
+    if isinstance(mode, str):
+        normalized = mode.strip().lower()
+        if normalized in {"fixed", "fixed_cut", "cut_video_duration"}:
+            return False
+        if normalized in {"tts", "tts_audio", "audio", "audio_duration"}:
+            return True
+    return _config_bool(config, "tts_driven_cut_duration", TTS_DRIVEN_CUT_DURATION_DEFAULT)
+
+
+def resolve_cut_audio_padding(config: dict | None = None) -> tuple[float, float]:
+    """Return (lead_in_sec, tail_sec) for TTS-driven cut timelines."""
+    lead = CUT_AUDIO_LEAD_IN_SECONDS
+    tail = CUT_AUDIO_TAIL_SECONDS
+    if isinstance(config, dict):
+        try:
+            lead = float(config.get("cut_audio_lead_in_sec", lead))
+        except (TypeError, ValueError):
+            lead = CUT_AUDIO_LEAD_IN_SECONDS
+        try:
+            tail = float(config.get("cut_audio_tail_sec", tail))
+        except (TypeError, ValueError):
+            tail = CUT_AUDIO_TAIL_SECONDS
+    return max(0.0, min(5.0, lead)), max(0.0, min(5.0, tail))
+
+
+def resolve_cut_audio_start_offset(config: dict | None = None) -> float:
+    if not use_tts_driven_cut_duration(config):
+        return 0.0
+    lead, _ = resolve_cut_audio_padding(config)
+    return lead
+
+
+def resolve_cut_video_duration_for_audio(
+    config: dict | None,
+    audio_duration: float | int | None,
+    default: float | None = None,
+) -> float:
+    """Return the per-cut video duration for a measured TTS audio file."""
+    fixed_duration = resolve_cut_video_duration(config, default=default)
+    if not use_tts_driven_cut_duration(config):
+        return fixed_duration
+    try:
+        spoken = float(audio_duration or 0.0)
+    except (TypeError, ValueError):
+        spoken = 0.0
+    if spoken <= 0:
+        return fixed_duration
+    lead, tail = resolve_cut_audio_padding(config)
+    return max(1.0, spoken + lead + tail)
+
+# Default script narration timing window. Script authoring still targets this
+# spoken-duration window before TTS.
 TTS_SCRIPT_TARGET_MULTIPLIER = 1.0
 TTS_MIN_DURATION = 4.0
 TTS_TARGET_DURATION = 5.0

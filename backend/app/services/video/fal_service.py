@@ -243,6 +243,7 @@ class FalVideoService(BaseVideoService):
         output_path: str = "",
         aspect_ratio: str = "16:9",
         prompt: str = "",
+        audio_start_offset: float = 0.0,
     ) -> str:
         if not _get_fal_key():
             raise ValueError("FAL_KEY not configured")
@@ -373,12 +374,19 @@ class FalVideoService(BaseVideoService):
                             # v1.1.45: fal.ai 는 고정 길이 클립을 반환한다. 음성이 더 짧아도
                             # `-shortest` 로 영상을 줄이지 않고, 음성을 `apad` 로 무음 패딩
                             # 한 뒤 `-t duration` 으로 고정 길이로 잘라낸다.
+                            try:
+                                offset_ms = max(0, int(round(float(audio_start_offset or 0.0) * 1000)))
+                            except (TypeError, ValueError):
+                                offset_ms = 0
+                            audio_filter = "apad"
+                            if offset_ms > 0:
+                                audio_filter = f"adelay={offset_ms}:all=1,apad"
                             cmd = [
                                 ffmpeg_bin, "-y",
                                 "-i", temp_path,
                                 "-i", audio_path,
                                 "-map", "0:v", "-map", "1:a",
-                                "-af", "apad",
+                                "-af", audio_filter,
                                 "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
                                 "-t", str(duration),
                                 output_path,

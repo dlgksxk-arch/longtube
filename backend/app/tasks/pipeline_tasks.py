@@ -6,7 +6,13 @@ import time
 import asyncio
 import redis as redis_lib
 from celery import Celery
-from app.config import REDIS_URL, resolve_cut_video_duration, resolve_project_dir
+from app.config import (
+    REDIS_URL,
+    resolve_cut_audio_start_offset,
+    resolve_cut_video_duration,
+    resolve_cut_video_duration_for_audio,
+    resolve_project_dir,
+)
 from app.models.database import SessionLocal
 from app.models.project import Project
 from app.models.cut import Cut
@@ -1570,12 +1576,40 @@ def _probe_audio_seconds(audio_path: str) -> float:
         return 0.0
 
 
+def _probe_media_seconds(path: str) -> float:
+    """ffprobe 로 미디어 길이(초) 측정. 실패시 0.0."""
+    try:
+        import subprocess as _sp
+        from app.services.video.subprocess_helper import find_ffmpeg as _ff
+        ffprobe = _ff().replace("ffmpeg", "ffprobe")
+        out = _sp.check_output(
+            [ffprobe, "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", path],
+            timeout=10,
+        )
+        return float((out or b"0").decode().strip() or 0)
+    except Exception as _e:
+        print(f"[probe] {path}: {_e}")
+        return 0.0
+
+
+def _resolve_cut_timeline_seconds(config: dict, cut_row, audio_path: str, fallback_duration: float) -> tuple[float, float, float]:
+    """Return (clip_duration, speech_duration, audio_start_offset) for one cut."""
+    speech_duration = float(getattr(cut_row, "audio_duration", 0) or 0)
+    if speech_duration <= 0 and audio_path:
+        speech_duration = _probe_audio_seconds(audio_path)
+    clip_duration = resolve_cut_video_duration_for_audio(config, speech_duration, default=fallback_duration)
+    audio_start_offset = resolve_cut_audio_start_offset(config)
+    return float(clip_duration), float(speech_duration or clip_duration), float(audio_start_offset)
+
+
 async def _burn_cut_subtitle(
     cut_video_path: str,
     narration: str,
     duration: float,
     style_config: dict,
     aspect_ratio: str,
+    start_offset: float = 0.0,
 ) -> bool:
     """v1.1.55: 단일 컷 mp4 에 자기 대사 자막을 in-place 로 번인.
 
@@ -1598,6 +1632,7 @@ async def _burn_cut_subtitle(
             aspect_ratio=aspect_ratio,
             style_config=style_config or {},
             duration=float(duration),
+            start_offset=float(start_offset or 0.0),
         )
     except Exception as _e:
         import traceback
@@ -1759,10 +1794,29 @@ def _step_video(project_id: str, config: dict):
             existing_candidates[0],
         )
         img_path = find_existing_cut_image(project_dir, num)
+        audio_candidates = _cut_audio_candidates(cut, num)
+        audio_path = next(
+            (
+                p for p in audio_candidates
+                if p.exists() and p.stat().st_size > 0
+            ),
+            audio_candidates[0],
+        )
+        target_clip_duration, target_speech_duration, audio_start_offset = _resolve_cut_timeline_seconds(
+            config,
+            cut,
+            str(audio_path) if audio_path.exists() else "",
+            cut_duration,
+        )
+        duration_is_current = False
+        if existing.exists() and existing.stat().st_size > 50:
+            existing_duration = _probe_media_seconds(str(existing))
+            duration_is_current = existing_duration > 0 and abs(existing_duration - target_clip_duration) <= 0.08
         existing_is_current = (
             existing.exists()
             and existing.stat().st_size > 50
             and (not img_path or existing.stat().st_mtime >= img_path.stat().st_mtime)
+            and duration_is_current
         )
         if existing_is_current:
             print(f"[Video] Cut {num} 이미 존재 — 건너뜀")
@@ -1771,8 +1825,9 @@ def _step_video(project_id: str, config: dict):
                     narration = (cut_data.get("narration") or "").strip()
                     if narration:
                         ok = run_async(_burn_cut_subtitle(
-                            str(existing), narration, float(cut_duration),
+                            str(existing), narration, float(target_speech_duration),
                             subtitle_style_cfg, aspect_ratio,
+                            start_offset=audio_start_offset,
                         ))
                         if ok:
                             print(f"[Video] Cut {num} existing subtitle burn verified")
@@ -1786,7 +1841,7 @@ def _step_video(project_id: str, config: dict):
             track_progress(project_id, 5)
             continue
         if existing.exists() and existing.stat().st_size > 50:
-            print(f"[Video] Cut {num} 이미지가 더 최신 — 재생성")
+            print(f"[Video] Cut {num} 이미지/길이 기준 불일치 — 재생성")
         to_generate.append(cut_data)
 
     # 배치 단위 병렬 처리
@@ -1846,6 +1901,12 @@ def _step_video(project_id: str, config: dict):
                         print(f"[Video] Cut {num} subtitle marker reset skipped: {_marker_e}")
                     aud = str(audio_path)
                     out = str(output_path)
+                    target_clip_duration, target_speech_duration, audio_start_offset = _resolve_cut_timeline_seconds(
+                        config,
+                        cut_row,
+                        aud,
+                        cut_duration,
+                    )
 
                     # ★ 스튜디오와 동일: AI/static 분기 + 모션 프롬프트
                     use_ai = should_generate_ai_video(num, selection, ai_first_n)
@@ -1870,10 +1931,11 @@ def _step_video(project_id: str, config: dict):
                     await svc.generate(
                         image_path=img,
                         audio_path=aud,
-                        duration=float(cut_duration),
+                        duration=float(target_clip_duration),
                         output_path=out,
                         aspect_ratio=aspect_ratio,
                         prompt=motion_prompt,
+                        audio_start_offset=float(audio_start_offset),
                     )
 
                     # v1.1.55: 컷 mp4 가 생긴 직후 자기 대사 자막 번인.
@@ -1885,13 +1947,12 @@ def _step_video(project_id: str, config: dict):
                             narration = (cut_data.get("narration") or "").strip()
                             # 1) DB 에 audio_duration 이 이미 있으면 그거 사용
                             # 2) 없으면 ffprobe 로 측정
-                            dur = float(getattr(cut_row, "audio_duration", 0) or 0)
-                            if dur <= 0:
-                                dur = _probe_audio_seconds(aud)
+                            dur = float(target_speech_duration)
                             if narration and dur > 0:
                                 ok = await _burn_cut_subtitle(
                                     out, narration, dur,
                                     subtitle_style_cfg, aspect_ratio,
+                                    start_offset=audio_start_offset,
                                 )
                                 if ok:
                                     print(f"[Video] Cut {num} 자막 번인 완료 ({dur:.1f}s)")

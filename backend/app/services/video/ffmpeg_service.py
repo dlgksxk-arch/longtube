@@ -46,6 +46,7 @@ class FFmpegService(BaseVideoService):
         output_path: str = "",
         aspect_ratio: str = "16:9",
         prompt: str = "",
+        audio_start_offset: float = 0.0,
     ) -> str:
         """Image + optional audio -> static clip. No pan/zoom motion."""
         if not os.path.exists(image_path):
@@ -62,6 +63,13 @@ class FFmpegService(BaseVideoService):
             resolution = "1920x1080"
 
         has_audio = bool(audio_path and os.path.exists(audio_path))
+        try:
+            offset_ms = max(0, int(round(float(audio_start_offset or 0.0) * 1000)))
+        except (TypeError, ValueError):
+            offset_ms = 0
+        audio_filter = "apad"
+        if offset_ms > 0:
+            audio_filter = f"adelay={offset_ms}:all=1,apad"
 
         # Static FFmpeg output only: no pan, no zoom, no motion effect.
         pad_wh = resolution.replace("x", ":")
@@ -80,7 +88,7 @@ class FFmpegService(BaseVideoService):
                 "-i", audio_path,
                 "-filter_complex", vf,
                 "-map", "[v]", "-map", "1:a",
-                "-af", "apad",
+                "-af", audio_filter,
                 "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
                 "-c:a", "aac", "-b:a", "192k",
                 "-t", str(duration),
@@ -526,6 +534,7 @@ class FFmpegSafeMotionService(BaseVideoService):
         output_path: str = "",
         aspect_ratio: str = "16:9",
         prompt: str = "",
+        audio_start_offset: float = 0.0,
     ) -> str:
         if not os.path.exists(image_path):
             raise FileNotFoundError(f"Image not found: {image_path}")
@@ -552,6 +561,13 @@ class FFmpegSafeMotionService(BaseVideoService):
         )
 
         has_audio = bool(audio_path and os.path.exists(audio_path))
+        try:
+            offset_ms = max(0, int(round(float(audio_start_offset or 0.0) * 1000)))
+        except (TypeError, ValueError):
+            offset_ms = 0
+        audio_filter = "apad"
+        if offset_ms > 0:
+            audio_filter = f"adelay={offset_ms}:all=1,apad"
         if has_audio:
             cmd = [
                 "ffmpeg", "-y",
@@ -559,7 +575,7 @@ class FFmpegSafeMotionService(BaseVideoService):
                 "-i", audio_path,
                 "-filter_complex", vf,
                 "-map", "[v]", "-map", "1:a",
-                "-af", "apad",
+                "-af", audio_filter,
                 "-c:v", "libx264", "-preset", "ultrafast", "-crf", "22",
                 "-c:a", "aac", "-b:a", "192k",
                 "-t", str(duration),
@@ -597,6 +613,7 @@ class FFmpegStaticService(BaseVideoService):
         output_path: str = "",
         aspect_ratio: str = "16:9",
         prompt: str = "",
+        audio_start_offset: float = 0.0,
     ) -> str:
         if not os.path.exists(image_path):
             raise FileNotFoundError(f"Image not found: {image_path}")
@@ -618,6 +635,13 @@ class FFmpegStaticService(BaseVideoService):
         )
 
         has_audio = bool(audio_path and os.path.exists(audio_path))
+        try:
+            offset_ms = max(0, int(round(float(audio_start_offset or 0.0) * 1000)))
+        except (TypeError, ValueError):
+            offset_ms = 0
+        audio_filter = "apad"
+        if offset_ms > 0:
+            audio_filter = f"adelay={offset_ms}:all=1,apad"
         if has_audio:
             # v1.1.45: -shortest 대신 apad + -t 로 영상 길이를 정확히 `duration` 으로 고정
             cmd = [
@@ -625,7 +649,7 @@ class FFmpegStaticService(BaseVideoService):
                 "-loop", "1", "-i", image_path,
                 "-i", audio_path,
                 "-vf", vf,
-                "-af", "apad",
+                "-af", audio_filter,
                 "-map", "0:v", "-map", "1:a",
                 "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
                 "-c:a", "aac", "-b:a", "192k",

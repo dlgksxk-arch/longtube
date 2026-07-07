@@ -21,7 +21,9 @@ from app.config import (
     SYSTEM_DIR,
     get_channel_projects_root,
     infer_project_channel,
+    resolve_cut_audio_start_offset,
     resolve_cut_video_duration,
+    resolve_cut_video_duration_for_audio,
     resolve_project_dir,
 )
 from app.services.subtitle_service import (
@@ -204,12 +206,17 @@ def _build_and_write_ass(project_id: str, project: Project, db: Session) -> tupl
     for cut in cuts:
         cut_script = next((c for c in script.get("cuts", []) if c["cut_number"] == cut.cut_number), {})
         spoken_duration = getattr(cut, "audio_original_duration", None) or cut.audio_duration
+        cut_window = resolve_cut_video_duration_for_audio(
+            project.config or {},
+            cut.audio_duration or spoken_duration,
+            default=cut_duration,
+        )
         cuts_data.append({
             "cut_number": cut.cut_number,
             "narration": cut.narration or cut_script.get("narration", ""),
             "actual_duration": spoken_duration,
             "duration_estimate": cut_script.get("duration_estimate", cut_duration),
-            "cut_video_duration": cut_duration,
+            "cut_video_duration": cut_window,
         })
 
     style_config = project.config.get("subtitle_style", dict(DEFAULT_SUBTITLE_STYLE))
@@ -1098,12 +1105,16 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
             )
             if narration:
                 try:
+                    speech_duration = float(c.audio_duration or 0.0)
+                    if speech_duration <= 0:
+                        speech_duration = float(cut_duration)
                     await burn_cut_subtitle_file(
                         ap,
                         narration,
                         aspect_ratio=aspect_ratio,
                         style_config=subtitle_style_cfg,
-                        duration=float(cut_duration),
+                        duration=speech_duration,
+                        start_offset=resolve_cut_audio_start_offset(project.config or {}),
                     )
                 except Exception as e:
                     print(f"[subtitle/render] Cut {c.cut_number}: cut subtitle burn failed: {e}")
@@ -1374,6 +1385,23 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
     try:
         if shorts_enabled:
             script_for_shorts = load_shorts_script(project_dir)
+            cfg = project.config or {}
+            if isinstance(script_for_shorts, dict):
+                db_cut_by_number = {int(c.cut_number): c for c in cuts}
+                for item in script_for_shorts.get("cuts", []) or []:
+                    try:
+                        cut_num = int(item.get("cut_number"))
+                    except (TypeError, ValueError):
+                        continue
+                    db_cut = db_cut_by_number.get(cut_num)
+                    if not db_cut:
+                        continue
+                    clip_duration = resolve_cut_video_duration_for_audio(
+                        cfg,
+                        db_cut.audio_duration,
+                        default=cut_duration,
+                    )
+                    item["audio_duration"] = clip_duration
             shorts_segments = select_shorts_segments(
                 script_for_shorts,
                 count=SHORTS_SEGMENT_COUNT,
@@ -1389,7 +1417,6 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
                     "[subtitle/render] shorts segment selection accepted partial result: "
                     f"{len(shorts_segments)}/{SHORTS_SEGMENT_COUNT}"
                 )
-            cfg = project.config or {}
             if isinstance(script_for_shorts, dict) and not script_for_shorts.get("language"):
                 script_for_shorts["language"] = (
                     cfg.get("language")
