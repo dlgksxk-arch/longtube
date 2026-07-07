@@ -277,6 +277,7 @@ CUT_VIDEO_DURATION = 4.0
 
 CUT_AUDIO_LEAD_IN_SECONDS = 0.3
 CUT_AUDIO_TAIL_SECONDS = 0.3
+MIN_TTS_DRIVEN_CUT_DURATION = 4.0
 TTS_DRIVEN_CUT_DURATION_DEFAULT = True
 TTS_AUDIO_TIMING_FIT_DEFAULT = False
 
@@ -371,7 +372,7 @@ def resolve_cut_video_duration_for_audio(
     if spoken <= 0:
         return fixed_duration
     lead, tail = resolve_cut_audio_padding(config)
-    return max(1.0, spoken + lead + tail)
+    return max(MIN_TTS_DRIVEN_CUT_DURATION, spoken + lead + tail)
 
 # Default script narration timing window. Script authoring still targets this
 # spoken-duration window before TTS.

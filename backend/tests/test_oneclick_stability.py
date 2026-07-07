@@ -1967,6 +1967,10 @@ class InterludeStabilityTests(unittest.TestCase):
             6.8,
         )
         self.assertAlmostEqual(
+            app_config.resolve_cut_video_duration_for_audio(cfg, 2.9, default=4.0),
+            4.0,
+        )
+        self.assertAlmostEqual(
             app_config.resolve_cut_video_duration_for_audio(cfg, 72.0, default=4.0),
             72.6,
         )
