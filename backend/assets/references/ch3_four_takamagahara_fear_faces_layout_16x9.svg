@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <defs>
+    <linearGradient id="sky118" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#7f9ba5"/>
+      <stop offset="0.5" stop-color="#b8bba7"/>
+      <stop offset="1" stop-color="#718893"/>
+    </linearGradient>
+    <radialGradient id="skin118a" cx="38%" cy="30%" r="75%">
+      <stop offset="0" stop-color="#efc69d"/>
+      <stop offset="1" stop-color="#bd805f"/>
+    </radialGradient>
+    <radialGradient id="skin118b" cx="38%" cy="30%" r="75%">
+      <stop offset="0" stop-color="#e8bc94"/>
+      <stop offset="1" stop-color="#b67557"/>
+    </radialGradient>
+    <filter id="shadow118" x="-25%" y="-25%" width="150%" height="150%">
+      <feGaussianBlur stdDeviation="12"/>
+    </filter>
+  </defs>
+
+  <rect width="1280" height="720" fill="url(#sky118)"/>
+  <g fill="none" stroke="#d8dfd5" stroke-width="9" opacity="0.36" stroke-linecap="round">
+    <path d="M0 133 Q176 72 347 132 T687 125 T1013 118 T1280 126"/>
+    <path d="M0 592 Q169 531 337 587 T670 581 T1007 571 T1280 585"/>
+  </g>
+  <g fill="none" stroke="#506d78" stroke-width="6" opacity="0.48" stroke-linecap="round">
+    <path d="M34 236 Q105 209 169 229"/><path d="M356 196 Q430 167 502 192"/>
+    <path d="M669 215 Q738 184 811 207"/><path d="M984 190 Q1060 162 1235 196"/>
+  </g>
+
+  <!-- Exactly four adult East Asian deity faces; all crops end at jawlines. -->
+  <g id="four-fear-faces118">
+    <!-- Female face 1 -->
+    <ellipse cx="176" cy="367" rx="130" ry="154" fill="#45545a" opacity="0.28" filter="url(#shadow118)"/>
+    <path d="M64 369 Q50 189 176 164 Q305 190 287 373 L250 484 Q213 526 176 532 Q136 525 102 484 Z" fill="#28231f" stroke="#41352f" stroke-width="12"/>
+    <ellipse cx="176" cy="353" rx="91" ry="124" fill="url(#skin118a)" stroke="#49362f" stroke-width="10"/>
+    <path d="M85 315 Q84 203 177 194 Q271 210 267 318 Q230 253 177 246 Q122 250 85 315 Z" fill="#28231f"/>
+    <path d="M110 326 Q132 304 153 321 M199 321 Q223 303 246 327" fill="none" stroke="#4a3029" stroke-width="9" stroke-linecap="round"/>
+    <g fill="#f7eee1" stroke="#50362f" stroke-width="6">
+      <ellipse cx="136" cy="352" rx="22" ry="18"/><ellipse cx="216" cy="352" rx="22" ry="18"/>
+    </g>
+    <g fill="#332724"><circle cx="139" cy="352" r="8"/><circle cx="213" cy="352" r="8"/></g>
+    <path d="M151 407 Q176 385 201 407 Q190 449 176 453 Q160 448 151 407 Z" fill="#6b3d39" stroke="#4a302d" stroke-width="7"/>
+    <path d="M161 414 Q176 404 191 414" fill="none" stroke="#f0c8b0" stroke-width="5"/>
+
+    <!-- Male face 2 -->
+    <ellipse cx="486" cy="367" rx="130" ry="154" fill="#45545a" opacity="0.28" filter="url(#shadow118)"/>
+    <path d="M374 367 Q360 198 486 166 Q615 196 598 371 L560 484 Q525 526 486 532 Q447 525 412 484 Z" fill="#2b2723" stroke="#41352f" stroke-width="12"/>
+    <ellipse cx="486" cy="353" rx="91" ry="124" fill="url(#skin118b)" stroke="#49362f" stroke-width="10"/>
+    <ellipse cx="486" cy="178" rx="55" ry="34" fill="#2b2723" stroke="#41352f" stroke-width="9"/>
+    <path d="M395 313 Q397 206 487 196 Q579 212 577 315 Q542 253 487 247 Q432 252 395 313 Z" fill="#2b2723"/>
+    <path d="M421 326 Q443 303 465 320 M509 320 Q532 302 555 326" fill="none" stroke="#4a3029" stroke-width="9" stroke-linecap="round"/>
+    <g fill="#f7eee1" stroke="#50362f" stroke-width="6">
+      <ellipse cx="446" cy="351" rx="22" ry="18"/><ellipse cx="526" cy="351" rx="22" ry="18"/>
+    </g>
+    <g fill="#332724"><circle cx="449" cy="351" r="8"/><circle cx="523" cy="351" r="8"/></g>
+    <path d="M461 407 Q486 385 511 407 Q500 449 486 453 Q470 448 461 407 Z" fill="#623936" stroke="#4a302d" stroke-width="7"/>
+    <path d="M471 414 Q486 404 501 414" fill="none" stroke="#efc5ad" stroke-width="5"/>
+
+    <!-- Female face 3 -->
+    <ellipse cx="796" cy="367" rx="130" ry="154" fill="#45545a" opacity="0.28" filter="url(#shadow118)"/>
+    <path d="M684 369 Q670 189 796 164 Q925 190 907 373 L870 484 Q833 526 796 532 Q756 525 722 484 Z" fill="#25211f" stroke="#41352f" stroke-width="12"/>
+    <ellipse cx="796" cy="353" rx="91" ry="124" fill="url(#skin118a)" stroke="#49362f" stroke-width="10"/>
+    <path d="M705 315 Q704 203 797 194 Q891 210 887 318 Q850 253 797 246 Q742 250 705 315 Z" fill="#25211f"/>
+    <path d="M730 326 Q752 304 773 321 M819 321 Q843 303 866 327" fill="none" stroke="#4a3029" stroke-width="9" stroke-linecap="round"/>
+    <g fill="#f7eee1" stroke="#50362f" stroke-width="6">
+      <ellipse cx="756" cy="352" rx="22" ry="18"/><ellipse cx="836" cy="352" rx="22" ry="18"/>
+    </g>
+    <g fill="#332724"><circle cx="759" cy="352" r="8"/><circle cx="833" cy="352" r="8"/></g>
+    <path d="M771 407 Q796 385 821 407 Q810 449 796 453 Q780 448 771 407 Z" fill="#6b3d39" stroke="#4a302d" stroke-width="7"/>
+    <path d="M781 414 Q796 404 811 414" fill="none" stroke="#f0c8b0" stroke-width="5"/>
+
+    <!-- Male face 4 -->
+    <ellipse cx="1106" cy="367" rx="130" ry="154" fill="#45545a" opacity="0.28" filter="url(#shadow118)"/>
+    <path d="M994 367 Q980 198 1106 166 Q1235 196 1218 371 L1180 484 Q1145 526 1106 532 Q1067 525 1032 484 Z" fill="#2c2723" stroke="#41352f" stroke-width="12"/>
+    <ellipse cx="1106" cy="353" rx="91" ry="124" fill="url(#skin118b)" stroke="#49362f" stroke-width="10"/>
+    <ellipse cx="1106" cy="178" rx="55" ry="34" fill="#2c2723" stroke="#41352f" stroke-width="9"/>
+    <path d="M1015 313 Q1017 206 1107 196 Q1199 212 1197 315 Q1162 253 1107 247 Q1052 252 1015 313 Z" fill="#2c2723"/>
+    <path d="M1041 326 Q1063 303 1085 320 M1129 320 Q1152 302 1175 326" fill="none" stroke="#4a3029" stroke-width="9" stroke-linecap="round"/>
+    <g fill="#f7eee1" stroke="#50362f" stroke-width="6">
+      <ellipse cx="1066" cy="351" rx="22" ry="18"/><ellipse cx="1146" cy="351" rx="22" ry="18"/>
+    </g>
+    <g fill="#332724"><circle cx="1069" cy="351" r="8"/><circle cx="1143" cy="351" r="8"/></g>
+    <path d="M1081 407 Q1106 385 1131 407 Q1120 449 1106 453 Q1090 448 1081 407 Z" fill="#623936" stroke="#4a302d" stroke-width="7"/>
+    <path d="M1091 414 Q1106 404 1121 414" fill="none" stroke="#efc5ad" stroke-width="5"/>
+  </g>
+</svg>

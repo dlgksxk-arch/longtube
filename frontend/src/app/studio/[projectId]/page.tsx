@@ -103,16 +103,18 @@ export default function StudioPage() {
   // v1.1.55: 설정 탭 미저장 경고
   const [settingsDirty, setSettingsDirty] = useState(false);
 
-  const loadProject = useCallback(async () => {
+  const loadProject = useCallback(async (refreshCuts = true) => {
     try {
       const data = await projectsApi.get(projectId);
       setProject(data);
       const running = Object.values(data.step_states || {}).some((s) => s === "running" || s === "waiting");
       setIsRunning(running);
-      try {
-        const cutsData = await scriptApi.listCuts(projectId);
-        setCuts(cutsData.cuts || []);
-      } catch {}
+      if (refreshCuts) {
+        try {
+          const cutsData = await scriptApi.listCuts(projectId);
+          setCuts(cutsData.cuts || []);
+        } catch {}
+      }
     } catch {}
   }, [projectId]);
 
@@ -133,8 +135,9 @@ export default function StudioPage() {
   useEffect(() => {
     if (!isRunning) return;
     const interval = setInterval(() => {
-      loadProject();
-      loadProgress();
+      if (typeof document !== "undefined" && document.hidden) return;
+      void loadProject(false);
+      void loadProgress();
     }, 2000);
     return () => clearInterval(interval);
   }, [isRunning, loadProject, loadProgress]);
@@ -341,36 +344,21 @@ export default function StudioPage() {
           실제로 running 일 때만 렌더링되므로 평시에는 보이지 않는다.
           요청: "한번 시작하면 페이지 변경 되도 계속 진행 되게 해". */}
       <div className="empty:hidden px-6 pt-3 flex flex-col gap-2 flex-shrink-0">
-        <GenerationTimer
-          projectId={projectId}
-          step="script"
-          label="대본 생성 중"
-          onComplete={handleUpdate}
-        />
-        <GenerationTimer
-          projectId={projectId}
-          step="voice"
-          label="음성 생성 중"
-          onComplete={handleUpdate}
-        />
-        <GenerationTimer
-          projectId={projectId}
-          step="image"
-          label="이미지 생성 중"
-          onComplete={handleUpdate}
-        />
-        <GenerationTimer
-          projectId={projectId}
-          step="video"
-          label="영상 생성 중"
-          onComplete={handleUpdate}
-        />
-        <GenerationTimer
-          projectId={projectId}
-          step="render"
-          label="최종 렌더링 중"
-          onComplete={handleUpdate}
-        />
+        {stepStates["2"] === "running" && activeStep !== "2" && (
+          <GenerationTimer projectId={projectId} step="script" running label="대본 생성 중" onComplete={handleUpdate} />
+        )}
+        {stepStates["3"] === "running" && activeStep !== "3" && (
+          <GenerationTimer projectId={projectId} step="voice" running label="음성 생성 중" onComplete={handleUpdate} />
+        )}
+        {stepStates["4"] === "running" && activeStep !== "4" && (
+          <GenerationTimer projectId={projectId} step="image" running label="이미지 생성 중" onComplete={handleUpdate} />
+        )}
+        {stepStates["5"] === "running" && activeStep !== "5" && (
+          <GenerationTimer projectId={projectId} step="video" running label="영상 생성 중" onComplete={handleUpdate} />
+        )}
+        {stepStates["6"] === "running" && activeStep !== "6" && (
+          <GenerationTimer projectId={projectId} step="render" running label="최종 렌더링 중" onComplete={handleUpdate} />
+        )}
       </div>
 
       {/* Body: vertical step sidebar + main content */}

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#a8845e"/>
+  <circle cx="130" cy="360" r="70" fill="#a96240" stroke="#403832" stroke-width="13"/>
+  <path d="M200 360 H405" stroke="#665446" stroke-width="20"/><path d="M275 305 L340 415 M340 305 L275 415" stroke="#403832" stroke-width="15"/>
+  <path d="M470 90 V630" stroke="#665446" stroke-width="11" stroke-dasharray="25 24"/>
+  <g fill="none" stroke="#718f98" stroke-width="13"><path d="M610 135 L845 85 L1080 150 L1190 350 L1080 575 L835 630 L590 525 L535 330 Z M610 135 L1080 575 M845 85 L835 630 M1080 150 L590 525 M1190 350 L535 330 M610 135 L1190 350"/></g>
+  <g stroke="#403832" stroke-width="10"><circle cx="610" cy="135" r="50" fill="#a96240"/><circle cx="845" cy="85" r="50" fill="#718f98"/><circle cx="1080" cy="150" r="50" fill="#c0aa7e"/><circle cx="1190" cy="350" r="50" fill="#80634e"/><circle cx="1080" cy="575" r="50" fill="#718f98"/><circle cx="835" cy="630" r="50" fill="#c0aa7e"/><circle cx="590" cy="525" r="50" fill="#80634e"/><circle cx="535" cy="330" r="50" fill="#a96240"/></g>
+</svg>

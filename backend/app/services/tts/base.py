@@ -1,5 +1,8 @@
 """Base TTS service interface"""
 import os
+import re
+import shutil
+import subprocess
 from abc import ABC, abstractmethod
 from typing import Optional
 
@@ -17,12 +20,71 @@ def _resolve_bins() -> tuple:
     return ffbin, ffprobe
 
 
+def probe_audio_duration(path: str) -> float:
+    """Measure an audio file without using bitrate-dependent size estimates."""
+    ffbin, ffprobe = _resolve_bins()
+    if ffprobe != "ffprobe" or shutil.which(ffprobe):
+        try:
+            result = subprocess.run(
+                [
+                    ffprobe,
+                    "-v",
+                    "error",
+                    "-show_entries",
+                    "format=duration",
+                    "-of",
+                    "csv=p=0",
+                    path,
+                ],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=10,
+                check=False,
+            )
+            measured = float((result.stdout or "").strip() or 0.0)
+            if measured > 0:
+                return measured
+        except (FileNotFoundError, subprocess.TimeoutExpired, ValueError):
+            pass
+
+    try:
+        result = subprocess.run(
+            [ffbin, "-hide_banner", "-i", path],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+            check=False,
+        )
+        match = re.search(
+            r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)",
+            (result.stderr or "") + (result.stdout or ""),
+        )
+        if match:
+            hours, minutes, seconds = match.groups()
+            return int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+    except (FileNotFoundError, subprocess.TimeoutExpired, ValueError):
+        pass
+    return 0.0
+
+
 class BaseTTSService(ABC):
     model_id: str
     display_name: str
 
     @abstractmethod
-    async def generate(self, text: str, voice_id: str, output_path: str, speed: float = 1.0, voice_settings: Optional[dict] = None) -> dict:
+    async def generate(
+        self,
+        text: str,
+        voice_id: str,
+        output_path: str,
+        speed: float = 1.0,
+        voice_settings: Optional[dict] = None,
+        request_context: Optional[dict] = None,
+    ) -> dict:
         """텍스트 → 음성 파일 생성. Returns {"path": str, "duration": float}"""
         pass
 

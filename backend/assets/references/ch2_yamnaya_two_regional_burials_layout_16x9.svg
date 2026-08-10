@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#a77d55"/>
+  <!-- Exactly two separated straight-sided earth pits. -->
+  <rect x="75" y="85" width="515" height="550" fill="#604536" stroke="#342923" stroke-width="16"/>
+  <rect x="690" y="85" width="515" height="550" fill="#604536" stroke="#342923" stroke-width="16"/>
+
+  <!-- Left: one straight closed shroud and one handle-free copper blade blank. -->
+  <rect x="145" y="160" width="260" height="390" rx="95" fill="#c9853d" stroke="#4b3428" stroke-width="13"/>
+  <path d="M430 365 H565 L535 495 H460 Z" fill="#ad6541" stroke="#4b3428" stroke-width="13"/>
+
+  <!-- Right: one closed L-shaped shroud and exactly three goods. -->
+  <path d="M760 165 H935 V395 H1080 V555 H760 Z" fill="#c9853d" stroke="#4b3428" stroke-width="13" stroke-linejoin="round"/>
+  <circle cx="1045" cy="190" r="58" fill="#95673f" stroke="#4b3428" stroke-width="12"/>
+  <path d="M1010 295 L1110 245" fill="none" stroke="#d5c6a2" stroke-width="22" stroke-linecap="round"/>
+  <rect x="985" y="430" width="145" height="105" rx="18" fill="#8d6c45" stroke="#4b3428" stroke-width="11"/>
+  <path d="M1005 450 L1110 515 M1110 450 L1005 515" fill="none" stroke="#c3a66c" stroke-width="8"/>
+</svg>

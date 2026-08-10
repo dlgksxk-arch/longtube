@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <defs>
+    <mask id="protectBackground">
+      <rect width="1280" height="720" fill="#fff"/>
+      <!-- Transparent cutouts become active inpaint regions after LoadImage. -->
+      <ellipse cx="245" cy="245" rx="110" ry="140" fill="#000"/>
+      <path d="M195 360L170 415L42 500L12 720H478L448 500L320 415L295 360Z" fill="#000"/>
+      <ellipse cx="640" cy="215" rx="117" ry="150" fill="#000"/>
+      <path d="M585 345L555 405L420 488L382 720H898L860 488L725 405L695 345Z" fill="#000"/>
+      <ellipse cx="1035" cy="245" rx="110" ry="140" fill="#000"/>
+      <path d="M985 360L960 415L832 500L802 720H1268L1238 500L1110 415L1085 360Z" fill="#000"/>
+    </mask>
+  </defs>
+  <rect width="1280" height="720" fill="#000" mask="url(#protectBackground)"/>
+</svg>

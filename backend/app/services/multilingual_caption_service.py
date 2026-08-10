@@ -22,6 +22,7 @@ LANGUAGE_NAMES = {
     "zh-CN": "Chinese (China)",
     "es": "Spanish",
     "fr": "French",
+    "de": "German",
 }
 _LANGUAGE_ALIASES = {
     "cn": "zh-CN",
@@ -30,7 +31,29 @@ _LANGUAGE_ALIASES = {
     "zh-hans": "zh-CN",
     "zh_cn": "zh-CN",
     "zh_hans": "zh-CN",
+    "eng": "en",
+    "english": "en",
+    "kor": "ko",
+    "kr": "ko",
+    "korean": "ko",
+    "jp": "ja",
+    "jpn": "ja",
+    "japanese": "ja",
+    "spa": "es",
+    "spanish": "es",
+    "fra": "fr",
+    "fre": "fr",
+    "french": "fr",
+    "ger": "de",
+    "deu": "de",
+    "german": "de",
 }
+_SCRIPT_CAPTION_TRACK_KEYS = (
+    "caption_tracks",
+    "captions",
+    "subtitle_tracks",
+    "youtube_caption_tracks",
+)
 
 
 def _truthy(value: Any) -> bool:
@@ -58,19 +81,33 @@ def _normalize_caption_language(value: Any) -> str | None:
 
 
 def should_upload_youtube_captions(config: dict[str, Any] | None) -> bool:
-    cfg = config or {}
-    for key in ("youtube_captions_enabled", "upload_youtube_captions", "upload_captions"):
-        if key in cfg:
-            return _truthy(cfg.get(key))
-
-    mode = str(cfg.get("subtitle_delivery") or cfg.get("subtitle_mode") or "").strip().lower()
-    if mode in {"none", "off", "disabled"}:
-        return False
-    return True
+    return app_config.resolve_main_subtitle_delivery(config) == "youtube_caption"
 
 
 def caption_languages_for_config(config: dict[str, Any] | None) -> list[str]:
-    return ["ko"]
+    cfg = config or {}
+    raw = (
+        cfg.get("caption_languages")
+        or cfg.get("youtube_caption_languages")
+        or cfg.get("subtitle_languages")
+        or cfg.get("captions_languages")
+    )
+    values: list[Any]
+    if raw is None:
+        values = list(DEFAULT_CAPTION_LANGUAGES)
+    elif isinstance(raw, str):
+        values = re.split(r"[,;/\s]+", raw)
+    elif isinstance(raw, (list, tuple, set)):
+        values = list(raw)
+    else:
+        values = [raw]
+
+    out: list[str] = []
+    for value in values:
+        lang = _normalize_caption_language(value)
+        if lang and lang not in out:
+            out.append(lang)
+    return out or list(DEFAULT_CAPTION_LANGUAGES)
 
 
 def _source_language(config: dict[str, Any] | None) -> str:
@@ -101,6 +138,81 @@ def _render_srt(entries: list[dict[str, str]], translations: list[str]) -> str:
     return "\n".join(blocks)
 
 
+def _caption_mode_requires_script_tracks(config: dict[str, Any] | None) -> bool:
+    cfg = config or {}
+    mode = str(
+        cfg.get("caption_source")
+        or cfg.get("caption_track_source")
+        or cfg.get("youtube_caption_source")
+        or ""
+    ).strip().lower()
+    return mode in {
+        "script",
+        "script_tracks",
+        "prepared",
+        "prepared_script",
+        "workbook",
+        "xlsx",
+    }
+
+
+def _script_caption_path(source_path: Path) -> Path:
+    return source_path.parent.parent / "script.json"
+
+
+def _caption_text_from_cut(cut: dict[str, Any], lang: str) -> str:
+    aliases = {lang}
+    if lang == "zh-CN":
+        aliases.update({"zh", "zh-cn", "zh_CN", "zh_Hans"})
+    for container_key in _SCRIPT_CAPTION_TRACK_KEYS:
+        container = cut.get(container_key)
+        if not isinstance(container, dict):
+            continue
+        for key in aliases:
+            value = container.get(key)
+            if value is not None and str(value).strip():
+                return re.sub(r"\s+", " ", str(value).replace("\r", " ").replace("\n", " ")).strip()
+    for key in (
+        f"caption_{lang}",
+        f"{lang}_caption",
+        f"subtitle_{lang}",
+        f"{lang}_subtitle",
+        f"narration_{lang}",
+        f"{lang}_narration",
+    ):
+        value = cut.get(key)
+        if value is not None and str(value).strip():
+            return re.sub(r"\s+", " ", str(value).replace("\r", " ").replace("\n", " ")).strip()
+    return ""
+
+
+def _load_script_caption_tracks(
+    source_path: Path,
+    entries: list[dict[str, str]],
+    target_languages: list[str],
+) -> dict[str, str]:
+    script_path = _script_caption_path(source_path)
+    if not script_path.exists():
+        return {}
+    try:
+        script = json.loads(script_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    cuts = script.get("cuts") if isinstance(script, dict) else None
+    if not isinstance(cuts, list) or len(cuts) != len(entries):
+        return {}
+
+    rendered: dict[str, str] = {}
+    for lang in target_languages:
+        texts = [
+            _caption_text_from_cut(cut, lang) if isinstance(cut, dict) else ""
+            for cut in cuts
+        ]
+        if texts and all(texts):
+            rendered[lang] = _render_srt(entries, texts)
+    return rendered
+
+
 def _extract_json_object(text: str) -> dict:
     raw = str(text or "").strip()
     try:
@@ -115,6 +227,7 @@ def _extract_json_object(text: str) -> dict:
 
 
 async def _translate_batch_openai(texts: list[str], target_lang: str, model: str) -> list[str]:
+    app_config.require_openai_api_enabled()
     async with AsyncOpenAI(api_key=app_config.OPENAI_API_KEY) as client:
         response = await client.chat.completions.create(
             model=model,
@@ -236,6 +349,7 @@ async def ensure_multilingual_caption_files(
     target_languages = caption_languages_for_config(config)
     captions_dir = source_path.parent
     results: dict[str, str] = {}
+    script_tracks = _load_script_caption_tracks(source_path, entries, target_languages)
     source_target = captions_dir / f"subtitles.{source_lang}.srt"
     if source_target.resolve() != source_path.resolve():
         shutil.copy2(source_path, source_target)
@@ -247,9 +361,17 @@ async def ensure_multilingual_caption_files(
         if lang == source_lang:
             results[lang] = str(source_target)
             continue
+        if lang in script_tracks:
+            target.write_text(script_tracks[lang], encoding="utf-8")
+            results[lang] = str(target)
+            continue
         if target.exists() and target.stat().st_size > 0:
             results[lang] = str(target)
             continue
+        if _caption_mode_requires_script_tracks(config):
+            raise ValueError(
+                f"caption track {lang} is required from script.json but was not found"
+            )
         translated = await _translate_texts(source_texts, lang, config)
         target.write_text(_render_srt(entries, translated), encoding="utf-8")
         results[lang] = str(target)
@@ -263,7 +385,8 @@ async def upload_multilingual_captions(
     source_srt_path: str | Path,
     config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    files = await ensure_multilingual_caption_files(source_srt_path, config)
+    effective_config = app_config.apply_main_caption_delivery_policy(config)
+    files = await ensure_multilingual_caption_files(source_srt_path, effective_config)
     uploaded: dict[str, Any] = {}
     errors: dict[str, str] = {}
     for lang, path in files.items():
@@ -277,6 +400,22 @@ async def upload_multilingual_captions(
             )
         except Exception as exc:
             errors[lang] = str(exc)
+    if errors:
+        raise RuntimeError(f"YouTube 자막 업로드 실패: {errors}")
+    for lang in files:
+        track = uploaded.get(lang) or {}
+        caption_id = str(track.get("caption_id") or "").strip()
+        actual_language = _normalize_caption_language(track.get("language"))
+        if not caption_id:
+            raise RuntimeError(
+                f"YouTube 자막 업로드 검증 실패: language={lang}, caption_id가 없습니다."
+            )
+        if actual_language != lang:
+            raise RuntimeError(
+                "YouTube 자막 업로드 검증 실패: "
+                f"expected_language={lang}, "
+                f"actual_language={actual_language or '(없음)'}"
+            )
     return {
         "languages": list(files.keys()),
         "uploaded": uploaded,

@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <defs>
+    <radialGradient id="soil63" cx="50%" cy="42%" r="78%">
+      <stop offset="0" stop-color="#624533"/>
+      <stop offset="0.62" stop-color="#493327"/>
+      <stop offset="1" stop-color="#33251f"/>
+    </radialGradient>
+    <linearGradient id="cloth63" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#a47c52"/>
+      <stop offset="1" stop-color="#795a3d"/>
+    </linearGradient>
+  </defs>
+  <rect width="1280" height="720" fill="url(#soil63)"/>
+  <g fill="none" stroke="#7e6049" stroke-width="7" opacity="0.42" stroke-linecap="round">
+    <path d="M0 138 Q300 104 640 142 T1280 124"/>
+    <path d="M0 604 Q310 568 650 612 T1280 588"/>
+  </g>
+
+  <g id="single-rice-stalk" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M515 610 Q500 431 510 228 M507 505 Q430 412 398 326 M509 448 Q579 354 615 270" stroke="#85a63f" stroke-width="22"/>
+    <path d="M510 260 Q466 224 447 176 M512 286 Q558 242 578 194" stroke="#d0aa43" stroke-width="15"/>
+    <g fill="#ddb44d" stroke="#735929" stroke-width="6">
+      <ellipse cx="438" cy="166" rx="10" ry="16" transform="rotate(-30 438 166)"/>
+      <ellipse cx="451" cy="187" rx="10" ry="16" transform="rotate(-27 451 187)"/>
+      <ellipse cx="465" cy="209" rx="10" ry="16" transform="rotate(-24 465 209)"/>
+      <ellipse cx="586" cy="184" rx="10" ry="16" transform="rotate(27 586 184)"/>
+      <ellipse cx="573" cy="206" rx="10" ry="16" transform="rotate(24 573 206)"/>
+      <ellipse cx="560" cy="229" rx="10" ry="16" transform="rotate(21 560 229)"/>
+    </g>
+  </g>
+
+  <g id="single-torn-cloth">
+    <ellipse cx="840" cy="548" rx="188" ry="39" fill="#241a16" opacity="0.34"/>
+    <path d="M675 446 L1012 432 L1031 558 L690 579 L712 557 L681 536 L708 511 L678 487 L705 466 Z" fill="url(#cloth63)" stroke="#2f2721" stroke-width="14" stroke-linejoin="round"/>
+    <path d="M734 470 L978 457 M736 545 L988 526" fill="none" stroke="#c39a68" stroke-width="10" opacity="0.68"/>
+  </g>
+</svg>

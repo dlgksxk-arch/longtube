@@ -157,6 +157,17 @@ def fail_task(project_id: str, step: str, error: str):
         state.finished_at = time.time()
 
 
+def pause_task(project_id: str, step: str, reason: str):
+    """Mark a task as intentionally paused for manual review."""
+    state = _tasks.get(_key(project_id, step))
+    if state:
+        if state.status == "cancelled":
+            return
+        state.status = "paused"
+        state.error = reason or "Manual review required"
+        state.finished_at = time.time()
+
+
 def record_item_error(project_id: str, step: str, cut_number: int, error: str):
     """Record a per-item failure (e.g. one cut failed out of N).
     Keeps the task running; does not affect overall status until fail_task is called.

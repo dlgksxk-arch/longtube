@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#a9855d"/>
+  <!-- One deep rectangular grave seen overhead. -->
+  <rect x="105" y="65" width="1070" height="590" fill="#5e4435" stroke="#342923" stroke-width="18"/>
+  <rect x="320" y="190" width="640" height="340" rx="18" fill="#94643b" stroke="#3e3028" stroke-width="16"/>
+  <path d="M350 270 H930 M350 360 H930 M350 450 H930 M475 210 V510 M640 210 V510 M805 210 V510"
+        fill="none" stroke="#67452f" stroke-width="11"/>
+  <!-- Exactly four solid wooden disk wheels, one at each wagon corner. -->
+  <g fill="#99683d" stroke="#3e3028" stroke-width="14">
+    <circle cx="260" cy="230" r="92"/><circle cx="1020" cy="230" r="92"/>
+    <circle cx="260" cy="490" r="92"/><circle cx="1020" cy="490" r="92"/>
+  </g>
+  <g fill="#c0a06a" stroke="#3e3028" stroke-width="9">
+    <circle cx="260" cy="230" r="25"/><circle cx="1020" cy="230" r="25"/>
+    <circle cx="260" cy="490" r="25"/><circle cx="1020" cy="490" r="25"/>
+  </g>
+</svg>

@@ -45,7 +45,7 @@ export default function GenerationTimer({ projectId, step, running, totalItems, 
     try {
       const status = await taskApi.status(projectId, step);
       setTaskStatus(status);
-      if (status.status === "completed" || status.status === "failed" || status.status === "cancelled") {
+      if (status.status !== "running") {
         if (pollRef.current) clearInterval(pollRef.current);
         pollRef.current = null;
         if (status.status === "completed") {
@@ -60,11 +60,14 @@ export default function GenerationTimer({ projectId, step, running, totalItems, 
   // Start polling when component mounts or step changes
   useEffect(() => {
     pollTask(); // initial check
-    pollRef.current = setInterval(pollTask, 1500);
+    pollRef.current = setInterval(() => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      void pollTask();
+    }, 2000);
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
-  }, [pollTask]);
+  }, [pollTask, running]);
 
   // Local timer fallback (for script generation which isn't async)
   useEffect(() => {

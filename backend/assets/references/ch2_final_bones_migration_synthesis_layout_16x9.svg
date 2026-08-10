@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#99968e"/>
+  <g fill="#c9cfcc" stroke="#414846" stroke-width="14"><rect x="45" y="60" width="360" height="600" rx="24"/><rect x="460" y="60" width="360" height="600" rx="24"/><rect x="875" y="60" width="360" height="600" rx="24"/></g>
+  <path d="M120 160 Q205 110 285 165 L300 330 L255 390 L205 335 L160 390 L105 330 Z" fill="#d8d2c2" stroke="#41403b" stroke-width="13"/><rect x="100" y="455" width="250" height="130" fill="#6f513c" stroke="#41403b" stroke-width="12"/>
+  <path d="M515 235 H760 M560 185 V285 M705 185 V285" stroke="#80634e" stroke-width="18"/><path d="M535 540 Q640 340 745 540 Z" fill="#a8845e" stroke="#41403b" stroke-width="13"/>
+  <defs><linearGradient id="mix150" x1="0" x2="1"><stop offset="0" stop-color="#718f98"/><stop offset="1" stop-color="#a96240"/></linearGradient></defs>
+  <g fill="url(#mix150)" stroke="#41403b" stroke-width="9"><rect x="920" y="115" width="120" height="105" rx="16"/><rect x="1070" y="115" width="120" height="105" rx="16"/><rect x="920" y="265" width="120" height="105" rx="16"/><rect x="1070" y="265" width="120" height="105" rx="16"/><rect x="920" y="415" width="120" height="105" rx="16"/><rect x="1070" y="415" width="120" height="105" rx="16"/><rect x="920" y="565" width="120" height="65" rx="16"/><rect x="1070" y="565" width="120" height="65" rx="16"/></g>
+</svg>

@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <defs><linearGradient id="woodBreak" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#c2925f"/><stop offset="1" stop-color="#805238"/></linearGradient></defs>
+  <rect width="1280" height="720" fill="url(#woodBreak)"/>
+  <path d="M0 115 Q320 77 640 120 T1280 103 M0 606 Q322 563 646 610 T1280 584" fill="none" stroke="#65432f" stroke-width="8" opacity=".34"/>
+  <circle cx="180" cy="238" r="81" fill="#e5bd42" stroke="#4a3821" stroke-width="14"/>
+  <g id="calm-rice-token" fill="none" stroke-linecap="round"><path d="M318 440 Q312 326 320 235" stroke="#4f7540" stroke-width="14"/><path d="M320 247 Q369 258 403 304" stroke="#806932" stroke-width="10"/><g fill="#dfbd55" stroke="#735727" stroke-width="4"><ellipse cx="345" cy="260" rx="9" ry="14" transform="rotate(-28 345 260)"/><ellipse cx="368" cy="276" rx="9" ry="14" transform="rotate(-34 368 276)"/><ellipse cx="390" cy="296" rx="9" ry="14" transform="rotate(-38 390 296)"/></g></g>
+  <g id="calm-loom-token" stroke="#3d2d25"><rect x="437" y="232" width="184" height="230" fill="#a56d45" stroke-width="12"/><rect x="475" y="273" width="108" height="137" fill="#ddd0af" stroke-width="8"/><g stroke="#f4ecd6" stroke-width="4"><path d="M492 274v136 M511 274v136 M530 274v136 M549 274v136 M568 274v136"/></g></g>
+  <path d="M88 540 Q346 503 548 480 Q598 474 630 451" fill="none" stroke="#8f3f34" stroke-width="17" stroke-linecap="round"/>
+  <path d="M650 444 l-22-35 M650 444 l-38 4 M672 448 l24-34 M672 448 l39 6" stroke="#e2a17a" stroke-width="8" stroke-linecap="round"/>
+  <path d="M694 463 Q829 500 1012 516 Q1116 527 1203 543" fill="none" stroke="#8f3f34" stroke-width="17" stroke-linecap="round"/>
+  <g id="storm-spiral" fill="none" stroke="#2e5578" stroke-width="25" stroke-linecap="round"><path d="M998 282 C1126 173 1230 321 1148 405 C1071 483 930 410 965 314 C994 234 1097 242 1118 302 C1134 350 1072 383 1038 351 C1014 328 1043 292 1073 303"/></g>
+</svg>

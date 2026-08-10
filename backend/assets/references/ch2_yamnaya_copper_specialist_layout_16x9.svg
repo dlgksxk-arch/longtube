@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#80604a"/>
+  <!-- One clay crucible with small copper droplets. -->
+  <path d="M105 160 H410 L365 430 H150 Z" fill="#9a5b3f" stroke="#3d2c27" stroke-width="15"/>
+  <ellipse cx="258" cy="160" rx="152" ry="58" fill="#4d3029" stroke="#3d2c27" stroke-width="15"/>
+  <g fill="#bd7248" stroke="#5b3429" stroke-width="7">
+    <circle cx="220" cy="165" r="18"/><circle cx="275" cy="145" r="15"/><circle cx="315" cy="180" r="13"/>
+  </g>
+  <!-- One plain hammerstone. -->
+  <path d="M500 175 Q625 100 720 205 Q735 330 600 365 Q480 320 500 175 Z"
+        fill="#84817a" stroke="#3d3733" stroke-width="14"/>
+  <!-- One handle-free copper blade blank. -->
+  <path d="M745 335 Q835 245 925 335 Q835 425 745 335 Z" fill="#b96d45" stroke="#4b3428" stroke-width="15"/>
+  <!-- One closed woven prestige packet. -->
+  <rect x="930" y="385" width="270" height="205" rx="28" fill="#9b754a" stroke="#3d3028" stroke-width="14"/>
+  <path d="M960 420 L1170 555 M1170 420 L960 555 M1065 395 V580" fill="none" stroke="#d0ad70" stroke-width="11"/>
+</svg>

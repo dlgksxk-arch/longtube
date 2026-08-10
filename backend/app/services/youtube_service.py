@@ -66,10 +66,42 @@ DEFAULT_CATEGORY_ID = "22"
 YOUTUBE_HTTP_TIMEOUT_SECONDS = 180
 YOUTUBE_UPLOAD_CHUNK_SIZE = 8 * 1024 * 1024
 YOUTUBE_UPLOAD_TRANSIENT_RETRIES = 8
+YOUTUBE_TOP_COMMENT_RETRIES = 5
 try:
     YOUTUBE_UPLOAD_INSERT_RETRIES = max(0, int(os.getenv("YOUTUBE_UPLOAD_INSERT_RETRIES", "0") or 0))
 except (TypeError, ValueError):
     YOUTUBE_UPLOAD_INSERT_RETRIES = 0
+
+
+def prepare_youtube_thumbnail_upload_path(path: str | Path) -> Path:
+    """Create a YouTube-safe JPEG derivative when a thumbnail exceeds 2 MiB."""
+    source = Path(path)
+    max_bytes = 2_097_152
+    if not source.exists() or source.stat().st_size <= max_bytes:
+        return source
+
+    from PIL import Image
+
+    out = source.with_name("thumbnail_youtube.jpg")
+    with Image.open(source) as image:
+        rgb = image.convert("RGB")
+        for quality in (92, 88, 84, 80, 76, 72, 68):
+            rgb.save(out, "JPEG", quality=quality, optimize=True, progressive=True)
+            if out.stat().st_size <= max_bytes:
+                return out
+
+        width, height = rgb.size
+        scale = 0.95
+        while scale >= 0.75:
+            resized = rgb.resize(
+                (int(width * scale), int(height * scale)),
+                Image.Resampling.LANCZOS,
+            )
+            resized.save(out, "JPEG", quality=82, optimize=True, progressive=True)
+            if out.stat().st_size <= max_bytes:
+                return out
+            scale -= 0.05
+    return out
 YOUTUBE_UPLOAD_FILE_READY_TIMEOUT_SECONDS = int(os.getenv("YOUTUBE_UPLOAD_FILE_READY_TIMEOUT_SECONDS", "300") or 300)
 YOUTUBE_UPLOAD_FILE_STABLE_SECONDS = float(os.getenv("YOUTUBE_UPLOAD_FILE_STABLE_SECONDS", "5") or 5)
 YOUTUBE_UPLOAD_FFMPEG_VALIDATE_TIMEOUT_SECONDS = int(os.getenv("YOUTUBE_UPLOAD_FFMPEG_VALIDATE_TIMEOUT_SECONDS", "600") or 600)
@@ -265,6 +297,19 @@ def _is_transient_upload_error(e: Exception) -> bool:
         return False
 
 
+def _is_retryable_top_comment_error(e: Exception) -> bool:
+    text = str(e).lower()
+    return _is_transient_upload_error(e) or any(
+        needle in text
+        for needle in (
+            "videonotfound",
+            "video not found",
+            "processingfailure",
+            "processing failure",
+        )
+    )
+
+
 class YouTubeAuthError(RuntimeError):
     """OAuth ì„¤ì •/í”Œë¡œìš° ì‹¤íŒ¨ ì‹œ."""
 
@@ -278,6 +323,68 @@ def normalize_upload_title_for_match(title: str) -> str:
     text = re.sub(r"#\s*shorts\b", "", text)
     text = re.sub(r"\s+", " ", text)
     return text.strip(" -_[]()")
+
+
+UPLOAD_TOP_COMMENT_TEMPLATES = {
+    "ko": (
+        "이번 편은 {topic}{particle} 주제로 다룬이야기 입니다. "
+        "위대한 우리 역사를 알리고 사랑하기 위해 여러분의 작은 관심이 필요합니다. "
+        "구독과 좋아요, 알림설정으로 응원해 주세요. "
+        "댓글은 언제나 열려있으니 여러분의 생각을 전해 주세요. "
+        "영상 제작에 반영할께요. 감사합니다!"
+    ),
+    "en": (
+        "This episode explores {topic}. "
+        "We need your support to share and celebrate our great history. "
+        "Please support us by subscribing, liking, and turning on notifications. "
+        "The comments are always open, so please share your thoughts. "
+        "We will reflect them in future videos. Thank you!"
+    ),
+    "ja": (
+        "今回は「{topic}」をテーマにした物語です。"
+        "私たちの偉大な歴史を広く伝え、愛していくために、皆さまの小さな関心が必要です。"
+        "チャンネル登録、高評価、通知設定で応援してください。"
+        "コメント欄はいつでも開かれていますので、ぜひ皆さまの考えをお聞かせください。"
+        "今後の動画制作に反映いたします。ありがとうございます！"
+    ),
+}
+
+
+def normalize_upload_comment_language(language: Optional[str]) -> str:
+    raw = str(language or "ko").strip().lower().replace("_", "-")
+    primary = raw.split("-", 1)[0]
+    aliases = {
+        "kor": "ko",
+        "korean": "ko",
+        "eng": "en",
+        "english": "en",
+        "jp": "ja",
+        "jpn": "ja",
+        "japanese": "ja",
+    }
+    normalized = aliases.get(primary, primary)
+    return normalized if normalized in UPLOAD_TOP_COMMENT_TEMPLATES else "ko"
+
+
+def _korean_object_particle(topic: str) -> str:
+    for char in reversed(str(topic or "").strip()):
+        if "가" <= char <= "힣":
+            return "을" if (ord(char) - ord("가")) % 28 else "를"
+        if char.isalnum():
+            return "을(를)"
+    return "을(를)"
+
+
+def build_upload_top_comment(topic: str, language: Optional[str]) -> str:
+    clean_topic = re.sub(r"(?:\s*#\S+)+\s*$", "", str(topic or "").strip())
+    clean_topic = re.sub(r"\s+", " ", clean_topic).strip()
+    if not clean_topic:
+        raise YouTubeUploadError("최상위 댓글 주제가 비어 있습니다.")
+    lang = normalize_upload_comment_language(language)
+    return UPLOAD_TOP_COMMENT_TEMPLATES[lang].format(
+        topic=clean_topic,
+        particle=_korean_object_particle(clean_topic) if lang == "ko" else "",
+    )
 
 
 class YouTubeUploader:
@@ -307,6 +414,7 @@ class YouTubeUploader:
         else:
             self.token_path = TOKEN_PATH
         self._uploads_playlist_id: Optional[str] = None
+        self._authenticated_channel_id: Optional[str] = None
 
     # ---------- OAuth ----------
 
@@ -497,6 +605,7 @@ class YouTubeUploader:
         category_id: Optional[str] = None,
         made_for_kids: bool = False,
         progress_callback: Optional[Callable[[int], None]] = None,
+        comment_topic: Optional[str] = None,
     ) -> dict:
         """ì˜ìƒ ì—…ë¡œë“œ + (ì„ íƒ) ì¸ë„¤ì¼ ì„¤ì •.
 
@@ -565,13 +674,21 @@ class YouTubeUploader:
                         if existing:
                             video_id = (existing.get("video_id") or "").strip()
                             if video_id:
-                                return {
+                                recovered = {
                                     "video_id": video_id,
                                     "url": existing.get("url") or f"https://youtube.com/watch?v={video_id}",
                                     "title": existing.get("title") or title,
                                     "already_uploaded": True,
                                     "recovered_after_upload_timeout": True,
                                 }
+                                recovered["top_comment"] = self.ensure_upload_top_comment(
+                                    video_id=video_id,
+                                    topic=comment_topic or title,
+                                    language=language,
+                                    privacy=privacy,
+                                    made_for_kids=made_for_kids,
+                                )
+                                return recovered
                         raise
                     time.sleep(min(60, 5 * transient_errors))
                     continue
@@ -586,13 +703,21 @@ class YouTubeUploader:
                 if existing:
                     video_id = (existing.get("video_id") or "").strip()
                     if video_id:
-                        return {
+                        recovered = {
                             "video_id": video_id,
                             "url": existing.get("url") or f"https://youtube.com/watch?v={video_id}",
                             "title": existing.get("title") or title,
                             "already_uploaded": True,
                             "recovered_after_upload_timeout": True,
                         }
+                        recovered["top_comment"] = self.ensure_upload_top_comment(
+                            video_id=video_id,
+                            topic=comment_topic or title,
+                            language=language,
+                            privacy=privacy,
+                            made_for_kids=made_for_kids,
+                        )
+                        return recovered
             err_text = str(e)
             if "uploadLimitExceeded" in err_text or "exceeded the number of videos" in err_text:
                 raise YouTubeUploadError(
@@ -605,6 +730,11 @@ class YouTubeUploader:
         video_id = response.get("id")
         if not video_id:
             raise YouTubeUploadError(f"ì—…ë¡œë“œ ì‘ë‹µì— video id ê°€ ì—†ìŒ: {response!r}")
+
+        result = {
+            "video_id": video_id,
+            "url": f"https://youtube.com/watch?v={video_id}",
+        }
 
         # ì¸ë„¤ì¼ ì„¤ì • (ì„ íƒ)
         if thumbnail_path and os.path.exists(thumbnail_path):
@@ -621,16 +751,16 @@ class YouTubeUploader:
                 ).execute(num_retries=3)
             except Exception as e:
                 # ì¸ë„¤ì¼ ì‹¤íŒ¨í•´ë„ ì˜ìƒ ìžì²´ëŠ” ì—…ë¡œë“œ ì„±ê³µì´ë¯€ë¡œ dict ì— ì—ëŸ¬ë§Œ ê¸°ë¡
-                return {
-                    "video_id": video_id,
-                    "url": f"https://youtube.com/watch?v={video_id}",
-                    "thumbnail_error": str(e),
-                }
+                result["thumbnail_error"] = str(e)
 
-        return {
-            "video_id": video_id,
-            "url": f"https://youtube.com/watch?v={video_id}",
-        }
+        result["top_comment"] = self.ensure_upload_top_comment(
+            video_id=video_id,
+            topic=comment_topic or title,
+            language=language,
+            privacy=privacy,
+            made_for_kids=made_for_kids,
+        )
+        return result
 
     def upload_caption(
         self,
@@ -677,6 +807,32 @@ class YouTubeUploader:
             "language": lang,
             "name": body["snippet"]["name"],
         }
+
+    def list_captions(self, video_id: str) -> list[dict]:
+        """Return caption tracks currently registered for a video."""
+        if not video_id or not str(video_id).strip():
+            raise YouTubeUploadError("caption list failed: video_id is empty")
+        if self.youtube is None:
+            self.authenticate()
+        try:
+            response = self.youtube.captions().list(
+                part="snippet",
+                videoId=str(video_id).strip(),
+            ).execute(num_retries=3)
+        except Exception as e:
+            raise YouTubeUploadError(f"caption list failed: {e}") from e
+        tracks: list[dict] = []
+        for item in response.get("items") or []:
+            snippet = item.get("snippet") or {}
+            tracks.append({
+                "caption_id": item.get("id"),
+                "language": str(snippet.get("language") or "").strip(),
+                "name": str(snippet.get("name") or "").strip(),
+                "status": snippet.get("status"),
+                "track_kind": snippet.get("trackKind"),
+                "is_draft": bool(snippet.get("isDraft")),
+            })
+        return tracks
 
     # ---------- Delete ----------
 
@@ -1091,6 +1247,8 @@ class YouTubeUploader:
             new_snippet["defaultLanguage"] = default_language
         elif cur_snippet.get("defaultLanguage"):
             new_snippet["defaultLanguage"] = cur_snippet["defaultLanguage"]
+        if cur_snippet.get("defaultAudioLanguage"):
+            new_snippet["defaultAudioLanguage"] = cur_snippet["defaultAudioLanguage"]
 
         new_status = dict(cur_status)
         if privacy_status is not None:
@@ -1127,6 +1285,102 @@ class YouTubeUploader:
             "video_id": resp.get("id") or video_id,
             "snippet": resp.get("snippet") or {},
             "status": resp.get("status") or {},
+        }
+
+    def set_video_localizations(
+        self,
+        video_id: str,
+        localizations: dict[str, dict[str, str]],
+        *,
+        default_language: str = "en",
+        default_audio_language: Optional[str] = None,
+    ) -> dict:
+        """Merge localized titles/descriptions without dropping the current snippet."""
+        self._ensure()
+        vid = str(video_id or "").strip()
+        if not vid:
+            raise YouTubeUploadError("video_id is empty")
+        normalized: dict[str, dict[str, str]] = {}
+        for raw_lang, raw_value in (localizations or {}).items():
+            lang = str(raw_lang or "").strip().replace("_", "-")
+            if not lang or not isinstance(raw_value, dict):
+                continue
+            title = str(raw_value.get("title") or "").strip()
+            description = str(raw_value.get("description") or "").strip()
+            if not title or not description:
+                raise YouTubeUploadError(
+                    f"localized title/description is empty: {lang}"
+                )
+            if len(title) > 100 or len(description) > 5000:
+                raise YouTubeUploadError(
+                    f"localized metadata exceeds YouTube limits: {lang}"
+                )
+            normalized[lang] = {
+                "title": title,
+                "description": description,
+            }
+        if not normalized:
+            return {"video_id": vid, "localizations": {}, "languages": []}
+
+        current = None
+        last_lookup_error: Exception | None = None
+        items: list[dict] = []
+        for attempt in range(6):
+            try:
+                current = self.youtube.videos().list(
+                    part="snippet,localizations",
+                    id=vid,
+                ).execute()
+                items = current.get("items") or []
+                if items:
+                    break
+            except Exception as e:
+                last_lookup_error = e
+            if attempt < 5:
+                time.sleep(min(8, attempt + 1))
+        if not items:
+            if last_lookup_error is not None:
+                raise YouTubeUploadError(
+                    f"video localization source lookup failed: {last_lookup_error}"
+                ) from last_lookup_error
+            raise YouTubeUploadError(f"video not found: {vid}")
+        item = items[0]
+        snippet = item.get("snippet") or {}
+        writable_snippet = {
+            "title": snippet.get("title") or "",
+            "description": snippet.get("description") or "",
+            "tags": snippet.get("tags") or [],
+            "categoryId": snippet.get("categoryId") or DEFAULT_CATEGORY_ID,
+            "defaultLanguage": (
+                str(default_language or "").strip()
+                or snippet.get("defaultLanguage")
+                or "en"
+            ),
+        }
+        audio_language = (
+            str(default_audio_language or "").strip()
+            or snippet.get("defaultAudioLanguage")
+        )
+        if audio_language:
+            writable_snippet["defaultAudioLanguage"] = audio_language
+        merged = dict(item.get("localizations") or {})
+        merged.update(normalized)
+        try:
+            response = self.youtube.videos().update(
+                part="snippet,localizations",
+                body={
+                    "id": vid,
+                    "snippet": writable_snippet,
+                    "localizations": merged,
+                },
+            ).execute()
+        except Exception as e:
+            raise YouTubeUploadError(f"video localization update failed: {e}") from e
+        response_localizations = response.get("localizations") or merged
+        return {
+            "video_id": response.get("id") or vid,
+            "localizations": response_localizations,
+            "languages": sorted(response_localizations),
         }
 
     def set_thumbnail(self, video_id: str, thumbnail_path: str) -> dict:
@@ -1368,6 +1622,126 @@ class YouTubeUploader:
             raise YouTubeUploadError(f"ìž¬ìƒëª©ë¡ í•­ëª© ì œê±° ì‹¤íŒ¨: {e}") from e
 
     # ---------- Comments ----------
+
+    def _own_youtube_channel_id(self) -> str:
+        if self._authenticated_channel_id:
+            return self._authenticated_channel_id
+        channel_id = str(self.get_channel_info().get("channel_id") or "").strip()
+        if not channel_id:
+            raise YouTubeUploadError("인증된 YouTube 채널 ID를 확인할 수 없습니다.")
+        self._authenticated_channel_id = channel_id
+        return channel_id
+
+    def ensure_top_level_comment(
+        self,
+        video_id: str,
+        topic: str,
+        language: Optional[str] = None,
+    ) -> dict:
+        """Create the channel-language upload comment once for a video."""
+        self._ensure()
+        vid = str(video_id or "").strip()
+        if not vid:
+            raise YouTubeUploadError("최상위 댓글 작성 실패: video_id가 비어 있습니다.")
+        text = build_upload_top_comment(topic, language)
+        channel_id = self._own_youtube_channel_id()
+
+        response = None
+        last_error: Exception | None = None
+        for attempt in range(YOUTUBE_TOP_COMMENT_RETRIES):
+            try:
+                existing = self.list_comment_threads(vid, max_results=100, order="time")
+                for item in existing.get("items") or []:
+                    if (
+                        str(item.get("author_channel_id") or "").strip() == channel_id
+                        and str(item.get("text") or "").strip() == text
+                    ):
+                        return {
+                            "status": "completed",
+                            "video_id": vid,
+                            "thread_id": item.get("thread_id"),
+                            "comment_id": item.get("top_comment_id"),
+                            "language": normalize_upload_comment_language(language),
+                            "text": text,
+                            "already_present": True,
+                        }
+
+                response = self.youtube.commentThreads().insert(
+                    part="snippet",
+                    body={
+                        "snippet": {
+                            "channelId": channel_id,
+                            "videoId": vid,
+                            "topLevelComment": {
+                                "snippet": {"textOriginal": text},
+                            },
+                        }
+                    },
+                ).execute()
+                break
+            except Exception as e:
+                last_error = e
+                if attempt + 1 >= YOUTUBE_TOP_COMMENT_RETRIES or not _is_retryable_top_comment_error(e):
+                    raise YouTubeUploadError(
+                        _friendly_youtube_error("최상위 댓글 작성 실패", e)
+                    ) from e
+                time.sleep(min(10, 2 * (attempt + 1)))
+
+        if response is None:
+            raise YouTubeUploadError(
+                _friendly_youtube_error(
+                    "최상위 댓글 작성 실패",
+                    last_error or RuntimeError("empty commentThreads.insert response"),
+                )
+            )
+
+        top_level = (response.get("snippet") or {}).get("topLevelComment") or {}
+        top_snippet = top_level.get("snippet") or {}
+        return {
+            "status": "completed",
+            "video_id": vid,
+            "thread_id": response.get("id"),
+            "comment_id": top_level.get("id"),
+            "language": normalize_upload_comment_language(language),
+            "text": top_snippet.get("textDisplay") or text,
+            "already_present": False,
+        }
+
+    def ensure_upload_top_comment(
+        self,
+        *,
+        video_id: str,
+        topic: str,
+        language: Optional[str],
+        privacy: str,
+        made_for_kids: bool,
+    ) -> dict:
+        text = build_upload_top_comment(topic, language)
+        base = {
+            "video_id": str(video_id or "").strip(),
+            "language": normalize_upload_comment_language(language),
+            "text": text,
+        }
+        if made_for_kids:
+            return {
+                **base,
+                "status": "pending",
+                "reason": "made_for_kids_comments_disabled",
+            }
+        if privacy == "private":
+            return {
+                **base,
+                "status": "pending",
+                "reason": "private_video_comments_unavailable",
+            }
+        try:
+            return self.ensure_top_level_comment(video_id, topic, language)
+        except Exception as e:
+            return {
+                **base,
+                "status": "failed",
+                "error": str(e),
+            }
 
     def list_comment_threads(
         self,

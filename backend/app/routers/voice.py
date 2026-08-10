@@ -16,12 +16,15 @@ from app.services.tts.narration_fit import (
     generate_tts_with_auto_narration_fit,
 )
 from app.services.tts.narration_source import (
-    get_cut_tts_narration,
+    build_tts_input_marker_payload,
+    build_tts_request_context,
+    is_japanese_language,
+    prepare_script_tts_inputs,
     tts_input_marker_matches,
-    uses_cut_tts_narration,
     write_tts_input_marker,
 )
-from app.services.tts.pronunciation_normalizer import prepare_spoken_narration_for_tts
+from app.services.tts.japanese_preflight import assert_japanese_tts_script_ready
+from app.services.tts.voice_cast import apply_emotion_to_tts_text, resolve_tts_voice
 from app.services.tts.voice_profile import (
     ensure_voice_profile_from_config,
     get_cached_voice_profile_from_config,
@@ -57,6 +60,64 @@ def _save_script(project_id: str, script: dict):
     script_path.parent.mkdir(parents=True, exist_ok=True)
     with open(script_path, "w", encoding="utf-8") as f:
         json.dump(script, f, ensure_ascii=False, indent=2)
+
+
+def _tts_cut_runtime(
+    prepared_inputs: dict,
+    cut_number: int,
+    config: dict,
+    tts_service,
+    tts_model: str,
+    voice_id: str,
+    speed: float,
+    voice_settings: dict | None,
+    cut_data: dict | None = None,
+) -> tuple[object, dict, dict, bool, object]:
+    prepared = prepared_inputs.get(int(cut_number))
+    if prepared is None:
+        raise ValueError(f"TTS 입력 준비 실패: cut {cut_number}")
+    resolved = resolve_tts_voice(cut_data, config)
+    # Explicit function argument remains the fallback for legacy callers.
+    effective_voice_id = resolved.voice_id or str(voice_id or "")
+    request_context = build_tts_request_context(prepared, config)
+    request_context.update({
+        "speaker": resolved.speaker,
+        "voice_role": resolved.role,
+        "emotion_tags": list(resolved.emotion_tags),
+    })
+    effective_voice_settings = (
+        tts_service.effective_voice_settings(speed, voice_settings)
+        if hasattr(tts_service, "effective_voice_settings")
+        else dict(voice_settings or {})
+    )
+    marker_payload = build_tts_input_marker_payload(
+        prepared,
+        config,
+        provider=tts_model,
+        engine_model=getattr(tts_service, "engine_model_id", tts_model),
+        voice_id=effective_voice_id,
+        speed=speed,
+        voice_settings=effective_voice_settings,
+    )
+    marker_enabled = bool(
+        prepared.uses_explicit_tts
+        or is_japanese_language(config)
+        or resolved.role != "narrator"
+        or resolved.emotion_tags
+    )
+    return prepared, request_context, marker_payload, marker_enabled, resolved
+
+
+def _assert_tts_preflight_or_http(
+    script: dict,
+    config: dict,
+    *,
+    cut_numbers: list[int] | None = None,
+) -> None:
+    try:
+        assert_japanese_tts_script_ready(script, config, cut_numbers=cut_numbers)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 def _audio_file_exists(project_id: str, audio_path: str | None) -> bool:
@@ -121,7 +182,7 @@ def _fit_existing_audio_without_api(
     config: dict,
     fallback_path: str | Path,
     expected_narration: str | None = None,
-    expected_tts_narration: str | None = None,
+    expected_tts_narration: object | None = None,
     tts_narration_marker_enabled: bool = False,
     log_prefix: str = "[Voice]",
 ) -> dict | None:
@@ -261,17 +322,30 @@ async def generate_all_voices(project_id: str, db: Session = Depends(get_db)):
         speed = 1.0
 
     script = _load_script(project_id)
+    _assert_tts_preflight_or_http(script, project.config)
     cuts = db.query(Cut).filter(Cut.project_id == project_id).all()
     cut_dict = {c.cut_number: c for c in cuts}
 
     results = []
     script_dirty = False
     script_cuts = script.get("cuts", [])
+    prepared_inputs = prepare_script_tts_inputs(script, project.config)
+    voice_id = project.config.get("tts_voice_id", "")
     for cut_data in script_cuts:
         cut_number = cut_data["cut_number"]
         narration = cut_data.get("narration", "")
-        tts_narration = get_cut_tts_narration(cut_data, project.config, narration)
-        tts_narration_marker_enabled = uses_cut_tts_narration(cut_data, project.config)
+        prepared_tts, request_context, marker_payload, tts_narration_marker_enabled, resolved_voice = _tts_cut_runtime(
+            prepared_inputs,
+            cut_number,
+            project.config,
+            tts_service,
+            tts_model,
+            voice_id,
+            speed,
+            None,
+            cut_data,
+        )
+        tts_narration = prepared_tts.tts_narration
 
         if not narration:
             results.append({
@@ -286,7 +360,6 @@ async def generate_all_voices(project_id: str, db: Session = Depends(get_db)):
             continue
 
         try:
-            voice_id = project.config.get("tts_voice_id", "")
             audio_dir = resolve_project_dir(project_id, project.config or {}, create=True) / "audio"
             audio_dir.mkdir(parents=True, exist_ok=True)
             audio_path = str(audio_dir / f"cut_{cut_number}.wav")
@@ -297,7 +370,7 @@ async def generate_all_voices(project_id: str, db: Session = Depends(get_db)):
                 config=project.config,
                 fallback_path=audio_path,
                 expected_narration=narration,
-                expected_tts_narration=tts_narration,
+                expected_tts_narration=marker_payload,
                 tts_narration_marker_enabled=tts_narration_marker_enabled,
             )
             if result is not None:
@@ -312,17 +385,14 @@ async def generate_all_voices(project_id: str, db: Session = Depends(get_db)):
                 })
                 continue
 
-            spoken_narration = prepare_spoken_narration_for_tts(
-                tts_narration,
-                project.config.get("language", "ko"),
-            )
+            spoken_narration = apply_emotion_to_tts_text(prepared_tts.spoken_narration, resolved_voice, tts_model)
             spoken_cut_data = dict(cut_data)
             spoken_cut_data["narration"] = spoken_narration
 
             result = await generate_tts_with_auto_narration_fit(
                 tts_service,
                 spoken_narration,
-                voice_id,
+                resolved_voice.voice_id,
                 audio_path,
                 speed=speed,
                 config=project.config,
@@ -332,6 +402,7 @@ async def generate_all_voices(project_id: str, db: Session = Depends(get_db)):
                 total_cuts=len(script_cuts),
                 cut_data=spoken_cut_data,
                 script=script,
+                request_context=request_context,
                 log=lambda msg: print(f"[Voice] {msg}"),
             )
 
@@ -350,7 +421,7 @@ async def generate_all_voices(project_id: str, db: Session = Depends(get_db)):
             cut.status = "completed"
             write_tts_input_marker(
                 audio_path,
-                tts_narration,
+                marker_payload,
                 enabled=tts_narration_marker_enabled,
             )
             db.commit()
@@ -412,6 +483,7 @@ async def generate_all_voices_async(project_id: str, db: Session = Depends(get_d
         return {"status": "already_running", "step": "voice"}
 
     script = _load_script(project_id)
+    _assert_tts_preflight_or_http(script, project.config)
     cut_list = script.get("cuts", [])
     state = start_task(project_id, "voice", len(cut_list))
 
@@ -458,6 +530,7 @@ async def generate_all_voices_async(project_id: str, db: Session = Depends(get_d
 
             cuts = local_db.query(Cut).filter(Cut.project_id == project_id).all()
             cut_dict = {c.cut_number: c for c in cuts}
+            prepared_inputs = prepare_script_tts_inputs(script, proj.config)
 
             if not cuts:
                 raise ValueError("No cuts found — generate script first")
@@ -468,8 +541,18 @@ async def generate_all_voices_async(project_id: str, db: Session = Depends(get_d
                     break
                 cut_number = cut_data["cut_number"]
                 narration = cut_data.get("narration", "")
-                tts_narration = get_cut_tts_narration(cut_data, proj.config, narration)
-                tts_narration_marker_enabled = uses_cut_tts_narration(cut_data, proj.config)
+                prepared_tts, request_context, marker_payload, tts_narration_marker_enabled, resolved_voice = _tts_cut_runtime(
+                    prepared_inputs,
+                    cut_number,
+                    proj.config,
+                    tts_service,
+                    tts_model,
+                    voice_id,
+                    speed,
+                    voice_settings,
+                    cut_data,
+                )
+                tts_narration = prepared_tts.tts_narration
                 if not narration:
                     update_task(project_id, "voice", i + 1)
                     continue
@@ -490,7 +573,7 @@ async def generate_all_voices_async(project_id: str, db: Session = Depends(get_d
                         config=proj.config,
                         fallback_path=audio_path,
                         expected_narration=narration,
-                        expected_tts_narration=tts_narration,
+                        expected_tts_narration=marker_payload,
                         tts_narration_marker_enabled=tts_narration_marker_enabled,
                     )
                     if result is not None:
@@ -500,16 +583,13 @@ async def generate_all_voices_async(project_id: str, db: Session = Depends(get_d
                         update_task(project_id, "voice", i + 1)
                         continue
 
-                    spoken_narration = prepare_spoken_narration_for_tts(
-                        tts_narration,
-                        proj.config.get("language", "ko"),
-                    )
+                    spoken_narration = apply_emotion_to_tts_text(prepared_tts.spoken_narration, resolved_voice, tts_model)
                     spoken_cut_data = dict(cut_data)
                     spoken_cut_data["narration"] = spoken_narration
                     result = await generate_tts_with_auto_narration_fit(
                         tts_service,
                         spoken_narration,
-                        voice_id,
+                        resolved_voice.voice_id,
                         audio_path,
                         speed=speed,
                         voice_settings=voice_settings,
@@ -520,6 +600,7 @@ async def generate_all_voices_async(project_id: str, db: Session = Depends(get_d
                         total_cuts=len(cut_list),
                         cut_data=spoken_cut_data,
                         script=script,
+                        request_context=request_context,
                         log=lambda msg: print(f"[Voice] {msg}"),
                     )
                     original_duration = result.get("original_duration") or result.get("duration", 0.0)
@@ -537,7 +618,7 @@ async def generate_all_voices_async(project_id: str, db: Session = Depends(get_d
                     cut.status = "completed"
                     write_tts_input_marker(
                         audio_path,
-                        tts_narration,
+                        marker_payload,
                         enabled=tts_narration_marker_enabled,
                     )
                     # v1.1.55-fix: 스튜디오 TTS 비용 기록
@@ -644,40 +725,64 @@ async def resume_voices_async(project_id: str, db: Session = Depends(get_db)):
         return {"status": "already_running", "step": "voice"}
 
     script = _load_script(project_id)
+    _assert_tts_preflight_or_http(script, project.config)
     cut_list = script.get("cuts", [])
-    script_cut_map = {
-        int(cut_data.get("cut_number")): cut_data
-        for cut_data in cut_list
-        if isinstance(cut_data, dict) and str(cut_data.get("cut_number") or "").isdigit()
-    }
 
-    # Find cuts missing audio, or Japanese TTS-input cuts whose sidecar no longer matches.
+    configured_tts_model = project.config.get("tts_model", "openai-tts")
+    configured_voice_id = project.config.get("tts_voice_id", "alloy")
+    configured_service = get_tts_service(configured_tts_model)
+    try:
+        configured_speed = float(project.config.get("tts_speed", 1.0) or 1.0)
+    except (TypeError, ValueError):
+        configured_speed = 1.0
+    configured_voice_settings = None
+    if "child" in str(project.config.get("tts_voice_preset") or "") and configured_tts_model == "elevenlabs":
+        configured_voice_settings = {"stability": 0.7, "similarity_boost": 0.85}
+    prepared_inputs = prepare_script_tts_inputs(script, project.config)
+
+    # Resume only fills missing audio. Stale cache metadata is reported but does
+    # not overwrite an existing generated file without an explicit regenerate.
     cuts = db.query(Cut).filter(Cut.project_id == project_id).order_by(Cut.cut_number).all()
     pending_cuts = []
+    stale_cache_preserved = 0
     for c in cuts:
         if not (c.narration or "").strip():
             continue
         audio_exists = _audio_file_exists(project_id, c.audio_path)
-        cut_data = script_cut_map.get(int(c.cut_number))
         marker_stale = False
-        if audio_exists and cut_data and uses_cut_tts_narration(cut_data, project.config):
+        if audio_exists and int(c.cut_number) in prepared_inputs:
+            source_cut_data = next((item for item in cut_list if int(item.get("cut_number") or 0) == int(c.cut_number)), {})
+            _prepared_tts, _request_context, marker_payload, marker_enabled, _resolved_voice = _tts_cut_runtime(
+                prepared_inputs,
+                int(c.cut_number),
+                project.config,
+                configured_service,
+                configured_tts_model,
+                configured_voice_id,
+                configured_speed,
+                configured_voice_settings,
+                source_cut_data,
+            )
             audio_path = _resolve_audio_path(project_id, c.audio_path)
             marker_stale = bool(
                 audio_path
                 and not tts_input_marker_matches(
                     audio_path,
-                    get_cut_tts_narration(cut_data, project.config, c.narration),
-                    enabled=True,
+                    marker_payload,
+                    enabled=marker_enabled,
                 )
             )
-        if not audio_exists or marker_stale:
+        if not audio_exists:
             pending_cuts.append(c)
+        elif marker_stale:
+            stale_cache_preserved += 1
     if not pending_cuts:
         completed = _mark_voice_completed_if_ready(project_id, project, db)
         return {
             "status": "completed" if completed else "nothing_to_resume",
             "step": "voice",
             "total": 0,
+            "stale_cache_preserved": stale_cache_preserved,
         }
 
     # Filter cut_list to only pending ones
@@ -723,6 +828,7 @@ async def resume_voices_async(project_id: str, db: Session = Depends(get_db)):
 
             db_cuts = local_db.query(Cut).filter(Cut.project_id == project_id).all()
             cut_dict = {c.cut_number: c for c in db_cuts}
+            prepared_inputs = prepare_script_tts_inputs(script, proj.config)
 
             script_dirty = False
             for i, cut_data in enumerate(pending_cut_list):
@@ -730,8 +836,18 @@ async def resume_voices_async(project_id: str, db: Session = Depends(get_db)):
                     break
                 cut_number = cut_data["cut_number"]
                 narration = cut_data.get("narration", "")
-                tts_narration = get_cut_tts_narration(cut_data, proj.config, narration)
-                tts_narration_marker_enabled = uses_cut_tts_narration(cut_data, proj.config)
+                prepared_tts, request_context, marker_payload, tts_narration_marker_enabled, resolved_voice = _tts_cut_runtime(
+                    prepared_inputs,
+                    cut_number,
+                    proj.config,
+                    tts_service,
+                    tts_model,
+                    voice_id,
+                    speed,
+                    voice_settings,
+                    cut_data,
+                )
+                tts_narration = prepared_tts.tts_narration
                 cut = cut_dict.get(cut_number)
                 if not cut or not narration:
                     update_task(project_id, "voice", i + 1)
@@ -748,7 +864,7 @@ async def resume_voices_async(project_id: str, db: Session = Depends(get_db)):
                         config=proj.config,
                         fallback_path=audio_path,
                         expected_narration=narration,
-                        expected_tts_narration=tts_narration,
+                        expected_tts_narration=marker_payload,
                         tts_narration_marker_enabled=tts_narration_marker_enabled,
                         log_prefix="[VoiceResume]",
                     )
@@ -759,16 +875,13 @@ async def resume_voices_async(project_id: str, db: Session = Depends(get_db)):
                         update_task(project_id, "voice", i + 1)
                         continue
 
-                    spoken_narration = prepare_spoken_narration_for_tts(
-                        tts_narration,
-                        proj.config.get("language", "ko"),
-                    )
+                    spoken_narration = apply_emotion_to_tts_text(prepared_tts.spoken_narration, resolved_voice, tts_model)
                     spoken_cut_data = dict(cut_data)
                     spoken_cut_data["narration"] = spoken_narration
                     result = await generate_tts_with_auto_narration_fit(
                         tts_service,
                         spoken_narration,
-                        voice_id,
+                        resolved_voice.voice_id,
                         audio_path,
                         speed=speed,
                         voice_settings=voice_settings,
@@ -779,6 +892,7 @@ async def resume_voices_async(project_id: str, db: Session = Depends(get_db)):
                         total_cuts=len(cut_list),
                         cut_data=spoken_cut_data,
                         script=script,
+                        request_context=request_context,
                         log=lambda msg: print(f"[Voice] {msg}"),
                     )
                     original_duration = result.get("original_duration") or result.get("duration", 0.0)
@@ -796,7 +910,7 @@ async def resume_voices_async(project_id: str, db: Session = Depends(get_db)):
                     cut.status = "completed"
                     write_tts_input_marker(
                         audio_path,
-                        tts_narration,
+                        marker_payload,
                         enabled=tts_narration_marker_enabled,
                     )
                     local_db.commit()
@@ -865,7 +979,13 @@ async def resume_voices_async(project_id: str, db: Session = Depends(get_db)):
 
     task = asyncio.create_task(_run())
     register_async_task(project_id, "voice", task)
-    return {"status": "started", "step": "voice", "total": len(pending_cut_list), "skipped": len(cuts) - len(pending_cuts)}
+    return {
+        "status": "started",
+        "step": "voice",
+        "total": len(pending_cut_list),
+        "skipped": len(cuts) - len(pending_cuts),
+        "stale_cache_preserved": stale_cache_preserved,
+    }
 
 
 @router.post("/{project_id}/generate/{cut_number}")
@@ -902,7 +1022,9 @@ async def generate_one_voice(
         voice_id = project.config.get("tts_voice_id", "")
         audio_dir = resolve_project_dir(project_id, project.config or {}, create=True) / "audio"
         audio_dir.mkdir(parents=True, exist_ok=True)
-        audio_path = str(audio_dir / f"cut_{cut_number}.wav")
+        # Studio bulk/resume voice generation stores MP3. Keep single-cut
+        # regeneration on the same canonical path so it replaces the render input.
+        audio_path = str(audio_dir / f"cut_{cut_number}.mp3")
 
         script = _load_script(project_id)
         script_cuts = script.get("cuts", [])
@@ -915,20 +1037,34 @@ async def generate_one_voice(
                 "scene_type": cut.scene_type,
             },
         )
-        tts_narration = get_cut_tts_narration(cut_data, project.config, cut.narration)
-        tts_narration_marker_enabled = uses_cut_tts_narration(cut_data, project.config)
-
-        spoken_narration = prepare_spoken_narration_for_tts(
-            tts_narration,
-            project.config.get("language", "ko"),
+        runtime_script = script
+        if not any(
+            isinstance(item, dict) and int(item.get("cut_number", -1)) == cut_number
+            for item in script_cuts
+        ):
+            runtime_script = {**script, "cuts": [*script_cuts, cut_data]}
+        _assert_tts_preflight_or_http(runtime_script, project.config, cut_numbers=[cut_number])
+        prepared_inputs = prepare_script_tts_inputs(runtime_script, project.config)
+        prepared_tts, request_context, marker_payload, tts_narration_marker_enabled, resolved_voice = _tts_cut_runtime(
+            prepared_inputs,
+            cut_number,
+            project.config,
+            tts_service,
+            tts_model,
+            voice_id,
+            speed,
+            None,
+            cut_data,
         )
+        tts_narration = prepared_tts.tts_narration
+        spoken_narration = apply_emotion_to_tts_text(prepared_tts.spoken_narration, resolved_voice, tts_model)
         spoken_cut_data = dict(cut_data)
         spoken_cut_data["narration"] = spoken_narration
 
         result = await generate_tts_with_auto_narration_fit(
             tts_service,
             spoken_narration,
-            voice_id,
+            resolved_voice.voice_id,
             audio_path,
             speed=speed,
             config=project.config,
@@ -937,7 +1073,8 @@ async def generate_one_voice(
             cut_number=cut_number,
             total_cuts=len(script_cuts) or 1,
             cut_data=spoken_cut_data,
-            script=script,
+            script=runtime_script,
+            request_context=request_context,
             log=lambda msg: print(f"[Voice] {msg}"),
         )
 
@@ -955,7 +1092,7 @@ async def generate_one_voice(
         cut.status = "completed"
         write_tts_input_marker(
             audio_path,
-            tts_narration,
+            marker_payload,
             enabled=tts_narration_marker_enabled,
         )
         # v1.1.55-fix: 단건 TTS 비용 기록

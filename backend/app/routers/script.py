@@ -26,6 +26,7 @@ from app.services.story_plan_stage import (
     mark_story_step_state,
     story_plan_response,
 )
+from app.services.local_script_source import is_local_script_model, load_local_saved_script
 
 router = APIRouter()
 
@@ -149,6 +150,33 @@ def _load_prepared_script_for_router(project_id: str, config: dict, topic: str) 
     return script
 
 
+def _assert_prepared_script_loaded(config: dict, script: Optional[dict]) -> None:
+    if script is not None:
+        return
+    from app.tasks.pipeline_tasks import _prepared_script_required
+
+    if _prepared_script_required(config):
+        raise RuntimeError(
+            "등록 대본 필수 작업에서 일치하는 준비 대본을 불러오지 못했습니다. "
+            "GPT/LLM 대본 생성 폴백은 금지되었습니다."
+        )
+
+
+def _load_registered_or_local_script(
+    project_id: str,
+    config: dict,
+    topic: str,
+    model_id: str,
+) -> tuple[Optional[dict], bool]:
+    """Prefer a queue-registered prepared script over Studio local-script."""
+    script = _load_prepared_script_for_router(project_id, config, topic)
+    prepared_script_used = script is not None
+    _assert_prepared_script_loaded(config, script)
+    if script is None and is_local_script_model(model_id):
+        script = load_local_saved_script(project_id, config)
+    return script, prepared_script_used
+
+
 def _assert_script_provider_key(model_id: str) -> None:
     from app import config as app_config
 
@@ -215,6 +243,7 @@ async def generate_story_plan_async(project_id: str, db: Session = Depends(get_d
             "reason": "prepared_script_available",
             "cuts": len(prepared_script.get("cuts", [])),
         }
+    _assert_prepared_script_loaded(prepared_config, prepared_script)
 
     if is_running(project_id, STORY_STEP_KEY):
         return {"status": "already_running", "step": STORY_STEP_KEY}
@@ -274,8 +303,12 @@ async def generate_script(project_id: str, db: Session = Depends(get_db)):
             _save_script(project_id, existing_script, (project.config or {}).get("language", "ko"))
             return existing_script
 
-        script = _load_prepared_script_for_router(project_id, llm_config, project.topic)
-        prepared_script_used = script is not None
+        script, prepared_script_used = _load_registered_or_local_script(
+            project_id,
+            llm_config,
+            project.topic,
+            model_id,
+        )
         if script is None:
             _assert_script_provider_key(model_id)
             try:
@@ -382,8 +415,12 @@ async def generate_script_async(project_id: str, db: Session = Depends(get_db)):
                 complete_task(project_id, "script")
                 return
 
-            script = _load_prepared_script_for_router(project_id, config, topic)
-            prepared_script_used = script is not None
+            script, prepared_script_used = _load_registered_or_local_script(
+                project_id,
+                config,
+                topic,
+                model_id,
+            )
             if script is None:
                 _assert_script_provider_key(model_id)
                 try:

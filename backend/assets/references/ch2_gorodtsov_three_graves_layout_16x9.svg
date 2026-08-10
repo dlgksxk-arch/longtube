@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#ead8b6"/>
+  <rect y="296" width="1280" height="424" fill="#9d6b4a"/>
+  <path d="M0 392H1280M0 500H1280M0 620H1280" fill="none" stroke="#744a35" stroke-width="8" opacity="0.58"/>
+
+  <!-- Left: Yamnaya simple vertical pit directly beneath one mound. -->
+  <path d="M92 296 Q250 150 408 296 Z" fill="#8b5b41" stroke="#4b3428" stroke-width="10"/>
+  <path d="M190 296V610H330V296" fill="#c99758" stroke="#4b3428" stroke-width="10"/>
+  <rect x="210" y="550" width="100" height="34" rx="14" fill="#bd7136" stroke="#704329" stroke-width="8"/>
+
+  <!-- Center: Catacomb entrance shaft with one short passage and side chamber. -->
+  <path d="M446 296 Q604 150 762 296 Z" fill="#8b5b41" stroke="#4b3428" stroke-width="10"/>
+  <path d="M520 296V512H586V470H724V610H570V530H520" fill="#c99758" stroke="#4b3428" stroke-width="10" stroke-linejoin="round"/>
+  <rect x="604" y="548" width="92" height="32" rx="14" fill="#bd7136" stroke="#704329" stroke-width="8"/>
+
+  <!-- Right: Srubnaya rectangular grave lined with horizontal timber courses. -->
+  <path d="M800 296 Q958 150 1116 296 Z" fill="#8b5b41" stroke="#4b3428" stroke-width="10"/>
+  <rect x="860" y="330" width="196" height="280" fill="#c99758" stroke="#4b3428" stroke-width="10"/>
+  <rect x="878" y="354" width="160" height="34" rx="8" fill="#8d5731" stroke="#4b3428" stroke-width="7"/>
+  <rect x="878" y="404" width="160" height="34" rx="8" fill="#8d5731" stroke="#4b3428" stroke-width="7"/>
+  <rect x="878" y="454" width="160" height="34" rx="8" fill="#8d5731" stroke="#4b3428" stroke-width="7"/>
+  <rect x="878" y="504" width="160" height="34" rx="8" fill="#8d5731" stroke="#4b3428" stroke-width="7"/>
+  <rect x="878" y="554" width="160" height="34" rx="8" fill="#8d5731" stroke="#4b3428" stroke-width="7"/>
+</svg>

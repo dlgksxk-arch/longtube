@@ -55,6 +55,10 @@ class PrepareRequest(BaseModel):
     channel: Optional[int] = None
 
 
+class QueueBatchRunRequest(BaseModel):
+    count: int
+
+
 @router.post("/prepare")
 def prepare(req: PrepareRequest):
     topic = (req.topic or "").strip()
@@ -66,6 +70,7 @@ def prepare(req: PrepareRequest):
             topic=topic,
             title=req.title,
             target_duration=req.target_duration,
+            target_cuts=req.target_cuts,
             episode_openings=req.openings,
             episode_endings=req.endings,
             episode_core_content=req.core_content,
@@ -322,7 +327,7 @@ def get_thumbnail_prompt(task_id: str):
 
     raw_prompt = (script.get("thumbnail_prompt") or "").strip()
     return {
-        "prompt": build_thumbnail_prompt(script),
+        "prompt": build_thumbnail_prompt(script, config),
         "source": "script" if raw_prompt else "fallback",
     }
 
@@ -363,12 +368,16 @@ async def regenerate_thumbnail(task_id: str, body: ThumbnailRegenRequest = Thumb
         raise HTTPException(status_code=404, detail="task not found")
 
     project_id = task["project_id"]
-    from app.services.oneclick_service import _load_project
+    from app.services.oneclick_service import _effective_live_config_for_task, _load_project
     project = _load_project(project_id)
     if not project:
         raise HTTPException(status_code=404, detail="project not found")
 
-    config = dict(project.config or {})
+    # Studio-linked V3 runs inherit their source preset on every pipeline step.
+    # Regeneration must use that same effective config so task-scoped
+    # oneclick_run_overrides (historical guard, subject direction, etc.) are
+    # not silently ignored for the thumbnail.
+    config = _effective_live_config_for_task(task)
     if body.image_model:
         config["thumbnail_model"] = body.image_model
 
@@ -392,11 +401,14 @@ async def regenerate_thumbnail(task_id: str, body: ThumbnailRegenRequest = Thumb
         from app.tasks.pipeline_tasks import save_script
         script["thumbnail_prompt"] = prompt
         save_script(project_id, script, config.get("language", "ko"), config)
-    thumb_prompt = build_thumbnail_prompt(script)
+    thumb_prompt = build_thumbnail_prompt(script, config)
 
-    from app.services.image.factory import DEFAULT_THUMBNAIL_MODEL, resolve_image_model
+    from app.services.image.factory import (
+        DEFAULT_THUMBNAIL_MODEL,
+        resolve_thumbnail_model,
+    )
 
-    image_model = resolve_image_model(
+    image_model = resolve_thumbnail_model(
         config.get("thumbnail_model") or DEFAULT_THUMBNAIL_MODEL
     )
     thumb_path = resolve_project_dir(project_id, config, create=True) / "output" / "thumbnail.png"
@@ -449,7 +461,6 @@ async def regenerate_thumbnail(task_id: str, body: ThumbnailRegenRequest = Thumb
                            f"바꾸거나 레퍼런스를 제거하세요.",
                 )
 
-    # v1.1.55: 공통 REFERENCE_STYLE_PREFIX 사용 — 컷/썸네일/재생성 문구 통일
     from app.services.image.prompt_builder import should_enable_historical_guard_for_context
     enable_historical_guard = should_enable_historical_guard_for_context(
         config,
@@ -458,14 +469,6 @@ async def regenerate_thumbnail(task_id: str, body: ThumbnailRegenRequest = Thumb
         script.get("topic") or script.get("title"),
         thumb_prompt,
     )
-    if combined_refs and thumb_prompt:
-        from app.services.image.prompt_builder import apply_reference_style_prefix
-        thumb_prompt = apply_reference_style_prefix(
-            thumb_prompt,
-            has_reference=True,
-            enable_historical_guard=enable_historical_guard,
-        )
-
     try:
         # v1.1.55: 스튜디오와 동일 — generate_ai_thumbnail + 텍스트 오버레이
         result = await generate_ai_thumbnail(
@@ -479,6 +482,7 @@ async def regenerate_thumbnail(task_id: str, body: ThumbnailRegenRequest = Thumb
             reference_images=combined_refs or None,
             enable_historical_guard=enable_historical_guard,
             config=config,
+            preserve_image_prompt=True,
         )
         _redis_set(f"thumbnail:status:{project_id}", "done")
         return {"ok": True, "path": result["path"], "model": image_model, "overlay": result["overlay_applied"]}
@@ -595,6 +599,10 @@ class QueueItemModel(BaseModel):
     template_project_id: Optional[str] = None
     # 초 단위. None/0 이면 템플릿 기본값 사용.
     target_duration: Optional[int] = None
+    # Prepared scripts may intentionally use a non-default cut count.
+    target_cuts: Optional[int] = None
+    # Opt-in only: pause after each generated image batch for manual review.
+    manual_image_review_batch_size: Optional[int] = None
     # v1.1.57: 채널 번호 (1~4). None/0 이면 채널 1.
     channel: Optional[int] = None
     # v1.2.9: 에피소드 상세 — 스크립트 프롬프트에 주입.
@@ -722,6 +730,24 @@ async def run_queue_next(channel: Optional[int] = None):
     if task is None:
         raise HTTPException(status_code=404, detail="queue is empty")
     return task
+
+
+@router.get("/queue/run-batch")
+def get_queue_batch():
+    return oneclick_service.get_queue_batch_state()
+
+
+@router.post("/queue/run-batch")
+async def run_queue_batch(body: QueueBatchRunRequest):
+    try:
+        return await oneclick_service.run_queue_batch_now(body.count)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"run-batch failed: {type(e).__name__}: {e}",
+        )
 
 
 @router.post("/queue/recover-existing")

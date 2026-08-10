@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#a8845e"/>
+  <g fill="#718f98" stroke="#403832" stroke-width="11"><circle cx="120" cy="145" r="54"/><circle cx="250" cy="145" r="54"/><circle cx="120" cy="275" r="54"/><circle cx="250" cy="275" r="54"/></g>
+  <g fill="#a96240" stroke="#403832" stroke-width="11"><circle cx="120" cy="455" r="54"/><circle cx="250" cy="455" r="54"/><circle cx="120" cy="585" r="54"/><circle cx="250" cy="585" r="54"/></g>
+  <path d="M305 210 L505 335 M305 520 L505 385" fill="none" stroke="#665446" stroke-width="20"/>
+  <circle cx="560" cy="360" r="78" fill="#80634e" stroke="#403832" stroke-width="14"/>
+  <path d="M638 360 H760" stroke="#665446" stroke-width="20"/>
+  <defs><linearGradient id="mix" x1="0" x2="1"><stop offset="0" stop-color="#718f98"/><stop offset="1" stop-color="#a96240"/></linearGradient></defs>
+  <g fill="url(#mix)" stroke="#403832" stroke-width="10"><rect x="790" y="95" width="165" height="110" rx="18"/><rect x="985" y="95" width="165" height="110" rx="18"/><rect x="790" y="235" width="165" height="110" rx="18"/><rect x="985" y="235" width="165" height="110" rx="18"/><rect x="790" y="375" width="165" height="110" rx="18"/><rect x="985" y="375" width="165" height="110" rx="18"/><rect x="790" y="515" width="165" height="110" rx="18"/><rect x="985" y="515" width="165" height="110" rx="18"/></g>
+</svg>

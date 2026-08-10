@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <defs><linearGradient id="skyPath" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#dce8e7"/><stop offset="1" stop-color="#67889e"/></linearGradient></defs>
+  <rect width="1280" height="720" fill="url(#skyPath)"/>
+  <g fill="#f2eee2" stroke="#403a35" stroke-width="11"><path d="M0 101 Q103 167 210 98 Q316 170 422 101 Q530 171 638 99 Q748 172 859 101 Q965 170 1071 99 Q1174 159 1280 101 L1280 0 L0 0Z"/><path d="M0 582 Q110 516 220 585 Q330 511 441 582 Q553 509 665 581 Q777 507 889 580 Q1002 510 1114 582 Q1198 532 1280 574 L1280 720 L0 720Z"/></g>
+  <circle cx="1082" cy="128" r="75" fill="#e5bd42" stroke="#4c3921" stroke-width="14"/>
+  <path d="M238 535 Q458 438 649 341 Q830 249 1000 178" fill="none" stroke="#738da2" stroke-width="19" stroke-linecap="round"/>
+  <path d="M277 552 Q485 473 671 381 Q839 298 1008 217" fill="none" stroke="#e8eee9" stroke-width="11" stroke-linecap="round"/>
+  <g id="ascending-storm-token" transform="translate(215 463)" fill="none" stroke="#294f73" stroke-width="20" stroke-linecap="round"><path d="M0 54 C76-14 146 71 96 122 C48 170-36 126-15 69 C3 22 62 24 75 60 C84 88 49 106 29 87 C15 73 32 52 49 60"/></g>
+  <circle cx="640" cy="360" r="30" fill="#335f84" stroke="#213d55" stroke-width="10"/>
+</svg>

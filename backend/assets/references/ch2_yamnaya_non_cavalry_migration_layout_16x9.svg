@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#c7c6b7"/>
+  <path d="M0 220 Q260 190 520 225 T1000 215 T1280 230 V720 H0 Z" fill="#a9845e"/>
+  <!-- Two slow household wagon groups dominate; no cavalry, weapon, or charge. -->
+  <g stroke="#3e3027">
+    <path d="M75 330 Q180 255 310 330 L285 375 Q180 335 95 375 Z" fill="#765035" stroke-width="13"/>
+    <rect x="330" y="280" width="330" height="210" rx="15" fill="#8e6039" stroke-width="15"/>
+    <rect x="390" y="325" width="105" height="125" rx="48" fill="#c5a673" stroke-width="10"/>
+    <rect x="520" y="320" width="95" height="90" rx="12" fill="#674b37" stroke-width="10"/>
+    <g fill="#9b6a3e" stroke-width="12">
+      <circle cx="355" cy="255" r="54"/><circle cx="635" cy="255" r="54"/>
+      <circle cx="355" cy="515" r="54"/><circle cx="635" cy="515" r="54"/>
+    </g>
+    <path d="M675 395 Q765 330 865 395 L845 435 Q765 402 690 435 Z" fill="#765035" stroke-width="13"/>
+    <rect x="865" y="350" width="280" height="175" rx="15" fill="#8e6039" stroke-width="15"/>
+    <rect x="920" y="390" width="95" height="105" rx="44" fill="#c5a673" stroke-width="10"/>
+    <g fill="#9b6a3e" stroke-width="12">
+      <circle cx="890" cy="330" r="47"/><circle cx="1120" cy="330" r="47"/>
+      <circle cx="890" cy="548" r="47"/><circle cx="1120" cy="548" r="47"/>
+    </g>
+  </g>
+</svg>

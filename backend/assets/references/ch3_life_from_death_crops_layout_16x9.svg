@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <defs>
+    <radialGradient id="soil20" cx="50%" cy="42%" r="78%">
+      <stop offset="0" stop-color="#5b4937"/>
+      <stop offset="0.62" stop-color="#403329"/>
+      <stop offset="1" stop-color="#2e2621"/>
+    </radialGradient>
+    <linearGradient id="cloth20" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#b28a5d"/>
+      <stop offset="1" stop-color="#7f5d3f"/>
+    </linearGradient>
+  </defs>
+  <rect width="1280" height="720" fill="url(#soil20)"/>
+  <g fill="none" stroke="#77624c" stroke-width="7" opacity="0.46" stroke-linecap="round">
+    <path d="M25 145 L145 126 L202 166 M1090 130 L1165 104 L1255 142"/>
+    <path d="M65 535 L165 502 L236 548 M1035 530 L1120 500 L1242 540"/>
+    <path d="M438 38 L470 102 L445 148 M842 54 L814 112 L838 157"/>
+  </g>
+
+  <g id="folded-cloth">
+    <ellipse cx="640" cy="392" rx="180" ry="38" fill="#201a16" opacity="0.35"/>
+    <path d="M482 282 L791 269 L817 408 L468 421 Z" fill="url(#cloth20)" stroke="#2c251f" stroke-width="13" stroke-linejoin="round"/>
+    <path d="M482 282 L638 348 L791 269 M468 421 L638 348 L817 408" fill="none" stroke="#d0a778" stroke-width="8" opacity="0.62"/>
+    <path d="M482 282 L458 299 L478 318 L452 339 M817 408 L837 391 L817 373 L843 352" fill="none" stroke="#2c251f" stroke-width="13" stroke-linejoin="round"/>
+  </g>
+
+  <g id="rice-sprout" stroke="#273b22" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M286 468 Q292 336 278 202 M290 400 Q240 334 218 258 M294 376 Q338 308 354 235" fill="none" stroke="#5fa54c" stroke-width="15"/>
+    <path d="M278 215 Q245 190 238 158 M278 232 Q315 205 323 170" fill="none" stroke="#89c66b" stroke-width="12"/>
+    <g fill="#d2be5a" stroke-width="6">
+      <ellipse cx="230" cy="150" rx="12" ry="20" transform="rotate(-28 230 150)"/>
+      <ellipse cx="250" cy="173" rx="12" ry="20" transform="rotate(-22 250 173)"/>
+      <ellipse cx="327" cy="160" rx="12" ry="20" transform="rotate(25 327 160)"/>
+      <ellipse cx="310" cy="189" rx="12" ry="20" transform="rotate(20 310 189)"/>
+    </g>
+  </g>
+
+  <g id="millet-sprout" stroke="#273b22" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M1000 468 Q994 340 1006 225 M995 410 Q950 351 930 289 M1004 402 Q1050 345 1072 278" fill="none" stroke="#68aa4f" stroke-width="15"/>
+    <ellipse cx="1008" cy="183" rx="52" ry="72" fill="#c8b64b" stroke-width="10"/>
+    <g fill="#806f2f" stroke="none" opacity="0.70">
+      <circle cx="986" cy="156" r="7"/><circle cx="1008" cy="145" r="7"/><circle cx="1030" cy="162" r="7"/>
+      <circle cx="982" cy="185" r="7"/><circle cx="1007" cy="180" r="7"/><circle cx="1034" cy="191" r="7"/>
+      <circle cx="990" cy="213" r="7"/><circle cx="1017" cy="218" r="7"/>
+    </g>
+  </g>
+
+  <g id="bean-seedling" stroke="#243820" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M640 690 Q635 618 642 536" fill="none" stroke="#5ca449" stroke-width="17"/>
+    <path d="M640 590 Q572 550 540 580 Q578 640 640 616 Z" fill="#70b95c" stroke-width="11"/>
+    <path d="M642 574 Q711 530 744 564 Q710 625 642 604 Z" fill="#78bf62" stroke-width="11"/>
+    <path d="M640 604 L566 583 M644 592 L717 563" fill="none" stroke="#3f7737" stroke-width="7"/>
+  </g>
+</svg>

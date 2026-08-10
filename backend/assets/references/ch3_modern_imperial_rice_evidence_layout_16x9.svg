@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#d8d6c4"/>
+  <rect y="0" width="1280" height="210" fill="#a8c59d"/>
+  <path d="M0 176 Q160 132 320 174 T640 172 T960 176 T1280 168" fill="none" stroke="#5e7e55" stroke-width="64"/>
+  <path d="M0 285 Q327 236 646 282 T1280 264 L1280 720 L0 720Z" fill="#78aab4" stroke="#5a4936" stroke-width="19"/>
+  <path d="M0 504 Q320 451 641 500 T1280 478" fill="none" stroke="#876443" stroke-width="34"/>
+  <g fill="none" stroke="#3e713e" stroke-width="12" stroke-linecap="round"><path d="M390 325 v90 m0-42 l-36-34 m36 34 l37-41 M570 306 v91 m0-43 l-37-34 m37 34 l38-42 M760 333 v90 m0-42 l-37-34 m37 34 l38-42 M954 309 v91 m0-43 l-37-34 m37 34 l38-42"/></g>
+  <g id="one-pair-boots" fill="#353d42" stroke="#20262a" stroke-width="12"><path d="M92 443 L205 443 L219 592 Q170 632 104 604Z"/><path d="M238 443 L351 443 L365 592 Q316 632 250 604Z"/></g>
+  <g id="seedling-tray"><rect x="895" y="482" width="294" height="145" rx="25" fill="#75533c" stroke="#382b24" stroke-width="13"/><g fill="none" stroke="#3b713c" stroke-width="9"><path d="M944 568 v-57 m0 28 l-24-22 m24 22 l25-25 M1019 568 v-57 m0 28 l-24-22 m24 22 l25-25 M1094 568 v-57 m0 28 l-24-22 m24 22 l25-25 M1160 568 v-57 m0 28 l-24-22 m24 22 l25-25"/></g></g>
+  <path d="M435 590 Q592 539 751 589 L719 663 Q593 701 465 661Z" fill="#253d55" stroke="#1c2733" stroke-width="13"/>
+</svg>

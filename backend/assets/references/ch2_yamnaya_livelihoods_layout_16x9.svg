@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#d9bf8c"/>
+  <path d="M0 356H1280" fill="none" stroke="#b28d5d" stroke-width="7" opacity="0.55"/>
+
+  <!-- Upper left: plain cattle yoke, herding evidence. -->
+  <path d="M105 100 Q215 235 325 100" fill="none" stroke="#4b3428" stroke-width="47" stroke-linecap="round"/>
+  <path d="M118 102V205M312 102V205" fill="none" stroke="#4b3428" stroke-width="31" stroke-linecap="round"/>
+  <path d="M110 100 Q215 218 320 100" fill="none" stroke="#966537" stroke-width="25" stroke-linecap="round"/>
+  <path d="M118 102V205M312 102V205" fill="none" stroke="#966537" stroke-width="15" stroke-linecap="round"/>
+
+  <!-- Upper center: one plant-fibre fishing net with four stone sinkers. -->
+  <path d="M495 90H785L748 285H532Z" fill="#c2a873" stroke="#4b3428" stroke-width="10"/>
+  <path d="M520 100L560 275M565 95L605 280M610 95L650 280M655 95L695 280M700 95L740 275M760 105L535 255M775 145L525 215M780 185L520 175M785 225L515 135" fill="none" stroke="#6e5136" stroke-width="7"/>
+  <ellipse cx="540" cy="295" rx="26" ry="20" fill="#716b61" stroke="#4b3428" stroke-width="8"/>
+  <ellipse cx="610" cy="300" rx="26" ry="20" fill="#716b61" stroke="#4b3428" stroke-width="8"/>
+  <ellipse cx="680" cy="300" rx="26" ry="20" fill="#716b61" stroke="#4b3428" stroke-width="8"/>
+  <ellipse cx="750" cy="295" rx="26" ry="20" fill="#716b61" stroke="#4b3428" stroke-width="8"/>
+
+  <!-- Upper right: gathered wild plants in one woven basket. -->
+  <path d="M965 145 Q1065 70 1165 145" fill="none" stroke="#4b3428" stroke-width="14"/>
+  <path d="M945 155H1185L1150 310H980Z" fill="#a97b45" stroke="#4b3428" stroke-width="11"/>
+  <path d="M975 190H1168M968 230H1160M960 270H1153M1010 160V300M1065 155V305M1120 160V300" fill="none" stroke="#6d4b31" stroke-width="7"/>
+  <path d="M1010 160Q990 105 1025 72M1060 158Q1065 95 1090 65M1110 158Q1140 110 1150 78" fill="none" stroke="#5e7141" stroke-width="13" stroke-linecap="round"/>
+  <circle cx="1020" cy="93" r="12" fill="#774838"/><circle cx="1085" cy="90" r="12" fill="#774838"/><circle cx="1135" cy="110" r="12" fill="#774838"/>
+
+  <!-- Lower left: one handmade clay pot. -->
+  <path d="M180 440 H410 L385 650 Q295 690 205 650 Z" fill="#a6603a" stroke="#4b3428" stroke-width="12"/>
+  <ellipse cx="295" cy="440" rx="118" ry="34" fill="#c27b4b" stroke="#4b3428" stroke-width="11"/>
+  <path d="M220 515Q295 555 370 515M212 575Q295 615 378 575" fill="none" stroke="#6f4430" stroke-width="8"/>
+
+  <!-- Lower right: one compact copper-working group, crucible, blade blank, hammerstone. -->
+  <path d="M730 545 Q820 660 910 545 L885 475 H755 Z" fill="#8d5536" stroke="#4b3428" stroke-width="11" stroke-linejoin="round"/>
+  <ellipse cx="820" cy="480" rx="68" ry="25" fill="#c27c45" stroke="#4b3428" stroke-width="9"/>
+  <path d="M955 450 Q1045 520 1000 650 Q955 520 955 450 Z" fill="#a75e39" stroke="#4b3428" stroke-width="11"/>
+  <path d="M1060 520 L1145 470 Q1170 455 1185 480 L1218 535 Q1230 558 1205 572 L1115 625 Z" fill="#716b61" stroke="#4b3428" stroke-width="11"/>
+</svg>

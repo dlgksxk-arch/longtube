@@ -109,7 +109,14 @@ def _clean_shorts_title_base(base_title: Any) -> str:
     text = _SHORTS_NUMBER_HASHTAG_RE.sub("", text)
     text = _SHORTS_HASHTAG_RE.sub("", text)
     text = _SHORTS_PART_MARKER_RE.sub(" ", text)
-    return _WHITESPACE_RE.sub(" ", text).strip(" |/-–—:·")
+    text = _WHITESPACE_RE.sub(" ", text).strip(" |/-–—:·")
+    if _JAPANESE_RE.search(text):
+        japanese = r"\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff"
+        text = re.sub(rf"(?<=[{japanese}])\s+(?=[{japanese}])", "", text)
+        text = re.sub(r"\s+([、。！？）」』】])", r"\1", text)
+        text = re.sub(r"([（「『【、])\s+", r"\1", text)
+        text = text.rstrip("、，")
+    return text
 
 
 def _specific_title_core(text: str) -> str:
@@ -214,6 +221,8 @@ def _english_shorts_title_base(text: str, idx: int, context: str = "") -> str:
             "Why {core} collapsed",
         ]
         return _trim_english_title(templates[(idx - 1) % len(templates)].format(core=core), 72)
+    if _english_specific_word_count(text) >= 4:
+        return _trim_english_title(text, 72)
     if context_core and not _EN_MAIN_TITLE_STRONG_RE.search(text):
         core = context_core
         templates = [
@@ -313,6 +322,8 @@ def _strong_english_main_title(base_title: Any, *, max_len: int = 92) -> str:
         candidates.append("The Emperor Who Drowned in a River")
     if "fatal" in lower and "raid" in lower and "empire" in lower:
         candidates.append("The Fatal Raid That Broke an Empire")
+    if "minoan" in lower and ("collapse" in lower or "crisis" in lower):
+        candidates.append("Crete Burned in 1450 BCE—Who Ended the Minoan World?")
 
     if _EN_MAIN_TITLE_STRONG_RE.search(text):
         candidates.append(text)
@@ -330,6 +341,20 @@ def _strong_english_main_title(base_title: Any, *, max_len: int = 92) -> str:
     return _trim_english_title(text, max_len)
 
 
+def _strong_japanese_main_title(base_title: Any, *, max_len: int = 92) -> str:
+    text = without_episode_prefix(base_title)
+    text = _TITLE_HASHTAG_RE.sub("", text)
+    text = _WHITESPACE_RE.sub(" ", text).strip(" |/-–—:·")
+    compact = re.sub(r"\s+", "", text)
+    if (
+        "女神" in compact
+        and any(word in compact for word in ("死んだ", "殺された", "ころされた", "遺体", "死体", "からだ"))
+        and any(word in compact for word in ("生命", "芽吹", "米", "稲", "蚕", "カイコ"))
+    ):
+        text = "殺された女神の死体から米と蚕が生まれた"
+    return text[:max_len].rstrip(" |/-–—:·")
+
+
 def strong_main_upload_title(
     title: Any,
     episode_number: Any = None,
@@ -343,10 +368,37 @@ def strong_main_upload_title(
     max_body_len = max(20, int(max_len or 100) - reserve)
     if lang == "en":
         body = _strong_english_main_title(title, max_len=max_body_len)
+    elif lang == "ja":
+        body = _strong_japanese_main_title(title, max_len=max_body_len)
     else:
         body = without_episode_prefix(title) or str(title or "").strip() or "Untitled"
         body = body[:max_body_len].rstrip(" |/-–—:·")
     return with_episode_prefix(body, episode_number)
+
+
+def series_episode_main_upload_title(
+    title: Any,
+    episode_number: Any,
+    series_prefix: Any,
+    *,
+    max_len: int = 100,
+) -> str:
+    """Build ``<series>-EP.## <title>`` when a run explicitly requests it."""
+    series = _WHITESPACE_RE.sub(" ", str(series_prefix or "")).strip(" |/-–—:·")
+    number = coerce_episode_number(episode_number)
+    if not series or not number:
+        return strong_main_upload_title(title, episode_number, max_len=max_len)
+
+    prefix = f"{series}-EP.{number:02d}"
+    body = without_episode_prefix(title) or str(title or "").strip() or "Untitled"
+    duplicate_prefix = re.compile(
+        rf"^\s*{re.escape(series)}\s*[-–—:]?\s*EP\.?\s*0*{number}\s*[-:.)]?\s*",
+        re.IGNORECASE,
+    )
+    body = duplicate_prefix.sub("", body, count=1).strip(" |/-–—:·") or "Untitled"
+    max_body_len = max(1, int(max_len or 100) - len(prefix) - 1)
+    body = body[:max_body_len].rstrip(" |/-–—:·")
+    return f"{prefix} {body}".strip()
 
 
 def without_episode_prefix(title: Any) -> str:

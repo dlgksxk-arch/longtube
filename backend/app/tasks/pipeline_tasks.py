@@ -5,6 +5,7 @@ import re
 import time
 import asyncio
 import redis as redis_lib
+from typing import Optional
 from celery import Celery
 from app.config import (
     REDIS_URL,
@@ -12,22 +13,40 @@ from app.config import (
     resolve_cut_video_duration,
     resolve_cut_video_duration_for_audio,
     resolve_project_dir,
+    should_burn_cut_level_subtitles,
 )
 from app.models.database import SessionLocal
 from app.models.project import Project
 from app.models.cut import Cut
 from app.services.title_utils import script_title_for_language, shorts_upload_title, strong_main_upload_title, with_episode_prefix, without_episode_prefix
-from app.services.llm.visual_policy import apply_script_visual_policy, normalize_cut_image_prompt, normalize_image_prompt
+from app.services.llm.visual_policy import (
+    apply_script_visual_policy,
+    normalize_cut_image_prompt,
+    normalize_image_prompt,
+    uses_source_locked_visual_policy,
+)
 from app.services.llm.script_quality import assert_script_quality, inspect_script_quality
 from app.services.script_generation_guard import ScriptGenerationGuard
 from app.services.shorts_service import annotate_script_shorts
 from app.services.tts.narration_source import (
-    get_cut_tts_narration,
+    build_tts_input_marker_payload,
+    build_tts_request_context,
+    is_japanese_language,
+    prepare_script_tts_inputs,
     tts_input_marker_matches,
-    uses_cut_tts_narration,
     write_tts_input_marker,
 )
-from app.services.youtube_metadata import expand_tags, format_description, recommended_shorts_title_hashtags
+from app.services.tts.japanese_preflight import assert_japanese_tts_script_ready
+from app.services.tts.voice_cast import apply_emotion_to_tts_text, resolve_tts_voice
+from app.services.local_script_source import is_local_script_model, load_local_saved_script
+from app.services.youtube_metadata import (
+    append_video_chapters,
+    expand_tags,
+    format_description,
+    metadata_profile_from_config,
+    recommended_shorts_title_hashtags,
+    validate_metadata_for_profile,
+)
 from app.services.multilingual_caption_service import should_upload_youtube_captions, upload_multilingual_captions
 
 celery_app = Celery("longtube", broker=REDIS_URL, backend=REDIS_URL)
@@ -216,6 +235,15 @@ _PREPARED_NEXT_EPISODE_PREVIEW_RE = re.compile(
 )
 
 
+def _prepared_script_required(config: dict | None) -> bool:
+    """Return True when this run must never fall back to LLM script generation."""
+    cfg = config if isinstance(config, dict) else {}
+    if cfg.get("prepared_script_required") is True:
+        return True
+    core_content = str(cfg.get("episode_core_content") or "")
+    return bool(re.search(r"(?im)^\s*\[Prepared Script\]\s*", core_content))
+
+
 def _filter_prepared_script_quality_issues(issues: list[str]) -> list[str]:
     """Prepared scripts are user-provided; keep hard failures, ignore generator-only structure checks."""
     return [
@@ -223,12 +251,22 @@ def _filter_prepared_script_quality_issues(issues: list[str]) -> list[str]:
         if not (
             str(issue).startswith("repeated narration line:")
             or str(issue) == "repeated image_prompt"
+            or str(issue).startswith("bad grammar pattern at cut ")
+            or str(issue).startswith("topic phrase repeated too often:")
             or str(issue).startswith("V3.1 story_core")
             or str(issue).startswith("V3.1 scene_blocks")
             or str(issue).startswith("V3.1 scene_block ")
             or (str(issue).startswith("V3.1 cut ") and "scene_block_id" in str(issue))
         )
     ]
+
+
+def _is_prepared_script_payload(script: object) -> bool:
+    if not isinstance(script, dict):
+        return False
+    if script.get("prepared_source") is True:
+        return True
+    return str(script.get("script_version") or "").strip().lower().startswith("prepared-")
 
 
 def _compact_match_key(value: object) -> str:
@@ -279,7 +317,11 @@ def _prepared_episode_number(script: dict, path) -> int | None:
     return None
 
 
-def _validate_prepared_script(script: dict, source_path) -> None:
+def _validate_prepared_script(
+    script: dict,
+    source_path,
+    expected_cut_count: int | None = None,
+) -> None:
     if not isinstance(script, dict):
         raise RuntimeError(f"사전작성 대본 형식 오류: JSON object 아님 ({source_path})")
     cuts = script.get("cuts")
@@ -307,6 +349,19 @@ def _validate_prepared_script(script: dict, source_path) -> None:
         for idx, cut in enumerate(cuts, start=1)
         if isinstance(cut, dict)
     ]
+    try:
+        required_cut_count = int(expected_cut_count or 0)
+    except (TypeError, ValueError):
+        required_cut_count = 0
+    if required_cut_count > 0:
+        expected_numbers = list(range(1, required_cut_count + 1))
+        if len(cuts) != required_cut_count or numbered_cuts != expected_numbers:
+            missing = sorted(set(expected_numbers) - set(numbered_cuts))
+            raise ValueError(
+                "사전작성 대본 컷 구성 오류: "
+                f"목표 {required_cut_count}컷, 실제 {len(cuts)}컷, "
+                f"누락 컷={missing[:12]} ({source_path})"
+            )
     max_cut = max(numbered_cuts or [len(cuts)])
     preview_cuts: list[int] = []
     for idx, cut in enumerate(cuts, start=1):
@@ -339,6 +394,10 @@ def _load_prepared_script(project_id: str, config: dict, topic: str) -> tuple[di
         target_episode = int(config.get("episode_number") or 0)
     except (TypeError, ValueError):
         target_episode = 0
+    try:
+        target_cut_count = int(config.get("target_cuts") or 0)
+    except (TypeError, ValueError):
+        target_cut_count = 0
     target_episode_code = _compact_match_key(config.get("episode_code") or config.get("episode_id"))
     target_topic = _compact_match_key(topic)
     candidates: list[tuple[int, dict, str]] = []
@@ -375,7 +434,13 @@ def _load_prepared_script(project_id: str, config: dict, topic: str) -> tuple[di
     validation_errors: list[str] = []
     for _score, script, source_path in candidates:
         try:
-            _validate_prepared_script(script, source_path)
+            _validate_prepared_script(
+                script,
+                source_path,
+                expected_cut_count=target_cut_count,
+            )
+            script = dict(script)
+            script["prepared_source"] = True
             return script, source_path
         except Exception as exc:
             validation_errors.append(f"{source_path}: {type(exc).__name__}: {exc}")
@@ -608,11 +673,24 @@ def _step_script(project_id: str, config: dict):
     try:
         existing_script = guard.acquire()
         if existing_script is not None:
+            existing_is_prepared = _is_prepared_script_payload(existing_script)
             existing_script = apply_script_visual_policy(existing_script)
             existing_script = annotate_script_shorts(existing_script)
-            assert_script_quality(existing_script, project.topic)
-            from app.services.llm.base import BaseLLMService
-            BaseLLMService.assert_script_timing(existing_script, script_config)
+            assert_japanese_tts_script_ready(existing_script, script_config)
+            if existing_is_prepared:
+                quality_issues = _filter_prepared_script_quality_issues(
+                    inspect_script_quality(existing_script, project.topic)
+                )
+                if quality_issues:
+                    raise ValueError(
+                        "script quality validation failed: "
+                        + "; ".join(quality_issues[:5])
+                    )
+                print("[Script] prepared script timing precheck skipped")
+            else:
+                assert_script_quality(existing_script, project.topic)
+                from app.services.llm.base import BaseLLMService
+                BaseLLMService.assert_script_timing(existing_script, script_config)
             save_script(project_id, existing_script, config.get("language", "ko"), config)
             _persist_script_cuts(existing_script)
             db.commit()
@@ -634,10 +712,21 @@ def _step_script(project_id: str, config: dict):
                 _time.sleep(min(0.25, remaining))
 
         prepared_path = ""
+        # 큐의 등록 대본은 local-script 설정보다 우선한다. local-script는
+        # Studio에서 수동 저장한 대본만 쓰는 일반 작업에서만 적용한다.
         if prepared:
             script, prepared_path = prepared
+            script["prepared_source"] = True
             print(f"[Script] prepared script 사용: {_safe_console(prepared_path)}")
+        elif is_local_script_model(script_config.get("script_model")):
+            script = load_local_saved_script(project_id, script_config)
+            prepared_path = "local-script.json"
         else:
+            if _prepared_script_required(script_config):
+                raise RuntimeError(
+                    "등록 대본 필수 작업에서 일치하는 준비 대본을 불러오지 못했습니다. "
+                    "GPT/LLM 대본 생성 폴백은 금지되었습니다."
+                )
             try:
                 run_async(ensure_voice_profile_from_config(script_config, log=print))
             except Exception as _e:
@@ -667,6 +756,7 @@ def _step_script(project_id: str, config: dict):
             raise RuntimeError("Script generation failed")
         script = apply_script_visual_policy(script)
         script = annotate_script_shorts(script)
+        assert_japanese_tts_script_ready(script, script_config)
         if prepared_path:
             quality_issues = _filter_prepared_script_quality_issues(
                 inspect_script_quality(script, project.topic)
@@ -737,6 +827,7 @@ def _step_voice(project_id: str, config: dict):
     project_dir = _ensure_project_layout(project_id, config)
 
     script = load_script(project_id, config)
+    assert_japanese_tts_script_ready(script, config)
 
     # v1.1.55: 스튜디오와 동일 — TTS 폴백 + voice_preset + voice_settings
     tts_model = config.get("tts_model", "openai-tts")
@@ -776,14 +867,21 @@ def _step_voice(project_id: str, config: dict):
     project = db.query(Project).filter(Project.id == project_id).first()
     topic = project.topic if project else ""
 
-    def _generate_tts_result(cut_data: dict, output_path: str, total_cuts: int, spoken_narration: str) -> dict:
+    def _generate_tts_result(
+        cut_data: dict,
+        output_path: str,
+        total_cuts: int,
+        spoken_narration: str,
+        request_context: dict,
+        cut_voice_id: str,
+    ) -> dict:
         spoken_cut_data = dict(cut_data)
         spoken_cut_data["narration"] = spoken_narration
         return run_async(
             generate_tts_with_auto_narration_fit(
                 service,
                 spoken_narration,
-                voice_id,
+                cut_voice_id,
                 output_path,
                 speed=speed,
                 voice_settings=voice_settings,
@@ -794,36 +892,74 @@ def _step_voice(project_id: str, config: dict):
                 total_cuts=total_cuts,
                 cut_data=spoken_cut_data,
                 script=script,
+                request_context=request_context,
                 log=lambda msg: print(f"[Voice] {msg}"),
             )
         )
 
     script_cuts = script.get("cuts", [])
+    prepared_tts_inputs = prepare_script_tts_inputs(script, config)
     script_dirty = False
     for cut_data in script_cuts:
         check_pause_or_cancel(project_id, 3)
         num = cut_data["cut_number"]
         output = str(project_dir / "audio" / f"cut_{num:03d}.mp3")
         original_narration = (cut_data.get("narration") or "").strip()
-        tts_narration = get_cut_tts_narration(cut_data, config, original_narration)
-        tts_narration_marker_enabled = uses_cut_tts_narration(cut_data, config)
+        prepared_tts = prepared_tts_inputs.get(int(num))
+        if prepared_tts is None:
+            raise ValueError(f"TTS 입력 준비 실패: cut {num}")
+        tts_narration = prepared_tts.tts_narration
+        resolved_voice = resolve_tts_voice(cut_data, config)
+        spoken_narration = apply_emotion_to_tts_text(prepared_tts.spoken_narration, resolved_voice, tts_model)
+        request_context = build_tts_request_context(prepared_tts, config)
+        request_context.update({
+            "speaker": resolved_voice.speaker,
+            "voice_role": resolved_voice.role,
+            "emotion_tags": list(resolved_voice.emotion_tags),
+        })
+        tts_narration_marker_enabled = bool(
+            prepared_tts.uses_explicit_tts
+            or is_japanese_language(config)
+            or resolved_voice.role != "narrator"
+            or resolved_voice.emotion_tags
+        )
+        marker_payload = build_tts_input_marker_payload(
+            prepared_tts,
+            config,
+            provider=tts_model,
+            engine_model=getattr(service, "engine_model_id", tts_model),
+            voice_id=resolved_voice.voice_id or voice_id,
+            speed=speed,
+            voice_settings=(
+                service.effective_voice_settings(speed, voice_settings)
+                if hasattr(service, "effective_voice_settings")
+                else dict(voice_settings or {})
+            ),
+        )
         cut = db.query(Cut).filter(Cut.project_id == project_id, Cut.cut_number == num).first()
-        has_matching_db_audio = bool(
+        has_existing_db_audio = bool(
             cut
             and (cut.audio_path or "").strip()
             and (cut.narration or "").strip() == original_narration
-            and tts_input_marker_matches(
-                output,
-                tts_narration,
-                enabled=tts_narration_marker_enabled,
-            )
+            and os.path.exists(output)
+            and os.path.getsize(output) > 100
+        )
+        marker_matches = tts_input_marker_matches(
+            output,
+            marker_payload,
+            enabled=tts_narration_marker_enabled,
         )
 
         # 이미 생성된 파일은 절대 삭제/재생성하지 않는다. API 비용 누수를 막기 위해
         # 길이가 어긋난 기존 음성도 로컬 FFmpeg 보정만 수행한다.
-        if has_matching_db_audio and os.path.exists(output) and os.path.getsize(output) > 100:
+        if has_existing_db_audio:
             try:
                 from app.services.tts.narration_fit import ensure_audio_duration_window
+                if not marker_matches:
+                    print(
+                        f"[Voice] Cut {num} 기존 음성의 TTS 캐시 버전이 다릅니다. "
+                        "파일은 보존하며 선택 재생성 전까지 API를 호출하지 않습니다."
+                    )
                 existing_dur = service._get_duration(output)
                 fitted_dur = ensure_audio_duration_window(
                     output,
@@ -852,12 +988,14 @@ def _step_voice(project_id: str, config: dict):
                 track_progress(project_id, 3)
                 continue
 
-        from app.services.tts.pronunciation_normalizer import prepare_spoken_narration_for_tts
-        spoken_narration = prepare_spoken_narration_for_tts(
-            tts_narration,
-            config.get("language", "ko"),
+        result = _generate_tts_result(
+            cut_data,
+            output,
+            len(script_cuts),
+            spoken_narration,
+            request_context,
+            resolved_voice.voice_id or voice_id,
         )
-        result = _generate_tts_result(cut_data, output, len(script_cuts), spoken_narration)
         try:
             from app.services.tts.narration_fit import ensure_audio_duration_window
             original_duration = result.get("original_duration") or result.get("duration", 0.0)
@@ -898,7 +1036,7 @@ def _step_voice(project_id: str, config: dict):
             cut.status = "voice_done"
         write_tts_input_marker(
             output,
-            tts_narration,
+            marker_payload,
             enabled=tts_narration_marker_enabled,
         )
 
@@ -915,14 +1053,14 @@ def _step_voice(project_id: str, config: dict):
         pass
 
 
-def build_thumbnail_prompt(script: dict) -> str:
+def build_thumbnail_prompt(script: dict, config: Optional[dict] = None) -> str:
     """v1.1.55: 썸네일 프롬프트 — 파이프라인 & 재생성 공용.
 
     script.json 에 thumbnail_prompt 가 있으면 그대로 사용하고,
     없으면 title 기반 기본 프롬프트를 반환한다.
     """
     from app.services.thumbnail_service import build_standard_thumbnail_prompt
-    return build_standard_thumbnail_prompt(script)
+    return build_standard_thumbnail_prompt(script, config=config)
 
 
 def _generate_thumbnail_sync(project_id: str, config: dict, script: dict):
@@ -982,9 +1120,14 @@ def _generate_thumbnail_sync(project_id: str, config: dict, script: dict):
         ))
         try:
             from app.services import spend_ledger
-            from app.services.image.factory import DEFAULT_THUMBNAIL_MODEL
+            from app.services.image.factory import (
+                DEFAULT_THUMBNAIL_MODEL,
+                resolve_thumbnail_model,
+            )
             spend_ledger.record_image(
-                resolve_image_model(config.get("thumbnail_model") or DEFAULT_THUMBNAIL_MODEL),
+                resolve_thumbnail_model(
+                    config.get("thumbnail_model") or DEFAULT_THUMBNAIL_MODEL
+                ),
                 n_images=1,
                 project_id=project_id,
                 note="thumbnail",
@@ -1007,10 +1150,13 @@ def _generate_thumbnail_sync(project_id: str, config: dict, script: dict):
         except Exception:
             pass
 
-    thumb_prompt = build_thumbnail_prompt(script)
-    from app.services.image.factory import DEFAULT_THUMBNAIL_MODEL
+    thumb_prompt = build_thumbnail_prompt(script, config)
+    from app.services.image.factory import (
+        DEFAULT_THUMBNAIL_MODEL,
+        resolve_thumbnail_model,
+    )
 
-    image_model = resolve_image_model(
+    image_model = resolve_thumbnail_model(
         config.get("thumbnail_model") or DEFAULT_THUMBNAIL_MODEL
     )
 
@@ -1135,15 +1281,23 @@ def _step_image(project_id: str, config: dict):
         should_enable_historical_guard_for_context,
     )
     from app.routers.image import (
+        _apply_image_prompt_profile,
         _apply_historical_negative_prompt,
         _build_image_prompt,
     )
     from app.services.image.asset_guard import (
         canonical_cut_image_path,
+        expected_comfyui_positive_prompt,
         find_existing_cut_image,
+        image_has_prompt_sidecar_commit,
         image_matches_prompt,
         write_prompt_sidecar,
     )
+    from app.services.image.channel_style_policy import (
+        apply_fixed_channel_image_style,
+        fixed_channel_image_style,
+    )
+    from app.services.image.comfyui_service import expected_effective_image_model_id
 
     # v1.1.56: 로컬 ComfyUI 는 동시 1 로 강제 (GPU 순차 큐).
     _img_model = resolve_image_model(config.get("image_model"))
@@ -1153,13 +1307,18 @@ def _step_image(project_id: str, config: dict):
     project_dir = _ensure_project_layout(project_id, config)
     script = load_script(project_id, config)
     script = apply_script_visual_policy(script)
+    source_locked_visual_policy = uses_source_locked_visual_policy(script)
 
     width, height = get_size(config.get("aspect_ratio", "16:9"))
 
     # ★ 레퍼런스/캐릭터 수집 — 레퍼런스가 있으면 스타일은 레퍼런스에서만
     ref_images = collect_reference_images(project_id, config)
     char_images = collect_character_images(project_id, config)
-    global_style = config.get("image_global_prompt", "")
+    global_style = fixed_channel_image_style(
+        config,
+        project_id,
+        config.get("image_global_prompt", ""),
+    )
     character_description = (config.get("character_description") or "").strip()
     enable_historical_guard = should_enable_historical_guard_for_context(
         config,
@@ -1189,6 +1348,11 @@ def _step_image(project_id: str, config: dict):
         pass
 
     service = get_image_service(image_model_id)
+    prompt_profile = _apply_image_prompt_profile(service, config)
+    if source_locked_visual_policy:
+        prompt_profile = ""
+        service.prompt_profile = ""
+        service.preserve_prompt_verbatim = True
     is_comfyui_image = IMAGE_REGISTRY.get(image_model_id, {}).get("provider") == "comfyui"
     if is_comfyui_image:
         try:
@@ -1253,24 +1417,6 @@ def _step_image(project_id: str, config: dict):
             custom_done_nums.add(int(num))
             track_progress(project_id, 4)
             continue
-        existing_at_entry = find_existing_cut_image(project_dir, num)
-        if (
-            existing_at_entry
-            and cut
-            and cut.image_path
-            and str(cut.status or "").lower() not in {
-                "pending",
-                "failed",
-                "error",
-                "image_failed",
-            }
-        ):
-            print(f"[Image] Cut {num} 기존 이미지 파일 유지 — 파일 삭제 컷만 재생성")
-            cut.image_path = str(existing_at_entry.relative_to(project_dir)).replace("\\", "/")
-            cut.image_model = image_model_id
-            cut.status = "image_done"
-            track_progress(project_id, 4)
-            continue
         is_shorts_cut = (
             cut_data.get("shorts_candidate") is True
             or int(cut_data.get("shorts_group") or 0) > 0
@@ -1290,42 +1436,51 @@ def _step_image(project_id: str, config: dict):
                     f"[Image] Cut {num} 재사용 건너뜀 — 기준 컷 {anchor_num}와 프롬프트 다름"
                 )
         is_char_cut = cut_has_character(num) and has_character_anchor
-        prompt_source = (cut.image_prompt if cut and cut.image_prompt else cut_data.get("image_prompt", "")) or ""
-        prompt_narration = (cut.narration if cut and cut.narration else cut_data.get("narration", "")) or ""
-        prompt = _build_image_prompt(
-            normalize_cut_image_prompt(
-                prompt_source,
-                prompt_narration,
-                " ".join(str(x or "") for x in (config.get("title"), config.get("topic"))),
-            ),
-            global_style,
-            has_reference=bool(ref_images),
-            has_character_slot=is_char_cut,
-            character_description=character_description,
-            enable_historical_guard=enable_historical_guard,
-            image_model=image_model_id,
+        # apply_script_visual_policy() updates the in-memory script before this loop.
+        # Prefer that current policy result over a stale Cut row from an earlier run.
+        prompt_source = (cut_data.get("image_prompt", "") or (cut.image_prompt if cut else "")) or ""
+        prompt_narration = (cut_data.get("narration", "") or (cut.narration if cut else "")) or ""
+        if cut:
+            cut.image_prompt = prompt_source
+        prompt = (
+            str(prompt_source).strip()
+            if source_locked_visual_policy
+            else _build_image_prompt(
+                normalize_cut_image_prompt(
+                    prompt_source,
+                    prompt_narration,
+                    " ".join(str(x or "") for x in (config.get("title"), config.get("topic"))),
+                    enable_series_repairs=True,
+                ),
+                global_style,
+                has_reference=bool(ref_images),
+                has_character_slot=is_char_cut,
+                character_description=character_description,
+                enable_historical_guard=enable_historical_guard,
+                image_model=image_model_id,
+                prompt_profile=prompt_profile,
+                narration_context=prompt_narration,
+                style_config=config,
+                project_id=project_id,
+            )
         )
+        prompt = apply_fixed_channel_image_style(prompt, config, project_id)
         existing = find_existing_cut_image(project_dir, num)
         if existing:
-            if cut and cut.image_path and str(cut.status or "").lower() not in {
-                "pending",
-                "failed",
-                "error",
-                "image_failed",
-            }:
-                print(
-                    f"[Image] Cut {num} 기존 완료 이미지 유지 — 선택 재생성 대상 아님"
-                )
-                cut.image_path = str(existing.relative_to(project_dir)).replace("\\", "/")
-                cut.image_model = image_model_id
-                cut.status = "image_done"
-                track_progress(project_id, 4)
-                continue
             matches, reason = image_matches_prompt(
                 existing,
                 source_prompt=prompt_source,
                 final_prompt=prompt,
                 image_model=image_model_id,
+                comfyui_positive_prompt=expected_comfyui_positive_prompt(
+                    prompt,
+                    image_model=image_model_id,
+                    prompt_profile=prompt_profile,
+                ),
+                effective_image_model=expected_effective_image_model_id(
+                    image_model_id,
+                    prompt,
+                ),
             )
             if matches:
                 print(f"[Image] Cut {num} 현재 프롬프트와 일치 — 건너뜀 ({reason})")
@@ -1432,13 +1587,15 @@ def _step_image(project_id: str, config: dict):
                             narration=(cut_row.narration if cut_row and cut_row.narration else cut_data.get("narration", "")),
                             comfyui_positive_prompt=getattr(service, "last_positive_prompt", ""),
                             comfyui_negative_prompt=getattr(service, "last_negative_prompt", ""),
+                            effective_image_model=getattr(service, "last_effective_model_id", ""),
                         )
                         service.negative_prompt = base_negative_prompt
                         # v1.1.55: 성공한 컷 이미지 1장 지출 기록
                         try:
                             from app.services import spend_ledger
                             spend_ledger.record_image(
-                                image_model_id, n_images=1,
+                                getattr(service, "last_effective_model_id", "") or image_model_id,
+                                n_images=1,
                                 project_id=project_id, note=f"cut_{num:03d}",
                             )
                         except Exception as _e:
@@ -1518,7 +1675,8 @@ def _step_image(project_id: str, config: dict):
     generated_nums = set(custom_done_nums)
     for cut_data in all_cuts:
         num = int(cut_data["cut_number"])
-        if find_existing_cut_image(project_dir, num):
+        existing = find_existing_cut_image(project_dir, num)
+        if existing and image_has_prompt_sidecar_commit(existing, cut_number=num):
             generated_nums.add(num)
 
     missing_nums = [n for n in expected_nums if n not in generated_nums]
@@ -1560,34 +1718,64 @@ def _step_image(project_id: str, config: dict):
 
 
 def _probe_audio_seconds(audio_path: str) -> float:
-    """ffprobe 로 오디오 길이(초) 측정. 실패시 0.0."""
+    """오디오 길이(초) 측정. ffprobe 가 없으면 ffmpeg stderr 를 파싱한다."""
     try:
         import subprocess as _sp
         from app.services.video.subprocess_helper import find_ffmpeg as _ff
-        ffprobe = _ff().replace("ffmpeg", "ffprobe")
-        out = _sp.check_output(
-            [ffprobe, "-v", "error", "-show_entries", "format=duration",
-             "-of", "default=noprint_wrappers=1:nokey=1", audio_path],
+        ffmpeg = _ff()
+        ffprobe = os.path.join(os.path.dirname(ffmpeg), "ffprobe.exe")
+        if os.path.exists(ffprobe):
+            out = _sp.check_output(
+                [ffprobe, "-v", "error", "-show_entries", "format=duration",
+                 "-of", "default=noprint_wrappers=1:nokey=1", audio_path],
+                timeout=10,
+            )
+            return float((out or b"0").decode().strip() or 0)
+        proc = _sp.run(
+            [ffmpeg, "-hide_banner", "-i", audio_path],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=10,
+            check=False,
         )
-        return float((out or b"0").decode().strip() or 0)
+        m = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", proc.stderr or "")
+        if not m:
+            return 0.0
+        return int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
     except Exception as _e:
         print(f"[probe] {audio_path}: {_e}")
         return 0.0
 
 
 def _probe_media_seconds(path: str) -> float:
-    """ffprobe 로 미디어 길이(초) 측정. 실패시 0.0."""
+    """미디어 길이(초) 측정. ffprobe 가 없으면 ffmpeg stderr 를 파싱한다."""
     try:
         import subprocess as _sp
         from app.services.video.subprocess_helper import find_ffmpeg as _ff
-        ffprobe = _ff().replace("ffmpeg", "ffprobe")
-        out = _sp.check_output(
-            [ffprobe, "-v", "error", "-show_entries", "format=duration",
-             "-of", "default=noprint_wrappers=1:nokey=1", path],
+        ffmpeg = _ff()
+        ffprobe = os.path.join(os.path.dirname(ffmpeg), "ffprobe.exe")
+        if os.path.exists(ffprobe):
+            out = _sp.check_output(
+                [ffprobe, "-v", "error", "-show_entries", "format=duration",
+                 "-of", "default=noprint_wrappers=1:nokey=1", path],
+                timeout=10,
+            )
+            return float((out or b"0").decode().strip() or 0)
+        proc = _sp.run(
+            [ffmpeg, "-hide_banner", "-i", path],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=10,
+            check=False,
         )
-        return float((out or b"0").decode().strip() or 0)
+        m = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", proc.stderr or "")
+        if not m:
+            return 0.0
+        return int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
     except Exception as _e:
         print(f"[probe] {path}: {_e}")
         return 0.0
@@ -1596,47 +1784,50 @@ def _probe_media_seconds(path: str) -> float:
 def _resolve_cut_timeline_seconds(config: dict, cut_row, audio_path: str, fallback_duration: float) -> tuple[float, float, float]:
     """Return (clip_duration, speech_duration, audio_start_offset) for one cut."""
     speech_duration = float(getattr(cut_row, "audio_duration", 0) or 0)
-    if speech_duration <= 0 and audio_path:
-        speech_duration = _probe_audio_seconds(audio_path)
+    if audio_path:
+        measured_duration = _probe_audio_seconds(audio_path)
+        if measured_duration > 0:
+            speech_duration = measured_duration
+            if cut_row is not None:
+                cut_row.audio_duration = measured_duration
     clip_duration = resolve_cut_video_duration_for_audio(config, speech_duration, default=fallback_duration)
     audio_start_offset = resolve_cut_audio_start_offset(config)
     return float(clip_duration), float(speech_duration or clip_duration), float(audio_start_offset)
 
 
-async def _burn_cut_subtitle(
+def _cut_mux_resolution(aspect_ratio: str) -> str:
+    if aspect_ratio == "9:16":
+        return "1080x1920"
+    if aspect_ratio == "1:1":
+        return "1080x1080"
+    if aspect_ratio == "3:4":
+        return "1080x1440"
+    return "1920x1080"
+
+
+async def _burn_cut_variety_highlight(
     cut_video_path: str,
-    narration: str,
+    cut_data: dict,
     duration: float,
-    style_config: dict,
+    config: dict,
     aspect_ratio: str,
-    start_offset: float = 0.0,
 ) -> bool:
-    """v1.1.55: 단일 컷 mp4 에 자기 대사 자막을 in-place 로 번인.
-
-    싱크 보장의 핵심: 대사가 0~`duration` 안에 균등 분포하므로 머지 후에도
-    클립 길이 변형(ensure_min_duration 등) 과 무관하게 각 컷의 자막이 자기
-    클립 안에서만 살아 있다. 실패해도 원본 파일은 보존되고 False 반환.
-
-    v1.1.55 hotfix: 이전엔 `run_async()` 로 새 이벤트 루프를 돌렸는데,
-    호출 지점(`_one`)이 이미 async 컨텍스트라 "This event loop is already
-    running" RuntimeError 로 자막이 전혀 안 붙었다. async 함수로 바꿔서
-    호출부에서 `await` 로 직접 돌린다.
-    """
-    if not narration or not narration.strip() or duration <= 0:
+    """단일 컷에 명시된 한국식 예능 자막만 번인."""
+    if not cut_data or duration <= 0:
         return False
     try:
-        from app.services.subtitle_service import burn_cut_subtitle_file
-        return await burn_cut_subtitle_file(
+        from app.services.subtitle_service import burn_cut_variety_highlight_file
+        return await burn_cut_variety_highlight_file(
             cut_video_path=cut_video_path,
-            narration=narration,
+            cut_data=cut_data,
             aspect_ratio=aspect_ratio,
-            style_config=style_config or {},
             duration=float(duration),
-            start_offset=float(start_offset or 0.0),
+            panel_mode=str((config or {}).get("variety_highlight_panel_mode") or "emotion_auto"),
+            fixed_panel=str((config or {}).get("variety_highlight_style") or "neutral"),
         )
     except Exception as _e:
         import traceback
-        print(f"[Video] cut subtitle burn 실패 {cut_video_path}: {_e}")
+        print(f"[Video] variety subtitle burn 실패 {cut_video_path}: {_e}")
         print(traceback.format_exc())
         return False
 
@@ -1696,8 +1887,7 @@ def _step_video(project_id: str, config: dict):
     )
 
     # v1.1.55: 컷 자막 스타일 — DEFAULT_CONFIG 의 subtitle_style 와 동일 키.
-    subtitle_style_cfg = config.get("subtitle_style") or {}
-    cut_level_subtitles = True
+    cut_level_subtitles = should_burn_cut_level_subtitles(config)
 
     db = SessionLocal()
     all_cuts = script.get("cuts", [])
@@ -1822,17 +2012,14 @@ def _step_video(project_id: str, config: dict):
             print(f"[Video] Cut {num} 이미 존재 — 건너뜀")
             if cut_level_subtitles:
                 try:
-                    narration = (cut_data.get("narration") or "").strip()
-                    if narration:
-                        ok = run_async(_burn_cut_subtitle(
-                            str(existing), narration, float(target_speech_duration),
-                            subtitle_style_cfg, aspect_ratio,
-                            start_offset=audio_start_offset,
-                        ))
-                        if ok:
-                            print(f"[Video] Cut {num} existing subtitle burn verified")
+                    ok = run_async(_burn_cut_variety_highlight(
+                        str(existing), cut_data, float(target_clip_duration),
+                        config, aspect_ratio,
+                    ))
+                    if ok:
+                        print(f"[Video] Cut {num} existing variety subtitle verified")
                 except Exception as _se:
-                    print(f"[Video] Cut {num} existing subtitle burn skipped: {_se}")
+                    print(f"[Video] Cut {num} existing variety subtitle skipped: {_se}")
             video_paths.append(str(existing))
             if cut:
                 cut.video_path = _relative_video_path(existing)
@@ -1928,15 +2115,35 @@ def _step_video(project_id: str, config: dict):
                     # 예외를 올려 task 가 실패하도록 한다. (use_ai=False 인
                     # 컷은 처음부터 ffmpeg-static 으로 가는 게 사용자 설정이라
                     # 폴백이 아님 — 그건 그대로 유지)
-                    await svc.generate(
+                    result_path = await svc.generate(
                         image_path=img,
-                        audio_path=aud,
+                        audio_path=None,
                         duration=float(target_clip_duration),
                         output_path=out,
                         aspect_ratio=aspect_ratio,
                         prompt=motion_prompt,
-                        audio_start_offset=float(audio_start_offset),
+                        audio_start_offset=0.0,
                     )
+                    from app.services.video.ffmpeg_service import FFmpegService as _CutMuxFFmpeg
+
+                    mux_tmp = str(_Path(out).with_suffix(".mux.mp4"))
+                    try:
+                        await _CutMuxFFmpeg.mux_cut_audio(
+                            video_path=str(result_path or out),
+                            audio_path=aud,
+                            output_path=mux_tmp,
+                            duration=float(target_clip_duration),
+                            audio_start_offset=float(audio_start_offset),
+                            resolution=_cut_mux_resolution(aspect_ratio),
+                        )
+                        import shutil as _shutil
+                        _shutil.move(mux_tmp, out)
+                    finally:
+                        try:
+                            if _Path(mux_tmp).exists():
+                                _Path(mux_tmp).unlink()
+                        except Exception:
+                            pass
 
                     # v1.1.55: 컷 mp4 가 생긴 직후 자기 대사 자막 번인.
                     # 머지/normalize 후에 자막 입히면 컷 길이 변경으로 싱크가
@@ -1944,22 +2151,14 @@ def _step_video(project_id: str, config: dict):
                     # 박아 둔다. 실패해도 영상 자체는 그대로.
                     if cut_level_subtitles:
                         try:
-                            narration = (cut_data.get("narration") or "").strip()
-                            # 1) DB 에 audio_duration 이 이미 있으면 그거 사용
-                            # 2) 없으면 ffprobe 로 측정
-                            dur = float(target_speech_duration)
-                            if narration and dur > 0:
-                                ok = await _burn_cut_subtitle(
-                                    out, narration, dur,
-                                    subtitle_style_cfg, aspect_ratio,
-                                    start_offset=audio_start_offset,
-                                )
-                                if ok:
-                                    print(f"[Video] Cut {num} 자막 번인 완료 ({dur:.1f}s)")
-                                else:
-                                    print(f"[Video] Cut {num} 자막 번인 건너뜀")
+                            dur = float(target_clip_duration)
+                            ok = await _burn_cut_variety_highlight(
+                                out, cut_data, dur, config, aspect_ratio,
+                            )
+                            if ok:
+                                print(f"[Video] Cut {num} 예능 자막 번인 완료 ({dur:.1f}s)")
                         except Exception as _se:
-                            print(f"[Video] Cut {num} subtitle stage 예외(무시): {_se}")
+                            print(f"[Video] Cut {num} variety subtitle stage 예외(무시): {_se}")
 
                     return num, out, used_model
 
@@ -2029,7 +2228,7 @@ def _step_video(project_id: str, config: dict):
     # 컷-only 병합본은 videos/merged.mp4 에 둔다.
     # output/merged.mp4 는 렌더 단계에서 오프닝/인터미션/엔딩까지 포함한 무BGM 기준본으로 만든다.
     merged = str(project_dir / "videos" / "merged.mp4")
-    from app.services.video.ffmpeg_service import FFmpegService as _FFmpeg
+    from app.services.remotion_longform_renderer import render_remotion_longform as _render_longform
     if not video_paths:
         raise RuntimeError(
             f"영상 클립이 하나도 생성되지 않았습니다 (총 {len(all_cuts)}컷). "
@@ -2043,7 +2242,7 @@ def _step_video(project_id: str, config: dict):
         video_paths = [p for p in video_paths if _os.path.exists(p)]
     if not video_paths:
         raise RuntimeError("영상 클립 파일이 모두 디스크에서 누락되었습니다.")
-    run_async(_FFmpeg.merge_videos(video_paths, merged))
+    run_async(_render_longform(video_paths, merged, resolution=_cut_mux_resolution(aspect_ratio)))
 
     db.commit()
     db.close()
@@ -2158,12 +2357,19 @@ def _step_upload(project_id: str, config: dict):
 
     upload_title = strong_main_upload_title(script.get("title", "Untitled"), config.get("episode_number"))
     narration_seed = " ".join((c.get("narration") or "") for c in script.get("cuts", [])[:30] if isinstance(c, dict))
+    metadata_profile = metadata_profile_from_config(config)
     upload_description = format_description(
         script.get("description", ""),
         title=upload_title,
         topic=script.get("title", ""),
         narration=narration_seed,
         language=config.get("language") or "ko",
+        profile=metadata_profile,
+    )
+    upload_description = append_video_chapters(
+        upload_description,
+        script.get("cuts") if isinstance(script.get("cuts"), list) else [],
+        config.get("target_duration") or config.get("cut_video_duration"),
     )
     upload_tags = expand_tags(
         script.get("tags", []),
@@ -2171,7 +2377,30 @@ def _step_upload(project_id: str, config: dict):
         topic=script.get("title", ""),
         narration=narration_seed,
         language=config.get("language") or "ko",
+        profile=metadata_profile,
     )
+    validate_metadata_for_profile(
+        title=upload_title,
+        description=upload_description,
+        tags=upload_tags,
+        profile=metadata_profile,
+    )
+    from app.services.youtube_localization_service import (
+        build_youtube_metadata_localizations,
+    )
+
+    metadata_localizations = run_async(build_youtube_metadata_localizations(
+        title=upload_title,
+        description=upload_description,
+        script=script,
+        config=config,
+    ))
+    upload_language = str(config.get("language") or "ko")
+    category_id = str(
+        config.get("youtube_category_id")
+        or config.get("category_id")
+        or ""
+    ).strip() or None
     try:
         from app.services.thumbnail_service import ensure_standard_thumbnail
         thumb_result = run_async(ensure_standard_thumbnail(
@@ -2209,6 +2438,14 @@ def _step_upload(project_id: str, config: dict):
             except Exception as exc:
                 result["thumbnail_error"] = str(exc)
                 print(f"[upload] thumbnail upload failed: {exc}")
+        if existing_video_id:
+            result["top_comment"] = uploader.ensure_upload_top_comment(
+                video_id=str(existing_video_id),
+                topic=script.get("topic") or script.get("title") or upload_title,
+                language=upload_language,
+                privacy="private",
+                made_for_kids=False,
+            )
         print(f"[upload] main upload skipped, already exists: {result.get('url')}")
     else:
         result = uploader.upload(
@@ -2219,6 +2456,9 @@ def _step_upload(project_id: str, config: dict):
             thumbnail_path=None,
             # v1.1.57: AI 생성 썸네일 우선, 없으면 첫 번째 컷 이미지 폴백
             privacy="private",
+            language=upload_language,
+            category_id=category_id,
+            comment_topic=script.get("topic") or script.get("title") or upload_title,
         )
         result = {**result, "studio_verified": False, "processing_verified": False}
         if _Path(thumbnail_upload_path).exists() and result.get("video_id"):
@@ -2230,6 +2470,22 @@ def _step_upload(project_id: str, config: dict):
                 result["thumbnail_error"] = str(exc)
                 print(f"[upload] thumbnail upload failed: {exc}")
         print(f"[upload] YouTube upload accepted: {result.get('url')}")
+
+    main_video_id = str(result.get("video_id") or "").strip()
+    if existing_upload and main_video_id and category_id:
+        uploader.update_video(
+            main_video_id,
+            category_id=category_id,
+            default_language=upload_language,
+        )
+    if metadata_localizations and main_video_id:
+        localization_result = uploader.set_video_localizations(
+            main_video_id,
+            metadata_localizations,
+            default_language=upload_language,
+            default_audio_language=upload_language,
+        )
+        result["localization_languages"] = localization_result.get("languages") or []
 
     main_playlist_id = str(
         config.get("youtube_playlist_id")
@@ -2255,23 +2511,18 @@ def _step_upload(project_id: str, config: dict):
     caption_path = project_dir / "subtitles" / "subtitles.srt"
     caption_upload = None
     caption_error = None
-    if (
-        result.get("video_id")
-        and not result.get("already_uploaded")
-        and caption_path.exists()
-        and should_upload_youtube_captions(config)
-    ):
-        try:
-            caption_upload = run_async(upload_multilingual_captions(
-                uploader,
-                str(result.get("video_id")),
-                str(caption_path),
-                config,
-            ))
-            print(f"[upload] caption uploaded: {caption_upload}")
-        except Exception as exc:
-            caption_error = str(exc)
-            print(f"[upload] caption upload failed: {exc}")
+    if result.get("video_id") and should_upload_youtube_captions(config):
+        if not caption_path.exists() or caption_path.stat().st_size <= 100:
+            raise RuntimeError(
+                f"YouTube 자막 업로드 검증 실패: 유효한 SRT가 없습니다: {caption_path}"
+            )
+        caption_upload = run_async(upload_multilingual_captions(
+            uploader,
+            str(result.get("video_id")),
+            str(caption_path),
+            config,
+        ))
+        print(f"[upload] caption uploaded and verified: {caption_upload}")
 
     shorts_results = []
     if bool(config.get("shorts_upload_enabled", True)):
@@ -2309,15 +2560,21 @@ def _step_upload(project_id: str, config: dict):
                     topic=script.get("title", ""),
                     narration=narration_seed,
                     language=config.get("language") or "ko",
+                    profile=metadata_profile,
                 ),
             )
             shorts_description = format_description(
-                upload_description,
+                (
+                    str(shorts_meta.get("description") or "").strip()
+                    if metadata_profile == "european_history"
+                    else upload_description
+                ),
                 title=shorts_title,
                 topic=script.get("title", ""),
                 narration=narration_seed,
                 language=config.get("language") or "ko",
                 shorts=True,
+                profile=metadata_profile,
             )
             shorts_tags = expand_tags(
                 upload_tags,
@@ -2326,7 +2583,29 @@ def _step_upload(project_id: str, config: dict):
                 narration=narration_seed,
                 language=config.get("language") or "ko",
                 shorts=True,
+                profile=metadata_profile,
             )
+            validate_metadata_for_profile(
+                title=shorts_title,
+                description=shorts_description,
+                tags=shorts_tags,
+                profile=metadata_profile,
+            )
+            short_script: dict = {}
+            raw_shorts_localizations = script.get("youtube_shorts_localizations")
+            if isinstance(raw_shorts_localizations, dict):
+                supplied = (
+                    raw_shorts_localizations.get(shorts_path.name)
+                    or raw_shorts_localizations.get(str(idx))
+                )
+                if isinstance(supplied, dict):
+                    short_script["youtube_localizations"] = supplied
+            short_localizations = run_async(build_youtube_metadata_localizations(
+                title=shorts_title[:100],
+                description=shorts_description,
+                script=short_script,
+                config=config,
+            ))
             try:
                 existing_short = uploader.find_existing_upload_by_title(shorts_title[:100])
                 if existing_short:
@@ -2347,6 +2626,9 @@ def _step_upload(project_id: str, config: dict):
                         tags=shorts_tags,
                         thumbnail_path=None,
                         privacy=str(config.get("youtube_privacy", "private") or "private"),
+                        language=upload_language,
+                        category_id=category_id,
+                        comment_topic=shorts_base_title,
                     )
                     shorts_upload = {
                         **shorts_upload,
@@ -2354,6 +2636,29 @@ def _step_upload(project_id: str, config: dict):
                         "processing_verified": False,
                     }
                     print(f"[upload] shorts upload accepted: {shorts_upload.get('url')}")
+                short_video_id = str(shorts_upload.get("video_id") or "").strip()
+                if existing_short and short_video_id:
+                    shorts_upload["top_comment"] = uploader.ensure_upload_top_comment(
+                        video_id=short_video_id,
+                        topic=shorts_base_title,
+                        language=upload_language,
+                        privacy=str(config.get("youtube_privacy", "private") or "private"),
+                        made_for_kids=False,
+                    )
+                if existing_short and short_video_id and category_id:
+                    uploader.update_video(
+                        short_video_id,
+                        category_id=category_id,
+                        default_language=upload_language,
+                    )
+                short_localization_result = None
+                if short_localizations and short_video_id:
+                    short_localization_result = uploader.set_video_localizations(
+                        short_video_id,
+                        short_localizations,
+                        default_language=upload_language,
+                        default_audio_language=upload_language,
+                    )
                 shorts_results.append({
                     "index": idx,
                     "path": str(shorts_path),
@@ -2361,6 +2666,10 @@ def _step_upload(project_id: str, config: dict):
                     "url": shorts_upload.get("url"),
                     "video_id": shorts_upload.get("video_id"),
                     "already_uploaded": bool(shorts_upload.get("already_uploaded")),
+                    "top_comment": shorts_upload.get("top_comment"),
+                    "localization_languages": (
+                        (short_localization_result or {}).get("languages") or []
+                    ),
                 })
                 shorts_playlist_id = str(
                     config.get("youtube_shorts_playlist_id")
@@ -2390,6 +2699,8 @@ def _step_upload(project_id: str, config: dict):
     new_config = dict(config or {})
     if result.get("thumbnail_error"):
         new_config["youtube_thumbnail_error"] = str(result.get("thumbnail_error"))
+    if result.get("top_comment"):
+        new_config["youtube_top_comment"] = result.get("top_comment")
     if caption_upload:
         new_config["youtube_captions"] = caption_upload
         new_config["youtube_caption"] = caption_upload

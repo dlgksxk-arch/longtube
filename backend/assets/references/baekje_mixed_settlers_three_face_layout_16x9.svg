@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <defs>
+    <linearGradient id="wash" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#b7a487"/>
+      <stop offset="0.48" stop-color="#8f7b62"/>
+      <stop offset="1" stop-color="#ad9677"/>
+    </linearGradient>
+    <pattern id="grain" width="9" height="9" patternUnits="userSpaceOnUse">
+      <path d="M0 2H9M0 7H9" stroke="#5e4d3d" stroke-width="0.8" opacity="0.24"/>
+      <path d="M2 0V9M7 0V9" stroke="#d8c8ab" stroke-width="0.7" opacity="0.18"/>
+    </pattern>
+  </defs>
+  <rect width="1280" height="720" fill="url(#wash)"/>
+  <rect width="1280" height="720" fill="url(#grain)"/>
+
+  <!-- Exactly three tightly cropped adult portrait guides. No environment,
+       objects, hands, waist, roads, structures, poles, wires, or vehicles. -->
+  <g fill="#a99b86" stroke="#493f35" stroke-width="7" stroke-linejoin="round">
+    <ellipse cx="245" cy="245" rx="105" ry="135"/>
+    <path d="M195 360L170 415L42 500L12 720H478L448 500L320 415L295 360Z"/>
+    <path d="M170 415L245 505L320 415M245 505L245 720" fill="none"/>
+    <path d="M156 242Q245 305 334 242" fill="none" opacity="0.6"/>
+
+    <ellipse cx="640" cy="215" rx="112" ry="145"/>
+    <path d="M585 345L555 405L420 488L382 720H898L860 488L725 405L695 345Z"/>
+    <path d="M555 405L640 508L725 405M640 508L640 720" fill="none"/>
+    <path d="M538 210Q640 280 742 210" fill="none" opacity="0.6"/>
+
+    <ellipse cx="1035" cy="245" rx="105" ry="135"/>
+    <path d="M985 360L960 415L832 500L802 720H1268L1238 500L1110 415L1085 360Z"/>
+    <path d="M960 415L1035 505L1110 415M1035 505L1035 720" fill="none"/>
+    <path d="M946 242Q1035 305 1124 242" fill="none" opacity="0.6"/>
+  </g>
+</svg>

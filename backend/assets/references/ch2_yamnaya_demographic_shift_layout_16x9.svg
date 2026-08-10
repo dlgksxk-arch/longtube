@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#99968e"/>
+  <g fill="#95593b" stroke="#40312a" stroke-width="13">
+    <circle cx="165" cy="250" r="72"/><circle cx="305" cy="360" r="72"/><circle cx="165" cy="470" r="72"/>
+  </g>
+  <path d="M395 360 H535" stroke="#65503b" stroke-width="22"/>
+  <g stroke="#463b33" stroke-width="10">
+    <g fill="#a96240">
+      <rect x="560" y="105" width="120" height="105" rx="14"/><rect x="705" y="105" width="120" height="105" rx="14"/><rect x="850" y="105" width="120" height="105" rx="14"/>
+      <rect x="560" y="240" width="120" height="105" rx="14"/><rect x="705" y="240" width="120" height="105" rx="14"/><rect x="995" y="240" width="120" height="105" rx="14"/>
+      <rect x="560" y="375" width="120" height="105" rx="14"/><rect x="850" y="375" width="120" height="105" rx="14"/><rect x="995" y="375" width="120" height="105" rx="14"/>
+      <rect x="705" y="510" width="120" height="105" rx="14"/><rect x="850" y="510" width="120" height="105" rx="14"/><rect x="995" y="510" width="120" height="105" rx="14"/>
+    </g>
+    <g fill="#bdb3a1">
+      <rect x="995" y="105" width="120" height="105" rx="14"/><rect x="850" y="240" width="120" height="105" rx="14"/>
+      <rect x="705" y="375" width="120" height="105" rx="14"/><rect x="560" y="510" width="120" height="105" rx="14"/>
+    </g>
+  </g>
+</svg>

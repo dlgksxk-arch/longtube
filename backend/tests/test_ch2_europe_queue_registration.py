@@ -10,6 +10,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scripts.ch2_register_europe_queue import (  # noqa: E402
     CH2_ENGLISH_VOICE_ID,
+    CH2_IMAGE_GLOBAL_PROMPT,
+    CH2_IMAGE_MODEL,
+    ENGLISH_CONTINUITY_EPISODE_CODES,
     EXPECTED_EPISODE_CODES,
     EXPECTED_QUEUE_HEADER,
     QUEUE_EP_RE,
@@ -21,7 +24,11 @@ from scripts.ch2_register_europe_queue import (  # noqa: E402
     _queue_item,
     _registration_state,
 )
-from scripts.ch2_europe_workbook_to_prepared_scripts import SCRIPT_VERSION  # noqa: E402
+from scripts.ch2_europe_workbook_to_prepared_scripts import (  # noqa: E402
+    ENGLISH_CONTINUITY_SOURCE_SCHEMA,
+    ENGLISH_CONTINUITY_WORKBOOK,
+    SCRIPT_VERSION,
+)
 
 
 class Ch2EuropeQueueRegistrationTests(unittest.TestCase):
@@ -44,6 +51,24 @@ class Ch2EuropeQueueRegistrationTests(unittest.TestCase):
         self.assertNotIn("French", item["core_content"])
         self.assertNotIn("Spanish", item["core_content"])
         self.assertNotIn("German", item["core_content"])
+
+    def test_queue_item_accepts_reviewed_34_episode_source_identity(self):
+        item = _queue_item(
+            episode_number=34,
+            episode_code="EP034",
+            title="The Crisis of the Third Century",
+            queued_at="2026-07-15T00:00:00Z",
+            source_label="English continuity workbook (EP001-034)",
+            queued_note="Reviewed English continuity workbook / prepared script ready",
+        )
+        self.assertIn(
+            "[Source] English continuity workbook (EP001-034)",
+            item["core_content"],
+        )
+        self.assertEqual(
+            item["queued_note"],
+            "Reviewed English continuity workbook / prepared script ready",
+        )
 
     def test_queue_sheet_contract_matches_179_episode_design(self):
         self.assertEqual(len(EXPECTED_QUEUE_HEADER), 22)
@@ -100,6 +125,14 @@ class Ch2EuropeQueueRegistrationTests(unittest.TestCase):
         self.assertEqual(configured["caption_languages"], ["en"])
         self.assertEqual(configured["caption_source"], "script_tracks")
         self.assertTrue(configured["youtube_captions_enabled"])
+        self.assertEqual(configured["image_model"], CH2_IMAGE_MODEL)
+        self.assertEqual(configured["image_prompt_profile"], "scene_contract_v2")
+        self.assertEqual(configured["image_global_prompt"], CH2_IMAGE_GLOBAL_PROMPT)
+        self.assertIn("vintage dark historical manhwa", configured["image_global_prompt"])
+        self.assertIn("variable-width scratchy dip-pen", configured["image_global_prompt"])
+        self.assertIn("aged fibrous print-stock grain", configured["image_global_prompt"])
+        self.assertNotIn("rugged masculine", configured["image_global_prompt"])
+        self.assertNotIn("matte cel shading", configured["image_global_prompt"])
         self.assertEqual(
             configured["youtube_localization_languages"], ["fr", "es", "de"]
         )
@@ -175,6 +208,43 @@ class Ch2EuropeQueueRegistrationTests(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertEqual(set(source_index), {"source.xlsx"})
 
+    def test_manifest_contract_accepts_reviewed_34_episode_source(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_path = Path(temp_dir) / ENGLISH_CONTINUITY_WORKBOOK.name
+            source_path.write_bytes(b"reviewed English continuity workbook")
+            digest = hashlib.sha256(source_path.read_bytes()).hexdigest().upper()
+            manifest = {
+                "script_version": SCRIPT_VERSION,
+                "language": "en",
+                "caption_languages": ["en"],
+                "source_schemas": [ENGLISH_CONTINUITY_SOURCE_SCHEMA],
+                "episode_count": 34,
+                "cut_count": 5100,
+                "sources": [
+                    {
+                        "path": str(source_path),
+                        "sha256": digest,
+                        "schema": ENGLISH_CONTINUITY_SOURCE_SCHEMA,
+                        "episode_count": 34,
+                        "first_episode": 1,
+                        "last_episode": 34,
+                    }
+                ],
+                "files": [
+                    {
+                        "episode_code": code,
+                        "file": f"{code}.json",
+                        "sha256": "C" * 64,
+                        "cuts": 150,
+                    }
+                    for code in sorted(ENGLISH_CONTINUITY_EPISODE_CODES)
+                ],
+            }
+            file_index, source_index, errors = _manifest_file_index(manifest)
+        self.assertEqual(errors, [])
+        self.assertEqual(set(file_index), ENGLISH_CONTINUITY_EPISODE_CODES)
+        self.assertEqual(set(source_index), {ENGLISH_CONTINUITY_WORKBOOK.name})
+
     def test_registration_preserves_other_channels_and_disables_ch2_schedule(self):
         current = {
             "channel_times": {"1": "03:00", "2": "04:00"},
@@ -199,6 +269,40 @@ class Ch2EuropeQueueRegistrationTests(unittest.TestCase):
         self.assertEqual(state["channel_presets"]["2"], TEMPLATE_PROJECT_ID)
         self.assertEqual(state["last_run_dates"], current["last_run_dates"])
         self.assertEqual(state["future_runtime_field"], {"preserve": True})
+
+    def test_registration_replaces_179_ch2_items_with_34(self):
+        current = {
+            "channel_times": {"1": "03:00", "2": "04:00"},
+            "channel_presets": {"1": "ch1", "2": "old"},
+            "items": [
+                {"id": "keep", "channel": 1, "status": "pending"},
+                *[
+                    {
+                        "id": f"old-ch2-{number:03d}",
+                        "channel": 2,
+                        "status": "pending",
+                    }
+                    for number in range(1, 180)
+                ],
+            ],
+        }
+        replacements = [
+            _queue_item(
+                episode_number=number,
+                episode_code=f"EP{number:03d}",
+                title=f"Title {number}",
+                queued_at="2026-07-15T00:00:00Z",
+            )
+            for number in range(1, 35)
+        ]
+        state, errors = _registration_state(current, replacements)
+        self.assertEqual(errors, [])
+        self.assertEqual(len(state["items"]), 35)
+        self.assertEqual(
+            sum(1 for item in state["items"] if item.get("channel") == 2),
+            34,
+        )
+        self.assertFalse(any(str(item["id"]).startswith("old-ch2-") for item in state["items"]))
 
 
 if __name__ == "__main__":

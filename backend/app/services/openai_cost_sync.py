@@ -14,6 +14,7 @@ from typing import Optional
 
 import httpx
 
+from app import config as app_config
 from app.config import DATA_DIR
 
 
@@ -152,6 +153,7 @@ async def _fetch_openai_costs(
     end_dt: datetime,
     organization_id: Optional[str] = None,
 ) -> float:
+    app_config.require_openai_api_enabled()
     if end_dt <= start_dt:
         return 0.0
 

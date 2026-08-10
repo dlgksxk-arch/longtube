@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#99968e"/>
+  <path d="M310 360 H475 M805 360 H970" fill="none" stroke="#665446" stroke-width="18" stroke-linecap="round"/>
+  <circle cx="392" cy="360" r="15" fill="#c0aa7e" stroke="#403832" stroke-width="8"/>
+  <circle cx="888" cy="360" r="15" fill="#c0aa7e" stroke="#403832" stroke-width="8"/>
+  <g>
+    <path d="M55 330 Q180 165 305 330 Z" fill="#a8845e" stroke="#403832" stroke-width="14"/>
+    <rect x="125" y="330" width="110" height="92" fill="#6f513c" stroke="#403832" stroke-width="12"/>
+    <circle cx="180" cy="520" r="76" fill="#98683f" stroke="#403832" stroke-width="14"/>
+    <circle cx="180" cy="520" r="20" fill="#c0aa7e" stroke="#403832" stroke-width="8"/>
+  </g>
+  <g transform="translate(640 360)">
+    <ellipse rx="170" ry="225" fill="#a8845e" stroke="#403832" stroke-width="24"/>
+    <ellipse rx="130" ry="183" fill="#b99b70" stroke="#665446" stroke-width="12"/>
+    <g fill="#835d42" stroke="#403832" stroke-width="8">
+      <rect x="-42" y="-170" width="84" height="72" rx="7"/>
+      <rect x="-42" y="98" width="84" height="72" rx="7"/>
+      <rect x="-148" y="-40" width="82" height="80" rx="7"/>
+      <rect x="66" y="-40" width="82" height="80" rx="7"/>
+      <rect x="-120" y="-120" width="72" height="68" rx="7" transform="rotate(-35 -84 -86)"/>
+      <rect x="48" y="-120" width="72" height="68" rx="7" transform="rotate(35 84 -86)"/>
+      <rect x="-120" y="52" width="72" height="68" rx="7" transform="rotate(35 -84 86)"/>
+      <rect x="48" y="52" width="72" height="68" rx="7" transform="rotate(-35 84 86)"/>
+    </g>
+    <circle r="48" fill="#718f98" stroke="#403832" stroke-width="11"/>
+  </g>
+  <g fill="none" stroke="#665446" stroke-width="14">
+    <path d="M1045 215 L1165 360 L1045 505 L925 360 Z"/>
+  </g>
+  <g fill="#8d603d" stroke="#403832" stroke-width="12">
+    <circle cx="1045" cy="215" r="68"/><circle cx="1165" cy="360" r="68"/>
+    <circle cx="1045" cy="505" r="68"/><circle cx="925" cy="360" r="68"/>
+  </g>
+  <ellipse cx="1045" cy="360" rx="54" ry="78" fill="#9e6a42" stroke="#403832" stroke-width="11"/>
+  <path d="M1000 342 H1090 M1004 382 H1086" fill="none" stroke="#d0a06b" stroke-width="9"/>
+</svg>

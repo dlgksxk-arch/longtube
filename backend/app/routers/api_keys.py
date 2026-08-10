@@ -79,6 +79,8 @@ def _reload_config_var(var_name: str, value: str):
     os.environ[var_name] = value
     # Also update the config module's global
     import app.config as cfg
+    if cfg.OPENAI_API_DISABLED and var_name in {"OPENAI_API_KEY", "OPENAI_ADMIN_KEY"}:
+        value = ""
     if hasattr(cfg, var_name):
         setattr(cfg, var_name, value)
 

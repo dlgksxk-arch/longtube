@@ -1371,6 +1371,8 @@ export default function LivePage() {
   // v1.1.49: 실패/취소된 태스크를 실패 지점부터 이어서 하기
   const [resuming, setResuming] = useState(false);
   const [startingCurrent, setStartingCurrent] = useState(false);
+  const [startingNextQueue, setStartingNextQueue] = useState(false);
+  const [startingQueueBatchCount, setStartingQueueBatchCount] = useState<2 | 3 | 4 | null>(null);
   const handleResume = async () => {
     if (!task) return;
     setResuming(true);
@@ -1739,7 +1741,7 @@ export default function LivePage() {
     try {
       const result = await oneclickApi.requeueTask(failed.task_id);
       markServerSync();
-      addLog(`[시스템] 제작 큐 상단에 배치: ${taskTitle(failed)} (CH${result.channel})`, "success");
+      addLog(`[시스템] 기존 자료 유지 복구: ${taskTitle(failed)} (CH${result.channel})`, "success");
       await loadRecoveryContent(recoveryChannel);
       await handleRefresh();
     } catch (e: any) {
@@ -1750,13 +1752,13 @@ export default function LivePage() {
   };
 
   const handleQueueCompletedTask = async (completed: OneClickTask) => {
-    if (!confirm(`완료된 작업을 백업 후 제작 큐 상단으로 복귀합니다.\n${taskTitle(completed)}\n계속할까요?`)) return;
+    if (!confirm(`완료된 작업을 백업한 뒤 처음부터 다시 제작합니다.\n${taskTitle(completed)}\n계속할까요?`)) return;
     setRecoveringId(completed.task_id);
     try {
       const result = await oneclickApi.requeueTask(completed.task_id);
       markServerSync();
       addLog(
-        `[시스템] 완료 작업 큐 복귀: ${taskTitle(completed)} (CH${result.channel})${result.archived_path ? ` · 백업: ${result.archived_path}` : ""}`,
+        `[시스템] 완료 작업 백업 후 재제작 대기: ${taskTitle(completed)} (CH${result.channel})${result.archived_path ? ` · 백업: ${result.archived_path}` : ""}`,
         "success",
       );
       await loadRecoveryContent(recoveryChannel);
@@ -1774,7 +1776,7 @@ export default function LivePage() {
       const result = await oneclickApi.requeueOrphanProjects([projectId], recoveryChannel);
       markServerSync();
       const queued = result.items?.[0]?.queue_item;
-      addLog(`[시스템] 고아 프로젝트를 제작 큐 상단에 배치: ${queued?.topic || projectId}`, "success");
+      addLog(`[시스템] 고아 프로젝트 자료 유지 복구: ${queued?.topic || projectId}`, "success");
       await loadRecoveryContent(recoveryChannel);
       await handleRefresh();
     } catch (e: any) {
@@ -1790,7 +1792,7 @@ export default function LivePage() {
     const orphanIds = orphanProjects.map((item) => item.project_id).filter(Boolean);
     const total = taskTargets.length + orphanIds.length;
     if (total === 0) return;
-    if (!confirm(`복구 대상 ${total}건을 제작 큐 상단에 순서대로 배치합니다. 계속할까요?`)) return;
+    if (!confirm(`복구 대상 ${total}건을 기존 자료를 유지한 채 원래 에피소드 순서로 복구합니다. 계속할까요?`)) return;
 
     setRecoveryBulkQueuing(true);
     let ok = 0;
@@ -2189,6 +2191,67 @@ export default function LivePage() {
       addLog(`[오류] 시작 실패: ${e?.message || e}`, "error");
     } finally {
       setStartingCurrent(false);
+    }
+  };
+  const hasInFlightTask = activeTasks.some((item) =>
+    ["prepared", "queued", "running"].includes(String(item.status || "").toLowerCase()),
+  );
+  const nextQueueStartDisabled =
+    startingNextQueue || startingQueueBatchCount !== null || !previewQueueItem || hasInFlightTask;
+  const handleStartNextQueued = async () => {
+    if (nextQueueStartDisabled || !previewQueueItem) return;
+    setStartingNextQueue(true);
+    try {
+      const live = await refreshLiveSnapshot("silent");
+      if (live && ["prepared", "queued", "running"].includes(String(live.status || "").toLowerCase())) {
+        addLog(`[시스템] 진행 중인 작업이 있어 다음 대기 작업을 시작하지 않았습니다: ${live.topic}`, "info");
+        return;
+      }
+      // channel을 전달하지 않아 전체 대기열의 첫 번째 항목을 실행한다.
+      const started = await oneclickApi.runQueueNext();
+      if (["prepared", "queued", "running"].includes(String(started.status || "").toLowerCase())) {
+        markServerSync();
+        setTask(started);
+        syncLogsFromTask(started);
+        addLog(`[시스템] 다음 대기 작업 시작: ${started.topic || previewQueueItem.topic || ""}`, "success");
+      }
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      await handleRefresh();
+    } catch (e: any) {
+      addLog(`[오류] 다음 대기 작업 시작 실패: ${e?.message || e}`, "error");
+    } finally {
+      setStartingNextQueue(false);
+    }
+  };
+  const handleStartQueuedBatch = async (count: 2 | 3 | 4) => {
+    if (
+      startingNextQueue ||
+      startingQueueBatchCount !== null ||
+      hasInFlightTask ||
+      pendingQueueItems.length < count
+    ) return;
+    setStartingQueueBatchCount(count);
+    try {
+      const live = await refreshLiveSnapshot("silent");
+      if (live && ["prepared", "queued", "running"].includes(String(live.status || "").toLowerCase())) {
+        addLog(`[시스템] 진행 중인 작업이 있어 ${count}편 제작을 시작하지 않았습니다: ${live.topic}`, "info");
+        return;
+      }
+      const result = await oneclickApi.runQueueBatch(count);
+      const started = result.first_task;
+      markServerSync();
+      setTask(started);
+      syncLogsFromTask(started);
+      addLog(
+        `[시스템] ${count}편 연속 제작 시작: 첫 작업 즉시 시작, 이후 10분 간격`,
+        "success",
+      );
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      await handleRefresh();
+    } catch (e: any) {
+      addLog(`[오류] ${count}편 제작 시작 실패: ${e?.message || e}`, "error");
+    } finally {
+      setStartingQueueBatchCount(null);
     }
   };
   const currentPanelStatus =
@@ -2761,6 +2824,45 @@ export default function LivePage() {
               <div className="ml-auto flex items-center gap-2">
                 <button
                   type="button"
+                  onClick={handleStartNextQueued}
+                  disabled={nextQueueStartDisabled}
+                  className="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-md border border-emerald-400/45 bg-emerald-500/20 px-3 text-xs font-black text-emerald-100 hover:bg-emerald-500/30 disabled:cursor-not-allowed disabled:opacity-45"
+                  title={
+                    previewQueueItem
+                      ? `전체 대기열 첫 항목 시작: CH${previewQueueItem.channel || 1} ${formatEpisodeBadge(previewQueueItem)}`
+                      : "대기 중인 작업이 없습니다"
+                  }
+                >
+                  {startingNextQueue ? <Loader2 size={13} className="animate-spin" /> : <PlayCircle size={13} />}
+                  {startingNextQueue ? "시작 중" : "다음 대기 작업 시작"}
+                </button>
+                {([2, 3, 4] as const).map((count) => {
+                  const isStarting = startingQueueBatchCount === count;
+                  const disabled =
+                    startingNextQueue ||
+                    startingQueueBatchCount !== null ||
+                    hasInFlightTask ||
+                    pendingQueueItems.length < count;
+                  return (
+                    <button
+                      key={`queue-batch-${count}`}
+                      type="button"
+                      onClick={() => void handleStartQueuedBatch(count)}
+                      disabled={disabled}
+                      className="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-md border border-sky-400/45 bg-sky-500/20 px-3 text-xs font-black text-sky-100 hover:bg-sky-500/30 disabled:cursor-not-allowed disabled:opacity-45"
+                      title={
+                        pendingQueueItems.length >= count
+                          ? `대기열 첫 ${count}편을 10분 간격으로 제작 시작`
+                          : `대기 작업이 ${count}편보다 적습니다`
+                      }
+                    >
+                      {isStarting ? <Loader2 size={13} className="animate-spin" /> : <PlayCircle size={13} />}
+                      {isStarting ? "시작 중" : `다음 ${count}편 제작`}
+                    </button>
+                  );
+                })}
+                <button
+                  type="button"
                   onClick={() => setQueuePanelOpen(true)}
                   className="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-md border border-blue-400/40 bg-blue-400/15 px-3 text-xs font-bold text-blue-100 hover:bg-blue-400/25"
                 >
@@ -3164,7 +3266,7 @@ export default function LivePage() {
                               disabled={recoveryBulkQueuing || recoveringId === item.task_id}
                               className="shrink-0 rounded-md border border-emerald-400/30 bg-emerald-400/10 px-2.5 py-1 text-xs font-semibold text-emerald-200 hover:bg-emerald-400/15 disabled:opacity-50"
                             >
-                              {recoveringId === item.task_id ? "처리 중..." : "큐 복귀"}
+                              {recoveringId === item.task_id ? "처리 중..." : "백업 후 재제작"}
                             </button>
                           </div>
                         ))}
@@ -3202,7 +3304,7 @@ export default function LivePage() {
                               disabled={recoveryBulkQueuing || recoveringId === item.task_id}
                               className="shrink-0 rounded-md border border-red-400/30 bg-red-400/10 px-2.5 py-1 text-xs font-semibold text-red-200 hover:bg-red-400/15 disabled:opacity-50"
                             >
-                              {recoveringId === item.task_id ? "처리 중..." : "큐 상단으로"}
+                              {recoveringId === item.task_id ? "처리 중..." : "자료 유지 복구"}
                             </button>
                           </div>
                         ))}
@@ -3225,7 +3327,7 @@ export default function LivePage() {
                               disabled={recoveryBulkQueuing || recoveringId === item.project_id}
                               className="shrink-0 rounded-md border border-amber-400/30 bg-amber-400/10 px-2.5 py-1 text-xs font-semibold text-amber-200 hover:bg-amber-400/15 disabled:opacity-50"
                             >
-                              {recoveringId === item.project_id ? "처리 중..." : "큐 상단으로"}
+                              {recoveringId === item.project_id ? "처리 중..." : "자료 유지 복구"}
                             </button>
                           </div>
                         ))}

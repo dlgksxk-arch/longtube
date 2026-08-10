@@ -32,10 +32,11 @@ from app.config import (
     resolve_cut_video_duration,
     resolve_cut_video_duration_for_audio,
     resolve_project_dir,
+    should_burn_cut_level_subtitles,
 )
 from app.services.video.factory import DEFAULT_VIDEO_MODEL, get_video_service, resolve_video_model
 from app.services.video.ffmpeg_service import FFmpegService
-from app.services.subtitle_service import burn_cut_subtitle_file
+from app.services.subtitle_service import burn_cut_variety_highlight_file
 
 router = APIRouter()
 
@@ -78,8 +79,10 @@ def _timeline_for_audio(
     audio_path: str | None = None,
 ) -> tuple[float, float, float]:
     speech_duration = float(audio_duration or 0.0)
-    if speech_duration <= 0 and audio_path:
-        speech_duration = _probe_media_seconds(audio_path)
+    if audio_path:
+        measured_duration = _probe_media_seconds(audio_path)
+        if measured_duration > 0:
+            speech_duration = measured_duration
     clip_duration = resolve_cut_video_duration_for_audio(config, speech_duration, default=fallback_duration)
     return (
         float(clip_duration),
@@ -88,20 +91,96 @@ def _timeline_for_audio(
     )
 
 
+def _cut_mux_resolution(aspect_ratio: str) -> str:
+    if aspect_ratio == "9:16":
+        return "1080x1920"
+    if aspect_ratio == "1:1":
+        return "1080x1080"
+    if aspect_ratio == "3:4":
+        return "1080x1440"
+    return "1920x1080"
+
+
 def _probe_media_seconds(path: str) -> float:
     try:
         import subprocess as _sp
         from app.services.video.subprocess_helper import find_ffmpeg
-        ffprobe = find_ffmpeg().replace("ffmpeg", "ffprobe")
-        out = _sp.check_output(
-            [ffprobe, "-v", "error", "-show_entries", "format=duration",
-             "-of", "default=noprint_wrappers=1:nokey=1", path],
+        ffmpeg = find_ffmpeg()
+        ffprobe = Path(ffmpeg).with_name("ffprobe.exe")
+        if ffprobe.exists():
+            out = _sp.check_output(
+                [str(ffprobe), "-v", "error", "-show_entries", "format=duration",
+                 "-of", "default=noprint_wrappers=1:nokey=1", path],
+                timeout=10,
+            )
+            return float((out or b"0").decode().strip() or 0.0)
+        proc = _sp.run(
+            [ffmpeg, "-hide_banner", "-i", path],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=10,
+            check=False,
         )
-        return float((out or b"0").decode().strip() or 0.0)
+        import re as _re
+        m = _re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", proc.stderr or "")
+        if not m:
+            return 0.0
+        return int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
     except Exception as exc:
         _vlog(f"media duration probe failed path={path}: {exc}")
         return 0.0
+
+
+def _cut_video_needs_regeneration(project_dir: Path, cut: Cut) -> bool:
+    """Regenerate missing clips and clips older than their image or audio input."""
+    if not cut.video_path:
+        return True
+
+    def _absolute(value: str | None) -> Path | None:
+        if not value:
+            return None
+        path = Path(value)
+        return path if path.is_absolute() else project_dir / path
+
+    video_path = _absolute(cut.video_path)
+    if video_path is None or not video_path.exists() or video_path.stat().st_size <= 0:
+        return True
+    video_mtime = video_path.stat().st_mtime_ns
+    for source_value in (cut.image_path, cut.audio_path):
+        source_path = _absolute(source_value)
+        if source_path is not None and source_path.exists() and source_path.stat().st_mtime_ns > video_mtime:
+            return True
+    return False
+
+
+def _restore_cut_media_paths_from_disk(project_dir: Path, cuts: list[Cut]) -> int:
+    """Restore missing DB media paths from committed per-cut files on disk."""
+    restored = 0
+    media_specs = (
+        ("image_path", "images", ".png"),
+        ("audio_path", "audio", ".mp3"),
+        ("video_path", "videos", ".mp4"),
+    )
+    for cut in cuts:
+        cut_number = int(cut.cut_number)
+        for attr, directory, suffix in media_specs:
+            if getattr(cut, attr, None):
+                continue
+            candidates = (
+                project_dir / directory / f"cut_{cut_number}{suffix}",
+                project_dir / directory / f"cut_{cut_number:03d}{suffix}",
+            )
+            existing = next(
+                (path for path in candidates if path.exists() and path.stat().st_size > 0),
+                None,
+            )
+            if existing is None:
+                continue
+            setattr(cut, attr, existing.relative_to(project_dir).as_posix())
+            restored += 1
+    return restored
 
 
 def _load_script_cut_map(project_id: str) -> dict[int, dict]:
@@ -433,12 +512,12 @@ async def _generate_one_cut_safe(
     if force_safe_motion:
         await safe_motion_service.generate(
             image_path=img_abs,
-            audio_path=aud_abs,
+            audio_path=None,
             duration=duration,
             output_path=output_path,
             aspect_ratio=aspect_ratio,
             prompt=motion_prompt,
-            audio_start_offset=audio_start_offset,
+            audio_start_offset=0.0,
         )
         return output_path, "ffmpeg_safe_motion"
 
@@ -446,12 +525,12 @@ async def _generate_one_cut_safe(
     if not use_ai:
         await static_service.generate(
             image_path=img_abs,
-            audio_path=aud_abs,
+            audio_path=None,
             duration=duration,
             output_path=output_path,
             aspect_ratio=aspect_ratio,
             prompt=motion_prompt,
-            audio_start_offset=audio_start_offset,
+            audio_start_offset=0.0,
         )
         return output_path, "ffmpeg_selection"
 
@@ -477,12 +556,12 @@ async def _generate_one_cut_safe(
             _vlog(f"_gen_safe cut={cut_number} attempt={attempt} → primary.generate() 호출")
             await primary_service.generate(
                 image_path=img_abs,
-                audio_path=aud_abs,
+                audio_path=None,
                 duration=duration,
                 output_path=output_path,
                 aspect_ratio=aspect_ratio,
                 prompt=motion_prompt,
-                audio_start_offset=audio_start_offset,
+                audio_start_offset=0.0,
             )
             _vlog(f"_gen_safe cut={cut_number} attempt={attempt} PRIMARY SUCCESS")
             return output_path, "ai"
@@ -785,29 +864,44 @@ async def generate_all_videos(project_id: str, db: Session = Depends(get_db)):
                 cut_duration,
                 cut_audio_abs,
             )
+            cut.audio_duration = speech_duration
 
             result_path = await svc.generate(
                 image_path=_to_absolute(project_id, cut.image_path),
-                audio_path=cut_audio_abs,
+                audio_path=None,
                 duration=clip_duration,
                 output_path=video_path,
                 aspect_ratio=aspect_ratio,
                 prompt=motion_prompt,
-                audio_start_offset=audio_start_offset,
+                audio_start_offset=0.0,
             )
-            narration = (
-                (script_cut_map.get(int(cut.cut_number), {}) or {}).get("narration")
-                or cut.narration
-                or ""
-            )
-            await burn_cut_subtitle_file(
-                result_path,
-                narration,
-                aspect_ratio=aspect_ratio,
-                style_config=(project.config or {}).get("subtitle_style") or {},
-                duration=float(speech_duration),
-                start_offset=audio_start_offset,
-            )
+            mux_tmp = str(Path(result_path).with_suffix(".mux.mp4"))
+            try:
+                await FFmpegService.mux_cut_audio(
+                    video_path=result_path,
+                    audio_path=cut_audio_abs,
+                    output_path=mux_tmp,
+                    duration=float(clip_duration),
+                    audio_start_offset=float(audio_start_offset),
+                    resolution=_cut_mux_resolution(aspect_ratio),
+                )
+                import shutil as _shutil
+                _shutil.move(mux_tmp, result_path)
+            finally:
+                try:
+                    Path(mux_tmp).unlink(missing_ok=True)
+                except Exception:
+                    pass
+            if should_burn_cut_level_subtitles(project.config or {}):
+                script_cut = script_cut_map.get(int(cut.cut_number), {}) or {}
+                await burn_cut_variety_highlight_file(
+                    result_path,
+                    script_cut,
+                    aspect_ratio=aspect_ratio,
+                    duration=float(clip_duration),
+                    panel_mode=str((project.config or {}).get("variety_highlight_panel_mode") or "emotion_auto"),
+                    fixed_panel=str((project.config or {}).get("variety_highlight_style") or "neutral"),
+                )
 
             cut.video_path = _to_relative(project_id, result_path)
             cut.video_model = used_model
@@ -845,9 +939,11 @@ async def generate_all_videos(project_id: str, db: Session = Depends(get_db)):
     merged_path = None
     if clip_paths:
         try:
-            ffmpeg_service = FFmpegService()
             merged_path = str(video_dir / "merged.mp4")
-            await ffmpeg_service.merge_videos(clip_paths, merged_path)
+            from app.services.remotion_longform_renderer import render_remotion_longform
+            await render_remotion_longform(
+                clip_paths, merged_path, resolution=_cut_mux_resolution(aspect_ratio)
+            )
 
             # Mark step completed
             step_states = dict(project.step_states or {})
@@ -996,6 +1092,10 @@ async def generate_all_videos_async(project_id: str, db: Session = Depends(get_d
             v_dir.mkdir(parents=True, exist_ok=True)
 
             cuts = local_db.query(Cut).filter(Cut.project_id == project_id).order_by(Cut.cut_number).all()
+            restored_paths = _restore_cut_media_paths_from_disk(v_dir.parent, cuts)
+            if restored_paths:
+                local_db.commit()
+                _vlog(f"_run restored {restored_paths} missing cut media paths from disk")
             total = len(cuts)
             _vlog(f"_run loaded {total} cuts from DB")
             script_cut_map = _load_script_cut_map(project_id)
@@ -1138,21 +1238,34 @@ async def generate_all_videos_async(project_id: str, db: Session = Depends(get_d
                             ),
                             timeout=720,  # 12분
                         )
+                        mux_tmp = str(Path(result_path).with_suffix(".mux.mp4"))
+                        try:
+                            await FFmpegService.mux_cut_audio(
+                                video_path=result_path,
+                                audio_path=aud_abs,
+                                output_path=mux_tmp,
+                                duration=float(clip_duration),
+                                audio_start_offset=float(audio_start_offset),
+                                resolution=_cut_mux_resolution(aspect_ratio),
+                            )
+                            import shutil as _shutil
+                            _shutil.move(mux_tmp, result_path)
+                        finally:
+                            try:
+                                Path(mux_tmp).unlink(missing_ok=True)
+                            except Exception:
+                                pass
                         elapsed = _t.time() - _s
                         print(f"[video-async] cut {cut_number} DONE in {elapsed:.1f}s (source={source})")
-                        narration = (
-                            (spec.get("script_cut") or {}).get("narration")
-                            or spec.get("narration")
-                            or ""
-                        )
-                        await burn_cut_subtitle_file(
-                            result_path,
-                            narration,
-                            aspect_ratio=aspect_ratio,
-                            style_config=(proj_config or {}).get("subtitle_style") or {},
-                            duration=float(speech_duration),
-                            start_offset=audio_start_offset,
-                        )
+                        if should_burn_cut_level_subtitles(proj_config):
+                            await burn_cut_variety_highlight_file(
+                                result_path,
+                                spec.get("script_cut") or {},
+                                aspect_ratio=aspect_ratio,
+                                duration=float(clip_duration),
+                                panel_mode=str((proj_config or {}).get("variety_highlight_panel_mode") or "emotion_auto"),
+                                fixed_panel=str((proj_config or {}).get("variety_highlight_style") or "neutral"),
+                            )
                         counts[source] += 1
                         cut_results[cut_number] = result_path
 
@@ -1163,6 +1276,7 @@ async def generate_all_videos_async(project_id: str, db: Session = Depends(get_d
                                 Cut.cut_number == cut_number,
                             ).first()
                             if wc:
+                                wc.audio_duration = speech_duration
                                 wc.video_path = _to_relative(project_id, result_path)
                                 if source == "ai":
                                     wc.video_model = video_model
@@ -1234,8 +1348,10 @@ async def generate_all_videos_async(project_id: str, db: Session = Depends(get_d
             merge_ok = True
             if clip_paths:
                 try:
-                    ffmpeg_svc = FFmpegService()
-                    await ffmpeg_svc.merge_videos(clip_paths, str(v_dir / "merged.mp4"))
+                    from app.services.remotion_longform_renderer import render_remotion_longform
+                    await render_remotion_longform(
+                        clip_paths, str(v_dir / "merged.mp4"), resolution=_cut_mux_resolution(aspect_ratio)
+                    )
                 except Exception as merge_err:
                     import traceback
                     merge_tb = traceback.format_exc()
@@ -1258,12 +1374,6 @@ async def generate_all_videos_async(project_id: str, db: Session = Depends(get_d
             proj = local_db.query(Project).filter(Project.id == project_id).first()
             ss = dict(proj.step_states or {})
             if clip_paths:
-                ss["5"] = "completed"
-                proj.step_states = ss
-                local_db.commit()
-                complete_task(project_id, "video")
-                print(f"[video-async] DONE: {len(clip_paths)}/{len(cuts)} clips succeeded")
-
                 # Auto-compose final_with_interludes.mp4 if interlude clips exist
                 if merge_ok:
                     try:
@@ -1309,6 +1419,15 @@ async def generate_all_videos_async(project_id: str, db: Session = Depends(get_d
                     with open(_auto_render_log, "a", encoding="utf-8") as _lf:
                         _lf.write(f"auto-render FAILED: {re}\n{tb}\n")
                     print(f"[video-async] auto-render FAILED (non-fatal): {re}")
+
+                # Step 5 must stay running until the internal render exits.  Otherwise
+                # one-click observes completion and starts Step 6 against the same
+                # tmp_render files while this render is still writing them.
+                ss["5"] = "completed"
+                proj.step_states = ss
+                local_db.commit()
+                complete_task(project_id, "video")
+                print(f"[video-async] DONE: {len(clip_paths)}/{len(cuts)} clips succeeded")
             else:
                 ss["5"] = "failed"
                 proj.step_states = ss
@@ -1362,7 +1481,15 @@ async def resume_videos_async(project_id: str, db: Session = Depends(get_db)):
         return {"status": "already_running", "step": "video"}
 
     cuts = db.query(Cut).filter(Cut.project_id == project_id).order_by(Cut.cut_number).all()
-    pending_cuts = [c for c in cuts if not c.video_path and c.image_path and c.audio_path]
+    project_dir = resolve_project_dir(project_id, project.config or {}, create=False)
+    restored_paths = _restore_cut_media_paths_from_disk(project_dir, cuts)
+    if restored_paths:
+        db.commit()
+        _vlog(f"resume restored {restored_paths} missing cut media paths from disk")
+    pending_cuts = [
+        c for c in cuts
+        if c.image_path and c.audio_path and _cut_video_needs_regeneration(project_dir, c)
+    ]
     if not pending_cuts:
         return {"status": "nothing_to_resume", "step": "video", "total": 0}
 
@@ -1439,8 +1566,10 @@ async def resume_videos_async(project_id: str, db: Session = Depends(get_db)):
 
             pending_specs = []
             for c in db_cuts:
-                should_generate = not c.video_path
-                if c.video_path:
+                should_generate = _cut_video_needs_regeneration(v_dir.parent, c)
+                if should_generate and c.video_path:
+                    print(f"[video-resume] cut {c.cut_number} source image/audio is newer than clip - regenerate")
+                if not should_generate and c.video_path:
                     existing_video = _to_absolute(project_id, c.video_path)
                     expected_duration, _, _ = _timeline_for_audio(
                         proj_config,
@@ -1566,21 +1695,34 @@ async def resume_videos_async(project_id: str, db: Session = Depends(get_db)):
                             ),
                             timeout=720,
                         )
+                        mux_tmp = str(Path(result_path).with_suffix(".mux.mp4"))
+                        try:
+                            await FFmpegService.mux_cut_audio(
+                                video_path=result_path,
+                                audio_path=aud_abs,
+                                output_path=mux_tmp,
+                                duration=float(clip_duration),
+                                audio_start_offset=float(audio_start_offset),
+                                resolution=_cut_mux_resolution(aspect_ratio),
+                            )
+                            import shutil as _shutil
+                            _shutil.move(mux_tmp, result_path)
+                        finally:
+                            try:
+                                Path(mux_tmp).unlink(missing_ok=True)
+                            except Exception:
+                                pass
                         elapsed = _t.time() - _s
                         print(f"[video-resume] cut {cut_number} DONE in {elapsed:.1f}s (source={source})")
-                        narration = (
-                            (spec.get("script_cut") or {}).get("narration")
-                            or spec.get("narration")
-                            or ""
-                        )
-                        await burn_cut_subtitle_file(
-                            result_path,
-                            narration,
-                            aspect_ratio=aspect_ratio,
-                            style_config=(proj_config or {}).get("subtitle_style") or {},
-                            duration=float(speech_duration),
-                            start_offset=audio_start_offset,
-                        )
+                        if should_burn_cut_level_subtitles(proj_config):
+                            await burn_cut_variety_highlight_file(
+                                result_path,
+                                spec.get("script_cut") or {},
+                                aspect_ratio=aspect_ratio,
+                                duration=float(clip_duration),
+                                panel_mode=str((proj_config or {}).get("variety_highlight_panel_mode") or "emotion_auto"),
+                                fixed_panel=str((proj_config or {}).get("variety_highlight_style") or "neutral"),
+                            )
                         counts[source] += 1
                         cut_results[cut_number] = result_path
 
@@ -1664,8 +1806,10 @@ async def resume_videos_async(project_id: str, db: Session = Depends(get_db)):
                 ordered_clips = []
             if ordered_clips:
                 try:
-                    ffmpeg_svc = FFmpegService()
-                    await ffmpeg_svc.merge_videos(ordered_clips, str(v_dir / "merged.mp4"))
+                    from app.services.remotion_longform_renderer import render_remotion_longform
+                    await render_remotion_longform(
+                        ordered_clips, str(v_dir / "merged.mp4"), resolution=_cut_mux_resolution(aspect_ratio)
+                    )
                 except Exception as merge_err:
                     import traceback
                     merge_tb = traceback.format_exc()

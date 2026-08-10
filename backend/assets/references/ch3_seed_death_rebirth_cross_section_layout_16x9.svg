@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <defs>
+    <linearGradient id="sky76" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#a9cfda"/>
+      <stop offset="1" stop-color="#d9e2d2"/>
+    </linearGradient>
+    <linearGradient id="soil76" x1="0" y1="0" x2="0.8" y2="1">
+      <stop offset="0" stop-color="#986742"/>
+      <stop offset="0.5" stop-color="#795038"/>
+      <stop offset="1" stop-color="#654532"/>
+    </linearGradient>
+    <linearGradient id="shell76" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#efe0ba"/>
+      <stop offset="1" stop-color="#b99462"/>
+    </linearGradient>
+    <linearGradient id="shoot76" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#4f7138"/>
+      <stop offset="1" stop-color="#94ba54"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1280" height="720" fill="url(#sky76)"/>
+  <path d="M0 315 Q173 299 348 319 T704 312 T1034 318 T1280 306 L1280 720 L0 720 Z" fill="url(#soil76)"/>
+  <path d="M0 315 Q173 299 348 319 T704 312 T1034 318 T1280 306" fill="none" stroke="#503728" stroke-width="14"/>
+  <g fill="none" stroke="#4d3529" stroke-width="6" opacity="0.35">
+    <path d="M0 423 Q216 393 420 429 M851 418 Q1053 388 1280 427"/>
+    <path d="M0 605 Q236 638 448 596 M816 609 Q1040 640 1280 594"/>
+  </g>
+  <g fill="#bc8a5b" opacity="0.44">
+    <circle cx="78" cy="369" r="7"/><circle cx="181" cy="547" r="6"/><circle cx="309" cy="389" r="5"/>
+    <circle cx="451" cy="653" r="7"/><circle cx="814" cy="370" r="6"/><circle cx="972" cy="566" r="7"/>
+    <circle cx="1168" cy="386" r="5"/><circle cx="1230" cy="647" r="6"/>
+  </g>
+
+  <!-- One cracked seed remains at the soil boundary. -->
+  <g id="single-seed-shell76" stroke="#4c3a2b" stroke-linejoin="round">
+    <path d="M548 301 C575 268 623 260 650 292 L626 335 C598 354 563 343 548 301 Z" fill="url(#shell76)" stroke-width="12"/>
+    <path d="M651 292 C684 260 733 270 751 309 C732 344 695 355 666 334 Z" fill="url(#shell76)" stroke-width="12"/>
+    <path d="M650 292 L626 335 M651 292 L666 334" fill="none" stroke="#806044" stroke-width="7"/>
+  </g>
+
+  <!-- A single curved shoot with one lateral leaf; deliberately no bilateral body-like symmetry. -->
+  <g id="single-shoot76" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M646 307 C631 259 643 217 681 181 C713 150 724 117 717 80" fill="none" stroke="#34502e" stroke-width="24"/>
+    <path d="M646 307 C634 258 648 220 685 185 C711 160 719 126 715 88" fill="none" stroke="url(#shoot76)" stroke-width="14"/>
+    <path d="M690 177 C733 130 797 132 832 153 C808 196 756 215 699 191 Z" fill="#799d50" stroke="#314b2d" stroke-width="11"/>
+    <path d="M703 185 Q757 173 811 155" fill="none" stroke="#46673a" stroke-width="6"/>
+  </g>
+
+  <!-- One asymmetrical tapering root with short alternating rootlets; no forked legs. -->
+  <g id="single-root76" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M646 332 C634 392 669 425 648 477 C631 520 645 557 616 610 C603 633 594 655 591 685" stroke="#55402e" stroke-width="25" opacity="0.35"/>
+    <path d="M646 332 C634 392 669 425 648 477 C631 520 645 557 616 610 C603 633 594 655 591 685" stroke="#e8dcc0" stroke-width="15"/>
+    <path d="M652 414 C701 433 724 445 749 469" stroke="#e8dcc0" stroke-width="9"/>
+    <path d="M642 493 C601 507 579 522 558 548" stroke="#e8dcc0" stroke-width="8"/>
+    <path d="M626 573 C659 590 677 608 687 632" stroke="#e8dcc0" stroke-width="7"/>
+    <path d="M746 467 L762 476 M561 546 L546 557 M685 629 L694 643" stroke="#e8dcc0" stroke-width="4"/>
+  </g>
+</svg>

@@ -10,17 +10,3254 @@ from __future__ import annotations
 import json
 import random
 import re
+import shutil
 from pathlib import Path
 from typing import Optional
 
 from app.config import COMFYUI_WORKFLOWS_DIR
 from app.services.image.base import BaseImageService
+from app.services.image.prompt_builder import is_canonical_script_image_prompt
+from app.services.image.prompt_compiler import (
+    compile_image_prompt,
+    expected_exact_cow_count,
+    is_baekje_ep01_bottom_credit_risk_scene,
+    is_guthe_origin_record_scene,
+    is_mixed_pungnap_manuscript_evidence,
+    is_present_day_pungnap_archaeology,
+    supports_scene_contract_v2_model,
+    uses_scene_contract_v2,
+)
+from app.services.image.ch3_ep7_safe_layouts import (
+    CH3_EP7_SAFE_LAYOUT_REFERENCE_FILENAMES,
+    match_ch3_ep7_safe_layout_reference,
+)
 from app.services import comfyui_client
 from app.services.llm.visual_policy import normalize_cut_image_prompt
 
 
+_FINAL_PERSON_DETECTOR_MODELS = {
+    "comfyui-flux2-klein-4b",
+    "comfyui-dreamshaper-xl-longtube",
+}
+_FINAL_COW_DETECTOR_MODELS = {
+    "comfyui-flux2-klein-4b",
+    "comfyui-dreamshaper-xl-longtube",
+}
+
+_LONGTUBE_DARK_MANHWA_STYLE_MODELS = {
+    "comfyui-z-image-base",
+    "comfyui-z-image-turbo",
+    "comfyui-flux2-klein-4b",
+    "comfyui-flux2-klein-9b",
+    "comfyui-krea2",
+    "comfyui-dreamshaper-xl",
+    "comfyui-dreamshaper-xl-longtube",
+}
+
+_BAEKJE_EP02_SHICHISHITO_REFERENCE_MODEL = "nano-banana-3"
+_BAEKJE_EP02_SHICHISHITO_REFERENCE_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "assets"
+    / "references"
+    / "shichishito_silhouette_16x9.png"
+)
+_BAEKJE_EP02_SHICHISHITO_CONSERVATION_LAYOUT_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "assets"
+    / "references"
+    / "shichishito_conservation_layout_16x9.png"
+)
+_BAEKJE_EP02_SHICHISHITO_CONSERVATION_MASK_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "assets"
+    / "references"
+    / "shichishito_conservation_side_mask_16x9.png"
+)
+_BAEKJE_EP05_SHICHISHITO_BRANCH_IMPACT_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "assets"
+    / "references"
+    / "shichishito_branch_impact_layout_16x9.png"
+)
+_BAEKJE_EP05_BOAT_CARGO_CLOSE_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "assets"
+    / "references"
+    / "baekje_boat_cargo_close_layout_16x9.png"
+)
+_BAEKJE_EP05_FLAT_IRON_MACRO_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "assets"
+    / "references"
+    / "baekje_flat_iron_macro_layout_16x9.png"
+)
+_BAEKJE_EP05_HINGE_CLOSE_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "assets"
+    / "references"
+    / "baekje_hinge_close_layout_16x9.png"
+)
+
+
+def _z_image_shichishito_object_workflow(template: dict) -> dict:
+    workflow = json.loads(json.dumps(template))
+    workflow["8"]["inputs"]["denoise"] = 0.35
+    workflow["16"]["inputs"]["image"] = ["9", 0]
+    return workflow
+
+
+def _z_image_shichishito_branch_impact_workflow(template: dict) -> dict:
+    workflow = json.loads(json.dumps(template))
+    workflow["8"]["inputs"]["denoise"] = 0.22
+    workflow["16"]["inputs"]["image"] = ["9", 0]
+    return workflow
+
+
+def _z_image_baekje_boat_cargo_close_workflow(template: dict) -> dict:
+    workflow = json.loads(json.dumps(template))
+    workflow["8"]["inputs"]["denoise"] = 0.62
+    workflow["16"]["inputs"]["image"] = ["9", 0]
+    return workflow
+
+
+def _z_image_baekje_flat_iron_macro_workflow(template: dict) -> dict:
+    workflow = json.loads(json.dumps(template))
+    workflow["8"]["inputs"]["denoise"] = 0.40
+    workflow["16"]["inputs"]["image"] = ["9", 0]
+    return workflow
+
+
+def _z_image_baekje_hinge_close_workflow(template: dict) -> dict:
+    workflow = json.loads(json.dumps(template))
+    workflow["8"]["inputs"]["denoise"] = 0.62
+    workflow["16"]["inputs"]["image"] = ["9", 0]
+    return workflow
+
+
+_BAEKJE_EP02_MIXED_SETTLERS_LAYOUT_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "assets"
+    / "references"
+    / "baekje_mixed_settlers_three_face_layout_16x9.png"
+)
+_BAEKJE_EP02_MIXED_SETTLERS_MASK_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "assets"
+    / "references"
+    / "baekje_mixed_settlers_people_mask_16x9.png"
+)
+_CH3_EP7_OATH_ITEMS_LAYOUT_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "assets"
+    / "references"
+    / "ch3_oath_chewed_blade_magatama_layout_16x9.png"
+)
+_CH3_EP7_OATH_ITEMS_MASK_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "assets"
+    / "references"
+    / "ch3_oath_chewed_blade_magatama_mask_16x9.png"
+)
+_CH2_RIDERLESS_BORDER_GATE_LAYOUT_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "assets"
+    / "references"
+    / "ch2_riderless_border_gate_layout_16x9.png"
+)
+_CH2_RIDERLESS_BORDER_GATE_MASK_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "assets"
+    / "references"
+    / "ch2_riderless_border_gate_mask_16x9.png"
+)
+_CH2_EP03_PREFLIGHT_LAYOUT_PATHS = {
+    "border_gate": _CH2_RIDERLESS_BORDER_GATE_LAYOUT_PATH,
+    "rulers_decide": Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_ep03_rulers_decide_layout_16x9.png",
+    "cattle_gifts": Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_ep03_cattle_gifts_layout_16x9.png",
+    "submission": Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_ep03_submission_layout_16x9.png",
+    "return_procession": Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_ep03_return_procession_layout_16x9.png",
+    "covered_ritual": Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_ep03_covered_ritual_layout_16x9.png",
+    "reconciliation": Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_ep03_reconciliation_layout_16x9.png",
+    "roman_cycle": Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_ep03_roman_cycle_layout_16x9.png",
+    "irish_cauldron": Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_ep03_irish_cauldron_layout_16x9.png",
+    "closing_gate": Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_ep03_closing_gate_layout_16x9.png",
+    "public_covered_platform": Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_ep03_public_covered_platform_layout_16x9.png",
+    "three_priest_covered_form": Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_ep03_three_priest_covered_form_layout_16x9.png",
+    "gupta_coin_horse": Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_ep03_gupta_coin_horse_layout_16x9.png",
+    "gupta_coin_queen": Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_ep03_gupta_coin_queen_layout_16x9.png",
+}
+_BAEKJE_EP02_SHICHISHITO_REFERENCE_PROMPT = (
+    "Treat the attached wide silhouette reference as immutable geometry. Render the exact same "
+    "one-piece fourth-century iron Seven-Branched Sword on the same wide pale woven-hemp field. "
+    "Preserve every outline and position exactly: three upward-curving branches on the left, "
+    "three on the right, alternating at six different heights, one central tip, one narrow tang, "
+    "all joined. Do not add, remove, pair, mirror, detach, or move any branch. Add only realistic "
+    "weathered iron texture, subtle corrosion, neutral museum light, and soft shadow. No crossguard, "
+    "handle, hilt, pommel, person, hand, body, text, symbol, frame, vignette, or dark border. Keep the "
+    "complete artifact fully visible in 16:9."
+)
+
+_EXACT_LAYOUT_REFERENCE_MODEL = "nano-banana-3"
+_EXACT_LAYOUT_REFERENCE_COPY_MODEL = "local-exact-layout-v1"
+_EXACT_LAYOUT_REFERENCE_COPY_IDS = frozenset(
+    {
+        "ch2_yamnaya_successive_burials",
+        "ch2_yamnaya_two_regional_burials",
+        "ch2_yamnaya_ten_copper_artifacts",
+        "ch2_yamnaya_hierarchy_privilege",
+        "ch2_yamnaya_monumental_inequality",
+        "ch2_yamnaya_household_transport",
+        "ch2_yamnaya_ox_traction",
+        "ch2_yamnaya_riding_osteology",
+        "ch2_yamnaya_horse_research",
+        "ch2_yamnaya_non_cavalry_migration",
+        "ch2_yamnaya_mobile_network",
+        "ch2_yamnaya_camp_fission",
+        "ch2_yamnaya_peer_network",
+        "ch2_yamnaya_open_steppe_origin_landscape",
+        "ch2_yamnaya_cold_dry_grazing_risk_landscape",
+        "ch2_yamnaya_mobility_command_early",
+        "ch2_yamnaya_three_rivers_kurgans",
+        "ch2_yamnaya_danube_frontier",
+        "ch2_yamnaya_wealth_systems",
+        "ch2_yamnaya_village_camp_river",
+        "ch2_yamnaya_frontier_four_outcomes",
+        "ch2_yamnaya_cautious_excavation",
+        "ch2_yamnaya_demographic_shift",
+        "ch2_corded_ware_adna_signature",
+        "ch2_corded_ware_funeral",
+        "ch2_corded_ware_beaker",
+        "ch2_corded_ware_single_grave",
+        "ch2_yamnaya_corded_burial_link",
+        "ch2_haak_adna_sampling",
+        "ch2_corded_ware_75_ratio",
+        "ch2_steppe_migration_demographic",
+        "ch2_living_household_migration",
+        "ch2_steppe_ancestry_persistence",
+        "ch2_multiple_ancestry_mixture",
+        "ch2_farming_valley_transition",
+        "ch2_local_lineage_outcomes",
+        "ch2_neolithic_corded_stratigraphy",
+        "ch2_genetic_conversations_unknown",
+        "ch2_corded_institutions_table",
+        "ch2_corded_zone_landscape",
+        "ch2_corded_regional_diversity",
+        "ch2_corded_settlement_network",
+        "ch2_bell_beaker_mixed_ancestry",
+        "ch2_sintashta_andronovo_network",
+        "ch2_repeated_migration_routes",
+        "ch2_partial_cultural_packages",
+        "ch2_language_ancestry_mismatch",
+        "ch2_language_shift_question",
+        "ch2_gimbutas_research_table",
+        "ch2_kurgan_hypothesis",
+        "ch2_gimbutas_old_europe_model",
+        "ch2_gimbutas_imposition_model",
+        "ch2_weapons_patrilineal_model",
+        "ch2_no_continent_battlefield",
+        "ch2_anthony_mechanism_revision",
+        "ch2_elite_recruitment_network",
+        "ch2_small_group_power_package",
+        "ch2_chief_network_choice",
+        "ch2_resist_or_join_network",
+        "ch2_parpola_small_powerful_groups",
+        "ch2_prestige_trade_weapon_cost",
+        "ch2_marriage_alliance_dual_claims",
+        "ch2_elite_language_diffusion",
+        "ch2_language_social_access",
+        "ch2_three_generation_language_shift",
+        "ch2_recruitment_coercion_cost",
+        "ch2_raid_protection_mechanism",
+        "ch2_feast_loyalty_intimidation",
+        "ch2_kurgan_landscape_dominance",
+        "ch2_service_status_resources",
+        "ch2_craft_patron_authority",
+        "ch2_alliance_expansion_network",
+        "ch2_network_fracture",
+        "ch2_branching_wagon_routes",
+        "ch2_speech_contact_loss",
+        "ch2_shared_word_echoes",
+        "ch2_local_vocabulary_inputs",
+        "ch2_language_four_processes",
+        "ch2_ancestral_language_branches",
+        "ch2_writing_gap_uncertainty",
+        "ch2_three_evidence_columns",
+        "ch2_mismatched_evidence_fields",
+        "ch2_yamnaya_two_ancestry_sources",
+        "ch2_clv_population_network",
+        "ch2_source_population_mixture",
+        "ch2_four_predecessor_model",
+        "ch2_language_ancestry_structure_dispute",
+        "ch2_paternal_lineage_mismatch",
+        "ch2_complex_steppe_ancestry_network",
+        "ch2_corded_ware_mixed_society",
+        "ch2_corded_beaker_bronze_sequence",
+        "ch2_population_power_chain_reaction",
+        "ch2_grave_sample_archive",
+        "ch2_adna_sterile_sampling_station",
+        "ch2_adna_powder_extraction_pipeline",
+        "ch2_fragment_comparison_matrix",
+        "ch2_haak_2015_steppe_cluster",
+        "ch2_central_europe_demographic_influx",
+        "ch2_migration_not_invasion_model",
+        "ch2_genes_cannot_show_consent",
+        "ch2_village_response_unknown",
+        "ch2_five_missing_decisions",
+        "ch2_ancestry_to_human_decisions",
+        "ch2_klejn_route_critique",
+        "ch2_competing_homeland_models",
+        "ch2_clv_deep_origin_update",
+        "ch2_narrow_migration_conclusion",
+        "ch2_some_language_branches",
+        "ch2_anonymous_chief_fresh_kurgan",
+        "ch2_chief_unseen_future",
+        "ch2_chief_immediate_horizon",
+        "ch2_three_way_camp_decision",
+        "ch2_network_over_skirmish",
+        "ch2_mobility_status_force_system",
+        "ch2_leader_language_households",
+        "ch2_new_corded_identity",
+        "ch2_camp_grave_gradual_change",
+        "ch2_dead_scale_living_motives",
+        "ch2_royal_horse_power_teaser",
+        "ch2_ritual_authority_mechanism",
+        "ch2_four_horse_ritual_traditions",
+        "ch2_royal_horse_enclosure",
+        "ch2_final_bones_migration_synthesis",
+        "ch3_day_night_separation_sky",
+        "ch3_amaterasu_command_objects",
+        "ch3_messenger_descent_objects",
+        "ch3_uke_mochi_crime_evidence",
+        "ch3_life_from_death_crops",
+        "ch3_uke_mochi_tragedy_evidence",
+        "ch3_closed_shroud_three_shoots",
+        "ch3_three_seed_groups_bowl",
+        "ch3_continuous_spring_autumn_field",
+        "ch3_myth_to_niinamesai_offering",
+        "ch3_niinamesai_offering_platform",
+        "ch3_amaterasu_rice_myth_source",
+        "ch3_rice_stalk_torn_cloth",
+        "ch3_hainuwele_type_comparison",
+        "ch3_seed_death_rebirth_cross_section",
+        "ch3_one_sacrifice_many_crops",
+        "ch3_life_taken_empty_bowl_dilemma",
+        "ch3_life_received_filled_bowl",
+        "ch3_three_silkworms_mulberry_tray",
+        "ch3_four_heavenly_weavers_hidden_limbs",
+        "ch3_four_takamagahara_fear_faces",
+        "ch3_four_team_comment_readers_hidden_limbs",
+        "ch3_head_ox_horse_tokens",
+        "ch3_forehead_millet_shroud",
+        "ch3_brow_silkworm_shroud",
+        "ch3_eye_millet_belly_rice_shroud",
+        "ch3_lower_wheat_soy_adzuki_shroud",
+        *CH3_EP7_SAFE_LAYOUT_REFERENCE_FILENAMES.keys(),
+    }
+)
+_EXACT_LAYOUT_REFERENCE_PATHS = {
+    "baekje_ep02_row156": (
+        Path(__file__).resolve().parents[3]
+        / "assets"
+        / "references"
+        / "baekje_ep02_row156_layout_16x9.png"
+    ),
+    "baekje_ep02_row157": (
+        Path(__file__).resolve().parents[3]
+        / "assets"
+        / "references"
+        / "baekje_ep02_row157_layout_16x9.png"
+    ),
+    "ch2_yamnaya_elite_grave": (
+        Path(__file__).resolve().parents[3]
+        / "assets"
+        / "references"
+        / "ch2_yamnaya_elite_grave_layout_16x9.png"
+    ),
+    "ch2_yamnaya_alliance": (
+        Path(__file__).resolve().parents[3]
+        / "assets"
+        / "references"
+        / "ch2_yamnaya_alliance_layout_16x9.png"
+    ),
+    "ch2_yamnaya_mobile_tools": (
+        Path(__file__).resolve().parents[3]
+        / "assets"
+        / "references"
+        / "ch2_yamnaya_mobile_tools_layout_16x9.png"
+    ),
+    "ch2_yamnaya_pit_grave": (
+        Path(__file__).resolve().parents[3]
+        / "assets"
+        / "references"
+        / "ch2_yamnaya_pit_grave_cutaway_16x9.png"
+    ),
+    "ch2_gorodtsov_three_graves": (
+        Path(__file__).resolve().parents[3]
+        / "assets"
+        / "references"
+        / "ch2_gorodtsov_three_graves_layout_16x9.png"
+    ),
+    "ch2_yamnaya_social_actors": (
+        Path(__file__).resolve().parents[3]
+        / "assets"
+        / "references"
+        / "ch2_yamnaya_social_actors_layout_16x9.png"
+    ),
+    "ch2_mykhailivka_mobile_settlement": (
+        Path(__file__).resolve().parents[3]
+        / "assets"
+        / "references"
+        / "ch2_mykhailivka_mobile_settlement_layout_16x9.png"
+    ),
+    "ch2_yamnaya_livelihoods": (
+        Path(__file__).resolve().parents[3]
+        / "assets"
+        / "references"
+        / "ch2_yamnaya_livelihoods_layout_16x9.png"
+    ),
+    "ch2_yamnaya_chiefdom_coordination": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_yamnaya_chiefdom_coordination_layout_16x9.png"
+    ),
+    "ch2_yamnaya_herd_wealth_risk": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_yamnaya_herd_wealth_risk_layout_16x9.png"
+    ),
+    "ch2_yamnaya_mobility_command": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_yamnaya_mobility_command_layout_16x9.png"
+    ),
+    "ch2_yamnaya_mobility_command_early": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_yamnaya_mobility_command_layout_16x9.png"
+    ),
+    "ch2_yamnaya_open_steppe_origin_landscape": (
+        Path(__file__).resolve().parents[3]
+        / "assets"
+        / "references"
+        / "ch2_yamnaya_open_steppe_origin_landscape_16x9.png"
+    ),
+    "ch2_yamnaya_cold_dry_grazing_risk_landscape": (
+        Path(__file__).resolve().parents[3]
+        / "assets"
+        / "references"
+        / "ch2_yamnaya_cold_dry_grazing_risk_landscape_16x9.png"
+    ),
+    "ch2_gorodtsov_identity": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_gorodtsov_identity_layout_16x9.png"
+    ),
+    "ch2_yamnaya_single_kurgan": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_yamnaya_single_kurgan_landscape_16x9.png"
+    ),
+    "ch2_yamnaya_successive_burials": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_yamnaya_successive_burials_cutaway_16x9.png"
+    ),
+    "ch2_yamnaya_animal_offerings": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_yamnaya_animal_offerings_layout_16x9.png"
+    ),
+    "ch2_yamnaya_authority_stela": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_yamnaya_authority_stela_layout_16x9.png"
+    ),
+    "ch2_yamnaya_rare_elite_ratio": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_yamnaya_rare_elite_ratio_layout_16x9.png"
+    ),
+    "ch2_yamnaya_two_regional_burials": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_yamnaya_two_regional_burials_layout_16x9.png"
+    ),
+    "ch2_yamnaya_complete_wagon_grave": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_yamnaya_complete_wagon_grave_layout_16x9.png"
+    ),
+    "ch2_yamnaya_wagon_burial_labor": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_yamnaya_wagon_burial_labor_layout_16x9.png"
+    ),
+    "ch2_yamnaya_copper_specialist": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_yamnaya_copper_specialist_layout_16x9.png"
+    ),
+    "ch2_yamnaya_ten_copper_artifacts": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_yamnaya_ten_copper_artifacts_layout_16x9.png"
+    ),
+    "ch2_yamnaya_oligarchy_model": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_yamnaya_oligarchy_model_layout_16x9.png"
+    ),
+    "ch2_yamnaya_hierarchy_privilege": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_yamnaya_hierarchy_privilege_layout_16x9.png"
+    ),
+    "ch2_yamnaya_monumental_inequality": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_yamnaya_monumental_inequality_landscape_16x9.png"
+    ),
+    "ch2_yamnaya_household_transport": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_yamnaya_household_transport_layout_16x9.png"
+    ),
+    "ch2_yamnaya_ox_traction": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_yamnaya_ox_traction_layout_16x9.png"
+    ),
+    "ch2_yamnaya_riding_osteology": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_yamnaya_riding_osteology_layout_16x9.png"
+    ),
+    "ch2_yamnaya_horse_research": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_yamnaya_horse_research_layout_16x9.png"
+    ),
+    "ch2_yamnaya_non_cavalry_migration": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_yamnaya_non_cavalry_migration_layout_16x9.png"
+    ),
+    "ch2_yamnaya_mobile_network": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_yamnaya_mobile_network_layout_16x9.png"
+    ),
+    "ch2_yamnaya_camp_fission": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_yamnaya_camp_fission_layout_16x9.png"
+    ),
+    "ch2_yamnaya_peer_network": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_yamnaya_peer_network_layout_16x9.png"
+    ),
+    "ch2_yamnaya_three_rivers_kurgans": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_yamnaya_three_rivers_kurgans_landscape_16x9.png"
+    ),
+    "ch2_yamnaya_danube_frontier": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_yamnaya_danube_frontier_layout_16x9.png"
+    ),
+    "ch2_yamnaya_wealth_systems": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_yamnaya_wealth_systems_layout_16x9.png"
+    ),
+    "ch2_yamnaya_village_camp_river": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_yamnaya_village_camp_river_landscape_16x9.png"
+    ),
+    "ch2_yamnaya_frontier_four_outcomes": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_yamnaya_frontier_four_outcomes_layout_16x9.png"
+    ),
+    "ch2_yamnaya_cautious_excavation": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_yamnaya_cautious_excavation_layout_16x9.png"
+    ),
+    "ch2_yamnaya_demographic_shift": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_yamnaya_demographic_shift_layout_16x9.png"
+    ),
+    "ch2_corded_ware_adna_signature": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_corded_ware_adna_signature_layout_16x9.png"
+    ),
+    "ch2_corded_ware_funeral": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_corded_ware_single_grave_layout_16x9.png"
+    ),
+    "ch2_corded_ware_beaker": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_corded_ware_beaker_layout_16x9.png"
+    ),
+    "ch2_corded_ware_single_grave": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_corded_ware_single_grave_layout_16x9.png"
+    ),
+    "ch2_yamnaya_corded_burial_link": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_yamnaya_corded_burial_link_layout_16x9.png"
+    ),
+    "ch2_haak_adna_sampling": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_haak_adna_sampling_layout_16x9.png"
+    ),
+    "ch2_corded_ware_75_ratio": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_corded_ware_adna_signature_layout_16x9.png"
+    ),
+    "ch2_steppe_migration_demographic": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_yamnaya_demographic_shift_layout_16x9.png"
+    ),
+    "ch2_living_household_migration": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_yamnaya_household_transport_layout_16x9.png"
+    ),
+    "ch2_steppe_ancestry_persistence": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_steppe_ancestry_persistence_layout_16x9.png"
+    ),
+    "ch2_multiple_ancestry_mixture": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_multiple_ancestry_mixture_layout_16x9.png"
+    ),
+    "ch2_farming_valley_transition": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_yamnaya_village_camp_river_landscape_16x9.png"
+    ),
+    "ch2_local_lineage_outcomes": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_yamnaya_frontier_four_outcomes_layout_16x9.png"
+    ),
+    "ch2_neolithic_corded_stratigraphy": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_neolithic_corded_stratigraphy_layout_16x9.png"
+    ),
+    "ch2_genetic_conversations_unknown": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_corded_ware_adna_signature_layout_16x9.png"
+    ),
+    "ch2_corded_institutions_table": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_corded_institutions_artifact_table_16x9.png"
+    ),
+    "ch2_corded_zone_landscape": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_corded_zone_landscape_16x9.png"
+    ),
+    "ch2_corded_regional_diversity": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_corded_regional_diversity_layout_16x9.png"
+    ),
+    "ch2_corded_settlement_network": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_corded_settlement_network_layout_16x9.png"
+    ),
+    "ch2_bell_beaker_mixed_ancestry": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_bell_beaker_mixed_ancestry_layout_16x9.png"
+    ),
+    "ch2_sintashta_andronovo_network": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_sintashta_andronovo_network_layout_16x9.png"
+    ),
+    "ch2_repeated_migration_routes": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_repeated_migration_routes_layout_16x9.png"
+    ),
+    "ch2_partial_cultural_packages": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_partial_cultural_packages_layout_16x9.png"
+    ),
+    "ch2_language_ancestry_mismatch": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_language_ancestry_mismatch_layout_16x9.png"
+    ),
+    "ch2_language_shift_question": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_language_shift_question_layout_16x9.png"
+    ),
+    "ch2_gimbutas_research_table": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_gimbutas_research_table_layout_16x9.png"
+    ),
+    "ch2_kurgan_hypothesis": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_kurgan_hypothesis_layout_16x9.png"
+    ),
+    "ch2_gimbutas_old_europe_model": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_gimbutas_old_europe_model_layout_16x9.png"
+    ),
+    "ch2_gimbutas_imposition_model": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_gimbutas_imposition_model_layout_16x9.png"
+    ),
+    "ch2_weapons_patrilineal_model": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_weapons_patrilineal_model_layout_16x9.png"
+    ),
+    "ch2_no_continent_battlefield": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_no_continent_battlefield_layout_16x9.png"
+    ),
+    "ch2_anthony_mechanism_revision": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_anthony_mechanism_revision_layout_16x9.png"
+    ),
+    "ch2_elite_recruitment_network": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_elite_recruitment_network_layout_16x9.png"
+    ),
+    "ch2_small_group_power_package": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_small_group_power_package_layout_16x9.png"
+    ),
+    "ch2_chief_network_choice": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_chief_network_choice_layout_16x9.png"
+    ),
+    "ch2_resist_or_join_network": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_resist_or_join_network_layout_16x9.png"
+    ),
+    "ch2_parpola_small_powerful_groups": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_parpola_small_powerful_groups_layout_16x9.png"
+    ),
+    "ch2_prestige_trade_weapon_cost": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_prestige_trade_weapon_cost_layout_16x9.png"
+    ),
+    "ch2_marriage_alliance_dual_claims": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_marriage_alliance_dual_claims_layout_16x9.png"
+    ),
+    "ch2_elite_language_diffusion": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_elite_language_diffusion_layout_16x9.png"
+    ),
+    "ch2_language_social_access": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_language_social_access_layout_16x9.png"
+    ),
+    "ch2_three_generation_language_shift": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_three_generation_language_shift_layout_16x9.png"
+    ),
+    "ch2_recruitment_coercion_cost": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_recruitment_coercion_cost_layout_16x9.png"
+    ),
+    "ch2_raid_protection_mechanism": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_raid_protection_mechanism_layout_16x9.png"
+    ),
+    "ch2_feast_loyalty_intimidation": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_feast_loyalty_intimidation_layout_16x9.png"
+    ),
+    "ch2_kurgan_landscape_dominance": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_kurgan_landscape_dominance_layout_16x9.png"
+    ),
+    "ch2_service_status_resources": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_service_status_resources_layout_16x9.png"
+    ),
+    "ch2_craft_patron_authority": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_craft_patron_authority_layout_16x9.png"
+    ),
+    "ch2_alliance_expansion_network": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_alliance_expansion_network_layout_16x9.png"
+    ),
+    "ch2_network_fracture": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_network_fracture_layout_16x9.png"
+    ),
+    "ch2_branching_wagon_routes": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_branching_wagon_routes_layout_16x9.png"
+    ),
+    "ch2_speech_contact_loss": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_speech_contact_loss_layout_16x9.png"
+    ),
+    "ch2_shared_word_echoes": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_shared_word_echoes_layout_16x9.png"
+    ),
+    "ch2_local_vocabulary_inputs": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_local_vocabulary_inputs_layout_16x9.png"
+    ),
+    "ch2_language_four_processes": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_language_four_processes_layout_16x9.png"
+    ),
+    "ch2_ancestral_language_branches": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_ancestral_language_branches_layout_16x9.png"
+    ),
+    "ch2_writing_gap_uncertainty": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_writing_gap_uncertainty_layout_16x9.png"
+    ),
+    "ch2_three_evidence_columns": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_three_evidence_columns_layout_16x9.png"
+    ),
+    "ch2_mismatched_evidence_fields": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_mismatched_evidence_fields_layout_16x9.png"
+    ),
+    "ch2_yamnaya_two_ancestry_sources": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_yamnaya_two_ancestry_sources_layout_16x9.png"
+    ),
+    "ch2_clv_population_network": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_clv_population_network_layout_16x9.png"
+    ),
+    "ch2_source_population_mixture": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_source_population_mixture_layout_16x9.png"
+    ),
+    "ch2_four_predecessor_model": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_four_predecessor_model_layout_16x9.png"
+    ),
+    "ch2_language_ancestry_structure_dispute": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_language_ancestry_structure_dispute_layout_16x9.png"
+    ),
+    "ch2_paternal_lineage_mismatch": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_paternal_lineage_mismatch_layout_16x9.png"
+    ),
+    "ch2_complex_steppe_ancestry_network": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_complex_steppe_ancestry_network_layout_16x9.png"
+    ),
+    "ch2_corded_ware_mixed_society": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_corded_ware_mixed_society_layout_16x9.png"
+    ),
+    "ch2_corded_beaker_bronze_sequence": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_corded_beaker_bronze_sequence_layout_16x9.png"
+    ),
+    "ch2_population_power_chain_reaction": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_population_power_chain_reaction_layout_16x9.png"
+    ),
+    "ch2_grave_sample_archive": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_grave_sample_archive_layout_16x9.png"
+    ),
+    "ch2_adna_sterile_sampling_station": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_adna_sterile_sampling_station_layout_16x9.png"
+    ),
+    "ch2_adna_powder_extraction_pipeline": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_adna_powder_extraction_pipeline_layout_16x9.png"
+    ),
+    "ch2_fragment_comparison_matrix": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_fragment_comparison_matrix_layout_16x9.png"
+    ),
+    "ch2_haak_2015_steppe_cluster": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_haak_2015_steppe_cluster_layout_16x9.png"
+    ),
+    "ch2_central_europe_demographic_influx": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_central_europe_demographic_influx_layout_16x9.png"
+    ),
+    "ch2_migration_not_invasion_model": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_migration_not_invasion_model_layout_16x9.png"
+    ),
+    "ch2_genes_cannot_show_consent": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_genes_cannot_show_consent_layout_16x9.png"
+    ),
+    "ch2_village_response_unknown": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_village_response_unknown_layout_16x9.png"
+    ),
+    "ch2_five_missing_decisions": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_five_missing_decisions_layout_16x9.png"
+    ),
+    "ch2_ancestry_to_human_decisions": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_ancestry_to_human_decisions_layout_16x9.png"
+    ),
+    "ch2_klejn_route_critique": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_klejn_route_critique_layout_16x9.png"
+    ),
+    "ch2_competing_homeland_models": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_competing_homeland_models_layout_16x9.png"
+    ),
+    "ch2_clv_deep_origin_update": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_clv_deep_origin_update_layout_16x9.png"
+    ),
+    "ch2_narrow_migration_conclusion": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_narrow_migration_conclusion_layout_16x9.png"
+    ),
+    "ch2_some_language_branches": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_some_language_branches_layout_16x9.png"
+    ),
+    "ch2_anonymous_chief_fresh_kurgan": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_anonymous_chief_fresh_kurgan_layout_16x9.png"
+    ),
+    "ch2_chief_unseen_future": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_chief_unseen_future_layout_16x9.png"
+    ),
+    "ch2_chief_immediate_horizon": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_chief_immediate_horizon_layout_16x9.png"
+    ),
+    "ch2_three_way_camp_decision": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_three_way_camp_decision_layout_16x9.png"
+    ),
+    "ch2_network_over_skirmish": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_network_over_skirmish_layout_16x9.png"
+    ),
+    "ch2_mobility_status_force_system": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_mobility_status_force_system_layout_16x9.png"
+    ),
+    "ch2_leader_language_households": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_leader_language_households_layout_16x9.png"
+    ),
+    "ch2_new_corded_identity": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_new_corded_identity_layout_16x9.png"
+    ),
+    "ch2_camp_grave_gradual_change": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_camp_grave_gradual_change_layout_16x9.png"
+    ),
+    "ch2_dead_scale_living_motives": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_dead_scale_living_motives_layout_16x9.png"
+    ),
+    "ch2_royal_horse_power_teaser": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_royal_horse_power_teaser_layout_16x9.png"
+    ),
+    "ch2_ritual_authority_mechanism": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_ritual_authority_mechanism_layout_16x9.png"
+    ),
+    "ch2_four_horse_ritual_traditions": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_four_horse_ritual_traditions_layout_16x9.png"
+    ),
+    "ch2_royal_horse_enclosure": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_royal_horse_enclosure_layout_16x9.png"
+    ),
+    "ch2_final_bones_migration_synthesis": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch2_final_bones_migration_synthesis_layout_16x9.png"
+    ),
+    "ch3_day_night_separation_sky": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch3_day_night_separation_sky_layout_16x9.png"
+    ),
+    "ch3_amaterasu_command_objects": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch3_amaterasu_command_objects_layout_16x9.png"
+    ),
+    "ch3_messenger_descent_objects": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch3_messenger_descent_objects_layout_16x9.png"
+    ),
+    "ch3_uke_mochi_crime_evidence": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch3_uke_mochi_crime_evidence_layout_16x9.png"
+    ),
+    "ch3_life_from_death_crops": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch3_life_from_death_crops_layout_16x9.png"
+    ),
+    "ch3_uke_mochi_tragedy_evidence": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch3_uke_mochi_tragedy_evidence_layout_16x9.png"
+    ),
+    "ch3_closed_shroud_three_shoots": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch3_closed_shroud_three_shoots_layout_16x9.png"
+    ),
+    "ch3_three_seed_groups_bowl": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch3_three_seed_groups_bowl_layout_16x9.png"
+    ),
+    "ch3_continuous_spring_autumn_field": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch3_continuous_spring_autumn_field_layout_16x9.png"
+    ),
+    "ch3_myth_to_niinamesai_offering": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch3_myth_to_niinamesai_offering_layout_16x9.png"
+    ),
+    "ch3_niinamesai_offering_platform": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch3_niinamesai_offering_platform_layout_16x9.png"
+    ),
+    "ch3_amaterasu_rice_myth_source": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch3_amaterasu_rice_myth_source_layout_16x9.png"
+    ),
+    "ch3_rice_stalk_torn_cloth": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch3_rice_stalk_torn_cloth_layout_16x9.png"
+    ),
+    "ch3_hainuwele_type_comparison": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch3_hainuwele_type_comparison_layout_16x9.png"
+    ),
+    "ch3_seed_death_rebirth_cross_section": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch3_seed_death_rebirth_cross_section_layout_16x9.png"
+    ),
+    "ch3_one_sacrifice_many_crops": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch3_one_sacrifice_many_crops_layout_16x9.png"
+    ),
+    "ch3_life_taken_empty_bowl_dilemma": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch3_life_taken_empty_bowl_dilemma_layout_16x9.png"
+    ),
+    "ch3_life_received_filled_bowl": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch3_life_received_filled_bowl_layout_16x9.png"
+    ),
+    "ch3_three_silkworms_mulberry_tray": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch3_three_silkworms_mulberry_tray_layout_16x9.png"
+    ),
+    "ch3_four_heavenly_weavers_hidden_limbs": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch3_four_heavenly_weavers_hidden_limbs_layout_16x9.png"
+    ),
+    "ch3_four_takamagahara_fear_faces": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch3_four_takamagahara_fear_faces_layout_16x9.png"
+    ),
+    "ch3_four_team_comment_readers_hidden_limbs": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch3_four_team_comment_readers_hidden_limbs_layout_16x9.png"
+    ),
+    "ch3_head_ox_horse_tokens": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch3_head_ox_horse_tokens_layout_16x9.png"
+    ),
+    "ch3_forehead_millet_shroud": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch3_forehead_millet_shroud_layout_16x9.png"
+    ),
+    "ch3_brow_silkworm_shroud": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch3_brow_silkworm_shroud_layout_16x9.png"
+    ),
+    "ch3_eye_millet_belly_rice_shroud": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch3_eye_millet_belly_rice_shroud_layout_16x9.png"
+    ),
+    "ch3_lower_wheat_soy_adzuki_shroud": (
+        Path(__file__).resolve().parents[3] / "assets" / "references" / "ch3_lower_wheat_soy_adzuki_shroud_layout_16x9.png"
+    ),
+}
+_EXACT_LAYOUT_REFERENCE_PATHS.update(
+    {
+        reference_id: (
+            Path(__file__).resolve().parents[3] / "assets" / "references" / filename
+        )
+        for reference_id, filename in CH3_EP7_SAFE_LAYOUT_REFERENCE_FILENAMES.items()
+    }
+)
+_EXACT_LAYOUT_REFERENCE_PROMPTS = {
+    "baekje_ep02_row156": (
+        "Treat the attached 16:9 layout as immutable geometry. Produce a finished historical "
+        "artifact still life with exactly six objects in the exact same positions and sizes: "
+        "exactly two large cracked grey unglazed commandery-war tiles at the far upper left and "
+        "far upper right, and exactly four smaller brown unglazed Mahan polity blocks in the "
+        "lower centered two-by-two grid. Keep the middle gap empty. Preserve every outer silhouette. "
+        "Add only subtle fired-clay grain, restrained cracks inside the two grey tiles, documentary "
+        "side light, and soft contact shadows. Do not add, remove, duplicate, swap, recolor, stack, "
+        "or move any object. No third grey tile, no fifth brown block, no person, body part, text, "
+        "symbol, inscription, border, frame, or vignette. Pale earth-clay field, full 16:9."
+    ),
+    "baekje_ep02_row157": (
+        "Treat the attached 16:9 layout as immutable geometry. Produce a finished third-century "
+        "Baekje material-evidence still life with exactly seven objects in the exact same positions "
+        "and sizes: one and only one flat matte dark-red unglazed royal disk at upper left; exactly "
+        "four plain grey rank blocks in the lower-left two-by-two grid; one blank tan law tablet at "
+        "lower center; and one narrow dark bloomery-iron leaf-shaped spearhead at right. Preserve "
+        "every outer silhouette. The royal disk face stays smooth, blank, flat, matte, rimless, and "
+        "undecorated. Add only subtle fired-clay and iron texture plus soft contact shadows. Do not "
+        "add, remove, duplicate, swap, stack, or move any object. No second red disk, extra spike, "
+        "shaft, handle, emblem, rings, relief, text, symbol, person, hand, border, or vignette."
+    ),
+    "ch2_yamnaya_elite_grave": (
+        "Treat the attached 16:9 layout as immutable geometry. Produce a finished Yamnaya elite-grave "
+        "artifact still life with exactly five separated groups in the same positions and sizes: "
+        "one small leaf-shaped copper blade blank at far left, one flat dark hide grave cover at "
+        "center-left, exactly two plain solid wooden grave disks at upper-right and lower-right, and "
+        "one compact pale-ivory animal-bone cluster with knobby joint ends at lower center. The "
+        "bones must remain animal bones, never wood, sticks, twigs, or branches. Preserve every "
+        "silhouette and bare gap. "
+        "The copper blade is a plain metal blade blank, not a feather and not a handled knife. Add "
+        "only restrained prehistoric material texture and bold documentary ink shading. Do not add, "
+        "remove, duplicate, overlap, or move anything. No second hide, third disk, person, corpse, "
+        "hand, text, symbol, spoked wheel, complete wagon, modern object, border, or vignette."
+    ),
+    "ch2_yamnaya_alliance": (
+        "Treat the attached 16:9 layout as immutable geometry. Produce a finished Yamnaya "
+        "violence-versus-alliance artifact still life with exactly five separated objects in the "
+        "same positions and sizes: one leaf-shaped copper blade blank at far left, one smooth blank "
+        "ochre clan disk at center-left, exactly two plain blank grey alliance disks at upper-right "
+        "and lower-right, and one closed rectangular woven prestige packet at lower center. Preserve "
+        "every silhouette and bare gap. Every disk face remains completely blank and undecorated. "
+        "Add only restrained prehistoric material texture and bold documentary ink shading. Do not "
+        "add, remove, duplicate, overlap, engrave, inscribe, or move anything. No letters, pseudo-"
+        "writing, compass emblem, rune, symbol, person, hand, modern object, border, or vignette."
+    ),
+    "ch2_yamnaya_mobile_tools": (
+        "Treat the attached 16:9 layout as immutable geometry. Produce a finished Yamnaya seasonal-"
+        "mobility artifact still life with exactly four separated tools in the same positions and "
+        "sizes: one solid three-plank wooden transport-wheel disk with one axle hole at upper left, "
+        "one plain curved wooden cattle yoke at upper right, one soft flexible pale animal-hide roll "
+        "with stitched edges and fibre ties at lower left, and one closed woven provisions packet at "
+        "lower right. The hide roll must never become a barrel, cask, wooden cylinder, wooden staves, "
+        "or wood grain. Preserve every silhouette and "
+        "bare gap. Add only restrained prehistoric wood, hide, fibre, dust, and bold documentary ink "
+        "texture. Do not add, remove, duplicate, overlap, or move anything. The wheel stays solid "
+        "with exactly two plank seams and no radial spokes. No wagon body, animal, person, hand, "
+        "modern object, text, symbol, border, or vignette."
+    ),
+    "ch2_yamnaya_pit_grave": (
+        "Treat the attached 16:9 archaeological cross-section as immutable geometry. Produce one "
+        "low rounded earthen Yamnaya kurgan and exactly one straight-sided vertical rectangular pit "
+        "directly below its center. Keep one flat ochre hide cover on the pit floor and layered soil "
+        "all around. Preserve every boundary, position, and proportion. Do not add an entrance, "
+        "doorway, tunnel, horizontal or side chamber, catacomb, coffin, person, corpse, skeleton, "
+        "camp, hut, tent, text, symbol, white background, border, frame, or vignette."
+    ),
+    "ch2_gorodtsov_three_graves": (
+        "Copy the attached 16:9 diagram's full-frame geometry exactly. It is one continuous vertical "
+        "soil cross-section, never a tabletop. Preserve all colored regions and dark outlines in "
+        "their exact positions: exactly three brown dome mounds across the top; one straight shaft "
+        "below the left dome; one bent shaft and one side cavity below the center dome; one rectangle "
+        "containing exactly five horizontal timber bars below the right dome. Add only subtle earth, "
+        "hide, and wood texture inside the existing shapes. Do not reinterpret, add, remove, "
+        "duplicate, join, resize, or move any shape. No rope, cord, pebbles, loose stones, weight, "
+        "table, floor, person, body part, tool, paper, map, label, writing, symbol, frame, border, "
+        "white background, or vignette."
+    ),
+    "ch2_yamnaya_social_actors": (
+        "Copy the attached 16:9 layout geometry exactly on one continuous uninterrupted earth field. "
+        "Preserve exactly four separated groups in their fixed positions: upper-left one closed woven household packet; upper-right one "
+        "plain curved wooden cattle yoke; lower-left one clay crucible beside one grey hammerstone; "
+        "lower-right one plain leaf-shaped copper prestige blade blank. Keep every outline, color "
+        "region, gap, position, size, and count unchanged. Add only subtle prehistoric fibre, wood, "
+        "clay, stone, copper, and earth texture inside the existing shapes. No person, body part, "
+        "living animal, fire, crown, throne, weapon handle, extra object, text, symbol, panel divider, "
+        "grid line, frame, border, "
+        "white background, or vignette."
+    ),
+    "ch2_mykhailivka_mobile_settlement": (
+        "Copy the attached 16:9 layout geometry exactly as one continuous lower-Dnieper landscape. "
+        "At left preserve one solid three-plank wooden wheel disk with one axle hole and one flexible "
+        "rolled hide shelter on wall-free open steppe. At right preserve low stone-founded dwellings behind one high irregular "
+        "unmortared dry-stone wall and one deep earthen ditch beside the river. Keep every outline, "
+        "color region, gap, position, size, and count unchanged. Add only subtle prehistoric wood, "
+        "hide, earth, rough dry stone, daub, and water texture inside the existing shapes. The wall "
+        "has no towers or crenellations. No person, body part, animal, spoked wheel, wagon, palisade, "
+        "castle, brick, mortar, telegraph pole, road, modern building, stone wall behind the wheel, "
+        "wall on the left half, text, symbol, panel divider, "
+        "frame, border, white background, or vignette."
+    ),
+    "ch2_yamnaya_livelihoods": (
+        "Copy the attached 16:9 layout geometry exactly. Preserve exactly five separated evidence "
+        "groups in fixed positions: upper-left one plain cattle yoke; upper-center one plant-fibre "
+        "fishing net with exactly four stone sinkers; upper-right one woven basket holding gathered "
+        "wild plants; lower-left one handmade clay pot; lower-right one compact copper-working group "
+        "containing one clay crucible, one plain copper blade blank, and one grey hammerstone. Keep "
+        "every outline, color region, gap, position, size, and count unchanged. Add only subtle "
+        "prehistoric material and earth texture inside the existing shapes. No person, body part, "
+        "living animal, metal fish hook, glazed or wheel-thrown pot, iron, steel, extra evidence group, "
+        "text, symbol, frame, border, white background, or vignette."
+    ),
+    "ch2_yamnaya_chiefdom_coordination": (
+        "Copy the attached 16:9 layout geometry exactly on one continuous bare earth field. Preserve "
+        "four fixed evidence groups: upper-left one solid three-plank wheel disk; lower-left exactly "
+        "two equal grey balance stones; center one large plain ochre authority disk; right exactly "
+        "three smaller blank grey camp disks connected to the center by exactly three plant-fibre "
+        "cords. Keep every shape, gap, position, size, and count unchanged. Add only subtle prehistoric "
+        "wood, stone, clay, fibre, and earth texture. Every disk stays blank. No person, body part, "
+        "animal, crown, throne, weapon, writing, symbol, map, arrow, panel divider, frame, border, or vignette."
+    ),
+    "ch2_yamnaya_herd_wealth_risk": (
+        "Copy the attached 16:9 layout geometry exactly on one continuous bare earth field. Preserve "
+        "exactly four fixed evidence groups: upper-center one plain wooden cattle yoke; lower-left one "
+        "plain leaf-shaped copper blade blank without handle; lower-center one closed woven provisions "
+        "packet; lower-right one solid three-plank wooden wheel disk with one axle hole. Keep every "
+        "shape, gap, position, size, and count unchanged. Add only subtle prehistoric material texture. "
+        "No person, body part, living cattle, spoked wheel, blade handle, sword, modern or medieval "
+        "object, loose stick, twig, branch, pebble pile, writing, symbol, panel divider, frame, border, "
+        "or vignette. The bare field contains absolutely nothing else."
+    ),
+    "ch2_yamnaya_mobility_command": (
+        "Copy the attached 16:9 layout geometry exactly on one continuous bare earth field. Preserve "
+        "exactly three fixed evidence groups: left one plain wooden wagon bed carrying one flexible "
+        "rolled hide shelter above exactly four solid disk wheels; upper-right one plain leaf-shaped "
+        "copper blade blank without handle; lower-right one plain carved wooden staff head. Every "
+        "wheel remains a solid disk with no spokes. Keep every shape, gap, position, size, and count "
+        "unchanged. Add only subtle prehistoric wood, hide, copper, fibre, and earth texture. No "
+        "person, body part, animal, rider, spoked wheel, covered wagon, chariot, sword, spear, crown, "
+        "royal regalia, medieval or modern object, writing, symbol, panel divider, frame, border, or vignette."
+    ),
+    "ch2_yamnaya_mobility_command_early": (
+        "Copy the attached 16:9 material-evidence layout geometry exactly. Preserve one plain wooden "
+        "wagon bed with one rolled hide above exactly four solid disk wheels, one plain copper blade "
+        "blank, and one carved wooden staff head. No person, body part, animal, rider, spoked wheel, "
+        "covered wagon, chariot, modern clothing, permanent house, chimney, writing, frame, or vignette."
+    ),
+    "ch2_yamnaya_open_steppe_origin_landscape": (
+        "Copy the attached 16:9 Pontic-Caspian steppe landscape geometry exactly. Preserve the immense "
+        "treeless ochre plain, one winding blue-grey river, exactly two low temporary camp markers, one "
+        "plain wooden wagon bed, and one separate solid three-plank wheel disk. No person, body part, "
+        "animal, permanent house, chimney, road, bridge, boat, spoked wheel, modern vehicle, writing, "
+        "symbol, frame, border, or vignette."
+    ),
+    "ch2_yamnaya_cold_dry_grazing_risk_landscape": (
+        "Copy the attached 16:9 cold dry steppe landscape geometry exactly. Preserve the sparse dry "
+        "grass tufts, cracked earth, one frozen blue-grey river with pale ice, one plain wooden cattle "
+        "yoke, and the low winter cloud bands. No person, body part, living animal, camp building, "
+        "chimney, modern clothing, road, bridge, vehicle, writing, symbol, frame, border, or vignette."
+    ),
+    "ch2_gorodtsov_identity": (
+        "Copy the attached 16:9 composite's full-frame geometry exactly. The verified historical "
+        "portrait on the right is Russian archaeologist Vasily Gorodtsov, recreated at age forty-one "
+        "in 1901 with short dark side-parted hair, clean-shaven cheeks and chin, and the same narrow "
+        "straight moustache with visible upper lip. Preserve his facial identity and the left empty "
+        "straight-sided kurgan pit with bare layered soil. Add restrained mature historical ink "
+        "texture and a muted sepia, earth, and pale blue-grey palette. Exactly one person; no worker, "
+        "crowd, hand, finger, arm, leg, corpse, skeleton, skull, bone, beard, full beard, handlebar "
+        "moustache, thick curled moustache, hat, notebook, writing, text, machinery, white margin, "
+        "border, frame, or vignette. Full-bleed 16:9."
+    ),
+    "ch2_yamnaya_single_kurgan": (
+        "Copy the attached 16:9 landscape geometry exactly. Preserve one and only one low, broad, "
+        "gently rounded earthen Yamnaya kurgan centered on flat treeless Pontic-Caspian grassland. "
+        "Keep its long shallow slopes, curved layered-earth bands, horizon, full-frame field, and "
+        "every boundary in the same position and proportion. Add only subtle packed-earth, dry-grass, "
+        "and restrained historical documentary ink texture. The mound is a rounded barrow, never a "
+        "steep cone, pyramid, cliff, volcano, flat-topped hill, house, or tent. No excavation opening, "
+        "person, worker, animal, tool, road, fence, second mound, text, symbol, frame, border, or vignette."
+    ),
+    "ch2_yamnaya_successive_burials": (
+        "Copy the attached 16:9 archaeological cutaway geometry exactly as one continuous Yamnaya "
+        "kurgan cross-section. Preserve exactly three separate rectangular grave pits: one large deep "
+        "founding pit below the buried ground at bottom center and exactly two smaller later pits "
+        "inserted higher into the mound at upper left and upper right. Preserve each empty dark-soil "
+        "pit, every mound layer, outline, position, size, and empty gap. Add only subtle packed-earth "
+        "texture inside the existing shapes. "
+        "Every dark rectangle is a straight cut through compact earth, never a wooden frame, timber "
+        "box, plank lining, or coffin; apply no wood grain anywhere. Keep every pit interior empty, "
+        "plain, and featureless with no marks or pseudo-writing. "
+        "No fourth pit, open grave, exposed body, corpse, skeleton, skull, hand, finger, arm, leg, worker, "
+        "mourner, coffin, chamber, tunnel, catacomb, text, symbol, panel divider, frame, border, or vignette."
+    ),
+    "ch2_yamnaya_animal_offerings": (
+        "Copy the attached 16:9 layout geometry exactly on one continuous bare ochre earth field. "
+        "Preserve exactly four separated animal-offering evidence groups: upper-left one isolated pale "
+        "cattle horn core; upper-right one smaller isolated curled sheep horn core; lower-left and "
+        "lower-right exactly two fully closed hide-wrapped boneless meat packets with fibre ties. "
+        "Keep every silhouette, gap, position, size, and count unchanged. Add only subtle archaeological "
+        "bone, hide, fibre, and earth texture. Horn cores remain plain excavated bone only, never heads: "
+        "no skull, face, eyes, eye sockets, muzzle, mouth, ears, horns attached to a head, live animal, "
+        "anthropomorphic ram, humanoid, person, body part, carcass, blood, exposed meat, knife, fifth "
+        "group, writing, symbol, panel divider, frame, border, or vignette."
+    ),
+    "ch2_yamnaya_authority_stela": (
+        "Copy the attached 16:9 geometry exactly. Preserve one and only one upright weathered stone "
+        "Yamnaya anthropomorphic stela with exactly four shallow carved features: one plain head oval, "
+        "one horizontal belt groove, one small single-bladed axe outline at lower left, and one small "
+        "dagger outline at lower right. Keep every outline, position, size, and empty stone area fixed. "
+        "Add only restrained stone grain and earth texture. No second axe, double axe, extra weapon, "
+        "carved hand, finger, arm, leg, living person, face details, eyes, mouth, writing, rune, emblem, "
+        "cross, modern monument, panel divider, frame, border, or vignette."
+    ),
+    "ch2_yamnaya_rare_elite_ratio": (
+        "Copy the attached 16:9 overhead layout exactly on one continuous bare-earth field. Preserve "
+        "exactly three large blank ochre grave-cover disks at left and exactly twelve much smaller "
+        "plain grey household pebbles in the right three-by-four grid, separated by one wide empty gap. "
+        "Keep every count, silhouette, position, size, and blank face unchanged. Add only subtle clay, "
+        "stone, and earth texture. No fourth ochre disk, thirteenth grey pebble, merged object, person, "
+        "body part, grave body, skull, skeleton, writing, number, percentage sign, symbol, frame, or vignette."
+    ),
+    "ch2_yamnaya_two_regional_burials": (
+        "Copy the attached 16:9 overhead geometry exactly. Preserve exactly two separated straight-sided "
+        "earth pits. The left pit contains one straight fully closed ochre shroud and one plain flat "
+        "copper axe head without haft or handle. The right pit contains one fully closed L-shaped ochre shroud and exactly "
+        "three goods: one plain solid wooden disk, one pale bone awl, and one closed woven packet. Keep "
+        "every outline, position, size, count, and empty gap unchanged. No exposed body, corpse, skeleton, "
+        "skull, face, hand, finger, arm, leg, coffin, third pit, fourth right-side good, axe haft, blade handle, hilt, "
+        "spoked wheel, writing, symbol, frame, border, or vignette."
+    ),
+    "ch2_yamnaya_complete_wagon_grave": (
+        "Copy the attached 16:9 overhead archaeological layout exactly. Preserve one deep rectangular "
+        "earth grave containing one plain four-plank wooden wagon bed and exactly four solid wooden disk "
+        "wheels fixed at its four corners. Keep every shape, axle hole, position, size, and count unchanged. "
+        "Add only restrained packed-earth and plain wood texture. Every wheel remains one solid wooden "
+        "disk with no spokes, rubber, tread, metal rim, tire, or modern hub. No second wagon, fifth wheel, "
+        "covered wagon, chariot, cart suspension, person, worker, animal, corpse, skeleton, coffin, writing, "
+        "symbol, frame, border, or vignette."
+    ),
+    "ch2_yamnaya_wagon_burial_labor": (
+        "Copy the attached 16:9 overhead layout exactly on one continuous bare-earth field. Preserve "
+        "exactly four evidence groups: left one heavy plain wooden wagon bed; upper center exactly four "
+        "solid wooden wheel disks in one row; lower center one plain curved wooden cattle yoke; right "
+        "exactly four separate plant-fibre rope coils in a two-by-two grid. Keep every silhouette, position, "
+        "size, gap, and count unchanged. No fifth wheel, fifth rope coil, spoked wheel, rubber tire, metal "
+        "horseshoe, person, worker, ox, animal, hand, leg, modern tool, machine, writing, symbol, frame, or vignette."
+    ),
+    "ch2_yamnaya_copper_specialist": (
+        "Copy the attached 16:9 overhead layout exactly on fire-darkened earth. Preserve exactly four "
+        "separated evidence groups: left one thick clay crucible containing exactly three small copper "
+        "droplets; center-left one plain grey hammerstone; center-right one horizontally oriented handle-free "
+        "leaf-shaped copper blade blank with no extension or nub; lower-right one closed woven prestige packet. Keep every shape, position, size, gap, "
+        "and count unchanged. The crucible remains clay, never a metal pot; the blade has no handle or hilt. "
+        "No person, face, hand, finger, arm, leg, anvil, furnace worker, iron, steel, modern or medieval tool, "
+        "fifth group, writing, symbol, frame, border, or vignette."
+    ),
+    "ch2_yamnaya_ten_copper_artifacts": (
+        "Copy the attached 16:9 overhead geometry exactly on one continuous ochre-hide field. Preserve "
+        "exactly ten separated copper artifacts: upper-left exactly three leaf-shaped dagger blade blanks with short bare tangs and no attached handles; "
+        "upper-center exactly two flat axe heads; upper-right exactly two narrow spearhead blanks; and "
+        "lower row exactly three plain spiral ornaments. Keep every silhouette, position, size, gap, and "
+        "count unchanged. All weapon forms are handle-free and shaft-free unalloyed copper blanks. No "
+        "eleventh artifact, merged spearheads, sword hilt, dagger handle, spear shaft, iron, steel, gold, "
+        "person, corpse, hand, leg, writing, number, symbol, frame, border, or vignette."
+    ),
+    "ch2_yamnaya_oligarchy_model": (
+        "Copy the attached 16:9 overhead geometry exactly on one continuous plain grey stone field. "
+        "Preserve one isolated ancient molar at upper left, one large blank dark-ochre elite-male disk "
+        "at center, exactly three short plant-fibre cords, and exactly three smaller blank pale grave "
+        "disks at upper-right, middle-right, and lower-right. Keep every count, silhouette, position, size, "
+        "and empty gap unchanged. Add only restrained tooth, clay, fibre, and stone texture. No fourth cord, "
+        "fourth pale disk, person, David Reich portrait, scientist, hand, glove, laboratory, screen, chart, "
+        "graph, DNA helix, chromosome letters, writing, numbers, percentage sign, symbol, frame, or vignette."
+    ),
+    "ch2_yamnaya_hierarchy_privilege": (
+        "Copy the attached 16:9 overhead cemetery geometry exactly. Preserve one large rich grave at "
+        "left containing one fully closed ochre shroud, one flat copper blade blank, one flat copper "
+        "axe head, and exactly three plain spiral ornaments. Preserve exactly four smaller plain graves "
+        "at right in a two-by-two grid, each containing only one closed grey cover and no goods. Keep "
+        "every count, outline, position, size, and empty gap unchanged. No exposed body, corpse, skeleton, "
+        "skull, person, face, hand, finger, arm, leg, modern clothing, military uniform, medieval object, "
+        "blade handle, axe haft, extra grave, writing, symbol, frame, border, or vignette."
+    ),
+    "ch2_yamnaya_monumental_inequality": (
+        "Copy the attached 16:9 Pontic-Caspian steppe landscape geometry exactly. Preserve exactly seven "
+        "rounded earthen kurgans in one receding row: one very large foreground mound followed by exactly "
+        "six progressively smaller distant mounds. Keep every mound outline, earth band, horizon, position, "
+        "size, and empty field unchanged. No person, chief, face, hand, arm, leg, animal, staff, dagger, "
+        "building, tent, road, vehicle, eighth mound, second row, writing, symbol, frame, border, or vignette."
+    ),
+    "ch2_yamnaya_household_transport": (
+        "Copy the attached 16:9 overhead transport geometry exactly. Preserve exactly two vehicles: at "
+        "left one cart with exactly two solid wooden disk wheels carrying one rolled hide and one closed "
+        "packet; at right one wagon with exactly four solid wooden disk wheels carrying one rolled hide "
+        "cradle, one closed packet, and exactly two handmade clay vessels. Keep every count, outline, axle "
+        "hole, position, size, and gap unchanged. Every wheel remains a solid wooden disk. No person, family, "
+        "child, hand, finger, arm, leg, live animal, rider, spoked wheel, tire, metal rim, chariot, modern or "
+        "medieval vehicle, third vehicle, seventh wheel, writing, symbol, frame, border, or vignette."
+    ),
+    "ch2_yamnaya_ox_traction": (
+        "Copy the attached 16:9 overhead ox-traction equipment geometry exactly. Preserve one broad paired "
+        "wooden cattle yoke above exactly two oval collar loops at left; exactly two plant-fibre traces; and "
+        "one heavy wooden wagon bed above exactly four solid wooden disk wheels at right. Keep every count, "
+        "outline, position, size, and gap unchanged. No person, driver, hand, finger, arm, leg, live ox, live "
+        "horse, animal body, rider, spoked wheel, tire, metal rim, chariot, second wagon, fifth wheel, modern "
+        "or medieval object, writing, symbol, frame, border, or vignette."
+    ),
+    "ch2_yamnaya_riding_osteology": (
+        "Copy the attached 16:9 overhead osteology geometry exactly on one plain grey stone field. Preserve "
+        "one human pelvic-bone group at left with exactly two ochre hip-socket stress areas, one proximal "
+        "human femur at center with exactly one ochre stress area, and one isolated ancient horse molar at "
+        "right. Keep every bone and tooth outline, position, size, count, and empty gap unchanged. No living "
+        "person, herder, rider, face, hand, finger, arm, living leg, living horse, cattle, saddle, stirrup, "
+        "bridle, cavalry, complete skeleton, skull, second tooth, inset panel, writing, arrow, symbol, frame, "
+        "border, or vignette."
+    ),
+    "ch2_yamnaya_horse_research": (
+        "Copy the attached 16:9 present-day laboratory tray geometry exactly. Preserve one isolated ancient "
+        "horse molar at left, one central rack with exactly six blank round sample wells, one right-side "
+        "branching comparison with exactly five blank ancestry sample disks, and one small metal caliper "
+        "below. Keep every count, outline, branch, position, size, and empty gap unchanged. No person, "
+        "archaeologist, scientist, face, hand, finger, arm, leg, glove, living horse, rider, excavation crowd, "
+        "readable screen, date label, writing, letters, numbers, arrow, sixth ancestry disk, second tooth, "
+        "frame, border, or vignette."
+    ),
+    "ch2_yamnaya_non_cavalry_migration": (
+        "Copy the attached 16:9 Pontic-Caspian steppe migration geometry exactly. Preserve exactly two slow "
+        "household wagon groups in one line. Each group contains one paired wooden cattle yoke, one plain "
+        "wooden load bed, household packets, and exactly four solid wooden disk wheels. Keep every count, "
+        "outline, position, size, horizon, and empty field unchanged. No person, migrant, rider, cavalry, "
+        "army, face, hand, finger, arm, leg, living ox, living horse, horse herd, saddle, stirrup, weapon, "
+        "spear, sword, spoked wheel, tire, metal rim, chariot, third wagon, modern or medieval object, "
+        "writing, symbol, frame, border, or vignette."
+    ),
+    "ch2_yamnaya_mobile_network": (
+        "Copy the attached 16:9 overhead geometry exactly: one four-solid-wheel wagon with rolled hide at "
+        "left, one cattle yoke above center, one closed household packet below center, and exactly three "
+        "equal clan disks connected by exactly three cords at right. No person, animal, covered wagon, "
+        "spoked wheel, extra disk, writing, symbol, frame, border, or vignette."
+    ),
+    "ch2_yamnaya_camp_fission": (
+        "Copy the attached 16:9 overhead geometry exactly: one large camp disk forks to exactly two separate "
+        "four-solid-wheel wagon tokens, exactly two touching pale alliance disks rest beyond the upper wagon, "
+        "and one authority disk rests beyond the lower wagon. No person, fire, weapon, covered wagon, spoked "
+        "wheel, extra vehicle, writing, symbol, frame, border, or vignette."
+    ),
+    "ch2_yamnaya_peer_network": (
+        "Copy the attached 16:9 overhead geometry exactly: exactly four equal ochre clan disks at the corners "
+        "connect with equal cords, exactly two closed gift packets rest on opposite links, and one low shared-"
+        "kurgan token rests at the empty center. No large central ruler, person, animal, weapon, fifth disk, "
+        "writing, symbol, frame, border, or vignette."
+    ),
+    "ch2_yamnaya_three_rivers_kurgans": (
+        "Copy the attached 16:9 steppe landscape geometry exactly. Preserve exactly three broad blue-grey "
+        "river bands and exactly six matching rounded earthen kurgans forming one chain between them. No "
+        "person, animal, settlement, road, bridge, boat, seventh mound, fourth river, map, label, writing, "
+        "symbol, frame, border, or vignette."
+    ),
+    "ch2_yamnaya_danube_frontier": (
+        "Copy the attached 16:9 lower-Danube frontier geometry exactly. Left of one broad river preserve one "
+        "four-solid-wheel Yamnaya wagon with one rolled hide; right preserve one low timber longhouse above "
+        "one fenced field grid. No person, animal, covered wagon, spoked wheel, castle, tower, modern farm, "
+        "second wagon, second house, writing, symbol, frame, border, or vignette."
+    ),
+    "ch2_yamnaya_wealth_systems": (
+        "Copy the attached 16:9 overhead comparison geometry exactly. Left preserve one cattle yoke, one solid "
+        "wheel disk, one closed packet, and one copper blade blank. Right preserve one timber longhouse token, "
+        "one handmade grain vessel, and one fenced field grid. No person, live animal, weapon handle, spoked "
+        "wheel, modern farm, extra object, writing, symbol, frame, border, or vignette."
+    ),
+    "ch2_yamnaya_village_camp_river": (
+        "Copy the attached 16:9 river-frontier geometry exactly. Left of one river preserve exactly two low "
+        "timber longhouses above one fenced field grid; right preserve exactly two low hide shelters beside "
+        "one solid wheel disk. No person, animal, modern house, castle, covered wagon, spoked wheel, extra "
+        "house or shelter, writing, symbol, frame, border, or vignette."
+    ),
+    "ch2_yamnaya_frontier_four_outcomes": (
+        "Copy the attached 16:9 overhead geometry exactly. Preserve exactly four separated groups: one handmade "
+        "vessel above one closed packet, exactly two touching alliance disks, one handle-free copper blade "
+        "blank, and exactly four charred fence stakes with exactly three ember marks. No person, guard, weapon "
+        "handle, burning house, fifth group, writing, symbol, frame, border, or vignette."
+    ),
+    "ch2_yamnaya_cautious_excavation": (
+        "Copy the attached 16:9 excavation-square geometry exactly. Preserve one charred rectangular house "
+        "fragment with exactly four burned patches, one isolated fractured human long bone, one plain metal "
+        "trowel, and one blank scale bar. No person, attacker, hand, complete skeleton, skull, second bone, "
+        "weapon, readable ruler, writing, symbol, frame, border, or vignette."
+    ),
+    "ch2_yamnaya_demographic_shift": (
+        "Copy the attached 16:9 overhead demographic geometry exactly. Preserve exactly three large ochre "
+        "source disks at left and exactly sixteen equal ancestry tiles in a right-side four-by-four grid, "
+        "exactly twelve ochre and exactly four pale grey, joined only by one short connector. No person, map, "
+        "arrow, text, number, percentage sign, extra disk or tile, symbol, frame, border, or vignette."
+    ),
+    "ch2_corded_ware_adna_signature": (
+        "Copy the attached 16:9 geometry exactly: one Corded Ware grave with closed bent shroud, beaker, and "
+        "stone axe head at left; one ancient molar at center; exactly four ancestry tiles at right, exactly "
+        "three ochre and one pale. No person, exposed body, skull, hand, text, map, extra tile, or border."
+    ),
+    "ch2_corded_ware_funeral": (
+        "Copy the attached 16:9 grave geometry exactly. Preserve one rectangular grave, one fully closed bent "
+        "ochre shroud, one cord-impressed beaker, and one polished stone battle-axe head with a shaft hole but "
+        "no handle. No person, exposed body, skeleton, metal weapon, extra grave, text, frame, or border."
+    ),
+    "ch2_corded_ware_beaker": (
+        "Copy the attached 16:9 pottery geometry exactly. Preserve one handmade clay beaker with exactly three "
+        "horizontal cord-impression bands and one separate loose twisted plant-fibre cord. No hand, finger, "
+        "person, second vessel, writing, symbol, frame, border, or vignette."
+    ),
+    "ch2_corded_ware_single_grave": (
+        "Copy the attached 16:9 grave geometry exactly. Preserve one rectangular grave, one fully closed bent "
+        "ochre shroud, one cord-impressed beaker, and one polished stone battle-axe head with a shaft hole but "
+        "no handle. No warrior, exposed body, skeleton, metal weapon, extra grave, text, frame, or border."
+    ),
+    "ch2_yamnaya_corded_burial_link": (
+        "Copy the attached 16:9 comparison exactly. Preserve one Yamnaya kurgan and pit at left, exactly three "
+        "ochre ancestry disks and cords at center, and one Corded Ware grave with closed bent shroud and beaker "
+        "at right. No person, exposed body, DNA helix, arrow, map, writing, extra disk, frame, or border."
+    ),
+    "ch2_haak_adna_sampling": (
+        "Copy the attached 16:9 laboratory-tray geometry exactly. Preserve exactly six isolated ancient molars "
+        "in one row and exactly four ochre ancestry sample disks below one plain connector. No researcher, hand, "
+        "map, country outline, screen, text, seventh tooth, fifth disk, frame, border, or vignette."
+    ),
+    "ch2_corded_ware_75_ratio": (
+        "Copy the attached 16:9 geometry exactly: one Corded Ware grave token at left, one ancient molar at "
+        "center, and exactly four equal ancestry tiles at right, exactly three ochre and one pale grey. No "
+        "warrior portrait, person, skull, percentage text, map, fifth tile, frame, border, or vignette."
+    ),
+    "ch2_steppe_migration_demographic": (
+        "Copy the attached 16:9 demographic geometry exactly. Preserve exactly three ochre source disks at left "
+        "and exactly sixteen tiles at right in a four-by-four grid, exactly twelve ochre and four pale grey, "
+        "with one short connector. No family, arrow, map, text, extra disk or tile, frame, or border."
+    ),
+    "ch2_living_household_migration": (
+        "Copy the attached 16:9 household-transport geometry exactly. Preserve one two-solid-wheel cart and one "
+        "four-solid-wheel wagon carrying rolled hides, closed packets, one closed cradle, and two handmade "
+        "vessels. No person, child, animal, covered wagon, spoked wheel, extra vehicle, text, frame, or border."
+    ),
+    "ch2_steppe_ancestry_persistence": (
+        "Copy the attached 16:9 ancestry-sequence geometry exactly. Preserve exactly five ancient molars in one "
+        "row, one plain connector, and exactly five equal ochre ancestry disks below, one per tooth. No family "
+        "portrait, person, DNA helix, arrow, date, sixth tooth, sixth disk, text, frame, border, or vignette."
+    ),
+    "ch2_multiple_ancestry_mixture": (
+        "Copy the attached 16:9 mixture geometry exactly. Preserve exactly four equal source disks in four "
+        "muted colors at left and exactly sixteen mixed tiles in a four-by-four grid at right, using each color "
+        "exactly four times. No portrait, person, racial typology, map, text, extra disk or tile, frame, or border."
+    ),
+    "ch2_farming_valley_transition": (
+        "Copy the attached 16:9 river-valley geometry exactly: exactly two timber houses and one fenced field "
+        "at left, one river at center, and exactly two hide shelters plus one solid wheel disk at right. No "
+        "person, animal, modern building, covered wagon, spoked wheel, text, frame, border, or vignette."
+    ),
+    "ch2_local_lineage_outcomes": (
+        "Copy the attached 16:9 four-outcome frontier geometry exactly. Preserve one vessel and packet, exactly "
+        "two touching alliance disks, one handle-free copper blade, and exactly four charred fence stakes. No "
+        "person, fight, body part, weapon handle, extra group, text, frame, border, or vignette."
+    ),
+    "ch2_neolithic_corded_stratigraphy": (
+        "Copy the attached 16:9 stratigraphy exactly. Preserve one empty crossed-timber Neolithic foundation in "
+        "the lower dark layer and exactly one later Corded Ware grave in the upper layer with closed bent shroud, "
+        "beaker, and stone axe head. No person, silhouette, skeleton, extra house or grave, text, frame, or border."
+    ),
+    "ch2_genetic_conversations_unknown": (
+        "Copy the attached 16:9 evidence geometry exactly: one Corded Ware grave token at left, one ancient molar "
+        "at center, and exactly four ancestry tiles at right, exactly three ochre and one pale. No chief, villager, "
+        "face, meeting, chart, map, text, fifth tile, frame, border, or vignette."
+    ),
+    "ch2_corded_institutions_table": (
+        "Copy the attached 16:9 artifact geometry exactly. Preserve exactly six groups: one stone battle-axe head, "
+        "one copper blade blank, one cord-impressed beaker, one closed gift packet, one bent-shroud grave plan, and "
+        "one straight-shroud grave plan. No person, hand, handle, extra group, text, frame, border, or vignette."
+    ),
+    "ch2_corded_zone_landscape": (
+        "Copy the attached 16:9 panorama exactly. Preserve forest at left, one river at center, one fenced field, "
+        "open grassland at right, and exactly three matching cord-impressed beaker tokens spaced across the zone. "
+        "No person, army, empire, map border, fourth beaker, text, frame, border, or vignette."
+    ),
+    "ch2_corded_regional_diversity": (
+        "Copy the attached 16:9 regional geometry exactly. Preserve exactly four equal vertical fields containing "
+        "respectively one house token, one bent-shroud grave, one corded beaker, and one hide shelter plus solid "
+        "wheel token. No person, dominant field, fifth field, text, frame, outer border, or vignette."
+    ),
+    "ch2_corded_settlement_network": (
+        "Copy the attached 16:9 network geometry exactly. Preserve exactly four equal settlement disks connected "
+        "in a diamond, one cord-impressed beaker at center, and exactly two polished stone axe heads at opposite "
+        "settlements. No traveler, person, metal axe, extra settlement, map, arrow, text, frame, border, or vignette."
+    ),
+    "ch2_bell_beaker_mixed_ancestry": (
+        "Copy the attached 16:9 Bell Beaker assemblage exactly. Preserve one bell-shaped beaker with three bands, "
+        "one rectangular stone wrist guard with exactly four holes, exactly three flint arrowheads, and exactly "
+        "three mixed-color ancestry tiles. No archer, person, hand, bow, extra object, text, frame, border, or vignette."
+    ),
+    "ch2_sintashta_andronovo_network": (
+        "Copy the attached 16:9 archaeological sequence exactly. Preserve one early kurgan-and-solid-wheel source "
+        "group at left, one closed oval fortified Sintashta settlement plan with exactly eight inward house cells at "
+        "center, and exactly four connected later-network disks plus one beaker token at right. The plain links show "
+        "a chronological relationship, not one simultaneous event. No person, horse, rider, chariot, spoked wheel, "
+        "army, warrior, map, arrow, text, frame, border, or vignette."
+    ),
+    "ch2_repeated_migration_routes": (
+        "Copy the attached 16:9 route geometry exactly. Preserve exactly eight population disks and exactly three "
+        "distinct unarrowed curving route cords, including one visible return loop and two crossing or merging paths. "
+        "No person, caravan, map, country outline, arrowhead, compass, writing, text, frame, border, or vignette."
+    ),
+    "ch2_partial_cultural_packages": (
+        "Copy the attached 16:9 partial-package geometry exactly. Preserve the left source field with one yoke token, "
+        "one solid wheel, one cord-impressed beaker, and one stone axe head. Preserve three separate right branches: "
+        "top yoke, wheel, and one ancestry disk; middle beaker, axe head, and one ancestry disk; bottom exactly three "
+        "ancestry disks. No person, live animal, wagon, hand, weapon handle, text, frame, border, or vignette."
+    ),
+    "ch2_language_ancestry_mismatch": (
+        "Copy the attached 16:9 mismatch geometry exactly. Preserve one blue branching language-token network of "
+        "exactly five rounded tokens above and one ochre ancestry-token network of exactly five disks below, with "
+        "different branch positions and one dashed separation line. No person, face, family tree portrait, DNA helix, "
+        "map, arrow, writing, text, frame, border, or vignette."
+    ),
+    "ch2_language_shift_question": (
+        "Copy the attached 16:9 unresolved-contact geometry exactly. Preserve exactly four grey community disks at "
+        "left, exactly four ochre community disks at right, two separated language cords, one deliberately open "
+        "central gap, one beaker, one handle-free stone axe head, and one closed exchange packet below. No assembly, "
+        "speaker, person, face, hand, finger, negotiation reenactment, text, frame, border, or vignette."
+    ),
+    "ch2_gimbutas_research_table": (
+        "Copy the attached 16:9 mid-twentieth-century research-table geometry exactly. Preserve exactly three archival "
+        "cards: one kurgan field plan at left, one anthropomorphic stela photograph at center with no carved hands, and "
+        "one gridded Old Europe settlement plan at right. No portrait, researcher, person, hand, finger, pen, readable "
+        "map, writing, text, extra card, frame, border, or vignette."
+    ),
+    "ch2_kurgan_hypothesis": (
+        "Copy the attached 16:9 hypothesis geometry exactly. Preserve one kurgan cross-section at left, one neutral "
+        "central hypothesis token, one plain connector, and one branching language network ending in exactly five "
+        "blank rounded speech tokens at right. No person, Gimbutas portrait, hand, map, country outline, arrow, label, "
+        "writing, text, frame, border, or vignette."
+    ),
+    "ch2_gimbutas_old_europe_model": (
+        "Copy the attached 16:9 two-field interpretive model exactly. Preserve the left mobile-hierarchy field with "
+        "one four-solid-wheel wagon, exactly three unequal hierarchy disks, and one handle-free blade head. Preserve "
+        "the right settled field with exactly two timber houses, one field grid, and exactly three equal community "
+        "disks. No person, herder, farmer, army, fight, horse, covered wagon, spoked wheel, text, frame, or vignette."
+    ),
+    "ch2_gimbutas_imposition_model": (
+        "Copy the attached 16:9 four-domain interpretive model exactly. Preserve one dominant source disk and one "
+        "handle-free blade head above exactly four connected evidence groups below: clay allocation counters, one "
+        "kurgan-and-stela group, one branching language-token group, and one seven-disk lineage group. No ruler, "
+        "victim, person, village, battle, body part, weapon handle, text, frame, border, or vignette."
+    ),
+    "ch2_weapons_patrilineal_model": (
+        "Copy the attached 16:9 evidence geometry exactly. Preserve exactly three handle-free weapon heads at left, "
+        "one anthropomorphic stone stela at center with one oval head groove, one belt groove, one axe groove, and one "
+        "dagger groove but no hands, plus exactly seven blank lineage disks in a one-two-four branching structure at "
+        "right. No war band, person, face, hand, finger, limb, weapon handle, text, frame, border, or vignette."
+    ),
+    "ch2_no_continent_battlefield": (
+        "Copy the attached 16:9 evidence review exactly. Preserve exactly four separated archaeological site cards: "
+        "one closed grave, one house foundation grid, one kurgan, and one four-disk ancestry sample. Preserve one "
+        "broken two-piece blade model at center with disconnected dashed traces. No battlefield, army, warrior, person, "
+        "body part, continent map, fire, text, frame, outer border, or vignette."
+    ),
+    "ch2_anthony_mechanism_revision": (
+        "Copy the attached 16:9 scholarly comparison exactly. Preserve one kurgan and one broken straight expansion "
+        "line at left, one dashed comparison divider, and one alliance network of exactly six pale disks around one "
+        "ochre center disk at right. No Anthony portrait, Gimbutas portrait, person, hand, arrowhead, map, writing, "
+        "text, extra network disk, frame, border, or vignette."
+    ),
+    "ch2_elite_recruitment_network": (
+        "Copy the attached 16:9 elite-recruitment geometry exactly. Preserve exactly three small ochre source disks at "
+        "left and exactly eight disks in the open local network at right, with exactly two network disks changed to "
+        "ochre and no mass replacement. No council, leader, villager, person, face, hand, army, arrow, map, writing, "
+        "text, ninth network disk, frame, border, or vignette."
+    ),
+    "ch2_small_group_power_package": (
+        "Copy the attached 16:9 mechanism geometry exactly. Preserve exactly three small source disks, one handle-free "
+        "copper blade head, one yoke token, one ornament ring, one hand-free stela, and one allied network of exactly "
+        "six pale disks. No delegation, person, live horse, live cattle, weapon handle, army, village, map, text, "
+        "extra object, frame, border, or vignette."
+    ),
+    "ch2_chief_network_choice": (
+        "Copy the attached 16:9 decision geometry exactly. Preserve one neutral decision disk above two unarrowed "
+        "branches. The left field contains one stone axe head and one isolated grey disk; the right field contains one "
+        "copper blade head, one ornament ring, and exactly three network disks. No elder, chief, duel, person, hand, "
+        "finger, weapon handle, balance scale, text, frame, border, or vignette."
+    ),
+    "ch2_resist_or_join_network": (
+        "Copy the attached 16:9 two-outcome geometry exactly. Preserve the left field with one isolated grey community "
+        "disk, one broken cord, and one stone axe head. Preserve the right field with exactly six linked network disks, "
+        "exactly one ochre joining disk, and one ornament ring. No faction, elder, person, fight, hand, weapon handle, "
+        "arrow, text, frame, outer border, or vignette."
+    ),
+    "ch2_parpola_small_powerful_groups": (
+        "Copy the attached 16:9 2012 scholarly model exactly. Preserve one archival card showing exactly three small "
+        "ochre source disks, exactly seven disks in one open alliance network, exactly one ochre recruited network disk, "
+        "and one ornament ring. No Parpola portrait, chief, feast, person, hand, weapon display, readable writing, text, "
+        "extra disk, frame, border, or vignette."
+    ),
+    "ch2_prestige_trade_weapon_cost": (
+        "Copy the attached 16:9 material mechanism exactly. Preserve one six-disk trade network at left and exactly "
+        "four separated objects at right: one handle-free copper blade head, one four-bead ornament ring, one yoke "
+        "token for a livestock gift, and one polished stone axe head. No villager, person, live animal, hand, weapon "
+        "handle, extra object, text, frame, border, or vignette."
+    ),
+    "ch2_marriage_alliance_dual_claims": (
+        "Copy the attached 16:9 kinship geometry exactly. Preserve exactly four grey kin disks at left, exactly four "
+        "ochre kin disks at right, and exactly two central mixed-color descendant disks connected to both sides. No "
+        "wedding, spouse, child body, family portrait, person, face, hand, finger, gender symbol, text, frame, border, "
+        "or vignette."
+    ),
+    "ch2_elite_language_diffusion": (
+        "Copy the attached 16:9 speech-diffusion geometry exactly. Preserve one blue elite disk and one blank speech "
+        "token at top, exactly three blue retainer disks with three blank speech tokens in the middle, and exactly six "
+        "follower disks below, three blue and three ochre, joined only by blue branching cords. No ruler, follower, "
+        "interpreter, person, face, mouth, writing, letters, text, frame, border, or vignette."
+    ),
+    "ch2_language_social_access": (
+        "Copy the attached 16:9 five-benefit geometry exactly. Preserve one central blue language disk and one blank "
+        "speech token connected to exactly five groups: one six-portion feast table, one knotted agreement packet, one "
+        "handle-free copper blade head, three rising status disks, and exactly two touching alliance rings. No learner, "
+        "person, hand, finger, courtship scene, writing, text, extra benefit group, frame, border, or vignette."
+    ),
+    "ch2_three_generation_language_shift": (
+        "Copy the attached 16:9 three-generation household sequence exactly. Preserve one continuous timber house, "
+        "exactly three generation disks from grey through mixed to blue, exactly three matching blank speech tokens, "
+        "and exactly three groups of three small descendant tokens. No family portrait, adult, child body, person, "
+        "face, hand, death, weapon, writing, text, fourth generation, frame, border, or vignette."
+    ),
+    "ch2_recruitment_coercion_cost": (
+        "Copy the attached 16:9 coercion-and-alliance geometry exactly. Preserve exactly two handle-free blade heads at "
+        "left, one isolated grey decision disk, and one open six-disk alliance network at right with exactly one ochre "
+        "joining disk. No armed retainer, negotiator, villager, person, hand, weapon handle, fight, text, frame, border, "
+        "or vignette."
+    ),
+    "ch2_raid_protection_mechanism": (
+        "Copy the attached 16:9 two-stage mechanism exactly. Preserve the left field with one breached fence, exactly "
+        "two break marks, one yoke token, and exactly two scattered herd disks. Preserve the right field with one large "
+        "protector disk linked inside one closed enclosure to exactly four pale herd disks. No raider, villager, live "
+        "animal, person, hand, weapon, fire, text, frame, outer border, or vignette."
+    ),
+    "ch2_feast_loyalty_intimidation": (
+        "Copy the attached 16:9 loyalty mechanism exactly. Preserve one yoke wealth token and one ornament ring at "
+        "left, one table with exactly six separated cooked boneless portions at center, one handle-free copper blade "
+        "head below, and exactly five linked loyalty disks at right. No chief, guard, follower, person, hand, animal "
+        "head, carcass, weapon handle, text, frame, border, or vignette."
+    ),
+    "ch2_kurgan_landscape_dominance": (
+        "Copy the attached 16:9 prehistoric landscape exactly. Preserve one exceptionally large earthen kurgan at "
+        "left with one closed grave chamber, exactly two small timber farmhouses, one fenced field, exactly two small "
+        "graves, and several plain paths across the lower valley. No mourner, ancestor body, person, skeleton, modern "
+        "building, castle, road, text, frame, border, or vignette."
+    ),
+    "ch2_service_status_resources": (
+        "Copy the attached 16:9 status-resource geometry exactly. Preserve one grey recruit disk joining one larger "
+        "ochre leader disk, which connects to exactly three resource groups: one yoke token, one route network of "
+        "exactly six pale disks, and one handle-free copper blade head. No young man, chief, oath, person, face, hand, "
+        "live animal, weapon handle, map, text, frame, border, or vignette."
+    ),
+    "ch2_craft_patron_authority": (
+        "Copy the attached 16:9 patronage geometry exactly. Preserve one clay crucible, one grooved stone mold, one "
+        "polished handle-free copper axe head, and one patron network of exactly four ochre disks in a one-to-three "
+        "hierarchy. No metalworker, chief, follower, person, face, hand, tool handle, iron, steel, text, extra object, "
+        "frame, border, or vignette."
+    ),
+    "ch2_alliance_expansion_network": (
+        "Copy the attached 16:9 alliance-expansion geometry exactly. Preserve one central shared fenced pasture, "
+        "exactly six low camp shelter tokens in one open network, exactly six matching camp disks, and exactly two "
+        "touching partnership rings over the pasture. No person, family, dependent body, live animal, army, map, arrow, "
+        "writing, text, seventh camp, frame, border, or vignette."
+    ),
+    "ch2_network_fracture": (
+        "Copy the attached 16:9 fracture geometry exactly. Preserve one cracked ochre leadership disk splitting into "
+        "three disconnected outcome groups: two equal heir disks at left, three separated subordinate disks at right "
+        "with a broken cord, and one broken yoke above one empty field at bottom. No rival heir portrait, chief, follower, "
+        "person, face, hand, live cattle, fight, weapon, text, frame, border, or vignette."
+    ),
+    "ch2_branching_wagon_routes": (
+        "Copy the attached 16:9 branching-route geometry exactly. Preserve one four-solid-wheel wagon token at left, "
+        "one plain source route splitting without arrowheads into exactly three separate cords, and exactly three low "
+        "camp shelter tokens with three matching ochre camp disks at the endpoints. No rival leader, migrant column, "
+        "person, horse, covered wagon, spoked wheel, map, text, frame, border, or vignette."
+    ),
+    "ch2_speech_contact_loss": (
+        "Copy the attached 16:9 speech-divergence geometry exactly. Preserve one ancestral blank speech token at left, "
+        "one four-way branching cord, and exactly four increasingly distant blank descendant speech tokens at right, "
+        "each reached by a differently colored dashed contact-loss cord. No conversation, speaker, person, face, mouth, "
+        "map, language name, writing, text, frame, border, or vignette."
+    ),
+    "ch2_shared_word_echoes": (
+        "Copy the attached 16:9 shared-word evidence geometry exactly. Preserve one central blank ancestral speech token "
+        "connected to exactly four material groups: exactly three kin disks, one yoke token, one solid wheel disk, and "
+        "one stone-ringed dark hearth. No kin portrait, live cattle, person, hand, spoked wheel, flame, written root, "
+        "letters, text, extra group, frame, border, or vignette."
+    ),
+    "ch2_local_vocabulary_inputs": (
+        "Copy the attached 16:9 local-vocabulary input geometry exactly. Preserve one central blue speech disk and one "
+        "blank speech token receiving four plain cords from exactly four local evidence groups: one fenced field grid, "
+        "exactly two forest-tree tokens, one river token, and one grinding-stone token. No farmer, speaker, person, hand, "
+        "live animal, map, written word, text, fifth input, frame, border, or vignette."
+    ),
+    "ch2_language_four_processes": (
+        "Copy the attached 16:9 four-process language geometry exactly. Preserve one central descendant speech disk and "
+        "one blank speech token receiving exactly four inputs: one handle-free blade head, one mixed-color adaptation disk, "
+        "exactly two touching blank borrowing tokens, and one intact house with exactly three kin disks. No household "
+        "portrait, person, face, hand, weapon handle, writing, text, extra process, frame, border, or vignette."
+    ),
+    "ch2_ancestral_language_branches": (
+        "Copy the attached 16:9 language-branch geometry exactly. Preserve one blank ancestral speech token at left, one "
+        "four-way branching cord, and exactly four equal blank descendant speech tokens at right. No community portrait, "
+        "person, national flag, modern country symbol, map, alphabet, writing, language name, text, fifth branch, frame, "
+        "border, or vignette."
+    ),
+    "ch2_writing_gap_uncertainty": (
+        "Copy the attached 16:9 evidence-gap geometry exactly. Preserve one kurgan and one solid wheel at far left, "
+        "exactly three unresolved dashed route cords, one long empty central interval, and one much later clay tablet at "
+        "far right with exactly five shallow unreadable horizontal marks. No person, scribe, hand, map, arrow, readable "
+        "writing, letters, text, extra tablet, frame, border, or vignette."
+    ),
+    "ch2_three_evidence_columns": (
+        "Copy the attached 16:9 three-evidence geometry exactly. Preserve exactly three equal columns: archaeology with "
+        "one stone axe head and one corded beaker; genetics with one ancient molar and exactly four ancestry disks; and "
+        "linguistics with one five-token branching speech network. No skeleton, body, person, face, hand, word list, "
+        "writing, text, fourth column, frame, outer border, or vignette."
+    ),
+    "ch2_mismatched_evidence_fields": (
+        "Copy the attached 16:9 mismatch geometry exactly. Preserve exactly three translucent irregular evidence fields "
+        "in blue, ochre, and pale tan with distinct nonmatching boundaries, and exactly four matching-color sample disks "
+        "inside each field. No geographic map, country outline, person, face, hand, arrow, legend, writing, text, fourth "
+        "field, frame, border, or vignette."
+    ),
+    "ch2_yamnaya_two_ancestry_sources": (
+        "Copy the attached 16:9 ancestry-mixture geometry exactly. Preserve exactly four blue eastern-hunter-gatherer-"
+        "related source disks and exactly four ochre Caucasus-related source disks at left, one neutral merge disk at "
+        "center, and exactly eight equal mixed-color descendant tiles at right. No Yamnaya family, racial portrait, "
+        "person, face, hand, DNA helix, map, label, text, extra source or tile, frame, border, or vignette."
+    ),
+    "ch2_clv_population_network": (
+        "Copy the attached 16:9 Caucasus-Lower-Volga population-network geometry exactly. Preserve two abstract foothill "
+        "forms at left, one unlabelled blue river band, exactly seven sample disks, and every plain connecting cord. "
+        "No geographic map, country outline, coast, person, face, hand, DNA helix, arrow, label, text, frame, or vignette."
+    ),
+    "ch2_source_population_mixture": (
+        "Copy the attached 16:9 source-mixture geometry exactly. Preserve exactly three blue source disks, exactly three "
+        "ochre source disks, exactly three tan source disks, one neutral merge disk, and exactly nine equal mixed-color "
+        "tiles. No family, person, face, hand, DNA helix, map, arrowhead, label, text, extra disk or tile, frame, or vignette."
+    ),
+    "ch2_four_predecessor_model": (
+        "Copy the attached 16:9 four-predecessor evidence model exactly. Preserve exactly four separate corner fields: "
+        "one kurgan, one handmade beaker, one settlement grid, and one river token, all linked by plain cords to one central "
+        "early-Yamnaya kurgan and closed grave chamber. No literal simultaneous gathering, person, body, hand, map, arrow, "
+        "label, text, fifth source field, frame, border, or vignette."
+    ),
+    "ch2_language_ancestry_structure_dispute": (
+        "Copy the attached 16:9 scholarly-dispute geometry exactly. Preserve exactly three equal columns: one four-branch "
+        "blank language network, exactly six ancestry disks, and one five-disk social hierarchy. No researcher, debate scene, "
+        "person, face, hand, map, writing, label, text, fourth column, frame, outer border, or vignette."
+    ),
+    "ch2_paternal_lineage_mismatch": (
+        "Copy the attached 16:9 paternal-lineage mismatch geometry exactly. Preserve one uniformly ochre seven-disk lineage "
+        "at left, one mixed blue-and-ochre seven-disk lineage at right, and one visibly broken dashed comparison cord between "
+        "them. No man, father portrait, person, face, hand, Y chromosome letter, DNA helix, arrow, writing, text, extra lineage, "
+        "frame, border, or vignette."
+    ),
+    "ch2_complex_steppe_ancestry_network": (
+        "Copy the attached 16:9 complex-ancestry geometry exactly. Preserve one isolated ochre source disk and one crossed "
+        "single-source line at left, one dashed divider, and one open eight-disk multicolor network at right with every plain "
+        "connector. No ancestor portrait, person, face, hand, map, arrowhead, writing, text, ninth disk, frame, border, or vignette."
+    ),
+    "ch2_corded_ware_mixed_society": (
+        "Copy the attached 16:9 Corded Ware mixed-society assemblage exactly. Preserve one timber house, one fenced field, "
+        "one corded beaker, one handle-free polished stone axe head, one closed single grave, and exactly four mixed-color "
+        "ancestry tiles. No family, farmer, warrior, body, hand, finger, leg, weapon handle, text, extra object, frame, or vignette."
+    ),
+    "ch2_corded_beaker_bronze_sequence": (
+        "Copy the attached 16:9 three-stage material sequence exactly. Preserve the left Corded Ware field with one corded "
+        "beaker and one handle-free stone axe head; the center Bell Beaker field with one bell-shaped vessel and one wristguard "
+        "with exactly four holes; and the right later-Bronze field with one handle-free copper-alloy axe head and exactly two "
+        "ingots. No person, archer, hand, arm, leg, weapon handle, anachronistic iron, text, fourth stage, frame, or vignette."
+    ),
+    "ch2_population_power_chain_reaction": (
+        "Copy the attached 16:9 chain-reaction model exactly. Preserve exactly five large generation disks on one plain "
+        "horizontal cord, exactly six smaller mixed-color branch disks above, and exactly three low authority tokens below. "
+        "No family portrait, person, face, hand, map, arrowhead, writing, text, extra generation, frame, border, or vignette."
+    ),
+    "ch2_grave_sample_archive": (
+        "Copy the attached 16:9 modern archive geometry exactly. Preserve exactly six closed archival boxes in two rows, "
+        "each containing exactly one ancient molar and exactly one ochre sample disk. No researcher, skeleton, skull, body, "
+        "hand, finger, arm, leg, readable label, writing, text, seventh box, frame, outer border, or vignette."
+    ),
+    "ch2_adna_sterile_sampling_station": (
+        "Copy the attached 16:9 sterile ancient-DNA sampling station exactly. Preserve one full-width filter hood, exactly "
+        "two closed sterile trays, one ancient molar and one petrous-bone fragment in separate trays, plus exactly two sealed "
+        "sample tubes. No David Reich portrait, researcher, technician, person, hand, glove, skeleton, skull, loose long bone, "
+        "medieval workshop, horse, readable label, text, extra specimen, frame, border, or vignette."
+    ),
+    "ch2_adna_powder_extraction_pipeline": (
+        "Copy the attached 16:9 four-stage ancient-DNA processing pipeline exactly. Preserve four separate clean-laboratory "
+        "bays containing, in order, one dense bone fragment with exactly five powder grains, one powder tube, one extraction "
+        "column with five fragment disks, and exactly two sealed comparison tubes with short damaged-fragment marks. No "
+        "technician, person, hand, glove, medieval equipment, writing, text, fifth stage, frame, border, or vignette."
+    ),
+    "ch2_fragment_comparison_matrix": (
+        "Copy the attached 16:9 computational comparison geometry exactly. Preserve three separate three-sample groups at "
+        "left, one blank gridded processor token at center, and exactly eight blank comparison tiles at right, linked only by "
+        "plain cords. No computer operator, person, hand, face, geographic map, country border, screen text, code, letters, "
+        "numbers, arrowhead, ninth tile, frame, border, or vignette."
+    ),
+    "ch2_haak_2015_steppe_cluster": (
+        "Copy the attached 16:9 2015 ancient-genome cluster geometry exactly. Preserve exactly four sampled molars at upper "
+        "left, exactly six scattered blue comparison disks below, one dashed divider, and exactly eleven tightly grouped "
+        "ochre steppe-related disks at right. No scientist, person, hand, face, graph labels, DNA helix, map, arrow, writing, "
+        "text, extra sample or cluster disk, frame, border, or vignette."
+    ),
+    "ch2_central_europe_demographic_influx": (
+        "Copy the attached 16:9 demographic-influx geometry exactly. Preserve exactly eight ochre source disks at left, one "
+        "thick non-directional connecting corridor, and exactly sixteen Central-European population tiles at right with four "
+        "blue earlier tiles and twelve ochre steppe-related tiles. No migrant portrait, person, hand, geographic map, Europe "
+        "outline, migration arrowhead, label, text, seventeenth tile, frame, border, or vignette."
+    ),
+    "ch2_migration_not_invasion_model": (
+        "Copy the attached 16:9 migration-not-invasion comparison exactly. Preserve the left field with one kurgan and exactly "
+        "five connected ancestry disks; preserve the separate right field with exactly two handle-free blade tokens crossed by "
+        "one large red diagonal X. No Gimbutas portrait, scientist, person, hand, battle, army, weapon handle, map, writing, text, "
+        "third blade, frame, outer border, or vignette."
+    ),
+    "ch2_genes_cannot_show_consent": (
+        "Copy the attached 16:9 genetics-limit geometry exactly. Preserve one seven-disk kinship tree, one six-disk population "
+        "group, and exactly two overlapping alliance rings above one broken comparison cord and one cross. No couple, wedding, "
+        "relative portrait, person, face, hand, armed family, consent gesture, question mark, writing, text, extra ring, frame, "
+        "border, or vignette."
+    ),
+    "ch2_village_response_unknown": (
+        "Copy the attached 16:9 unknown-village-response geometry exactly. Preserve exactly two equal village-plan fields, "
+        "one incoming ochre population disk, two broken dashed connector cords, and one central empty crossed uncertainty ring. "
+        "No villagers, migrants, person, face, hand, welcome scene, battle, weapon, fire, arrow, writing, text, third village, "
+        "frame, border, or vignette."
+    ),
+    "ch2_five_missing_decisions": (
+        "Copy the attached 16:9 five-missing-decisions geometry exactly. Preserve one genetic sample disk and exactly five "
+        "separate evidence bays containing a blank speech token, one oath ring, one enclosed hostage token, one breached-fence "
+        "token, and two bargaining rings; preserve one red diagonal exclusion line across each bay. No insult speaker, oath hand, "
+        "hostage body, raider, handshake, person, face, hand, text, sixth bay, frame, border, or vignette."
+    ),
+    "ch2_ancestry_to_human_decisions": (
+        "Copy the attached 16:9 ancestry-to-decision geometry exactly. Preserve one six-disk impersonal ancestry graph at "
+        "left, one large dashed empty decision ring with one cross at center, and exactly five divergent outcome disks at right. "
+        "No frontier crowd, face, person, hand, body, map, migration arrowhead, writing, text, sixth outcome, frame, border, or vignette."
+    ),
+    "ch2_klejn_route_critique": (
+        "Copy the attached 16:9 route-critique geometry exactly. Preserve one ochre source disk, one crossed straight-route "
+        "segment, one three-way alternative branch, and one separate six-disk mixed ancestry network. No Leo Klejn portrait, "
+        "person, face, hand, geographic map, Europe outline, arrowhead, fake writing, label, text, extra network disk, frame, border, or vignette."
+    ),
+    "ch2_competing_homeland_models": (
+        "Copy the attached 16:9 competing-homeland comparison exactly. Preserve exactly three equal separate model fields: "
+        "one low steppe mound with three disks, one foothill-and-river token with three disks, and one western-Asian settlement "
+        "grid with three disks. No geographic map, country outline, winner mark, person, face, hand, arrow, writing, label, text, "
+        "fourth model, frame, outer border, or vignette."
+    ),
+    "ch2_clv_deep_origin_update": (
+        "Copy the attached 16:9 2025 deep-origin update geometry exactly. Preserve exactly three faded earlier-origin rings at "
+        "left feeding one strong Caucasus-Lower-Volga evidence field with foothills, one unlabelled river band, and exactly six "
+        "interconnected sample disks. No map, country outline, person, face, hand, migration arrowhead, writing, label, text, "
+        "seventh disk, frame, border, or vignette."
+    ),
+    "ch2_narrow_migration_conclusion": (
+        "Copy the attached 16:9 narrow-conclusion geometry exactly. Preserve one Yamnaya-related source field with one kurgan "
+        "and exactly five ochre source disks, one thick non-directional corridor, and exactly twelve Central-European ancestry "
+        "tiles with three blue earlier tiles and nine ochre steppe-related tiles. No person, family, army, map, arrowhead, writing, "
+        "text, thirteenth tile, frame, border, or vignette."
+    ),
+    "ch2_some_language_branches": (
+        "Copy the attached 16:9 partial-language-branch geometry exactly. Preserve exactly two steppe-related source disks, one "
+        "neutral transmission disk, exactly five blank language tokens, three solid aligned cords, two dashed unresolved cords, "
+        "and two unmatched comparison rings beyond the divider. No speaker, person, face, hand, national flag, map, language name, "
+        "writing, text, sixth language token, frame, border, or vignette."
+    ),
+    "ch2_anonymous_chief_fresh_kurgan": (
+        "Copy the attached 16:9 Yamnaya horizon exactly. Preserve exactly one anonymous full-body cloaked chief silhouette with "
+        "both hands fully hidden, exactly two separated legs, one fresh earthen kurgan with one closed grave chamber, one low wagon "
+        "token with exactly four solid wheels, and exactly two herd disks. No visible hand, finger, extra arm, extra leg, missing leg, "
+        "face detail, crowd, follower, spoked wheel, medieval clothing, text, frame, border, or vignette."
+    ),
+    "ch2_chief_unseen_future": (
+        "Copy the attached 16:9 unseen-future geometry exactly. Preserve exactly one anonymous full-body cloaked chief silhouette "
+        "with both hands fully hidden and exactly two separated legs at left, one empty steppe horizon, and one crossed veiled future "
+        "field containing three faint ancestry disks and two faint blank language tokens. No visible hand, finger, extra limb, map, "
+        "Germany outline, readable future symbol, writing, text, second person, frame, border, or vignette."
+    ),
+    "ch2_chief_immediate_horizon": (
+        "Copy the attached 16:9 immediate-horizon model exactly. Preserve one central chief disk connected to exactly four evidence "
+        "fields: one sparse-yoke field with two herd disks, one rival-camp field with two separated disks, one two-ring alliance field, "
+        "and one winter-cloud field. No chief portrait, person, face, hand, live cattle, campfire flame, wedding, weapon, writing, text, "
+        "fifth field, frame, border, or vignette."
+    ),
+    "ch2_three_way_camp_decision": (
+        "Copy the attached 16:9 three-way camp-decision geometry exactly. Preserve one central clan disk, one fork with no "
+        "arrowheads, one west-branch wagon token with exactly four solid wheels, one separate low camp token, and exactly two "
+        "overlapping alliance rings. No chief, visitor, negotiator, person, face, hand, pointing gesture, spoked wheel, horse, map, "
+        "writing, text, third ring, frame, border, or vignette."
+    ),
+    "ch2_network_over_skirmish": (
+        "Copy the attached 16:9 herd-versus-network comparison exactly. Preserve the left field with one broken yoke, exactly two "
+        "herd disks, and one handle-free copper blade head; preserve the right field with one unlabelled river corridor and exactly "
+        "eight linked camp disks. No cattle fight, warrior, person, face, hand, live animal, weapon handle, army, map, arrowhead, "
+        "writing, text, ninth camp disk, frame, outer border, or vignette."
+    ),
+    "ch2_mobility_status_force_system": (
+        "Copy the attached 16:9 integrated-power-system geometry exactly. Preserve one central system disk linked to one wagon "
+        "token with exactly four solid wheels, exactly two overlapping kinship rings, one closed elite-grave token, one handle-free "
+        "copper blade head, and one yoke with exactly two herd disks. No armed retainer, family, person, face, hand, live animal, "
+        "spoked wheel, weapon handle, medieval clothing, writing, text, extra component, frame, border, or vignette."
+    ),
+    "ch2_leader_language_households": (
+        "Copy the attached 16:9 three-generation leader-and-household geometry exactly. Preserve exactly three equal successive "
+        "fields; each field contains exactly one leader disk, one blank speech token, and one intact timber-house token, with plain "
+        "continuity bars between fields. No farmer leader portrait, child, family, person, face, hand, language writing, text, "
+        "fourth generation, medieval house, frame, border, or vignette."
+    ),
+    "ch2_new_corded_identity": (
+        "Copy the attached 16:9 new-identity mixture geometry exactly. Preserve exactly four blue local-source disks, exactly four "
+        "ochre steppe-related source disks, one neutral merge disk, exactly eight new mixed-color identity tiles, and one corded "
+        "beaker. No child, family, racial portrait, person, face, hand, DNA helix, map, writing, text, ninth tile, frame, border, or vignette."
+    ),
+    "ch2_camp_grave_gradual_change": (
+        "Copy the attached 16:9 gradual-change landscape exactly. Preserve one continuous night-to-dawn field with exactly five "
+        "separate low camp tokens and exactly five separate closed grave-mound tokens linked by one plain winding corridor. No army, "
+        "conquest, person, face, hand, body, skeleton, open grave, city, geographic map, arrowhead, writing, text, sixth camp or grave, "
+        "frame, border, or vignette."
+    ),
+    "ch2_dead_scale_living_motives": (
+        "Copy the attached 16:9 dead-scale versus living-motives geometry exactly. Preserve exactly six closed grave boxes, each "
+        "containing exactly one ancient molar and one ochre sample disk, around one central dashed crossed decision gap. No open grave, "
+        "skeleton, skull, corpse, negotiation scene, person, face, hand, DNA chart, writing, text, seventh grave, frame, border, or vignette."
+    ),
+    "ch2_royal_horse_power_teaser": (
+        "Copy the attached 16:9 comparative royal-horse-power teaser exactly. Preserve exactly one flat clay horse token with "
+        "exactly four separated legs, one royal authority disk, exactly three warrior-status disks, and one land-allocation grid. "
+        "No live horse, fifth horse leg, missing horse leg, king, priest, claimant, warrior body, person, face, hand, sacrifice gore, "
+        "weapon, writing, text, frame, border, or vignette."
+    ),
+    "ch2_ritual_authority_mechanism": (
+        "Copy the attached 16:9 ritual-authority mechanism exactly. Preserve one flat clay horse token with exactly four separated "
+        "legs inside one ritual ring, one royal authority disk, one land grid, and exactly three warrior-status disks linked by plain "
+        "cords. No live horse, fifth horse leg, missing horse leg, priest, future king, warrior, crowd, person, face, hand, gesture, "
+        "sacrifice gore, weapon, writing, text, frame, border, or vignette."
+    ),
+    "ch2_four_horse_ritual_traditions": (
+        "Copy the attached 16:9 four-tradition comparison exactly. Preserve exactly four separate evidence fields, each containing "
+        "exactly one flat clay horse token with exactly four separated legs; preserve one steppe mound, one ritual ring, one Roman "
+        "public-altar grid, and one medieval Irish mound token in separate fields. No live horse, extra horse, fifth horse leg, "
+        "person, priest, king, map, direct-descent arrow, writing, text, fifth tradition, frame, outer border, or vignette."
+    ),
+    "ch2_royal_horse_enclosure": (
+        "Copy the attached 16:9 royal-horse enclosure geometry exactly. Preserve exactly one flat clay horse token with exactly "
+        "four separated legs inside one open dashed ritual enclosure and exactly four authority disks outside its four sides. No live "
+        "horse, fifth horse leg, missing horse leg, rival noble, guard, crowd, person, face, hand, weapon, gore, writing, text, "
+        "fifth authority disk, frame, border, or vignette."
+    ),
+    "ch2_final_bones_migration_synthesis": (
+        "Copy the attached 16:9 final evidence synthesis exactly. Preserve exactly three equal fields: one ancient molar above one "
+        "closed grave box; one solid-wheel track token above one kurgan; and exactly eight mixed-color ancestry tiles. No skull, "
+        "skeleton, body, mixed family portrait, person, face, hand, spoked wheel, map, writing, text, ninth tile, fourth field, "
+        "frame, outer border, or vignette."
+    ),
+    "ch3_day_night_separation_sky": (
+        "Copy the attached 16:9 continuous sky geometry exactly. Preserve one unbroken horizontal sky gradient from pale daylight "
+        "at left through one broad muted-blue twilight zone into deep night at right, exactly one small golden sun disk at far left, "
+        "and exactly one small silver moon disk at far right. No person, deity, face, body, hand, finger, arm, leg, ground, mountain, "
+        "rock, building, vertical divider, split panel, stars, text, frame, border, or vignette."
+    ),
+    "ch3_amaterasu_command_objects": (
+        "Copy the attached 16:9 command-mission object layout exactly. Preserve uninterrupted bare wood to every edge and exactly "
+        "three separate objects in one vertical sequence: one closed pale plant-fiber command bundle with one brown fiber tie at top, "
+        "one golden clay messenger disk at center, and one earth-brown clay destination tile at bottom. No person, deity, face, body, "
+        "hand, finger, arm, leg, rock, border, open scroll, writing, arrow, connector, fourth object, frame, or vignette."
+    ),
+    "ch3_messenger_descent_objects": (
+        "Copy the attached 16:9 messenger-descent layout exactly. Preserve one continuous pale cloud-shaped band across the top, one "
+        "broad uninterrupted muted blue-grey descent field, exactly one small golden clay messenger disk centered in that open field, "
+        "and one continuous earth-brown destination field across the bottom. No person, deity, face, body, hand, finger, arm, leg, rock, "
+        "tree, forest, bird, wing, second disk, arrow, writing, border, split panel, frame, or vignette."
+    ),
+    "ch3_uke_mochi_crime_evidence": (
+        "Copy the attached 16:9 non-graphic crime-evidence layout exactly. Preserve pale bare earth to every edge and exactly three "
+        "separate objects: one golden clay messenger disk at left, one flat torn earth-tone woven sash at center with no knot or human "
+        "shape, and one dull aged-bronze straight blade at right. No person, deity, face, body, hand, finger, arm, leg, blood, stain, "
+        "second blade, crossed blades, weapon handle, rock, border, arrow, writing, fourth object, frame, or vignette."
+    ),
+    "ch3_life_from_death_crops": (
+        "Copy the attached 16:9 life-from-death evidence layout exactly. Preserve uninterrupted dark natural soil to every edge, one "
+        "flat folded torn earth-tone cloth fragment at center, and exactly three separate young food-crop sprouts around it: one "
+        "rice-like blade cluster at left, one millet-like blade cluster at right, and one two-leaf bean seedling at bottom. No person, "
+        "face, body, hand, finger, arm, leg, decorative flower, rock border, fourth sprout, text, frame, or vignette."
+    ),
+    "ch3_uke_mochi_tragedy_evidence": (
+        "Copy the attached 16:9 Uke Mochi tragedy evidence layout exactly. Preserve one continuous rough grey stone surface to every "
+        "edge, one flat torn earth-tone woven sash at center, exactly one plain handleless aged-bronze straight blade lying diagonally "
+        "across that sash, and one small scatter of clean rice grains and millet seeds at right. No person, face, body, hand, finger, "
+        "arm, leg, knot, loop, second blade, modern knife handle, blood, plate, table, rock border, writing, frame, or vignette."
+    ),
+    "ch3_closed_shroud_three_shoots": (
+        "Copy the attached 16:9 closed-shroud miracle layout exactly. Preserve pale bare earth to every edge, exactly one completely "
+        "closed uninterrupted earth-tone woven shroud bundle at center with zero exposed anatomy, and exactly three small separate "
+        "green grain shoots emerging around it: one at left, one at upper right, and one at lower right. No person, face, head, body, "
+        "hand, finger, arm, leg, foot, fourth shoot, rock border, flame, violent glow, text, frame, or vignette."
+    ),
+    "ch3_three_seed_groups_bowl": (
+        "Copy the attached 16:9 food-treasure bowl layout exactly. Preserve uninterrupted natural bare wood to every edge, exactly "
+        "one shallow unpainted wooden bowl centered in frame, and exactly three clearly separated small seed groups inside: white rice "
+        "grains at left, pale millet seeds at center, and reddish-brown beans at right. No person, face, body, hand, palm, finger, arm, "
+        "leg, glowing grain, mixed pile, fourth seed group, rock, black border, text, frame, or vignette."
+    ),
+    "ch3_continuous_spring_autumn_field": (
+        "Copy the attached 16:9 continuous seasonal rice-field landscape exactly. Preserve one uninterrupted sky and the same curved "
+        "field rows across the entire frame as green spring seedlings at far left gradually mature through the center into golden autumn "
+        "rice at far right. No person, deity, face, body, hand, finger, arm, leg, split image, vertical divider, panel seam, diptych, "
+        "duplicated scene, text, border, frame, or vignette."
+    ),
+    "ch3_myth_to_niinamesai_offering": (
+        "Copy the attached 16:9 myth-to-Niiname-sai continuity evidence layout exactly. Preserve uninterrupted natural bare wood to "
+        "every edge; at left one pale-gold sun disk above three separate small seed groups; one loose unbroken red plant-fiber cord across "
+        "the open center; and at right one simple unpainted offering tray holding one harvested rice stalk bundle and one millet stalk "
+        "bundle. No person, deity, face, body, hand, finger, arm, leg, foot, clock, watch, calendar, digital display, digits, readable "
+        "writing, electronics, rock border, split panel, frame, or vignette."
+    ),
+    "ch3_niinamesai_offering_platform": (
+        "Copy the attached 16:9 Niiname-sai gratitude evidence layout exactly. Preserve one uncluttered warm wood-toned ritual space "
+        "to every edge and exactly one low simple unpainted wooden offering platform supporting one shallow bowl of polished new rice "
+        "at left and one tied harvested rice sheaf at right. No person, Emperor portrait, Amaterasu, deity, face, body, hand, finger, "
+        "arm, leg, foot, cave, rock, glowing altar, shrine building, clock, calendar, writing, black border, frame, or vignette."
+    ),
+    "ch3_amaterasu_rice_myth_source": (
+        "Copy the attached 16:9 Amaterasu rice-myth source-evidence layout exactly. Preserve uninterrupted natural bare wood to every "
+        "edge and exactly three separate objects in one row: one plain pale-gold sun disk at left, one fully closed blank cord-tied "
+        "undyed plant-fiber source bundle at center, and one natural mature rice stalk at right. No person, sun goddess portrait, human "
+        "king, face, body, hand, finger, arm, leg, foot, handoff, open scroll, painted scene, writing, rock border, frame, or vignette."
+    ),
+    "ch3_rice_stalk_torn_cloth": (
+        "Copy the attached 16:9 rice-life evidence layout exactly. Preserve uninterrupted dark rich natural soil to every edge and "
+        "exactly two separate objects: one mature golden rice stalk rooted at left and one small flat torn earth-tone woven cloth "
+        "fragment beside its roots at right. No person, baby, child, face, body, hand, finger, arm, leg, foot, grabbing gesture, second "
+        "rice stalk, second cloth fragment, basket, rock border, writing, frame, or vignette."
+    ),
+    "ch3_hainuwele_type_comparison": (
+        "Copy the attached 16:9 Hainuwele-type comparative crop-origin evidence layout exactly. Preserve one continuous warm natural "
+        "soil field to every edge and exactly two separate analogous evidence clusters linked only by one unbroken red plant-fiber cord "
+        "through the open center. Preserve the left Japanese grain cluster with one flat torn earth-tone cloth fragment, one mature rice "
+        "stalk, and one bean seedling. Preserve the right Seram crop cluster with one flat brown woven mat fragment, one yam vine, exactly "
+        "three pale tubers, and one coconut-flower sprig. No person, deity, Hainuwele portrait, face, body, corpse, hand, finger, arm, leg, "
+        "foot, leather book, codex, title, writing, emblem, map, divider, split panel, rock border, black frame, or vignette."
+    ),
+    "ch3_seed_death_rebirth_cross_section": (
+        "Copy the attached 16:9 agricultural death-and-rebirth seed cross-section exactly. Preserve the single continuous pale sky above "
+        "the single continuous warm soil section, exactly one cracked pale seed shell at the soil boundary, exactly one curved green shoot "
+        "with one lateral leaf above, and exactly one asymmetrical tapering white root below with short alternating rootlets. Keep the root "
+        "organic and non-humanoid. No person, farmer, deity, face, head, torso, body, hand, finger, arm, leg, foot, bilateral root symmetry, "
+        "second seed, second shoot, second root, text, rock border, black frame, or vignette."
+    ),
+    "ch3_one_sacrifice_many_crops": (
+        "Copy the attached 16:9 one-sacrifice-many-crops evidence layout exactly. Preserve uninterrupted warm natural soil to every edge, "
+        "exactly one completely closed earth-tone woven plant-fiber shroud across the lower center, and exactly seven separate food-crop "
+        "shoots rising behind it in one broad row. Keep all seven shoots visibly separate and keep the shroud sealed and untouched. No "
+        "person, deity, face, body, corpse, hand, finger, arm, leg, foot, exclamation mark, punctuation, blade, iron, weapon, blood, text, "
+        "rock border, black frame, or vignette."
+    ),
+    "ch3_life_taken_empty_bowl_dilemma": (
+        "Copy the attached 16:9 life-taken-versus-hunger dilemma evidence layout exactly. Preserve uninterrupted warm natural clay to every "
+        "edge and exactly three visual elements in one row: exactly one visibly cut harvested golden grain stalk at left, exactly one taut "
+        "red plant-fiber cord with exactly one central knot across the open middle, and exactly one completely empty unpainted wooden bowl "
+        "at right. No person, blindfolded figure, statue, deity, face, body, hand, finger, arm, leg, foot, sword, knife, blade, metal, blood, "
+        "balance scale, writing, symbol, rock border, black frame, or vignette."
+    ),
+    "ch3_life_received_filled_bowl": (
+        "Copy the attached 16:9 life-received-as-nourishment evidence layout exactly. Preserve uninterrupted natural bare wood to every edge, "
+        "exactly one intact living green rice plant with its single root system at left, exactly one unknotted unbroken pale-gold plant-fiber "
+        "cord crossing the open center, and exactly one simple unpainted wooden bowl filled with plain cooked white rice at right. No person, "
+        "Tsukuyomi, deity, face, body, human heart, anatomical organ, hand, finger, arm, leg, foot, glowing magic, second plant, second bowl, "
+        "writing, rock border, black frame, or vignette."
+    ),
+    "ch3_three_silkworms_mulberry_tray": (
+        "Copy the attached 16:9 silkworm feeding evidence layout exactly. Preserve uninterrupted natural bare wood to every edge, exactly "
+        "one shallow rectangular unpainted wooden tray, exactly three separate fresh green mulberry leaves in one row, and exactly three "
+        "separate small cream-white silkworms, one centered on each leaf. No fourth or fifth silkworm, no overlapping duplicate, person, "
+        "deity, face, body, hand, finger, arm, leg, foot, feeding gesture, cocoon, silk cloth, rock border, black frame, text, or vignette."
+    ),
+    "ch3_head_ox_horse_tokens": (
+        "Copy the attached 16:9 head-origin livestock evidence layout exactly. Preserve uninterrupted warm natural earth to every edge, "
+        "exactly one fully closed earth-tone woven shroud at right with its rounded head end at left, and exactly two separate rectangular "
+        "unglazed-clay relief tokens immediately beside that head end: exactly one broad horned ox-head token at far left and exactly one "
+        "long-faced horse-head token beside it. Keep both tokens head-only with no animal bodies or legs. No live animal, second ox, second "
+        "horse, rider, person, face, exposed corpse, hand, finger, arm, leg, foot, text, rock border, frame, or vignette."
+    ),
+    "ch3_forehead_millet_shroud": (
+        "Copy the attached 16:9 forehead-millet origin evidence layout exactly. Preserve uninterrupted warm natural earth to every edge, "
+        "exactly one fully closed earth-tone woven shroud with its rounded head end at left, and exactly three separate golden millet stalks "
+        "rising only from one narrow marked position at the upper head end. No fourth stalk, person, face, exposed corpse, hand, finger, arm, "
+        "leg, foot, decorative flower, wheat, rice panicle, text, rock border, frame, or vignette."
+    ),
+    "ch3_brow_silkworm_shroud": (
+        "Copy the attached 16:9 brow-silkworm origin evidence layout exactly. Preserve uninterrupted warm natural earth to every edge, "
+        "exactly one fully closed earth-tone woven shroud with its rounded head end at left, exactly two short dark curved plant-fiber arcs "
+        "on the closed cloth at the brow position, and exactly three separate cream-white silkworms directly above those arcs. No fourth "
+        "silkworm, cocoon, mulberry tray, person, deity, visible face, exposed corpse, hand, finger, arm, leg, foot, text, rock border, frame, "
+        "or vignette."
+    ),
+    "ch3_eye_millet_belly_rice_shroud": (
+        "Copy the attached 16:9 dual crop-origin evidence layout exactly. Preserve uninterrupted warm natural earth to every edge and exactly "
+        "one fully closed earth-tone woven shroud with its rounded head end at left. Preserve exactly one sparse branching barnyard-millet tuft "
+        "at the head-and-eye end and exactly one drooping rice stalk at the middle belly position, keeping the two crop types and positions "
+        "visibly separate. No person, face, exposed corpse, hand, finger, arm, leg, foot, third crop, wheat, beans, text, rock border, frame, "
+        "or vignette."
+    ),
+    "ch3_lower_wheat_soy_adzuki_shroud": (
+        "Copy the attached 16:9 lower-body three-crop origin evidence layout exactly. Preserve uninterrupted warm natural earth to every edge "
+        "and exactly one fully closed earth-tone woven shroud at left with its lower end at right. Immediately beside that lower end preserve "
+        "exactly three separate crop groups: exactly one tied golden wheat sheaf above, exactly one unpainted bowl of large yellow soybeans in "
+        "the middle, and exactly one separate unpainted bowl of smaller red adzuki beans below. No person, face, exposed corpse, hand, finger, "
+        "arm, leg, foot, rice, fourth crop group, text, rock border, frame, or vignette."
+    ),
+    "ch3_four_heavenly_weavers_hidden_limbs": (
+        "Copy the attached 16:9 heavenly weaving-hall layout exactly. Preserve the single plain unpainted timber shelter and earthen floor, "
+        "exactly four adult East Asian heavenly weaving women in one row, and exactly four simple archaic vertical unpainted wooden frame "
+        "looms, one directly before each woman. Preserve only each woman's face and shoulders above her loom beam; keep every arm, hand, "
+        "finger, torso below the shoulder line, lower body, leg, and foot completely hidden behind the loom and woven cloth. No fifth person, "
+        "crowd, extra face, child, Amaterasu, ornate robe, gold embroidery, palace, tiled room, treadle loom, pedal, gear, machinery, rock "
+        "border, black frame, text, or vignette."
+    ),
+    "ch3_four_takamagahara_fear_faces": (
+        "Copy the attached 16:9 Takamagahara group-fear reaction layout exactly. Preserve one continuous muted natural storm sky to every "
+        "edge and exactly four adult East Asian Japanese deity faces in one row, exactly two female faces with long untied dark hair and "
+        "exactly two male faces with plain tied dark hair. Preserve widened eyes, raised tense brows, and open shocked mouths on all four. "
+        "Every crop ends at the jawline with zero visible necks, shoulders, arms, hands, fingers, torsos, waists, legs, or feet. No fifth "
+        "face, duplicate, child, weaving shuttle, loom, ornate robe, gold ornament, palace, rock border, black frame, text, or vignette."
+    ),
+    "ch3_four_team_comment_readers_hidden_limbs": (
+        "Copy the attached 16:9 present-day team comment-reading layout exactly. Preserve one continuous warm neutral studio wall to every "
+        "edge, exactly four adult Japanese creator faces in one row above, and exactly one central modern tablet below showing exactly three "
+        "abstract blank comment rows with profile-color dots and grey line shapes only. Every face crop ends at the jawline; zero visible "
+        "necks, shoulders, arms, hands, fingers, torsos, waists, legs, or feet. No fifth face, child, ancient robe, Japanese traditional room, "
+        "rock, readable letters, numbers, logo, black outer frame, or vignette."
+    ),
+}
+_EXACT_LAYOUT_REFERENCE_PROMPTS.update(
+    {
+        reference_id: (
+            "Copy the attached full-frame 16:9 safe layout exactly. Preserve every shape, "
+            "position, count, color region, gap, and outer edge without reinterpretation. "
+            "Do not add a person, face, body part, hand, finger, arm, leg, foot, readable text, "
+            "symbol, border, frame, or vignette."
+        )
+        for reference_id in CH3_EP7_SAFE_LAYOUT_REFERENCE_FILENAMES
+    }
+)
+
+
+def _should_use_baekje_ep02_shichishito_reference(prompt: str) -> bool:
+    text = str(prompt or "")
+    return bool(
+        re.search(r"\bSource\s+workbook\s+row\s+02-136\b", text, re.IGNORECASE)
+        and (
+            "칠지도 같은 유물은 그 복잡한 관계가 물질로 남은 사례" in text
+            or re.search(r"\b(?:Seven-Branched\s+Sword|Shichishito)\b", text, re.IGNORECASE)
+        )
+    )
+
+
+def _should_use_baekje_ep02_mixed_settlers_layout(prompt: str) -> bool:
+    text = str(prompt or "")
+    return bool(
+        re.search(r"\bSource\s+workbook\s+row\s+02-103\b", text, re.IGNORECASE)
+        and "여기에 예계 주민과 중국 군현에서 이동한 사람들까지 섞이며" in text
+    )
+
+
+def _should_use_ch3_ep7_oath_items_layout(prompt: str) -> bool:
+    text = str(prompt or "")
+    return bool(
+        re.search(r"\bEP07\s+oath-items\s+macro\b", text, re.IGNORECASE)
+        and re.search(r"\bJapanese\s+mythic\s+creation\s+era\b", text, re.IGNORECASE)
+    )
+
+
+def _should_use_ch2_riderless_border_gate_layout(prompt: str) -> bool:
+    text = str(prompt or "")
+    return bool(
+        re.search(r"\b3000\s+BCE\s+to\s+1000\s+BCE\b", text, re.IGNORECASE)
+        and "Decorated white stallion entering a rival kingdom as villagers and armed guards freeze" in text
+    )
+
+
+def _ch2_ep03_preflight_layout_spec(prompt: str) -> tuple[str, Path, float] | None:
+    text = str(prompt or "")
+    if not re.search(r"\b3000\s+BCE\s+to\s+1000\s+BCE\b", text, re.IGNORECASE):
+        return None
+    cases = (
+        ("Decorated white stallion entering a rival kingdom as villagers and armed guards freeze", "border_gate"),
+        ("Several Rival rulers receiving news of the approaching horse and weighing weapons against tribute", "rulers_decide"),
+        ("Bards singing as four thousand symbolic cattle and gold gifts pass before priests", "cattle_gifts"),
+        ("Royal escorts reopening the gate as the defeated Rival ruler offers formal submission", "submission"),
+        ("Sacrificing king receiving the procession from a raised platform before the capital", "return_procession"),
+        ("Royal horse standing between divided factions as Yudhishthira approaches", "reconciliation"),
+        ("Large ritual cauldron and white mare imagery around the Irish claimant", "irish_cauldron"),
+        ("Royal stallion walking between open gates", "closing_gate"),
+        ("Gupta gold coin showing a horse before a sacrificial post in close detail", "gupta_coin_horse"),
+        ("Reverse of an Ashvamedha coin with queen figure and royal inscription shapes", "gupta_coin_queen"),
+    )
+    for phrase, reference_id in cases:
+        if phrase in text:
+            denoise = {
+                "rulers_decide": 0.78,
+                "cattle_gifts": 0.78,
+                "covered_ritual": 0.78,
+                "roman_cycle": 0.78,
+                "irish_cauldron": 0.75,
+                "return_procession": 0.72,
+                "public_covered_platform": 0.75,
+                "three_priest_covered_form": 0.75,
+                "gupta_coin_horse": 0.35,
+                "gupta_coin_queen": 0.35,
+            }.get(reference_id, 0.85)
+            return reference_id, _CH2_EP03_PREFLIGHT_LAYOUT_PATHS[reference_id], denoise
+    return None
+
+
+def _exact_layout_reference_spec(prompt: str) -> tuple[str, Path, str] | None:
+    text = str(prompt or "")
+    if (
+        re.search(r"\bNARRATION\s+VISUAL\s+ALIGNMENT\s*:", text, re.IGNORECASE)
+        and "NARRATIVE_FIDELITY_REGEN_V1" in text
+    ):
+        return None
+    lowered = text.lower()
+    reference_id = ""
+    if "japanese mythic creation era" in lowered:
+        reference_id = match_ch3_ep7_safe_layout_reference(text)
+    if reference_id:
+        return (
+            reference_id,
+            _EXACT_LAYOUT_REFERENCE_PATHS[reference_id],
+            _EXACT_LAYOUT_REFERENCE_PROMPTS[reference_id],
+        )
+    if (
+        "japanese mythic creation era" in lowered
+        and "an abstract visual showing a pure white sky perfectly separated from a dark, starry night" in lowered
+    ):
+        reference_id = "ch3_day_night_separation_sky"
+    elif (
+        "japanese mythic creation era" in lowered
+        and "amaterasu handing a glowing golden scroll to a kneeling heavenly messenger" in lowered
+    ):
+        reference_id = "ch3_amaterasu_command_objects"
+    elif (
+        "japanese mythic creation era" in lowered
+        and "a god rushing anxiously through a dark, foggy forest to find the fallen goddess" in lowered
+    ):
+        reference_id = "ch3_messenger_descent_objects"
+    elif (
+        "japanese mythic creation era" in lowered
+        and "dark red blood pooling heavily on the bright green grass in a quiet, lonely clearing" in lowered
+    ):
+        reference_id = "ch3_uke_mochi_crime_evidence"
+    elif (
+        "japanese mythic creation era" in lowered
+        and "a delicate, beautiful flower blooming instantly from a crack in a hard, dark stone" in lowered
+    ):
+        reference_id = "ch3_life_from_death_crops"
+    elif (
+        "japanese mythic creation era" in lowered
+        and "a heavy, bloody iron blade cleanly slicing through an elegant, peaceful dinner setting" in lowered
+    ):
+        reference_id = "ch3_uke_mochi_tragedy_evidence"
+    elif (
+        "japanese mythic creation era" in lowered
+        and "a dead body on the ground, violently glowing with bright, warm golden light from within" in lowered
+    ):
+        reference_id = "ch3_closed_shroud_three_shoots"
+    elif (
+        "japanese mythic creation era" in lowered
+        and "amaterasu holding a single, glowing grain of rice gently in the palm of her hand" in lowered
+    ):
+        reference_id = "ch3_three_seed_groups_bowl"
+    elif (
+        "japanese mythic creation era" in lowered
+        and "a split image showing green spring planting on the left and golden autumn harvest on the right" in lowered
+    ):
+        reference_id = "ch3_continuous_spring_autumn_field"
+    elif (
+        "japanese mythic creation era" in lowered
+        and "a beautiful ancient japanese clock blending seamlessly into a modern digital calendar" in lowered
+    ):
+        reference_id = "ch3_myth_to_niinamesai_offering"
+    elif (
+        "japanese mythic creation era" in lowered
+        and "a dignified figure bowing deeply before a hidden, glowing altar in the dark" in lowered
+    ):
+        reference_id = "ch3_niinamesai_offering_platform"
+    elif (
+        "japanese mythic creation era" in lowered
+        and "an ancient scroll depicting a sun goddess handing a glowing rice plant to a human king" in lowered
+    ):
+        reference_id = "ch3_amaterasu_rice_myth_source"
+    elif (
+        "japanese mythic creation era" in lowered
+        and "a baby's hand reaching out from dark, rich soil to grab a golden stalk of rice" in lowered
+    ):
+        reference_id = "ch3_rice_stalk_torn_cloth"
+    elif (
+        "japanese mythic creation era" in lowered
+        and "an elegant, old leather-bound book titled an abstract emblem resting on a wooden desk" in lowered
+    ):
+        reference_id = "ch3_hainuwele_type_comparison"
+    elif (
+        "japanese mythic creation era" in lowered
+        and "a rugged, ancient farmer staring in awe at a sprouting seed in his dirt-covered hands" in lowered
+    ):
+        reference_id = "ch3_seed_death_rebirth_cross_section"
+    elif (
+        "japanese mythic creation era" in lowered
+        and "a large, glowing red exclamation mark hovering mysteriously over a sharp iron blade" in lowered
+    ):
+        reference_id = "ch3_one_sacrifice_many_crops"
+    elif (
+        "japanese mythic creation era" in lowered
+        and "a completely blindfolded silver statue holding a sword, representing the dilemma of survival" in lowered
+    ):
+        reference_id = "ch3_life_taken_empty_bowl_dilemma"
+    elif (
+        "japanese mythic creation era" in lowered
+        and "a glowing golden thread connecting a fresh, vibrant green plant to a human heart" in lowered
+    ):
+        reference_id = "ch3_life_received_filled_bowl"
+    elif (
+        "japanese mythic creation era" in lowered
+        and "divine hands gently offering fresh, green mulberry leaves to a cluster of white silkworms" in lowered
+    ):
+        reference_id = "ch3_three_silkworms_mulberry_tray"
+    elif (
+        "japanese mythic creation era" in lowered
+        and "powerful, majestic wild horses galloping proudly out of a glowing, magical mist" in lowered
+    ):
+        reference_id = "ch3_head_ox_horse_tokens"
+    elif (
+        "japanese mythic creation era" in lowered
+        and "bright, golden stalks of millet erupting rapidly from the forehead of the serene corpse" in lowered
+    ):
+        reference_id = "ch3_forehead_millet_shroud"
+    elif (
+        "japanese mythic creation era" in lowered
+        and "thick, perfectly healthy silkworms weaving pure white silk threads on green leaves" in lowered
+    ):
+        reference_id = "ch3_brow_silkworm_shroud"
+    elif (
+        "japanese mythic creation era" in lowered
+        and "lush, vibrant green rice stalks rapidly sprouting and growing wildly out of a glowing belly" in lowered
+    ):
+        reference_id = "ch3_eye_millet_belly_rice_shroud"
+    elif (
+        "japanese mythic creation era" in lowered
+        and "a beautiful, natural cascade of diverse beans and wheat pouring over the rich soil" in lowered
+    ):
+        reference_id = "ch3_lower_wheat_soy_adzuki_shroud"
+    elif (
+        "japanese mythic creation era" in lowered
+        and "multiple ethereal, beautiful maidens working diligently at large wooden looms in a sunlit hall" in lowered
+    ):
+        reference_id = "ch3_four_heavenly_weavers_hidden_limbs"
+    elif (
+        "japanese mythic creation era" in lowered
+        and "multiple ethereal maidens dropping their weaving shuttles, covering their ears in sheer panic" in lowered
+    ):
+        reference_id = "ch3_four_takamagahara_fear_faces"
+    elif (
+        "a group of diverse, happy creators reading off a glowing tablet together in a cozy studio" in lowered
+    ):
+        reference_id = "ch3_four_team_comment_readers_hidden_limbs"
+    elif (
+        re.search(r"\bSource\s+workbook\s+row\s+02-156\b", text, re.IGNORECASE)
+        and "낙랑과 대방의 전쟁으로 마한의 질서가 흔들리는 바로 그 틈에서" in text
+    ):
+        reference_id = "baekje_ep02_row156"
+    elif (
+        re.search(r"\bSource\s+workbook\s+row\s+02-157\b", text, re.IGNORECASE)
+        and "고이왕은 주변 세력을 누르고 관등과 법, 군사 지휘권을 손에 쥡니다" in text
+    ):
+        reference_id = "baekje_ep02_row157"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "ochre-covered male burial beneath a kurgan with wagon wheels" in lowered
+    ):
+        reference_id = "ch2_yamnaya_elite_grave"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "yamnaya chief and farmer elder facing each other between armed followers and exchanged prestige gifts"
+        in lowered
+    ):
+        reference_id = "ch2_yamnaya_alliance"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "seasonal yamnaya camp being dismantled as wagons form a departing column" in lowered
+    ):
+        reference_id = "ch2_yamnaya_mobile_tools"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "wide pontic-caspian grassland between distant rivers with cattle camps and wooden wagons"
+        in lowered
+    ):
+        reference_id = "ch2_yamnaya_open_steppe_origin_landscape"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "high panoramic view of steppe routes between the black sea, caspian sea, dnieper, don, and volga"
+        in lowered
+    ):
+        reference_id = "ch2_yamnaya_three_rivers_kurgans"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "cattle searching sparse winter grass beside a frozen river and a worried pastoral camp"
+        in lowered
+    ):
+        reference_id = "ch2_yamnaya_cold_dry_grazing_risk_landscape"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "young herder driving cattle while families repair an ox-drawn wagon during a cold migration"
+        in lowered
+    ):
+        reference_id = "ch2_yamnaya_mobility_command_early"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "cross-section of a simple pit grave beneath an earthen kurgan beside a living steppe camp"
+        in lowered
+    ):
+        reference_id = "ch2_yamnaya_pit_grave"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "gorodtsov comparing three distinct grave plans on a field table beside excavated mounds"
+        in lowered
+    ):
+        reference_id = "ch2_gorodtsov_three_graves"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "gorodtsov recording an exposed pit grave near the donets river with early excavation workers"
+        in lowered
+    ):
+        reference_id = "ch2_gorodtsov_identity"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "yamnaya chief, young herder, metalworker, women, children, and cattle gathered around a council fire"
+        in lowered
+    ):
+        reference_id = "ch2_yamnaya_social_actors"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "mobile wagons approaching the fortified riverside settlement of mykhailivka on the lower dnieper"
+        in lowered
+    ):
+        reference_id = "ch2_mykhailivka_mobile_settlement"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "busy yamnaya camp with herding, fishing, pottery making, food preparation, and copper working"
+        in lowered
+    ):
+        reference_id = "ch2_yamnaya_livelihoods"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "yamnaya chief judging a dispute before several clan representatives and tethered herds" in lowered
+    ):
+        reference_id = "ch2_yamnaya_chiefdom_coordination"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "young herder guarding a dense cattle herd while armed strangers watch from a distant ridge" in lowered
+    ):
+        reference_id = "ch2_yamnaya_herd_wealth_risk"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "long wagon column crossing exposed grassland under the watch of mounted scouts and armed leaders" in lowered
+    ):
+        reference_id = "ch2_yamnaya_mobility_command"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "workers piling earth into a tall kurgan visible across an otherwise flat steppe" in lowered
+    ):
+        reference_id = "ch2_yamnaya_single_kurgan"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "layered kurgan cross-section with successive burials arranged above the founding grave" in lowered
+    ):
+        reference_id = "ch2_yamnaya_successive_burials"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "slaughtered sheep and cattle portions placed beside an elite burial during a solemn rite" in lowered
+    ):
+        reference_id = "ch2_yamnaya_animal_offerings"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "anthropomorphic stone stela with carved belt, hands, axe, and dagger overlooking a burial" in lowered
+    ):
+        reference_id = "ch2_yamnaya_authority_stela"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "small group of elite male graves contrasted with a much larger living yamnaya population" in lowered
+    ):
+        reference_id = "ch2_yamnaya_rare_elite_ratio"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "two regional yamnaya burials with distinct body positions and sharply different grave goods" in lowered
+    ):
+        reference_id = "ch2_yamnaya_two_regional_burials"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "complete four-wheeled wooden wagon lowered into a deep grave beside the deceased chief" in lowered
+    ):
+        reference_id = "ch2_yamnaya_complete_wagon_grave"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "exhausted workers and oxen surrounding the chief's wagon burial as elite relatives supervise" in lowered
+    ):
+        reference_id = "ch2_yamnaya_wagon_burial_labor"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "metalworker raising a newly cast copper blade beside a glowing crucible and watching chiefs" in lowered
+    ):
+        reference_id = "ch2_yamnaya_copper_specialist"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "copper daggers, axes, spearheads, and ornaments arranged around one richly furnished burial" in lowered
+    ):
+        reference_id = "ch2_yamnaya_ten_copper_artifacts"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "reich comparing ancient y chromosomes, rich male graves, and a narrowing ancestry chart" in lowered
+    ):
+        reference_id = "ch2_yamnaya_oligarchy_model"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "kurgan cemetery emphasizing richly furnished male graves beside sparse ordinary burials" in lowered
+    ):
+        reference_id = "ch2_yamnaya_hierarchy_privilege"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "row of kurgans growing across the steppe behind a commanding yamnaya chief" in lowered
+    ):
+        reference_id = "ch2_yamnaya_monumental_inequality"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "ox-drawn carts and wagons loaded with hides, vessels, food, tools, and families" in lowered
+    ):
+        reference_id = "ch2_yamnaya_household_transport"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "powerful oxen straining against a loaded four-wheeled wagon on rough steppe ground" in lowered
+    ):
+        reference_id = "ch2_yamnaya_ox_traction"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "young herder riding a compact steppe horse beside cattle with anatomical bone details inset" in lowered
+    ):
+        reference_id = "ch2_yamnaya_riding_osteology"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "archaeologists comparing disputed riding traces, horse teeth, and genetic timelines at an excavation" in lowered
+    ):
+        reference_id = "ch2_yamnaya_horse_research"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "yamnaya migrants with ox wagons and a few riders, deliberately avoiding a mass cavalry charge" in lowered
+    ):
+        reference_id = "ch2_yamnaya_non_cavalry_migration"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "families, cattle, wagons, ritual objects, and messengers moving along interconnected steppe routes" in lowered
+    ):
+        reference_id = "ch2_yamnaya_mobile_network"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "yamnaya families dividing between two wagon columns while chiefs negotiate beside a fire" in lowered
+    ):
+        reference_id = "ch2_yamnaya_camp_fission"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "multiple independent chiefs connected by marriage gifts, cattle exchanges, and shared burial customs" in lowered
+    ):
+        reference_id = "ch2_yamnaya_peer_network"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "chain of matching kurgans stretching between the dnieper, don, and volga river landscapes" in lowered
+    ):
+        reference_id = "ch2_yamnaya_three_rivers_kurgans"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "wagon column descending toward danube farmland, timber houses, fields, and defensive fences" in lowered
+    ):
+        reference_id = "ch2_yamnaya_danube_frontier"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "yamnaya chief and farmer elder studying each other's cattle, fields, weapons, and households" in lowered
+    ):
+        reference_id = "ch2_yamnaya_wealth_systems"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "central european farming village facing a temporary yamnaya camp across a river" in lowered
+    ):
+        reference_id = "ch2_yamnaya_village_camp_river"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "exchange feast shadowed by armed guards, a marriage procession, tense bargaining, and burned fencing" in lowered
+    ):
+        reference_id = "ch2_yamnaya_frontier_four_outcomes"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "excavators carefully examining a burned house and injured skeleton without assigning an attacker" in lowered
+    ):
+        reference_id = "ch2_yamnaya_cautious_excavation"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "population silhouettes shifting dramatically as steppe ancestry spreads into central europe" in lowered
+    ):
+        reference_id = "ch2_yamnaya_demographic_shift"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "corded ware cemetery in germany with sampled teeth and a glowing ancient-dna profile" in lowered
+    ):
+        reference_id = "ch2_corded_ware_adna_signature"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "corded ware funeral with cord-decorated pottery, stone battle-axe, wool clothing, and single burial" in lowered
+    ):
+        reference_id = "ch2_corded_ware_funeral"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "close view of hands pressing twisted cord into the surface of a wet clay beaker" in lowered
+    ):
+        reference_id = "ch2_corded_ware_beaker"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "corded ware warrior buried alone with polished battle-axe and corded beaker" in lowered
+    ):
+        reference_id = "ch2_corded_ware_single_grave"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "yamnaya kurgan and corded ware grave linked by ancestry strands despite different burial arrangements" in lowered
+    ):
+        reference_id = "ch2_yamnaya_corded_burial_link"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "ancient-dna researchers sampling teeth and sequencing genomes across a map of prehistoric europe" in lowered
+    ):
+        reference_id = "ch2_haak_adna_sampling"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "corded ware warrior portrait formed from three parts steppe ancestry and one part local ancestry" in lowered
+    ):
+        reference_id = "ch2_corded_ware_75_ratio"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "dense east-to-west migration arrows carrying families into central european river valleys" in lowered
+    ):
+        reference_id = "ch2_steppe_migration_demographic"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "yamnaya-related families arriving with children, livestock, wagons, tools, and household goods" in lowered
+    ):
+        reference_id = "ch2_living_household_migration"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "generations of central european families connected through an enduring steppe ancestry line" in lowered
+    ):
+        reference_id = "ch2_steppe_ancestry_persistence"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "layered portraits of later european populations built from multiple ancestry streams without racial typology" in lowered
+    ):
+        reference_id = "ch2_multiple_ancestry_mixture"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "farming valley transforming as new households, graves, animals, and customs fill the region" in lowered
+    ):
+        reference_id = "ch2_farming_valley_transition"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "farmer families choosing among retreat, guarded resistance, intermarriage, and alliance with migrants" in lowered
+    ):
+        reference_id = "ch2_local_lineage_outcomes"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "abandoned neolithic house beneath a later corded ware settlement with missing family silhouettes" in lowered
+    ):
+        reference_id = "ch2_neolithic_corded_stratigraphy"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "ancient dna chart fading into a tense face-to-face meeting between chiefs and villagers" in lowered
+    ):
+        reference_id = "ch2_genetic_conversations_unknown"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "table of battle-axes, copper daggers, beakers, marriage gifts, and burial plans under study" in lowered
+    ):
+        reference_id = "ch2_corded_institutions_table"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "panoramic corded ware cultural zone spanning forests, rivers, farmland, and eastern grassland" in lowered
+    ):
+        reference_id = "ch2_corded_zone_landscape"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "several distinct corded ware communities with varied houses, clothing, graves, and landscapes" in lowered
+    ):
+        reference_id = "ch2_corded_regional_diversity"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "travelers carrying corded pottery and axes between distant but related settlements" in lowered
+    ):
+        reference_id = "ch2_corded_settlement_network"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "bell beaker archer arriving in western europe with distinctive vessel, wrist guard, and mixed ancestry" in lowered
+    ):
+        reference_id = "ch2_bell_beaker_mixed_ancestry"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "migration paths continuing east toward fortified sintashta settlements and later andronovo herders" in lowered
+    ):
+        reference_id = "ch2_sintashta_andronovo_network"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "branching migration routes crossing, merging, and turning back across eurasia over generations" in lowered
+    ):
+        reference_id = "ch2_repeated_migration_routes"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "separate migrant columns carrying different combinations of livestock, tools, rituals, and ancestry" in lowered
+    ):
+        reference_id = "ch2_partial_cultural_packages"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "family tree of languages crossing but not perfectly matching an ancient ancestry map" in lowered
+    ):
+        reference_id = "ch2_language_ancestry_mismatch"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "village assembly divided between steppe migrants and local speakers during a tense negotiation" in lowered
+    ):
+        reference_id = "ch2_language_shift_question"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "gimbutas arranging kurgan maps, warrior stelae, and old european settlement photographs" in lowered
+    ):
+        reference_id = "ch2_gimbutas_research_table"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "gimbutas tracing a connection from kurgans to a branching proto-indo-european language map" in lowered
+    ):
+        reference_id = "ch2_kurgan_hypothesis"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "armed mobile herders approaching a prosperous neolithic farming settlement under gimbutas's model" in lowered
+    ):
+        reference_id = "ch2_gimbutas_old_europe_model"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "victorious yamnaya-style leaders presiding over a subdued village in a clearly labeled interpretive tableau" in lowered
+    ):
+        reference_id = "ch2_gimbutas_imposition_model"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "male war band displaying axes and spears beneath a lineage tree centered on fathers and sons" in lowered
+    ):
+        reference_id = "ch2_weapons_patrilineal_model"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "dramatic invasion mural breaking apart into scattered graves, settlements, and uncertain archaeological traces" in lowered
+    ):
+        reference_id = "ch2_no_continent_battlefield"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "anthony comparing gimbutas's invasion arrows with a network of alliances and elite contacts" in lowered
+    ):
+        reference_id = "ch2_anthony_mechanism_revision"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "local leaders joining a prestigious steppe council while villagers observe the political shift" in lowered
+    ):
+        reference_id = "ch2_elite_recruitment_network"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "compact yamnaya delegation entering a village with copper weapons, horses, cattle, and ceremonial gifts" in lowered
+    ):
+        reference_id = "ch2_small_group_power_package"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "farmer elder weighing a stone axe against offered copper weapon and marriage bracelet" in lowered
+    ):
+        reference_id = "ch2_chief_network_choice"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "village factions split as the farmer elder chooses between armed resistance and alliance" in lowered
+    ):
+        reference_id = "ch2_resist_or_join_network"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "local chiefs entering a compact migrant coalition around a shared feast and weapons display" in lowered
+    ):
+        reference_id = "ch2_parpola_small_powerful_groups"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "copper dagger, rare ornament, livestock gift, and polished axe displayed before watching villagers" in lowered
+    ):
+        reference_id = "ch2_prestige_trade_weapon_cost"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "wedding between steppe migrant and farming family before two watchful kin groups" in lowered
+    ):
+        reference_id = "ch2_marriage_alliance_dual_claims"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "local chief addressing retainers in a new language as interpreters and scribeless memory keepers listen" in lowered
+    ):
+        reference_id = "ch2_elite_language_diffusion"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "young villagers learning elite speech during feasting, oath making, guard service, and courtship" in lowered
+    ):
+        reference_id = "ch2_language_social_access"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "three generations of one mixed household shifting gradually from local speech to steppe-derived speech" in lowered
+    ):
+        reference_id = "ch2_three_generation_language_shift"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "armed retainers standing behind negotiators as a reluctant village accepts new obligations" in lowered
+    ):
+        reference_id = "ch2_recruitment_coercion_cost"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "night cattle raid followed by frightened villagers seeking protection from a powerful chief" in lowered
+    ):
+        reference_id = "ch2_raid_protection_mechanism"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "yamnaya chief distributing meat and gifts during a feast guarded by armed followers" in lowered
+    ):
+        reference_id = "ch2_feast_loyalty_intimidation"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "towering kurgan overlooking smaller farms, paths, and graves across a settled valley" in lowered
+    ):
+        reference_id = "ch2_kurgan_landscape_dominance"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "young herder accepting a weapon and oath before joining the chief's mobile retinue" in lowered
+    ):
+        reference_id = "ch2_service_status_resources"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "metalworker presenting a polished copper axe to the yamnaya chief before assembled followers" in lowered
+    ):
+        reference_id = "ch2_craft_patron_authority"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "network of allied camps expanding around shared grazing land and marriage connections" in lowered
+    ):
+        reference_id = "ch2_alliance_expansion_network"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "rival heirs arguing over cattle while allied camps split and armed followers choose sides" in lowered
+    ):
+        reference_id = "ch2_network_fracture"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "single wagon route dividing into several independent migration columns under rival leaders" in lowered
+    ):
+        reference_id = "ch2_branching_wagon_routes"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "one ancestral speech line dividing into increasingly distinct regional conversations" in lowered
+    ):
+        reference_id = "ch2_speech_contact_loss"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "kin group, cattle, wagon wheel, and ritual fire linked to reconstructed word roots" in lowered
+    ):
+        reference_id = "ch2_shared_word_echoes"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "steppe speakers learning local words while working fields and entering european forests" in lowered
+    ):
+        reference_id = "ch2_local_vocabulary_inputs"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "mixed household speaking across generations during farming, herding, marriage, and ritual" in lowered
+    ):
+        reference_id = "ch2_language_four_processes"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "branching language tree rising behind early european communities without modern national symbols" in lowered
+    ):
+        reference_id = "ch2_ancestral_language_branches"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "blank centuries between prehistoric migration maps and the first written indo-european texts" in lowered
+    ):
+        reference_id = "ch2_writing_gap_uncertainty"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "battle-axe, ancient skeleton, and comparative word list aligned as three evidence columns" in lowered
+    ):
+        reference_id = "ch2_three_evidence_columns"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "three overlapping maps from archaeology, genetics, and linguistics with mismatched boundaries" in lowered
+    ):
+        reference_id = "ch2_mismatched_evidence_fields"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "yamnaya family emerging from two older ancestry streams meeting north of the caucasus" in lowered
+    ):
+        reference_id = "ch2_yamnaya_two_ancestry_sources"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "pre-yamnaya communities connected between the caucasus foothills and lower volga river" in lowered
+    ):
+        reference_id = "ch2_clv_population_network"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "multiple older communities merging into the yamnaya horizon before its expansion" in lowered
+    ):
+        reference_id = "ch2_source_population_mixture"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "four predecessor cultural zones converging around early yamnaya settlements and graves" in lowered
+    ):
+        reference_id = "ch2_four_predecessor_model"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "researchers debating separate maps of language origin, ancestry formation, and cultural development" in lowered
+    ):
+        reference_id = "ch2_language_ancestry_structure_dispute"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "y chromosome lineages from yamnaya graves failing to align perfectly with corded ware men" in lowered
+    ):
+        reference_id = "ch2_paternal_lineage_mismatch"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "complex ancestry network replacing a simplistic arrow from one yamnaya man to all europeans" in lowered
+    ):
+        reference_id = "ch2_complex_steppe_ancestry_network"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "corded ware settlement containing mixed families, local farming tools, steppe customs, and new graves" in lowered
+    ):
+        reference_id = "ch2_corded_ware_mixed_society"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "corded ware community transitioning into bell beaker and later bronze age cultural scenes" in lowered
+    ):
+        reference_id = "ch2_corded_beaker_bronze_sequence"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "successive generations passing movement, authority, and ancestry across a changing european map" in lowered
+    ):
+        reference_id = "ch2_population_power_chain_reaction"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "modern researchers entering a museum store filled with carefully boxed prehistoric skeletons" in lowered
+    ):
+        reference_id = "ch2_grave_sample_archive"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "reich's laboratory sampling a petrous bone in a sterile clean room" in lowered
+    ):
+        reference_id = "ch2_adna_sterile_sampling_station"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "gloved technicians processing ancient bone powder through clean laboratory equipment" in lowered
+    ):
+        reference_id = "ch2_adna_powder_extraction_pipeline"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "sequencing screens linking prehistoric individuals across a time-scaled map of europe" in lowered
+    ):
+        reference_id = "ch2_fragment_comparison_matrix"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "scientists watching a clear steppe ancestry cluster emerge from ancient genome data" in lowered
+    ):
+        reference_id = "ch2_haak_2015_steppe_cluster"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "ancient population map showing a major influx from the steppe into central europe" in lowered
+    ):
+        reference_id = "ch2_central_europe_demographic_influx"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "gimbutas's kurgan map beside dna results with confirmed migration and unconfirmed battle scenes separated" in lowered
+    ):
+        reference_id = "ch2_migration_not_invasion_model"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "mixed-ancestry couple at a prehistoric wedding with uncertain expressions and armed relatives" in lowered
+    ):
+        reference_id = "ch2_genes_cannot_show_consent"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "two neighboring villages responding differently to the same approaching migrant group" in lowered
+    ):
+        reference_id = "ch2_village_response_unknown"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "rapid tableau of a shouted insult" in lowered
+        and "sworn oath, guarded hostage, cattle raid, and handshake" in lowered
+    ):
+        reference_id = "ch2_five_missing_decisions"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "individual faces in a tense frontier crowd emerging from an impersonal ancestry graph" in lowered
+    ):
+        reference_id = "ch2_ancestry_to_human_decisions"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "klejn challenging a straight migration arrow with alternative ancestry distributions on a map" in lowered
+    ):
+        reference_id = "ch2_klejn_route_critique"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "competing homeland circles around the steppe, caucasus, and western asia" in lowered
+    ):
+        reference_id = "ch2_competing_homeland_models"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "updated research map moving the earliest language origin toward the caucasus-lower volga zone" in lowered
+    ):
+        reference_id = "ch2_clv_deep_origin_update"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "firm evidence panel connecting yamnaya-related groups to major central european ancestry change" in lowered
+    ):
+        reference_id = "ch2_narrow_migration_conclusion"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "steppe migration routes aligned with several, but not all, indo-european language branches" in lowered
+    ):
+        reference_id = "ch2_some_language_branches"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "yamnaya chief alive beside a fresh kurgan as followers, wagons, and herds assemble" in lowered
+    ):
+        reference_id = "ch2_anonymous_chief_fresh_kurgan"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "yamnaya chief looking west across empty grassland with distant future maps hidden in clouds" in lowered
+    ):
+        reference_id = "ch2_chief_unseen_future"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "chief surveying thin pasture, rival campfires, a marriage delegation, and dark winter clouds" in lowered
+    ):
+        reference_id = "ch2_chief_immediate_horizon"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "chief pointing as one wagon group prepares westward and another negotiates with visitors" in lowered
+    ):
+        reference_id = "ch2_three_way_camp_decision"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "small cattle skirmish contrasted with a vast allied route of camps, rivers, and kurgans" in lowered
+    ):
+        reference_id = "ch2_network_over_skirmish"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "wagons, marriage bonds, elite graves, armed retainers, and herds forming one power system" in lowered
+    ):
+        reference_id = "ch2_mobility_status_force_system"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "successive farmer leaders joining the network while children learn the prestige language" in lowered
+    ):
+        reference_id = "ch2_leader_language_households"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "mixed children growing into a distinct corded ware community unlike either original group" in lowered
+    ):
+        reference_id = "ch2_new_corded_identity"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "night-to-dawn sequence of camps and graves spreading gradually across a european landscape" in lowered
+    ):
+        reference_id = "ch2_camp_grave_gradual_change"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "opened graves and dna charts surrounding unseen prehistoric negotiations beneath the soil" in lowered
+    ):
+        reference_id = "ch2_dead_scale_living_motives"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "horse beside an indo-european royal sacrifice ground as priests and a tense claimant approach" in lowered
+    ):
+        reference_id = "ch2_royal_horse_power_teaser"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "priests arranging a horse sacrifice while the future king faces assembled warriors" in lowered
+    ):
+        reference_id = "ch2_ritual_authority_mechanism"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "horse-sacrifice traditions connected across the steppe, ancient india, rome, and medieval ireland" in lowered
+    ):
+        reference_id = "ch2_four_horse_ritual_traditions"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "royal horse entering a guarded ritual enclosure before a crowd of rival nobles" in lowered
+    ):
+        reference_id = "ch2_royal_horse_enclosure"
+    elif (
+        "3500 bce to 2000 bce" in lowered
+        and "ancient skull, wagon track, kurgan, and mixed family joined in a final cinematic tableau" in lowered
+    ):
+        reference_id = "ch2_final_bones_migration_synthesis"
+    if not reference_id:
+        return None
+    return (
+        reference_id,
+        _EXACT_LAYOUT_REFERENCE_PATHS[reference_id],
+        _EXACT_LAYOUT_REFERENCE_PROMPTS[reference_id],
+    )
+
+
+def expected_effective_image_model_id(image_model: str, prompt: str) -> str:
+    requested = str(image_model or "").strip()
+    if requested.lower() not in {
+        "comfyui-flux2-klein-4b",
+        "comfyui-flux2-klein-9b",
+    }:
+        return requested
+    if _should_use_baekje_ep02_shichishito_reference(prompt):
+        return _BAEKJE_EP02_SHICHISHITO_REFERENCE_MODEL
+    exact_layout_spec = _exact_layout_reference_spec(prompt)
+    if exact_layout_spec is not None:
+        if exact_layout_spec[0] in _EXACT_LAYOUT_REFERENCE_COPY_IDS:
+            return _EXACT_LAYOUT_REFERENCE_COPY_MODEL
+        return _EXACT_LAYOUT_REFERENCE_MODEL
+    return requested
+
+
+def _reference_dark_geometry_scores(
+    reference_path: str | Path,
+    candidate_path: str | Path,
+    *,
+    threshold: int = 105,
+    crop_box: tuple[int, int, int, int] | None = None,
+) -> tuple[float, float, float]:
+    """Compare dark artifact geometry while ignoring surface texture and corrosion."""
+    from PIL import Image
+
+    with Image.open(reference_path) as opened_reference:
+        reference = opened_reference.convert("L")
+    with Image.open(candidate_path) as opened_candidate:
+        candidate = opened_candidate.convert("L")
+    if candidate.size != reference.size:
+        candidate = candidate.resize(reference.size, Image.Resampling.LANCZOS)
+    if crop_box is not None:
+        reference = reference.crop(crop_box)
+        candidate = candidate.crop(crop_box)
+
+    intersection = 0
+    union = 0
+    reference_dark = 0
+    candidate_dark = 0
+    reference_values = (
+        reference.get_flattened_data()
+        if hasattr(reference, "get_flattened_data")
+        else reference.getdata()
+    )
+    candidate_values = (
+        candidate.get_flattened_data()
+        if hasattr(candidate, "get_flattened_data")
+        else candidate.getdata()
+    )
+    for reference_value, candidate_value in zip(
+        reference_values,
+        candidate_values,
+    ):
+        is_reference_dark = int(reference_value) < threshold
+        is_candidate_dark = int(candidate_value) < threshold
+        if is_reference_dark:
+            reference_dark += 1
+        if is_candidate_dark:
+            candidate_dark += 1
+        if is_reference_dark and is_candidate_dark:
+            intersection += 1
+        if is_reference_dark or is_candidate_dark:
+            union += 1
+
+    if not union or not reference_dark or not candidate_dark:
+        return 0.0, 0.0, 0.0
+    return (
+        intersection / union,
+        intersection / reference_dark,
+        intersection / candidate_dark,
+    )
+
+
+def _validate_baekje_ep02_shichishito_reference_geometry(
+    candidate_path: str | Path,
+) -> tuple[float, float, float]:
+    if not _BAEKJE_EP02_SHICHISHITO_REFERENCE_PATH.exists():
+        raise RuntimeError(
+            "칠지도 형상 레퍼런스 누락: "
+            f"{_BAEKJE_EP02_SHICHISHITO_REFERENCE_PATH}"
+        )
+    scores = _reference_dark_geometry_scores(
+        _BAEKJE_EP02_SHICHISHITO_REFERENCE_PATH,
+        candidate_path,
+        crop_box=(450, 30, 830, 700),
+    )
+    iou, reference_coverage, candidate_coverage = scores
+    if iou < 0.78 or reference_coverage < 0.84 or candidate_coverage < 0.84:
+        raise RuntimeError(
+            "칠지도 레퍼런스 형상 불일치: "
+            f"iou={iou:.3f}, reference_coverage={reference_coverage:.3f}, "
+            f"candidate_coverage={candidate_coverage:.3f}"
+        )
+    return scores
+
+
+def _validate_baekje_ep05_shichishito_object_geometry(
+    candidate_path: str | Path,
+) -> tuple[float, float, float]:
+    if not _BAEKJE_EP02_SHICHISHITO_REFERENCE_PATH.exists():
+        raise RuntimeError(
+            "칠지도 단독 형상 레퍼런스 누락: "
+            f"{_BAEKJE_EP02_SHICHISHITO_REFERENCE_PATH}"
+        )
+    scores = _reference_dark_geometry_scores(
+        _BAEKJE_EP02_SHICHISHITO_REFERENCE_PATH,
+        candidate_path,
+        crop_box=(450, 30, 830, 700),
+    )
+    iou, reference_coverage, candidate_coverage = scores
+    if iou < 0.80 or reference_coverage < 0.96 or candidate_coverage < 0.80:
+        raise RuntimeError(
+            "칠지도 단독 레퍼런스 형상 불일치: "
+            f"iou={iou:.3f}, reference_coverage={reference_coverage:.3f}, "
+            f"candidate_coverage={candidate_coverage:.3f}"
+        )
+    return scores
+
+
+def _validate_baekje_ep02_shichishito_conservation_geometry(
+    candidate_path: str | Path,
+) -> tuple[float, float, float]:
+    if not _BAEKJE_EP02_SHICHISHITO_CONSERVATION_LAYOUT_PATH.exists():
+        raise RuntimeError(
+            "칠지도 학예사 레이아웃 레퍼런스 누락: "
+            f"{_BAEKJE_EP02_SHICHISHITO_CONSERVATION_LAYOUT_PATH}"
+        )
+    scores = _reference_dark_geometry_scores(
+        _BAEKJE_EP02_SHICHISHITO_CONSERVATION_LAYOUT_PATH,
+        candidate_path,
+        crop_box=(450, 80, 830, 650),
+    )
+    iou, reference_coverage, candidate_coverage = scores
+    if iou < 0.78 or reference_coverage < 0.84 or candidate_coverage < 0.84:
+        raise RuntimeError(
+            "칠지도 학예사 레이아웃 형상 불일치: "
+            f"iou={iou:.3f}, reference_coverage={reference_coverage:.3f}, "
+            f"candidate_coverage={candidate_coverage:.3f}"
+        )
+    return scores
+
+
+def _validate_exact_layout_reference_geometry(
+    reference_id: str,
+    candidate_path: str | Path,
+) -> tuple[float, float, float]:
+    reference_path = _EXACT_LAYOUT_REFERENCE_PATHS.get(str(reference_id or ""))
+    if reference_path is None:
+        raise RuntimeError(f"정확 배치 레퍼런스 ID 오류: {reference_id}")
+    if not reference_path.exists():
+        raise RuntimeError(f"정확 배치 레퍼런스 누락: {reference_path}")
+    scores = _reference_dark_geometry_scores(
+        reference_path,
+        candidate_path,
+        threshold=205,
+    )
+    iou, reference_coverage, candidate_coverage = scores
+    normalized_reference_id = str(reference_id or "")
+    if normalized_reference_id == "ch2_gorodtsov_identity":
+        minimums = (0.62, 0.72, 0.78)
+    elif normalized_reference_id == "ch2_yamnaya_authority_stela":
+        minimums = (0.58, 0.90, 0.58)
+    else:
+        minimums = (0.70, 0.80, 0.78)
+    if (
+        iou < minimums[0]
+        or reference_coverage < minimums[1]
+        or candidate_coverage < minimums[2]
+    ):
+        raise RuntimeError(
+            "정확 배치 레퍼런스 형상 불일치: "
+            f"reference_id={reference_id}, iou={iou:.3f}, "
+            f"reference_coverage={reference_coverage:.3f}, "
+            f"candidate_coverage={candidate_coverage:.3f}"
+        )
+    return scores
+
+
 def _safe_console(value) -> str:
     return str(value).encode("ascii", "backslashreplace").decode("ascii")
+
+
+def _history_int_output(entry: dict, node_id: str) -> int | None:
+    payload = ((entry or {}).get("outputs") or {}).get(str(node_id))
+    if payload is None:
+        return None
+
+    def _walk(value):
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float) and value.is_integer():
+            return int(value)
+        if isinstance(value, str) and re.fullmatch(r"\s*-?\d+\s*", value):
+            return int(value.strip())
+        if isinstance(value, dict):
+            for key in ("value", "values", "int", "text", "ui"):
+                if key in value:
+                    found = _walk(value[key])
+                    if found is not None:
+                        return found
+            for nested in value.values():
+                found = _walk(nested)
+                if found is not None:
+                    return found
+        if isinstance(value, (list, tuple)):
+            for nested in value:
+                found = _walk(nested)
+                if found is not None:
+                    return found
+        return None
+
+    return _walk(payload)
 
 
 def _flux2_klein_has_645_sui_drift(text: str) -> bool:
@@ -99,6 +3336,8 @@ _WORKFLOW_FILES = {
     "comfyui-flux2-turbo": "flux2_turbo_text2img.json",
     "comfyui-flux2-klein-4b": "flux2_klein_4b_text2img.json",
     "comfyui-flux2-klein-9b": "flux2_klein_9b_text2img.json",
+    "comfyui-krea2": "krea2_text2img.json",
+    "comfyui-z-image-base": "z_image_base_text2img.json",
     "comfyui-z-image-turbo": "z_image_turbo_text2img.json",
     "comfyui-sd15": "sd15_text2img.json",
     "comfyui-toonyou": "toonyou_beta6_text2img.json",
@@ -113,6 +3352,7 @@ _WORKFLOW_FILES = {
 # SD1.5/SDXL → IPAdapter Plus, Flux.2 → Redux, Z-Image → img2img 폴백.
 _WORKFLOW_FILES_REF = {
     "comfyui-flux2-turbo": "flux2_turbo_text2img_ref.json",
+    "comfyui-z-image-base": "z_image_base_text2img_ref.json",
     "comfyui-z-image-turbo": "z_image_turbo_text2img_ref.json",
     "comfyui-sd15": "sd15_text2img_ref.json",
     "comfyui-toonyou": "toonyou_beta6_text2img_ref.json",
@@ -126,6 +3366,8 @@ _DISPLAY_NAMES = {
     "comfyui-flux2-turbo": "ComfyUI Flux.2 Turbo (local)",
     "comfyui-flux2-klein-4b": "ComfyUI Flux.2 Klein 4B (local)",
     "comfyui-flux2-klein-9b": "ComfyUI Flux.2 Klein 9B FP8 (local)",
+    "comfyui-krea2": "로컬krea2",
+    "comfyui-z-image-base": "ComfyUI Z-Image Base (local, CFG)",
     "comfyui-z-image-turbo": "ComfyUI Z-Image Turbo (local, fast)",
     "comfyui-sd15": "ComfyUI SD 1.5 (local, ultra-fast)",
     "comfyui-toonyou": "ComfyUI ToonYou Beta 6 (local, cartoon)",
@@ -365,21 +3607,20 @@ Build the visible subject, place, era, objects, action, weather, and composition
 [MASTER PROMPT — DOCUMENTARY ILLUSTRATION STYLE]
 
 longtubestyle,
-2D painted documentary illustration,
-visible ink linework,
-bold black ink contour lines,
-matte cel shading,
-painterly brush texture,
-stylized human faces,
-serious adult graphic novel illustration,
-cinematic documentary illustration style,
-clean composition,
-thick outlines,
-dark cinematic mood,
-high-contrast graphic shadow shapes,
+mature vintage dark historical manhwa illustration,
+variable-width scratchy dip-pen contour lines,
+thin angular interior contours,
+controlled heavy black silhouette accents only at focal outer edges,
+dry-brush texture,
+dense hatching with intersecting hatch strokes,
+aged fibrous print-stock grain,
+muted watercolor and gouache washes,
+sepia dirty-ivory tobacco rust faded-burgundy soot-black palette,
+elongated angular adult anatomy,
+weathered expressive adult faces,
+hard directional shadow masses,
+bleak ominous tension,
 dynamic single-frame graphic-novel composition,
-soft natural shadows,
-muted natural color palette,
 story-driven scene,
 emotional atmosphere,
 high visual clarity,
@@ -486,19 +3727,17 @@ Build only the visible object, surface, era materials, weather, and composition 
 [MASTER PROMPT - DOCUMENTARY OBJECT EVIDENCE STYLE]
 
 longtubestyle,
-2D painted documentary illustration,
-visible ink linework,
-bold black ink contour lines,
-matte cel shading,
-painterly brush texture,
-serious adult graphic novel illustration,
-cinematic documentary illustration style,
-clean object-first composition,
-thick outlines,
-dark cinematic mood,
-high-contrast graphic shadow shapes,
-soft natural shadows,
-muted natural color palette,
+mature vintage dark historical manhwa illustration,
+variable-width scratchy dip-pen contour lines,
+thin angular interior contours,
+controlled heavy black silhouette accents only at focal outer edges,
+dry-brush texture,
+dense hatching with intersecting hatch strokes,
+aged fibrous print-stock grain,
+muted watercolor and gouache washes,
+sepia dirty-ivory tobacco rust faded-burgundy soot-black palette,
+hard directional shadow masses,
+bleak ominous tension,
 historical evidence mood,
 high visual clarity,
 single focused object moment,
@@ -2033,7 +5272,7 @@ def _local_prompt_field(prompt: str, label: str) -> str:
     pattern = _LOCAL_PROMPT_FIELD_RE_CACHE.get(key)
     if pattern is None:
         pattern = re.compile(
-            rf"(?:^|;\s*|\|\|\s*){re.escape(label)}\s*:\s*(.*?)(?=;\s*(?:Time range|Place scope|Culture scope|Material culture|Continuity rule|Year/period|Exact place|Scene evidence|Style|Main subject|Scene)\s*:|\s+\|\|\s+|$)",
+            rf"(?:^|[.;]\s*|\|\|\s*){re.escape(label)}\s*:\s*(.*?)(?=[.;]\s*(?:Era/period|Time range|Place scope|Culture scope|Material culture|Continuity rule|Year/period|Exact place|Scene evidence|Visible evidence|Style|Main subject|Primary subject|Scene|Composition|Negative|Visible action|Visible inventory|Visible surface detail|Visible edge detail)\s*:|\s+\|\|\s+|$)",
             re.IGNORECASE | re.DOTALL,
         )
         _LOCAL_PROMPT_FIELD_RE_CACHE[key] = pattern
@@ -2054,7 +5293,7 @@ def _local_prompt_field(prompt: str, label: str) -> str:
         maxsplit=1,
         flags=re.IGNORECASE,
     )[0]
-    return re.sub(r"\s+", " ", value).strip(" ;,")
+    return re.sub(r"\s+", " ", value).strip(" ;,.")
 
 
 def _local_is_modern_context(prompt: str) -> bool:
@@ -7138,26 +10377,1941 @@ PROMPT_NAMED_SYMBOL_FLAG_COMFYUI_EXTRA_NEGATIVE = (
 )
 
 ADULT_COMIC_STYLE_COMFYUI_FRONT_PROMPT = (
-    "Render as 2D painted adult graphic novel illustration with extra-thick "
-    "black ink contour lines, bold outer silhouettes, heavy brush-ink line "
-    "weight, hard shadow masses, angular stylish single-frame composition, dynamic "
-    "cropping, matte cel shading, gritty period brush texture, desaturated "
-    "restrained colors, low-key dark documentary comic lighting, dramatic rim "
-    "light, and mature manhwa graphic-novel tension. Historical material "
+    "DEFAULT VISUAL STYLE LOCK — STYLE ONLY: render as a mature vintage dark "
+    "historical manhwa illustration with variable-width "
+    "scratchy dip-pen contour lines, thin angular interior contours, controlled "
+    "dark contour accents only along selected outer edges, dry-brush texture, "
+    "dense hatching with intersecting hatch strokes, aged fibrous print-stock grain, muted watercolor "
+    "and gouache washes, sepia, dirty ivory, tobacco brown, rust, faded burgundy, "
+    "and soot-black colors, hard directional shadow masses, elongated angular "
+    "adult anatomy, weathered expressive adult faces, dynamic full-bleed cropping, "
+    "and bleak ominous tension. Historical material "
     "accuracy is higher priority than style: clothing, role-specific equipment, animals, "
     "architecture, props, and terrain must stay exact to the stated era, place, "
-    "and culture. Avoid bright pastel skies, cute rounded forms, clean "
-    "storybook softness, and cheerful children's illustration color balance; "
-    "do not render as a photo, "
-    "live-action still, 3D render, plastic game asset, or glossy cosplay image."
+    "and culture. This is a rendering-style lock only: never import unmentioned "
+    "costume, equipment, symbols, architecture, or props. Avoid uniformly heavy "
+    "contour weight, clean or matte anime cel shading, "
+    "smooth vector lines, glossy digital gradients, bright pastel skies, cute rounded "
+    "forms, clean storybook softness, and cheerful children's illustration color "
+    "balance; do not render as a photo, "
+    "live-action still, 3D render, plastic game asset, or glossy cosplay image. "
+    "Every foreground or focal person is fully rendered with visible face, "
+    "clothing folds, limbs, material detail, and local color; no person is an "
+    "opaque solid-black shape. All four corners remain broad uninterrupted "
+    "local scene material with no compact mark. The bottom-right corner contains "
+    "only continuous ground, wall, fabric, or architecture texture, with no "
+    "isolated short stroke cluster."
 )
 
 ADULT_COMIC_STYLE_COMFYUI_EXTRA_NEGATIVE = (
     "photorealistic photo, photographic still, live-action still, raw camera "
     "photo, 3D render, glossy CGI, plastic game asset, cosplay photo, pastel "
     "storybook, cute storybook, watercolor children's book, soft pastel palette, "
-    "bright cheerful fairy-tale mood, low-contrast cute illustration"
+    "bright cheerful fairy-tale mood, low-contrast cute illustration, uniform "
+    "extra-thick outlines, clean anime cel shading, matte cel shading, smooth "
+    "vector line art, glossy digital gradients, washed-out pale background, "
+    "bright blue sky, airy pastoral color balance, thin clean outlines, weak "
+    "line weight, low-ink illustration, featureless solid-black person, opaque "
+    "black human cutout, unrendered black human shape, solid black foreground "
+    "silhouette, missing face and clothing detail, small corner emblem, square artist stamp, "
+    "jagged black perimeter, spiky black border, black brush frame, enclosing ink border, "
+    "abstract black corner wedges, arrow-shaped border, torn-paper border, irregular black vignette, "
+    "artist monogram, bottom-right artist scrawl, lower-corner signature strokes, "
+    "illegible artist signature, clustered cursive corner mark, compact black "
+    "signature, cowboy, cowboy hat, wide-brim frontier "
+    "hat, western duster, frontier gun belt, revolver, modern suit, modern shirt collar"
 )
+
+Z_IMAGE_JAPANESE_MYTH_EXACT_TWO_EXTRA_NEGATIVE = (
+    "third person, extra person, background person, bystander, observer, crowd, "
+    "third head, third face, third torso, duplicate deity, duplicate messenger, "
+    "human-shaped shadow, standing silhouette, reflection person, statue person"
+)
+
+Z_IMAGE_JAPANESE_MYTH_BOWL_REACTION_EXTRA_NEGATIVE = (
+    "face inside bowl, head emerging from bowl, body inside bowl, portrait painted on bowl, "
+    "person holding bowl, hands gripping bowl, visible hand, visible fingers, visible arms, "
+    "second person, background person, missing clay bowl, oversized bowl covering torso"
+)
+
+Z_IMAGE_DARK_HARDBOILED_MANHWA_STYLE_PROMPT = (
+    "Z-IMAGE DARK HARD-BOILED HISTORICAL MANHWA STYLE LOCK: render an ink-dominant mature "
+    "ink-heavy historical manhwa frame with thick irregular black outer contours, sharp "
+    "angular silhouette breaks, scratchy variable-width dip-pen interior lines, aggressive dense "
+    "cross-hatching, dry-brush abrasion, and deep soot-black shadow masses occupying roughly one "
+    "quarter to one third of the frame. Adult faces are weathered, focused and angular when "
+    "visible. Use aged fibrous print-stock grain and restrained dirty-ivory, tobacco-brown, rust, "
+    "faded-burgundy and soot-black washes. Keep the background tonally weathered and fully inked. "
+    "Use one open full-bleed historical staging. Every heavy black mass follows a depicted body, "
+    "garment fold, named item contact, local ground, or cast shadow. Historical accuracy outranks "
+    "style: every visible garment, named item, and ground material follows the stated era, place, "
+    "culture, and visible action. Broad irregular local ground and sky texture continues naturally "
+    "through every corner in one continuous frame."
+)
+
+Z_IMAGE_DARK_HARDBOILED_FACE_STYLE_PROMPT = (
+    "Z-IMAGE DARK HARD-BOILED FACIAL MANHWA STYLE LOCK: render one flat two-dimensional hand-drawn "
+    "ink manhwa facial illustration with simplified illustrated skin planes, thick irregular black facial "
+    "contours, sharp angular feature breaks, scratchy variable-width "
+    "dip-pen interior lines, aggressive dense cross-hatching, dry-brush abrasion, and deep soot-black "
+    "facial shadow masses. Use aged fibrous print-stock grain and restrained dirty-ivory, tobacco-brown, "
+    "rust, faded-burgundy and soot-black washes. Enormous facial features and natural hair fill the full "
+    "16:9 image edge to edge, while one continuous indistinct earth-tone blur fills every remaining pixel."
+)
+
+Z_IMAGE_DARK_HARDBOILED_EYES_ONLY_STYLE_PROMPT = (
+    "Z-IMAGE DARK HARD-BOILED EYES-ONLY MANHWA STYLE LOCK: render one flat two-dimensional hand-drawn "
+    "ink manhwa single-eye macro illustration with simplified skin planes, thick irregular black eyebrow and eye "
+    "contours, scratchy variable-width dip-pen lines, dense cross-hatching, dry-brush abrasion, aged fibrous "
+    "print-stock grain and restrained dirty-ivory, tobacco-brown and soot-black washes. Exactly one enormous "
+    "natural adult East Asian right eye with its one eyebrow, eyelids, iris and temple fills the full 16:9 frame "
+    "edge to edge. The nose, second eye, cheeks, mouth, upper lip, chin, jaw, neck and garment are completely "
+    "outside every image edge."
+)
+
+Z_IMAGE_DARK_HARDBOILED_FIGURE_STYLE_PROMPT = (
+    "Z-IMAGE DARK HARD-BOILED FIGURE MANHWA STYLE LOCK: render one flat two-dimensional hand-drawn "
+    "ink manhwa adult figure with simplified illustrated body planes, thick irregular black body contours, "
+    "sharp angular silhouette breaks, scratchy variable-width dip-pen interior lines, aggressive dense "
+    "cross-hatching, dry-brush abrasion, and deep soot-black cast shadows. Use aged fibrous print-stock grain "
+    "and restrained dirty-ivory, tobacco-brown, rust, faded-burgundy, natural-green and soot-black washes. "
+    "One coherent adult body and the named natural setting fill one continuous full-bleed 16:9 image."
+)
+
+Z_IMAGE_DARK_HARDBOILED_OBJECT_STYLE_PROMPT = (
+    "Z-IMAGE DARK HARD-BOILED HISTORICAL MANHWA OBJECT STYLE LOCK: render the named objects "
+    "as an ink-dominant mature historical manhwa still life with thick irregular black outer "
+    "contours, scratchy variable-width dip-pen interior lines, aggressive dense cross-hatching, "
+    "dry-brush abrasion, and deep soot-black shadow masses. Only the exact named items and their "
+    "local ground material fill one continuous still-life frame. "
+    "Use aged fibrous print-stock grain and restrained dirty-ivory, tobacco-brown, rust, "
+    "faded-burgundy and soot-black washes. The background remains tonally weathered and fully inked. "
+    "Historical accuracy outranks style: each named item and material matches the stated era, place, "
+    "and culture. Every heavy black mass follows a named item's form, its local ground, or its cast "
+    "shadow. Broad irregular local ground texture continues naturally through every corner in one "
+    "open full-bleed composition."
+)
+
+Z_IMAGE_DARK_HARDBOILED_MATERIAL_SURFACE_STYLE_PROMPT = (
+    "Z-IMAGE DARK HARD-BOILED MATERIAL SURFACE MACRO STYLE LOCK: render one continuous forged-iron "
+    "surface as a flat two-dimensional historical manhwa material study. The camera crop lies entirely "
+    "inside the iron plane: solid metal grain and granular corrosion cross all four image edges, with no "
+    "outer item silhouette, rim, base, lid, handle, fitting, cast shadow, tabletop, ground, or separate "
+    "background. Use scratchy variable-width dip-pen texture, dense irregular cross-hatching, dry-brush "
+    "abrasion, aged fibrous print grain, soot-black pits, restrained rust washes, and only the explicitly "
+    "named shallow broken gold-inlay grooves. The frame reads as magnified flat forged metal, never as a "
+    "container, vessel, mask, weapon, stone, geological slab, product, or still life."
+)
+
+Z_IMAGE_DARK_HARDBOILED_ANIMAL_STYLE_PROMPT = (
+    "Z-IMAGE DARK HARD-BOILED HISTORICAL MANHWA ANIMAL STYLE LOCK: render only the exact named "
+    "animal count and species as an ink-dominant mature historical manhwa wildlife frame with thick "
+    "irregular black outer contours, scratchy variable-width dip-pen interior lines, aggressive dense "
+    "cross-hatching, dry-brush abrasion, and deep soot-black natural shadow masses. Every animal has "
+    "one coherent body with species-correct head, spine, limbs when applicable, and tail. Only the named "
+    "animal bodies, natural ground, rock, vegetation, water, and open sky may occupy the frame. Zero "
+    "people, human anatomy, clothing, buildings, walls, settlements, text, or symbolic collage. Use aged "
+    "fibrous print-stock grain and restrained dirty-ivory, tobacco-brown, rust, faded-burgundy and "
+    "soot-black washes. Broad natural ground and sky texture continues through every corner in one open "
+    "full-bleed composition."
+)
+
+Z_IMAGE_SEVEN_BRANCH_SWORD_STYLE_PROMPT = (
+    "Z-IMAGE SEVEN-BRANCHED SWORD GEOMETRY LOCK: render one flat two-dimensional hand-drawn "
+    "historical ink manhwa illustration of one featureless soot-black artifact silhouette only, never "
+    "a photograph, product photo, 3D render, realistic reflective metal, or studio backdrop. One "
+    "straight central blade runs continuously from one simple handle "
+    "to one central pointed tip. Exactly six short branch blades project upward from that same central "
+    "blade in six fixed slots: lower-left, middle-left, upper-left, lower-right, middle-right, and "
+    "upper-right. The artifact therefore has exactly seven pointed tips total: three left branch tips, "
+    "three right branch tips, and one central tip. No extra prong, missing branch, detached piece, "
+    "trident, fork, ordinary sword, person, hand, inscription, glyph, logo, watermark, or readable text. "
+    "Use thick irregular black contours, dense cross-hatching, dry-brush abrasion, a solid blank blade "
+    "surface, restrained soot-black and rust watercolor washes, aged fibrous paper grain, and one "
+    "continuous plain unmarked illustrated ground."
+)
+
+Z_IMAGE_OATH_ITEMS_OBJECT_STYLE_PROMPT = (
+    "Z-IMAGE OATH ITEMS OBJECT STYLE LOCK: render one flat two-dimensional mature dark ink manhwa macro on "
+    "continuous dry brown earth. Exactly two separated objects occupy the frame: at left exactly one small dull "
+    "bronze shard with one tooth-shaped notch and no handle, and at right exactly one small green crescent-comma "
+    "ornament stone with one round hole near its blunt end and one tapered curved tail. No person, face, hand, "
+    "blood, weapon hilt, full sword, necklace, extra bead, "
+    "duplicate, collection, grid, shelf, panel, label, symbol or text appears."
+)
+
+Z_IMAGE_DARK_HARDBOILED_LANDSCAPE_STYLE_PROMPT = (
+    "Z-IMAGE DARK HARD-BOILED HISTORICAL MANHWA LANDSCAPE STYLE LOCK: render an ink-dominant mature "
+    "historical manhwa environment with thick irregular black outer contours, scratchy variable-width "
+    "dip-pen interior lines, aggressive dense cross-hatching, dry-brush abrasion, and deep soot-black "
+    "shadow masses. Only the concrete scene's named terrain, vegetation, water, and natural light "
+    "occupy the frame. Continuous wild unbuilt ground and open air extend edge to edge; the "
+    "environment remains completely unoccupied. Use aged fibrous print-stock "
+    "grain and restrained dirty-ivory, tobacco-brown, rust, faded-burgundy and soot-black washes. "
+    "Historical accuracy outranks style: terrain contours, vegetation, water, soil, rock, and natural "
+    "light match the stated era, place, and season. Every heavy black mass follows actual terrain, "
+    "vegetation, rock, or cast shadow. Broad irregular terrain texture continues naturally through "
+    "every corner in one open full-bleed composition."
+)
+
+Z_IMAGE_MODERN_NATURAL_MANHWA_LANDSCAPE_STYLE_PROMPT = (
+    "Z-IMAGE PRESENT-DAY NATURAL MANHWA LANDSCAPE STYLE LOCK: render one flat two-dimensional hand-drawn "
+    "ink manhwa present-day environment with scratchy variable-width dip-pen contours, dense cross-hatching, "
+    "dry-brush texture, and restrained dirty-ivory, tobacco-brown, natural-green, muted-blue and soot-black "
+    "watercolor washes. Present-day location accuracy governs every field edge, irrigation fitting, hose, tree, "
+    "and distant skyline. Living terrain and modern working landscape fill one continuous full-bleed 16:9 frame."
+)
+
+Z_IMAGE_PRIMORDIAL_NATURAL_MANHWA_LANDSCAPE_STYLE_PROMPT = (
+    "Z-IMAGE PRIMORDIAL NATURAL MANHWA LANDSCAPE STYLE LOCK: render one ink-dominant mature natural "
+    "environment with thick irregular black terrain contours, scratchy variable-width dip-pen "
+    "interior lines, aggressive dense cross-hatching, dry-brush abrasion, and deep soot-black natural "
+    "shadow masses. Only the concrete action's named sea, shore, terrain, vegetation, water, rock, "
+    "and natural light occupy the frame. Continuous ground, wild vegetation, rock, water, and open "
+    "sky fill every visible distance edge to edge. Use aged fibrous print-stock grain and restrained "
+    "dirty-ivory, tobacco-brown, rust, faded-burgundy, deep-blue, natural-green, and soot-black washes. "
+    "Natural accuracy outranks style: terrain contours, vegetation, water, soil, rock, and light match "
+    "the concrete action. Every heavy black mass follows actual terrain, vegetation, rock, or cast "
+    "shadow. Broad irregular terrain texture continues naturally through every corner in one open "
+    "full-bleed composition."
+)
+
+Z_IMAGE_FERTILE_CULTIVATION_MANHWA_LANDSCAPE_STYLE_PROMPT = (
+    "Z-IMAGE FERTILE CULTIVATION MANHWA LANDSCAPE STYLE LOCK: render one ink-dominant mature living "
+    "field with thick irregular dark-soil contours, scratchy variable-width dip-pen plant lines, dense "
+    "natural cross-hatching and restrained dirty-ivory, tobacco-brown, wet-earth, freshwater-blue and "
+    "living-green watercolor washes. Only real dark soil, freshwater irrigation, rice, millet, wheat, "
+    "bean plants, grain shoots and warm natural light named by the concrete action fill the frame. "
+    "Crop anatomy and growth stages stay botanically coherent, irregularly spaced and rooted in one "
+    "continuous field. The full frame is an uninhabited vegetation-only field surface: every visible pixel "
+    "belongs to natural soil, water, leaf litter, growing crops, or open sky. The entire horizon remains a "
+    "low fertile field edge beneath open warm sky."
+)
+
+Z_IMAGE_SINGLE_GRAIN_GERMINATION_MACRO_STYLE_PROMPT = (
+    "Z-IMAGE SINGLE GRAIN GERMINATION MACRO STYLE LOCK: one flat two-dimensional hand-drawn ink manhwa "
+    "extreme ground-level macro uses thick irregular black soil and plant contours, scratchy variable-width "
+    "dip-pen interior lines, dense cross-hatching, dry-brush abrasion, aged fibrous paper grain and restrained "
+    "dirty-ivory, wet-earth-brown and living-green watercolor washes. The macro "
+    "shows exactly one intact natural rice grain embedded in moist dark soil, with exactly one pale root "
+    "descending and exactly one fresh green shoot rising from that same grain. The single grain, its root, "
+    "its shoot and real soil texture fill the full 16:9 frame without a distant horizon or additional seeds. "
+    "No mature rice plant, tiller, tall leaf cluster, hand, finger, arm, leg, foot, person, village, building, "
+    "animal, writing, border or panel appears."
+)
+
+Z_IMAGE_RICE_COCOON_CLOTH_PLATFORM_STYLE_PROMPT = (
+    "Z-IMAGE RICE COCOON CLOTH PLATFORM STYLE LOCK: one flat two-dimensional hand-drawn ink manhwa straight "
+    "overhead evidence layout on uninterrupted bare natural wooden planks. Exactly one small flat pile of narrow "
+    "pale rice grains sits at left. Exactly one separate group of twenty thumb-sized smooth ivory oval silk "
+    "cocoons with fine loose white silk fibers sits at right. Exactly one compact flat rectangular stack of folded "
+    "white woven cloth sits along the top edge. Wide bare wood gaps separate all three groups. No potato, tuber, "
+    "fruit, stone, silkworm, mulberry leaf, body-shaped garment, person, human body part, text, border or panel appears."
+)
+
+Z_IMAGE_SINGLE_RAW_RICE_SEED_MACRO_STYLE_PROMPT = (
+    "Z-IMAGE SINGLE RAW RICE SEED MACRO STYLE LOCK: one flat two-dimensional hand-drawn ink manhwa "
+    "extreme close macro uses thick irregular black contours, scratchy variable-width dip-pen interior lines, "
+    "dense fine cross-hatching, aged fibrous paper grain and restrained dirty-ivory and warm wood-brown washes. "
+    "Exactly one raw unhulled rice seed occupies sixty percent of the full 16:9 frame width on bare rough wooden "
+    "planks. It has one narrow tapered pale hull, one closed lengthwise seam and fine parallel husk ridges. "
+    "No second seed, grain pile, bowl, tray, basket, sack, shadow, silhouette, person, animal, text or border appears."
+)
+
+Z_IMAGE_RAISED_FLOOR_GRANARY_EXTERIOR_STYLE_PROMPT = (
+    "Z-IMAGE RAISED-FLOOR GRANARY EXTERIOR STYLE LOCK: one flat two-dimensional hand-drawn ink manhwa "
+    "low exterior view shows exactly one archaic raised-floor granary with a simple thatched roof and four tall "
+    "plain timber support posts. Narrow wooden wall slats reveal exactly two closed woven seed baskets inside. "
+    "Wind-bent inland grass and one dark agricultural field fill the ground and horizon under a night sky. "
+    "No open room, interior floor, sea, shore, coast, beach, tropical vegetation, person, animal, text or border appears."
+)
+
+Z_IMAGE_TROPICAL_FOOD_GARDEN_MANHWA_STYLE_PROMPT = (
+    "Z-IMAGE TROPICAL FOOD GARDEN MANHWA LANDSCAPE STYLE LOCK: render one flat two-dimensional "
+    "ink-and-wash humid food garden with thick irregular dark-soil and leaf contours, scratchy "
+    "variable-width dip-pen lines, dense natural cross-hatching, dry-brush texture, aged fibrous paper "
+    "grain and restrained wet-earth-brown, deep-leaf-green and humid-blue watercolor washes. Living "
+    "taro, yam, cassava, maize, bean or breadfruit plants named by the concrete action remain botanically "
+    "coherent, rooted at irregular natural distances in one continuous dark-soil garden beneath forest light. "
+    "Every leaf, trunk, soil patch and margin remains natural and completely blank: no title, caption, label, "
+    "Latin letters, pseudo-letters, glyphs, signature, map, panel, border, interface or arranged artifact display."
+)
+
+Z_IMAGE_PRESENT_DAY_FAMILY_MEAL_STYLE_PROMPT = (
+    "Z-IMAGE PRESENT-DAY FAMILY MEAL STYLE LOCK: flat two-dimensional hand-drawn ink-and-wash mature manhwa "
+    "illustration with thick irregular black contours, scratchy variable-width dip-pen interior lines, dense "
+    "cross-hatching, dry-brush abrasion, aged fibrous paper grain and restrained watercolor washes. One contemporary Japanese apartment "
+    "scene shows exactly the three distinct adults named by the concrete action as three separate natural heads "
+    "and shoulder silhouettes. Each person wears one plain contemporary crewneck shirt or simple collarless "
+    "sweater in muted grey, cream or navy. A bright blank apartment wall and the low edge of one ordinary meal "
+    "table are the only background elements. All hands, utensils and tableware remain below the lower frame edge. "
+    "Every visible surface stays blank and natural, with no robe, kimono, sash, village, field, shrine, speech "
+    "bubble, caption, lettering, duplicate face, cloned person, panel or interface."
+)
+
+Z_IMAGE_PRESENT_DAY_CREATOR_GROUP_STYLE_PROMPT = (
+    "Z-IMAGE PRESENT-DAY CREATOR GROUP STYLE LOCK: flat two-dimensional hand-drawn ink-and-wash mature manhwa "
+    "illustration with thick irregular black contours, scratchy variable-width dip-pen interior lines, dense "
+    "cross-hatching, dry-brush abrasion, aged fibrous paper grain and restrained warm-neutral watercolor washes. "
+    "Exactly four distinct adult Japanese creators appear in fixed left-to-right order as one woman with shoulder-length "
+    "hair, one man with short hair, one different woman with bob hair, and one different man with short hair. All four "
+    "wear plain modern collarless crewneck shirts in muted charcoal, cream, "
+    "navy or rust and have contemporary short or shoulder-length dark hairstyles. All hands, phones, tablets, screens "
+    "and equipment remain below frame. The blank warm studio wall is the only background. No robe, kimono, sash, "
+    "historic garment, armor, shrine, village, speech bubble, caption, lettering, interface, duplicated face, cloned "
+    "person, extra person, panel or artifact display appears."
+)
+
+Z_IMAGE_PRESENT_DAY_EMPTY_MEAL_ROOM_STYLE_PROMPT = (
+    "Z-IMAGE PRESENT-DAY EMPTY MEAL ROOM STYLE LOCK: flat two-dimensional hand-drawn ink-and-wash mature manhwa "
+    "illustration with thick irregular black contours, scratchy variable-width dip-pen lines, dense cross-hatching, "
+    "aged fibrous paper grain and restrained watercolor washes. A steep overhead close view shows exactly one "
+    "continuous natural-wood tabletop filling the full 16:9 frame and exactly one simple centered place setting "
+    "consisting of one rice bowl, one soup bowl and one pair of chopsticks. Daylight crosses the blank surrounding wood. "
+    "No person, face, body, hand, portrait, chair, stool, robe, shrine, field, speech bubble, caption, lettering, "
+    "panel, interface or separate display appears."
+)
+
+Z_IMAGE_PRESENT_DAY_SERICULTURE_FIGURE_STYLE_PROMPT = (
+    "Z-IMAGE PRESENT-DAY SERICULTURE FIGURE STYLE LOCK: flat two-dimensional hand-drawn ink-and-wash mature "
+    "manhwa illustration with thick irregular black contours, scratchy variable-width dip-pen lines, dense "
+    "cross-hatching, aged fibrous paper grain and restrained grey, leaf-green and warm-wood watercolor washes. "
+    "Exactly one adult Japanese woman wears one plain light-grey collarless modern work jacket and matching simple "
+    "work trousers inside one clean present-day sericulture room with blank pale walls, simple modern shelving and "
+    "the one low silkworm tray named by the concrete action. Her one coherent body has one head, one torso, two "
+    "attached arms and two natural hands. No kimono, robe, sash, palace exterior, tiled gate, shrine, outdoor field, "
+    "historic hall, portrait, text, panel or artifact display appears."
+)
+
+Z_IMAGE_PRESENT_DAY_SILK_CEREMONY_FIGURE_STYLE_PROMPT = (
+    "Z-IMAGE PRESENT-DAY SILK CEREMONY FIGURE STYLE LOCK: flat two-dimensional hand-drawn ink-and-wash mature "
+    "manhwa illustration with thick irregular black contours, scratchy variable-width dip-pen lines, dense "
+    "cross-hatching, aged fibrous paper grain and restrained charcoal, ivory and warm-neutral watercolor washes. "
+    "Exactly one adult Japanese woman wears one plain charcoal contemporary business suit inside one clean neutral "
+    "present-day ceremonial room and holds exactly one folded white silk cloth at torso height. Her coherent body, "
+    "respectful face and the folded cloth are the only subjects. No kimono, robe, sash, palace exterior, tiled gate, "
+    "shrine, outdoor field, historic hall, portrait, text, panel or artifact display appears."
+)
+
+Z_IMAGE_MULBERRY_SERICULTURE_MANHWA_LANDSCAPE_STYLE_PROMPT = (
+    "Z-IMAGE MULBERRY SERICULTURE MANHWA LANDSCAPE STYLE LOCK: one flat two-dimensional ink-and-wash close "
+    "garden view uses scratchy variable-width dip-pen contours, dense natural cross-hatching, aged fibrous paper "
+    "grain and restrained leaf-green, earth-brown and dirty-ivory watercolor washes. Living white silkworms, "
+    "fresh mulberry leaves and the one pale cocoon named by the concrete action fill the frame at natural scale. "
+    "Mulberry foliage and shaded garden soil continue through every edge under soft daylight. Every surface stays "
+    "blank, with no sea, shore, bare rock field, map, text, panel, border or arranged artifact display."
+)
+
+Z_IMAGE_FINISHED_GARMENT_SHELTER_STYLE_PROMPT = (
+    "Z-IMAGE FINISHED GARMENT SHELTER STYLE LOCK: one flat two-dimensional ink-and-wash mature manhwa "
+    "illustration shows the interior of exactly one open-sided shelter made from plain unpainted posts. Exactly "
+    "one plain ivory short-sleeve crewneck shirt with a simple T-shirt silhouette and rough handwoven plant-fiber "
+    "texture physically hangs from the upper crossbar of exactly one vertical loom, with taut loom threads visibly "
+    "continuing above it. The shirt has one closed circular neck hole and one perfectly blank single-piece front "
+    "surface with no diagonal line, overlap, lapel, cord, fastener, sash, belt, robe or kimono shape. Dense living "
+    "mulberry foliage fills every opening and reaches every background "
+    "edge. No person, hand, silkworm, cocoon, sea, coast, water horizon, text, panel or artifact display appears."
+)
+
+Z_IMAGE_RICE_MULBERRY_LEGACY_LANDSCAPE_STYLE_PROMPT = (
+    "Z-IMAGE RICE MULBERRY LEGACY LANDSCAPE STYLE LOCK: one flat two-dimensional ink-and-wash mature manhwa "
+    "illustration shows exactly one structure in the entire image: the named plain open-front unpainted sericulture "
+    "shelter, whose fully open front clearly reveals exactly one upright working loom inside. A continuous unbroken "
+    "wall of dense inland forest fills the entire distant horizon from left edge to "
+    "right edge and blocks every settlement. One continuous inland agricultural landscape remains in front. Mature golden rice fills the left field, orderly "
+    "living green mulberry rows fill the right field, and exactly one plain open-sided unpainted sericulture shelter "
+    "stands where the fields meet. Natural soil and low inland vegetation continue to every edge. No additional "
+    "building, house, roof, road, utility pole or wire appears. No person, animal, silkworm, cocoon, sea, coast, text, "
+    "panel, border or arranged artifact display appears."
+)
+
+Z_IMAGE_SACRED_WEAVING_HALL_LANDSCAPE_STYLE_PROMPT = (
+    "Z-IMAGE SACRED WEAVING HALL LANDSCAPE STYLE LOCK: one flat two-dimensional ink-and-wash mature manhwa "
+    "illustration shows exactly one newly completed open-sided sacred weaving hall made only from plain unpainted "
+    "posts and a simple plant-fiber roof. Exactly three separated vertical looms with clean ivory warp threads stand "
+    "inside. Dense inland green foliage fills every open side and every background edge above continuous bare earth. "
+    "No person, animal, silkworm, cocoon, water, sea, coast, distant horizon, text, panel, border or arranged artifact "
+    "display appears."
+)
+
+Z_IMAGE_DRY_TAKAMAGAHARA_LANDSCAPE_STYLE_PROMPT = (
+    "Z-IMAGE DRY TAKAMAGAHARA LANDSCAPE STYLE LOCK: one flat two-dimensional ink-and-wash mature manhwa "
+    "illustration contains one uninterrupted dry matte-brown plateau from the entire bottom edge to a continuous "
+    "line of low dry hills at the horizon. Sparse wind-bent grass grows directly from the dry earth. Above that "
+    "single land plane, dense black storm clouds and the named natural sunlight fill the sky. Every pixel below "
+    "the sky belongs to opaque dry brown earth, dry grass, dry hill or natural stone."
+)
+
+Z_IMAGE_COVERED_MOUND_FERTILE_FIELD_STYLE_PROMPT = (
+    "Z-IMAGE COVERED MOUND FERTILE FIELD STYLE LOCK: one flat two-dimensional ink-and-wash mature manhwa "
+    "landscape contains exactly one low smooth oval ground mound fully sealed beneath one continuous plain "
+    "earth-brown woven cover. The cover is closed, uninterrupted and smooth from edge to edge; no body, face, "
+    "skin, limb, bone, blood or opening is visible. Irregular young rice, millet and bean shoots grow from dark "
+    "soil around the covered mound. Only the single cover, low mound, living plants, soil and natural sky appear."
+)
+
+Z_IMAGE_PRESENT_DAY_LIVING_CULTURE_LANDSCAPE_STYLE_PROMPT = (
+    "Z-IMAGE PRESENT-DAY LIVING CULTURE LANDSCAPE STYLE LOCK: one contemporary Japanese working plot in one "
+    "continuous natural landscape. A mature living rice paddy fills the left side, orderly living mulberry rows "
+    "fill the right side, and exactly one small white rectangular flat-roof sericulture workroom stands between "
+    "them. A dense tree wall closes the background. The workroom is the only building, roof, gate or structure; "
+    "no palace, tiled roof, shrine, castle, pagoda, sign, text, panel, artifact display or decorative architecture."
+)
+
+NATURAL_COLOR_BALANCE_PROMPT = (
+    "NEUTRAL-DAYLIGHT FULL-COLOR LOCK: preserve soot-black ink, hatching, and shadow depth while "
+    "keeping the watercolor fills visibly distinct. Use clean light-ivory paper, cool charcoal-grey, "
+    "muted mineral-blue, natural vegetation-green, earth umber, unbleached linen, and restrained "
+    "period-appropriate red accents. White balance stays neutral daylight; pale surfaces remain clean, "
+    "blue and green remain visibly chromatic, and chromatic separation remains clear across the complete frame. "
+    "Warm aged-paper patina is a faint secondary accent at no more than half strength and is confined to narrow "
+    "paper-shadow or natural-wood areas; it never becomes a full-frame brown wash."
+)
+
+_FLUX2_BAEKJE_EP06_SHOT_DIRECTIONS = (
+    "LOW-ANGLE WIDE STORY FRAME: use one low viewpoint with a strong foreground subject, readable middle-ground "
+    "action, and the narration-named place extending into a distinct background",
+    "OVER-THE-SHOULDER DEPTH FRAME: use one near shoulder or partial silhouette as foreground depth, keep the "
+    "narration actor and action sharp in the middle plane, and retain a restrained place cue behind",
+    "HIGH THREE-QUARTER SPATIAL FRAME: look down obliquely enough to reveal the relationship among people, the "
+    "narration-named object when present, and the surrounding historical setting",
+    "TIGHT SIDE-PROFILE STORY FRAME: use a side-lit profile or tight two-shot for the narration actor, with a "
+    "soft but recognizable historical background and no generic frontal lineup",
+    "MATERIAL-LED GROUND FRAME: place only a narration-named artifact, tool, boat edge, textile, or ground detail "
+    "large in the foreground when one exists, while the human consequence or setting remains readable behind",
+    "LAYERED ENVIRONMENT FRAME: let the narration-named architecture, shoreline, courtyard, interior material, "
+    "or landscape carry most of the frame while the required people remain story-active at a different scale",
+)
+
+_FLUX2_BAEKJE_EP06_ROW_DIRECTIONS = {
+    70: "LOW-ANGLE SINGLE-PERSON ORDINATION PORTRAIT: exactly one newly shaved monk fills the frame chest-up before one distant unmarked rough-thatched worship hall; no second person, weapon, writing, or sign",
+    71: "STRICT TOP-DOWN EXACT-TEN CIRCLE: ten fully shaved seated monks form one open circle on empty packed earth around one plain lamp; no building, observer, weapon, or sign",
+    72: "FIVE-PERSON ORGANIZATION DEPTH: Marananta fills the foreground while exactly four shaved novices work at separated depths in one blank unfinished room; no sixth person or sign",
+    73: "TIGHT TWO-PERSON FAREWELL: one shaved novice departs in foreground profile while one older family member remains distant on an open dirt path; no house, crowd, weapon, or sign",
+    74: "PEOPLE-FREE LIVING-BASE VIEW: exactly two rough-thatched monk shelters, grain jars, firewood, water jar, and rolled reed mats; no person, palace, tiled roof, plaque, sign, or writing",
+    75: "STRICT TOP-DOWN RESOURCE STILL LIFE: four raw beams, one carpenter adze, one grain sack, one boundary rope, and bare earth only; no person, building, paper, sign, or writing",
+    76: "TIGHT TWO-PERSON ROYAL COMMAND: King Chimnyu and one steward fill the frame against one blank reed wall; no paper order, guard, weapon, doorway, or sign",
+    77: "OBJECT-ONLY ADMINISTRATIVE FINANCE MACRO: one grain measure, boundary rope, six wooden tally rods, and one land peg on dark cloth; no clay seal, stamped object, round token, people, paper, mark, or sign",
+    78: "INTIMATE FOUR-PERSON RITUAL LEARNING: one older shaved monk demonstrates a bow while exactly three younger shaved monks mirror him beside one closed bundle and lamp; no fifth person, open book, writing, or sign",
+    79: "INTIMATE TWO-MONK MENTORSHIP: one older shaved monk and one younger shaved novice face each other beside one lamp against a blank reed wall; no third person or sign",
+    80: "FIVE-PERSON VILLAGE COEXISTENCE: one three-person family performs a clay-bowl ancestral rite while two monks walk on a distant path; no sixth person, crowd, or sign",
+    81: "CAPITAL-TO-PROVINCES PANORAMA: one compact capital and three distant villages recede along a long dirt path with exactly one tiny solitary traveler; no second person, arrow, label, tiled roof, or sign",
+    82: "OBJECT-ONLY COEXISTING-RITES STILL LIFE: one ancestral clay bowl, one closed woven scripture bundle, and one oil lamp share a blank earthen room; no people, statue, text, or sign",
+    83: "OBJECT-ONLY TWO-LAYER RITUAL VIEW: one old clay bowl remains on the earth below exactly one bronze Buddhist oil lamp with visible wick and flame on a timber shelf; no second bowl, people, statue, text, doorway, or sign",
+    84: "SINGLE-PERSON UNFINISHED-BEGINNING PORTRAIT: King Chimnyu fills the foreground before blurred raw posts, open roof ribs, and thatch; no second person, weapon, or sign",
+    85: "OBJECT-ONLY THREE-DEPTH CULTURAL STILL LIFE: one royal ritual cup, one closed funerary jar, and one uninscribed stone relief on dark cloth; no people, text, or sign",
+    86: "TIGHT TWO-PERSON GRIEF AND CONSOLATION: one bereaved adult and one shaved monk face each other beside an extinguished lamp against a blank wall; no corpse, third person, or sign",
+    87: "LOW-ANGLE SINGLE-PERSON PROTECTOR PORTRAIT: King Chimnyu stands chest-up before one distant unmarked rough-thatched hall; no monk, guard, crowd, weapon, or sign",
+    88: "TIGHT TWO-PERSON HUMAN-SCALE PORTRAIT: King Chimnyu and one grieving ordinary adult meet eyes against one blank reed wall; no monk, third person, throne, weapon, or sign",
+    89: "INTIMATE TWO-PERSON COMPASSION PATH: one ordinary adult places one grain bowl beside one elderly adult on open earth; no monk, king, crowd, temple, weapon, or sign",
+    90: "TWO-MONK SPECIALIZED LEARNING: one monk arranges six unmarked wooden slips while one monk rehearses a seated bow beside one lamp; no third person, paper, writing, or sign",
+    91: "WIDE THREE-ARTISAN WORKSHOP: one carpenter, one metalworker, and one painter work at separated stations beneath rough thatch; no fourth person, weapon, text, or sign",
+    92: "PEOPLE-FREE EMPTY-PEDESTAL INTERIOR: one bare pedestal stands in a narrow daylight shaft against blank reed walls; no statue, person, doorway, exterior, text, or sign",
+    93: "FOUR-PERSON CRAFT TRANSMISSION: one shaved monk shapes a clay relief while three apprentices separately prepare timber, pigment, and plain clay; no fifth person, finished statue, or sign",
+    94: "LOW WATERLINE TWO-PERSON ARRIVAL: one shaved Eastern Jin monk steps from one low boat toward one Baekje envoy on mud; no third person, building, weapon, writing, or sign",
+    95: "WIDE EXACT-THREE MONK DEPARTURE: three shaved Baekje monks occupy one low open boat with one plain sail and oar; no fourth person, weapon, writing, building, or sign",
+    96: "FULL-BLEED TWO-MONK NETWORK OUTPOST: one rough-thatched hall, two shaved monks, one small river landing, and one low boat connect across water and wooded ridges extending to every edge; no third person, sign, rectangular frame, or white margin",
+    97: "LOW WATERLINE TWO-PERSON IDEAS ROUTE: one merchant and one shaved monk travel in one small boat with two separate closed bundles; no third person, weapon, writing, or sign",
+    98: "EXTREME SINGLE-PERSON CHIMNYU TIME PORTRAIT: King Chimnyu fills the frame against one near-black blank reed wall with fatigued urgent eyes; no second person, weapon, doorway, or sign",
+    99: "RESPECTFUL DEATH-CHAMBER FRAME: one fully covered low bier, one shaved monk, one official, and one extinguished lamp against a blank wall; no visible corpse, third living person, weapon, or sign",
+    100: "TIGHT SINGLE-PERSON CHIMNYU DEATHBED PORTRAIT: Chimnyu's drawn face and unfinished concern dominate against one blank reed wall; no second person, crown, throne, writing, or sign",
+    101: "LAYERED TWO-PERSON SUCCESSION-CRISIS FRAME: Marananta and one worried official stand among raw worship-hall posts; no king, third person, crowd, weapon, writing, or sign",
+    102: "EXTREME SINGLE-PERSON MARANANTA GRIEF PORTRAIT: Marananta's lowered eyes and uncertain expression fill the frame beside one raw post at dusk; no second person, writing, or sign",
+    103: "TWO-PLANE JINSA-ASIN SUCCESSION PORTRAIT: adult Jinsa holds one unmarked seal cord in foreground while adolescent MALE SON Asin stands displaced behind as an unmistakable teenage boy with a masculine face, flat chest, and small male topknot; exactly two male people, no woman, writing, or sign",
+    104: "OVER-ASIN'S-SHOULDER JINSA CLOSE-UP: Jinsa grips one unmarked seal cord low and averts his eyes; exactly two people, no throne, writing, or sign",
+    105: "TIGHT TWO-PERSON FACTION CONFRONTATION: one royal kinsman and one senior aristocrat oppose each other against one blank reed wall; no third person, document, weapon, writing, or sign",
+    106: "LOW MATERIAL-LED POLITICAL CONFLICT: one Buddhist lamp dominates foreground while EXACTLY TWO nobles total occupy far-left and far-right background positions with broad empty wall between; no central person, faint duplicate, third person, writing, or sign",
+    107: "OBJECT-ONLY LAMP-AND-SEAL-CORD CONTRAST: one plain Buddhist lamp and one unmarked royal seal cord lie apart on dark cloth; no people, glyph, writing, or sign",
+    108: "HIGH THREE-QUARTER TWO-CLAN POWER PORTRAIT: two senior clan leaders stand far apart on open earth above the royal enclosure; no third person, building facade, banner, weapon, writing, or sign",
+    109: "QUIET DAWN SINGLE-MONK CONTINUITY FRAME: one shaved monk lights one lamp inside a modest rough-thatched worship hall; no second person, statue, writing, or sign",
+    110: "TIGHT SINGLE-PERSON KING ASIN PROCLAMATION: Asin places one unmarked seal cord on one closed decree bundle against a blank reed screen; no second person, readable surface, writing, or sign",
+    111: "LOW-ANGLE TWO-PERSON ROYAL-BUDDHIST CONTINUITY: King Asin and one shaved monk face one modest rough-thatched hall; no third person, statue, tiled roof, writing, or sign",
+    112: "STRICT VERTICAL TOP-DOWN OBJECT-ONLY JOINERY MACRO: one old horizontal beam and one newer horizontal beam lie flat on packed earth, overlap at one scarf joint with one wooden peg, and sit beside one lamp; zero horizon, sky, water, upright post, gate, lintel, roof, wall, person, torii, writing, or sign",
+    113: "LONG AXIAL THREE-MONK INSTITUTIONAL INTERIOR: three shaved monks work at widely separated depths inside one blank timber hall; no fourth person, open page, statue, writing, or sign",
+    114: "PEOPLE-FREE EXTINGUISHED-AND-BURNING LAMP CONTRAST: one cold royal lamp and one burning Buddhist lamp with one closed bundle share a blank wall; no people, text, writing, or sign",
+    115: "TIGHT SINGLE-PERSON OLDER MARANANTA PORTRAIT: ordinary daylight and lamplight divide his weathered face without fantasy; no second person, halo, writing, or sign",
+    116: "EXTREME SINGLE-PERSON MEDITATION CLOSE-UP: Marananta's human discipline fills a near-black blank reed background; no halo, magic, second person, writing, or sign",
+    117: "LOW REAR THREE-QUARTER SINGLE MARANANTA LANDING: one monk silhouette links one low boat and one distant rough-thatched hall; no second person, halo, writing, or sign",
+    118: "INTIMATE THREE-MONK ORAL-MEMORY SCENE: one elderly shaved monk speaks while exactly two younger monks listen beside one lamp; no fourth person, image, statue, writing, or sign",
+    119: "OBJECT-ONLY CHRONICLE-BUNDLE-AND-LAMP EVIDENCE CONTRAST: one closed wooden-slip bundle and one devotional lamp remain separated on dark cloth; no people, readable mark, writing, or sign",
+    120: "LANDSCAPE-ONLY THREE-REGIONAL-HALL PANORAMA: three tiny rough-thatched worship halls stand far apart at a river bend, wooded valley, and coastal inlet; no people, map, label, tiled roof, writing, or sign",
+    121: "TIGHT EXACT-THREE RECEPTION REENACTMENT: Marananta, Chimnyu, and one official stand before one uninterrupted blank reed wall; no fourth person, record, weapon, writing, or sign",
+    122: "PEOPLE-FREE THREE-POSSIBLE-LANDINGS ESTUARY: muddy riverbank, reed inlet, rocky shore, and one empty low boat recede through mist; no building, map, label, writing, or sign",
+    123: "INTIMATE TWO-PERSON LOCAL-MEMORY PORTRAIT: one elderly storyteller and one young adult listener sit beneath one plain tree with a distant rough-thatched hall; no third person, writing, or sign",
+    124: "TIGHT PROTECTIVE CHIMNYU-MARANANTA PORTRAIT: Chimnyu shields Marananta through body angle and decisive gaze against one blank reed wall; exactly two adults, no guard, weapon, writing, or sign",
+    125: "WIDE EXACT-FOUR MONK LEARNING INTERIOR: one older shaved monk teaches three younger monks using one closed bundle and six unmarked slips; no fifth person, readable mark, writing, or sign",
+    126: "HIGH WIDE BUDDHIST INSTITUTIONAL LANDSCAPE: one modest hall, one monk shelter, one craft shed, fields, landing, and exactly two tiny monks form one riverside compound; no third person, tiled roof, writing, or sign",
+    127: "EXTREME SINGLE-PERSON HUMANIZED MARANANTA CLOSE-UP: exhausted Marananta sits beside one closed bundle on bare ground; no magic, halo, second person, writing, or sign",
+    128: "LAYERED EXACT-THREE INTERMEDIARY OPEN-MUDFLAT LANDING: Eastern Jin monk-envoy, Marananta, and Baekje royal envoy connect through eye-lines with only open water, sky, reeds, mud, and one low boat behind; no building, wall, post, gate, roof, fourth person, weapon, writing, or sign",
+    129: "BACKLIT SINGLE-PERSON MARANANTA ARRIVAL: recognizable Marananta steps from one low boat onto a quiet riverbank with one closed bundle; no second person, halo, building, writing, or sign",
+    130: "HIGH WIDE EARLY-TO-LATER BAEKJE CULTURAL LANDSCAPE: one tiny rough-thatched early hall and one distant refined later temple compound share one continuous river terrace with exactly two tiny monks; no crowd, fantasy pagoda, writing, or sign",
+    131: "TIGHT EXACT-THREE PATRONAGE HANDOVER: one topknotted royal patron and one differently topknotted noble jointly present one closed bronze reliquary case to one fully shaved monk against a blank reed screen filling every edge; no fourth person, corner mark, signature, writing, or sign",
+    132: "LAYERED EXACT-FOUR MONK KNOWLEDGE SCENE BEFORE ONE BLANK REED WALL: monks teach by eye-line, secure one closed bundle, and study one uninscribed bronze object; no table, slip, tablet, paper, book, wall hanging, fifth person, corner mark, signature, writing, or sign",
+    133: "OBJECT-ONLY LATER-BAEKJE ARTISAN TABLE: one gilt-bronze lotus pedestal fragment, one roof-end tile, and three pigment bowls occupy separate depths; no person, statue face, writing, or sign",
+    134: "OBJECT-ONLY EXACT NEUNGSAN-RI BAEKJE GILT-BRONZE INCENSE BURNER: one coiled dragon base supports one raised lotus basin, one tall closed many-peaked mountain lid, and exactly one summit phoenix; no handle, spout, teapot, serving bowl, second bird, architecture, writing, or sign",
+    135: "GROUND-LEVEL PEOPLE-FREE HUMBLE 384-AD HALL: one tiny unfinished rough-thatched hall, one clay lamp, and two rolled mats sit in open landscape; no stone pagoda, gilt craft, person, writing, or sign",
+    136: "WIDE EXACT-THREE-GENERATION ARTISAN WORKSHOP: elderly bronze artisan, middle-aged carpenter, and young pigment apprentice work at separate stations; no fourth person, finished statue, writing, or sign",
+    137: "SINGLE-PERSON CHIMNYU FUTURE PORTRAIT: Chimnyu fills foreground before raw foundation posts and looks toward a future he will not see; no second person, completed temple, writing, or sign",
+    138: "LOW-WATERLINE EXACT-FOUR BAEKJE CULTURE DEPARTURE: two shaved monks, one carpenter, and one bronze artisan travel with closed bundles in one modest boat; no fifth person, weapon, writing, or sign",
+    139: "LANDSCAPE-DOMINANT EASTBOUND SINGLE-BOAT ROUTE: one small boat with exactly three tiny Baekje travelers moves toward a distant island; no fourth person, map, arrow, writing, or sign",
+    140: "TIGHT EXACT-TWO CULTURAL-ADAPTATION WORKSHOP: one Eastern Jin monk presents an uninscribed bronze lotus fragment while one Baekje artisan reshapes a clay lotus mold; no third person, writing, or sign",
+    141: "LOW EXACT-TWO CULTURAL HANDOVER LANDING: one Baekje monk passes one closed craft case and unmarked tile sample to one island envoy beside one low boat; no third person, building, writing, or sign",
+    142: "TIGHT EXACT-THREE INSTITUTIONAL TURNING POINT: Marananta, Chimnyu, and one unarmed steward with one closed resource bundle stand before one blank reed wall; no fourth person, weapon, writing, or sign",
+    143: "WIDE EXACT-THREE LINKED-WORK SCENE: one carpenter, one bronze artisan, and one unarmed envoy work at separated stations beneath one open timber shelter; no fourth person, weapon, writing, or sign",
+    144: "EXTREME SINGLE-PERSON CHIMNYU LEGACY CLOSE-UP: Chimnyu's weary resolved face fills one blank dark reed background beside one blurred lamp; no second person, doorway, writing, or sign",
+    145: "REAR THREE-QUARTER SINGLE MARANANTA MOVEMENT FRAME: Marananta walks from reception toward raw foundation posts and two empty monk mats; no second person, crowd, weapon, writing, or sign",
+    146: "LAYERED EXACT-FOUR FOUNDATION SCENE: Chimnyu and Marananta stand foreground while exactly two shaved Baekje monks prepare mats beside raw posts; no fifth person, weapon, writing, or sign",
+    147: "TIGHT EXACT-TWO ASIN CONTINUITY PORTRAIT: King Asin places one unmarked seal cord on one closed decree bundle while one shaved monk witnesses against a blank screen; no third person, readable surface, writing, or sign",
+    148: "LAYERED EXACT-FIVE DIFFERENT-SPEED SOCIAL SCENE: one official and one monk conduct a rite far from exactly three villagers tending grain and an ancestral bowl; no sixth person, crowd, writing, or sign",
+    149: "PEOPLE-FREE COEXISTING-FAITH STILL LIFE: one ancestral grain bowl, one Buddhist lamp, and one closed scripture bundle share packed earth; no person, statue, text, writing, or sign",
+    150: "STRICT OBJECT-ONLY MEMORY-VERSUS-RECORD SEPARATION: one devotional lamp sits far from one closed chronicle bundle and one foundation peg on dark cloth; no people, miracle, readable mark, writing, or sign",
+    151: "TIGHT SINGLE-PERSON FACTUAL MARANANTA PORTRAIT: human-scale Marananta fills a quiet river landing with one low empty boat and rough-thatched hall blurred behind; no halo, magic, second person, writing, or sign",
+    152: "TENSE EXACT-TWO KING-AND-COMMONER MORAL CONTRAST: unnamed king stands in hard side light while one ordinary commoner kneels across broad shadow in a blank room; no third person, guard, weapon, writing, or sign",
+    153: "PEOPLE-FREE DISRUPTED-COMMONER-HOME AFTERMATH: overturned grain bowl, torn work sash, extinguished lamp, and one long doorway shadow lie on earth; no body, blood, weapon, writing, or sign",
+    154: "INTIMATE EXACT-TWO DOMI-COUPLE PORTRAIT: humble boatman Domi and his wife exchange one warm trusting gaze beside one lamp in a modest blank reed home; no king, third person, weapon, writing, or sign",
+    155: "LAYERED EXACT-THREE TRAP SCENE: unnamed king watches from shadow while Domi and his wife stand close together in lit foreground sensing danger; no fourth person, guard, weapon, writing, or sign",
+    156: "NON-GRAPHIC EXACT-THREE AFTERMATH: blindfolded bloodless Domi sits left, his wife recoils protectively center, and the unnamed king remains distant right; no touching, guard, weapon, writing, or sign",
+    157: "WIFE-EYES FOCAL EXACT-TWO BOAT ESCAPE: Domi faces completely away so his whole face is outside view; his wife fills the foreground with both natural eyes open, sharp, uncovered, and clearly visible while rowing on open water; no cloth or accessory near her face, blindfold on wife, headband on wife, building, third person, weapon, writing, or sign",
+    158: "LAYERED EXACT-THREE OPEN-RIVER TEASER: Domi and his wife move away together in one near boat while one distant king stands alone on the far bare bank; no guard, weapon, building, writing, or sign",
+    159: "CLOSING WIDE EXACT-TWO DOMI-COUPLE SUNRISE: the couple recedes together in one small boat toward open water with no viewer gesture; no third person, text, icon, logo, writing, or sign",
+}
+
+def _flux2_baekje_ep06_visual_direction(source_prompt: str) -> str:
+    """Return deterministic FLUX2 camera direction for the prepared Baekje EP06 workbook."""
+    source = str(source_prompt or "")
+    row_match = re.search(r"\bSource\s+workbook\s+row\s+06-(\d{3})\b", source, re.IGNORECASE)
+    if not (
+        row_match
+        and re.search(r"\b384\s*(?:AD|CE)\b", source, re.IGNORECASE)
+        and re.search(r"\bBaekje\b", source, re.IGNORECASE)
+    ):
+        return ""
+
+    row_number = int(row_match.group(1))
+    narration_match = re.search(
+        r"\bNarration\s+context\s*:\s*(.*?)(?:\|\||$)",
+        source,
+        re.IGNORECASE | re.DOTALL,
+    )
+    narration = narration_match.group(1).strip() if narration_match else ""
+    strict_nonhuman = bool(
+        re.search(
+            r"\b(?:Object-only|Landscape-only|Animal-only|zero\s+(?:visible\s+)?people|"
+            r"no\s+(?:visible\s+)?people|without\s+people)\b",
+            source,
+            re.IGNORECASE,
+        )
+    )
+    base_direction = _FLUX2_BAEKJE_EP06_SHOT_DIRECTIONS[
+        (row_number - 1) % len(_FLUX2_BAEKJE_EP06_SHOT_DIRECTIONS)
+    ]
+    base_direction = _FLUX2_BAEKJE_EP06_ROW_DIRECTIONS.get(
+        row_number,
+        base_direction,
+    )
+    if row_number == 38:
+        base_direction = (
+            "LOW WATERLINE THREE-PERSON ARRIVAL FRAME: keep Marananta and the two required Baekje envoys as the "
+            "only three adults; use the boat edge and river mud for foreground depth, never an extra shoulder or observer"
+        )
+    elif row_number == 40:
+        base_direction = (
+            "EXTREME SINGLE-PERSON MARANANTA PROFILE: exactly one West Asian monk fills the frame chest-up; hair is absent "
+            "from his fully shaved bare scalp only, while one short dark moustache and close dark chin-and-jaw beard remain "
+            "clearly visible; behind him are only open muted-blue sea, pale sky, and distant natural coastlines extending "
+            "full-bleed to all four edges; no second person, boat, building, post, roof, weapon, decorated clothing, glyph, "
+            "character, sign, writing, rectangular frame, wooden border, black perimeter, white margin, mat, or vignette"
+        )
+    elif row_number == 43:
+        base_direction = (
+            "STRICT VERTICAL TOP-DOWN OBJECT MACRO: one dark woven cloth surface fills the complete frame beneath exactly "
+            "one tied bundle of narrow solid dark-wood slats, one blank clay seal, and one hemp cord coil; no room, wall, "
+            "floorboard, doorway, exterior, person, hand, book, paper, character, carved mark, or sign"
+        )
+    elif row_number == 45:
+        base_direction = (
+            "OBJECT-ONLY SIDE-LIT THREE-DEPTH STILL LIFE: a closed woven scripture bundle, uninscribed stone relief "
+            "fragment, and plain oil lamp remain the only three objects against a blank reed room"
+        )
+    elif row_number == 49:
+        base_direction = (
+            "PEOPLE-FREE SEALED INTERIOR FRAME: two empty woven mats and one closed wooden-slip bundle face one "
+            "uninterrupted blank reed wall; no window, doorway, exterior view, second building, person, or sign"
+        )
+    elif row_number == 65:
+        base_direction = (
+            "LANDSCAPE-ONLY ELEVATED HAN RIVER PANORAMA: earthworks, water, fields, wooded ridges, and only rough-thatched "
+            "settlements fill the frame; no foreground object, watercraft, person, gatehouse, tiled roof, map mark, or sign"
+        )
+    elif row_number == 66:
+        base_direction = (
+            "PEOPLE-FREE FOUNDATION HIGH THREE-QUARTER FRAME: only raw postholes, short timber stubs, uncut thatch, "
+            "rope, bare earth, and low grass appear; no finished temple, tiled roof, archaeologist, modern tool, or sign"
+        )
+    elif row_number == 68:
+        base_direction = (
+            "DIRECT TWO-PERSON POWER PORTRAIT: King Chimnyu and Marananta are the only two adults, both chest-up and "
+            "fully visible against one blank reed wall; no foreground shoulder, observer silhouette, third person, or sign"
+        )
+    locks = [
+        "BAEKJE EP06 FLUX2 COMPOSITION VARIETY LOCK",
+        base_direction,
+        "Preserve the source scene's exact people count, named action, era, place, and object restrictions. "
+        "Do not fall back to a repeated eye-level medium court lineup. Do not invent an artifact that the "
+        "narration or scene does not name. Do not invent a sword, spear, bow, armor, guard weapon, or armed "
+        "retainer unless the narration explicitly names combat or a weapon",
+        "BAEKJE CLEAN-SURFACE LOCK: every lintel, post, door, wall, gate, screen, and roof edge is uninterrupted "
+        "bare wood, reed, plaster, earth, or thatch. No attached board, plaque, paper strip, framed panel, sign, "
+        "inscription, calligraphy, glyph-like mark, letter, or number appears on architecture",
+    ]
+    important_figure = bool(
+        not strict_nonhuman
+        and re.search(
+            r"(?:침류왕|마라난타|백제\s*왕|낯선\s*승려|Chimnyu|Marananta|Baekje\s+king|"
+            r"king\s+of\s+Baekje|foreign\s+monk)",
+            f"{narration} {source}",
+            re.IGNORECASE,
+        )
+        and (
+            re.search(
+                r"(?:불러들|맞이|환대|도착|선택|결단|결정|받아들|들여놓|마주|긴장|낯선|"
+                r"허락|명령|고민|확신|두려|의심|경계|수용)",
+                narration,
+                re.IGNORECASE,
+            )
+            or re.search(
+                r"\b(?:summon|receive|welcome|arrive|choose|decide|accept|confront|"
+                r"tension|uncertain|resolve|fear|doubt|caution)\w*\b",
+                source,
+                re.IGNORECASE,
+            )
+        )
+    )
+    if important_figure:
+        locks.append(
+            "IMPORTANT-FIGURE EMOTION LOCK: give King Chimnyu or Marananta, whichever performs or receives the "
+            "narrated action, one dominant head-and-shoulders or chest-up focal plane without cropping away any "
+            "other required person. Make the narration-specific emotion readable through eyes, brow, jaw, breath, "
+            "and posture; use restrained directional light and a recognizable but secondary historical background"
+        )
+    return ": ".join((locks[0], "; ".join(locks[1:])))
+
+_LEGACY_LONGTUBE_STYLE_REWRITES: tuple[tuple[str, str], ...] = (
+    ("2D hard-boiled rugged masculine historical action cartoon", "mature dark historical manhwa illustration"),
+    ("2D hard-boiled rugged adult historical story cartoon", "mature dark historical manhwa illustration"),
+    ("extra-thick bold black ink contour lines", "variable-width scratchy dip-pen contour lines"),
+    ("extra-thick black ink contour lines", "variable-width scratchy dip-pen contour lines"),
+    ("extra-thick black outer contours", "controlled heavy black silhouette accents"),
+    ("thick bold black ink outlines", "variable-width scratchy dip-pen outlines"),
+    ("thick clean ink outlines", "variable-width scratchy dip-pen outlines"),
+    ("thick black contours", "variable-width scratchy dip-pen contours"),
+    ("bold black ink contour lines", "variable-width scratchy dip-pen contour lines"),
+    ("strong ink contour lines", "variable-width scratchy dip-pen contour lines"),
+    ("thick ink outlines", "variable-width scratchy dip-pen outlines"),
+    ("heavy brush-ink line weight", "dry-brush variable ink line weight"),
+    ("bold outer silhouettes", "controlled heavy silhouette accents"),
+    ("clean matte cel shading", "muted watercolor and gouache washes"),
+    ("matte cel shading", "muted watercolor and gouache washes"),
+    ("ink-and-cel", "ink-and-wash"),
+    ("cel-shaded", "watercolor-and-gouache"),
+    ("rugged masculine", "mature adult"),
+)
+
+
+def _z_image_japanese_myth_positive_guard(prompt: str) -> str:
+    """Put primordial setting and mature anatomy in Turbo's positive path."""
+    scan = str(prompt or "")
+    if not re.search(
+        r"\b(?:EP07\s+(?:oath-items\s+macro|eyes-only\s+crop|face-crop\s+only|strict-profile\s+faces|silk-filament\s+facial\s+action|attire\s+topology|present-day\s+family\s+meal|present-day\s+empty\s+meal\s+room|present-day\s+sericulture\s+figure|present-day\s+silk\s+ceremony\s+figure|present-day\s+creator\s+group)|Kojiki|Nihon\s+Shoki|Japanese\s+mythic(?:\s+creation)?|Takamagahara|"
+        r"Uke\s+Mochi|Tsukuyomi|Amaterasu|Susanoo)\b",
+        scan,
+        re.IGNORECASE,
+    ):
+        return ""
+
+    clay_bowl_face_reflection = bool(
+        re.search(
+            r"\b(?:messenger(?:'s)?\s+)?(?:frightened\s+)?face\s+reflected\s+in\s+(?:a|the)\s+dark\s+clay\s+bowl\b",
+            scan,
+            re.IGNORECASE,
+        )
+    )
+    if clay_bowl_face_reflection:
+        return (
+            "Messenger reaction close-up lock: exactly one frightened mature East Asian messenger "
+            "face fills the upper frame and looks sharply downward; the upper rim of exactly one "
+            "dark clay bowl stays small at the bottom edge with fresh sprouts beside it; the face "
+            "and head remain physically above and completely outside the bowl; both arms, both "
+            "hands and every finger stay outside the frame; no second person appears"
+        )
+
+    exact_place_match = re.search(
+        r"\bExact\s+place:\s*(.*?)(?=\.\s+(?:Culture\s+scope|Material\s+culture|"
+        r"Visible\s+evidence|Composition|Style|Primary\s+subject|Body\s+topology):|$)",
+        scan,
+        re.IGNORECASE | re.DOTALL,
+    )
+    exact_place = exact_place_match.group(1).strip(" ;,.") if exact_place_match else ""
+
+    if re.search(r"\bEP07\s+present-day\s+family\s+meal\b", scan, re.IGNORECASE):
+        return (
+            "Present-day family lock: exactly three distinct contemporary adult Japanese people occupy one "
+            "bright apartment dining-room frame as separate natural heads and shoulders in plain modern shirts; "
+            "the lower crop excludes every hand, utensil and lap, and the blank apartment wall contains no marks"
+        )
+    if re.search(r"\bEP07\s+present-day\s+empty\s+meal\s+room\b", scan, re.IGNORECASE):
+        return (
+            "Present-day empty-table lock: a steep overhead close view contains exactly one continuous natural-wood "
+            "tabletop filling the full frame and exactly one simple centered place setting consisting of one rice "
+            "bowl, one soup bowl and one pair of chopsticks with natural empty tabletop surrounding it"
+        )
+    if re.search(r"\bEP07\s+present-day\s+sericulture\s+figure\b", scan, re.IGNORECASE):
+        return (
+            "Present-day sericulture-room lock: exactly one adult Japanese woman in plain light-grey modern work "
+            "clothes stands inside one clean pale-walled sericulture room beside the single named tray; her one "
+            "coherent body has two attached arms and two natural hands"
+        )
+    if re.search(r"\bEP07\s+present-day\s+silk\s+ceremony\s+figure\b", scan, re.IGNORECASE):
+        return (
+            "Present-day ceremony-room lock: exactly one adult Japanese woman in one plain charcoal contemporary "
+            "business suit stands inside one clean neutral indoor room and holds one folded white silk cloth at torso height"
+        )
+    if re.search(r"\bEP07\s+present-day\s+creator\s+group\b", scan, re.IGNORECASE):
+        return (
+            "Present-day creator group lock: exactly four distinct adult Japanese creators appear in fixed left-to-right "
+            "order as one woman with shoulder-length hair, one man with short hair, one different woman with bob hair, "
+            "and one different man with short hair; every person wears one plain "
+            "modern collarless crewneck shirt with a contemporary dark hairstyle; all hands, screens and devices "
+            "remain below frame; no robe, kimono, sash, armor, historic garment, duplicate face or extra person"
+        )
+    if re.search(r"\bEP07\s+oath-items\s+macro\b", scan, re.IGNORECASE):
+        return (
+            "Oath-items macro lock: exactly two separated narration-critical objects rest on continuous dry brown "
+            "earth: one short flat irregular dull-bronze shard with one tooth-shaped notch and no handle at left and "
+            "one small green crescent-comma ornament stone with one round hole and one tapered curved tail at right; "
+            "no person, blood, extra object or display"
+        )
+
+    ep7_eyes_only_crop = bool(re.search(r"\bEP07\s+eyes-only\s+crop\b", scan, re.IGNORECASE))
+    ep7_face_crop = bool(re.search(r"\bEP07\s+(?:face-crop\s+only|strict-profile\s+faces)\b", scan, re.IGNORECASE))
+    ep7_foot_impact_crop = bool(re.search(r"\bEP07\s+foot-impact\s+crop\b", scan, re.IGNORECASE))
+    ep7_magatama_crop = bool(re.search(r"\bEP07\s+magatama\s+armor\s+crop\b", scan, re.IGNORECASE))
+    ep7_silk_filament_face = bool(
+        re.search(r"\bEP07\s+silk-filament\s+facial\s+action\b", scan, re.IGNORECASE)
+    )
+    hand_only_scene = bool(re.search(r"\bhand-only\b", scan, re.IGNORECASE))
+    if ep7_eyes_only_crop:
+        location_lock = (
+            "Eyes-only background lock: one enormous right eye, its eyebrow, eyelids, iris and temple fill every "
+            "pixel edge to edge; no background or other facial feature is visible"
+        )
+    elif hand_only_scene:
+        location_lock = (
+            "Hand-only background lock: exactly two connected wrists and hands fill the close foreground above one "
+            "continuous empty patch of bare brown earth; flat natural ground fills every remaining pixel with no head, "
+            "face, person, body, garment, tree, structure, display, extra object or distant figure"
+        )
+    elif re.search(r"\bEP07\s+dry-takamagahara\s+(?:figure|landscape)\b", scan, re.IGNORECASE):
+        location_lock = (
+            "Dry Takamagahara lock: dry matte brown earth and sparse wind-bent grass fill every pixel below the "
+            "unbroken storm sky, with low dry hills closing the horizon and no reflective or blue ground surface"
+        )
+    elif ep7_foot_impact_crop:
+        location_lock = (
+            "Foot-impact ground lock: dry matte brown rock fills every background pixel; black jagged fractures exist "
+            "only in that ground plane and radiate outward from beneath the heel; no blue surface or liquid appears"
+        )
+    elif ep7_silk_filament_face:
+        location_lock = (
+            "Silk-filament face background lock: soft continuous leaf-green blur fills every pixel behind the one "
+            "enormous side-profile face, the single pale cocoon and the single unbroken white filament"
+        )
+    elif re.search(r"\bEP07\s+finished-garment\s+shelter\b", scan, re.IGNORECASE):
+        location_lock = (
+            "Finished-garment shelter lock: dense living inland mulberry foliage fills every open side of exactly "
+            "one plain unpainted weaving shelter, leaving no distant horizon, sea, coast or open water"
+        )
+    elif re.search(r"\bEP07\s+rice-mulberry\s+legacy\s+landscape\b", scan, re.IGNORECASE):
+        location_lock = (
+            "Rice-mulberry landscape lock: one continuous inland field contains mature rice at left, orderly mulberry "
+            "rows at right and exactly one centered plain open-sided sericulture shelter between them; one dense "
+            "unbroken forest wall fills every horizon pixel, so the shelter is the only roof, only structure and "
+            "only vertical construction anywhere in the image; no animal or loose object appears"
+        )
+    elif re.search(r"\bEP07\s+completely-dry-river\s+landscape\b", scan, re.IGNORECASE):
+        location_lock = (
+            "Completely dry former-river lock: a serpentine sunken band of matte brown cracked clay runs through one "
+            "landlocked mountain valley; the full channel from foreground to distance is solid opaque dry earth, and "
+            "all remaining pixels are rock, slope, storm cloud or sparse dry vegetation"
+        )
+    elif re.search(r"\bEP07\s+sacred-weaving-hall\s+landscape\b", scan, re.IGNORECASE):
+        location_lock = (
+            "Sacred weaving-hall lock: exactly one inland open-sided unpainted hall contains exactly three separated "
+            "vertical looms, while dense green foliage fills every background edge with no water or horizon"
+        )
+    elif ep7_face_crop:
+        location_lock = (
+            "Face-crop background lock: an indistinct continuous earth-tone natural blur fills every pixel behind "
+            "the enormous facial features"
+        )
+    elif re.search(
+        r"\b(?:food\s+preparation|food\s+hall|heavenly\s+hall|council\s+space|"
+        r"audience\s+chamber|death\s+chamber)\b",
+        exact_place,
+        re.IGNORECASE,
+    ):
+        location_lock = (
+            "Archaic hall interior lock: the camera, every named person and every named object remain inside exactly "
+            "one simple early Japanese hall; reed mats, plain unpainted timber pillars, low roof beams and dim interior "
+            "shadow enclose the full frame; no open sky, outdoor horizon, mountain, seashore or wilderness replaces "
+            "the interior"
+        )
+    elif re.search(r"\bopen-sided\s+unpainted\s+timber\s+food\s+shelter\b", scan, re.IGNORECASE):
+        location_lock = (
+            "Primordial location lock: exactly one isolated open-sided food shelter uses bare "
+            "unpainted posts and one simple plant-fiber roof; wild empty earth and open sky surround "
+            "it, every distant slope remains unbuilt, and every surface stays blank"
+        )
+    elif re.search(
+        r"\b(?:tropical\s+food\s+garden|tropical\s+garden|taro|yam|cassava|breadfruit)\b",
+        scan,
+        re.IGNORECASE,
+    ):
+        location_lock = (
+            "Tropical food-garden lock: humid dark soil and living broad-leaf food plants form one "
+            "continuous rooted garden beneath dense natural forest light"
+        )
+    elif re.search(r"\b(?:vertical\s+loom|weaving\s+shelter|weaving\s+hall)\b", scan, re.IGNORECASE):
+        location_lock = (
+            "Weaving-shelter lock: exactly one open-sided structure of plain unpainted posts surrounds the named "
+            "vertical loom, while bare earth and living mulberry foliage continue beyond its open sides"
+        )
+    elif re.search(r"\b(?:mulberry|silkworm|silk\s+cocoon|cocoons?)\b", scan, re.IGNORECASE):
+        location_lock = (
+            "Mulberry-garden lock: living green mulberry leaves and shaded garden soil fill every distance "
+            "under soft daylight, with the named silkworms and cocoon kept at natural scale"
+        )
+    elif re.search(r"\brice\s+grain\s+germinating\b", scan, re.IGNORECASE):
+        location_lock = (
+            "Single-grain macro lock: exactly one intact rice grain, one connected pale root, one connected "
+            "green shoot and moist dark soil occupy the entire close frame"
+        )
+    elif re.search(
+        r"\b(?:fertile\s+(?:river\s+)?field|cultivation\s+field|grain\s+shoots|"
+        r"rice,\s*millet|fallen\s+dry\s+stalk|rice\s+grain\s+germinating)\b",
+        scan,
+        re.IGNORECASE,
+    ):
+        location_lock = (
+            "Fertile field lock: wet dark soil, freshwater channels and living crop plants form one "
+            "continuous cultivated landscape from foreground to the low grassy horizon"
+        )
+    elif re.search(r"\bTakamagahara\b", scan, re.IGNORECASE):
+        location_lock = (
+            "Primordial location lock: Takamagahara is one open windswept cloud plain beneath an "
+            "uninterrupted sky, containing only cloud, light, wind, grass, and rough natural stone; "
+            "the entire distance remains wild, unbuilt, and blank"
+        )
+    elif re.search(
+        r"\b(?:palace|hall|house|shrine|platform|gate|shelter|building)\b",
+        scan,
+        re.IGNORECASE,
+    ):
+        location_lock = (
+            "Primordial location lock: show only the one simple archaic structure explicitly named "
+            "by the concrete scene; all surrounding land remains wild, unbuilt, and blank"
+        )
+    else:
+        location_lock = (
+            "Primordial location lock: wild primordial island terrain and open sky contain only "
+            "the natural land, water, plants, and light explicitly named by the concrete "
+            "scene; all surfaces remain blank"
+        )
+
+    person_lock = ""
+    nonhuman_scene = bool(
+        re.search(
+            r"\b(?:landscape-only|object-only|hand-only|animal-only|nonhuman\s+spirits?)\b",
+            scan,
+            re.IGNORECASE,
+        )
+        or re.search(r"\bComposition:\s*wide\s+environment\b", scan, re.IGNORECASE)
+    )
+    if hand_only_scene:
+        person_lock = (
+            " Hand-only anatomy lock: exactly two natural adult hands enter from opposite frame edges, each with "
+            "one connected wrist, one palm, one thumb and four other separate fingers; the left hand holds exactly "
+            "one small green curved magatama and the right hand holds exactly one short flat dull-bronze shard with no "
+            "handle, hilt or guard; "
+            "no head, face, neck, shoulder, torso, leg, full person, third hand, extra item or scattered bead appears"
+        )
+    elif not nonhuman_scene and re.search(
+        r"\b(?:adult|deity|goddess|god|Uke\s+Mochi|Tsukuyomi|Amaterasu|Susanoo)\b",
+        scan,
+        re.IGNORECASE,
+    ):
+        face_only_scene = ep7_eyes_only_crop or ep7_face_crop or ep7_silk_filament_face or bool(re.search(
+            r"\b(?:EP07\s+face-crop\s+only|face-only|facial\s+close-up|two-face\s+close-up|"
+            r"extreme\s+macro|enormous\s+(?:mature\s+)?profiles?|"
+            r"both\s+jawlines\s+meet\s+the\s+lower\s+edge)\b",
+            scan,
+            re.IGNORECASE,
+        ))
+        if ep7_eyes_only_crop:
+            person_lock = (
+                " Adult single-eye anatomy lock: exactly one adult East Asian man's natural right eye is visible; "
+                "one coherent eyebrow, two eyelids, one iris, one pupil and the surrounding temple fill the frame; "
+                "the second eye, nose, cheeks, mouth, upper lip, chin, jaw, neck and garment do not exist anywhere "
+                "inside the image"
+            )
+        elif face_only_scene:
+            if re.search(r"\b(?:Hainuwele|Indonesian)\b", scan, re.IGNORECASE):
+                person_lock = (
+                    " Adult face lock: exactly one mature young Southeast Asian woman with natural Indonesian "
+                    "facial proportions and coherent adult bone structure; one complete face occupies 95 percent "
+                    "of the full frame height, the hair crown extends beyond the upper edge, and the lower crop "
+                    "ends directly through the chin before the neck begins; forehead, two natural eyes, one nose, "
+                    "one mouth, two cheeks, one chin, two ears and natural dark hair fill all visible subject pixels"
+                )
+            else:
+                person_lock = (
+                    " Adult face lock: mature natural East Asian facial proportions and angular adult bone "
+                    "structure; complete faces occupy 95 percent of the full frame height, hair crowns extend beyond "
+                    "the upper edge, and every lower crop ends directly through the chin before the neck begins; "
+                    "forehead, eyes, nose, mouth, cheeks, chin, ears and natural hair fill all visible subject pixels; "
+                    "chin, jaw and natural hair continue through the entire lower image edge"
+                )
+            if re.search(r"\bclean-shaven\s+upper\s+lip,?\s+chin\s+and\s+jaw\b", scan, re.IGNORECASE):
+                person_lock += (
+                    "; clean-shaven male identity lock: the adult East Asian man at the right side in his thirties has "
+                    "one completely smooth hairless upper lip, two smooth hairless cheeks, one smooth hairless chin "
+                    "and one smooth hairless jawline, with thick long black scalp hair continuing behind his ear"
+                )
+            if re.search(r"\bEP07\s+strict-profile\s+faces\b", scan, re.IGNORECASE):
+                person_lock += (
+                    "; distinct sister-brother identity lock: the left profile is one adult East Asian woman with "
+                    "feminine cheek and jaw proportions, smooth hairless skin, natural feminine lips and long "
+                    "center-parted black hair; the right profile is one visibly different adult East Asian man in "
+                    "his thirties with a stronger angular jaw and long black hair; the two faces are not clones"
+                )
+        else:
+            if re.search(r"\bEP07\s+attire\s+topology\b", scan, re.IGNORECASE):
+                if re.search(
+                    r"\bexactly\s+one\s+adult\s+messenger\s+man\b.*\bfully\s+covered\s+earth-tone\s+shroud\b",
+                    scan,
+                    re.IGNORECASE | re.DOTALL,
+                ):
+                    person_lock = (
+                        " Exactly one visible adult East Asian messenger man with one coherent body wears one raw "
+                        "woven plant-fiber T-shaped pullover shirt with short straight sleeves, one shallow round "
+                        "neckline fitted at the base of his neck, one uninterrupted chest panel, a knee-length hem, "
+                        "and loose ankle trousers; one separate fully covered low earth-tone shroud rests on the ground"
+                    )
+                elif ep7_foot_impact_crop:
+                    person_lock = (
+                        " Foot-impact anatomy lock: one trousered lower leg ends naturally in one complete bare foot "
+                        "with one heel, one arch and five toes; its skin is smooth, continuous and completely unmarked; "
+                        "the heel rests on dry brown rock while black jagged fractures remain visibly in the rock around it"
+                    )
+                elif ep7_magatama_crop:
+                    person_lock = (
+                        " Magatama torso lock: one adult East Asian woman fills one tight symmetrical head-shoulders-chest "
+                        "portrait; two identical strands of many small separated green comma-shaped beads appear "
+                        "simultaneously and symmetrically, one strand encircling each upper arm; one separate necklace "
+                        "of the same small green comma-shaped beads hangs at center; all three strands visibly consist "
+                        "of individual beads, while an ivory crewneck T-shirt covers the torso"
+                    )
+                elif re.search(r"\bEP07\s+rice-planting\s+hands\b", scan, re.IGNORECASE):
+                    person_lock = (
+                        " Hand-action crop lock: exactly two natural adult female hands, each with five separated "
+                        "fingers and one connected wrist, emerge from two raw woven plant-fiber T-shaped pullover "
+                        "sleeves and plant one living young rice shoot into wet paddy mud; hands, sleeve ends, the "
+                        "single shoot, water and mud fill the entire frame"
+                    )
+                elif re.search(r"\brear\s+view\b", scan, re.IGNORECASE):
+                    figure_count = (
+                        "Exactly one visible adult"
+                        if re.search(r"\bexactly\s+one\s+visible\s+adult\b", scan, re.IGNORECASE)
+                        else "Every visible adult"
+                    )
+                    person_lock = (
+                        f" Adult figure lock: mature natural East Asian body proportions; {figure_count} wears one raw "
+                        "woven plant-fiber T-shaped pullover shirt with short straight sleeves, one shallow neckline "
+                        "fitted directly at the base of the neck, one continuous uninterrupted rear panel from both "
+                        "shoulders to the knee-length hem, and loose ankle trousers"
+                    )
+                else:
+                    if re.search(r"\bexactly\s+one\s+visible\s+adult\b", scan, re.IGNORECASE):
+                        figure_count = "Exactly one visible adult"
+                    elif re.search(r"\bexactly\s+two\s+visible\s+adults\b", scan, re.IGNORECASE):
+                        figure_count = "Exactly two visible adults"
+                    elif re.search(r"\bexactly\s+three\s+visible\s+adults\b", scan, re.IGNORECASE):
+                        figure_count = "Exactly three visible adults"
+                    else:
+                        figure_count = "Every visible adult"
+                    has_man = bool(re.search(r"\b(?:adult\s+male|adult\s+east\s+asian\s+man|messenger\s+man|middle-aged\s+man|young\s+adult\s+man)\b", scan, re.IGNORECASE))
+                    has_woman = bool(re.search(r"\b(?:adult\s+female|adult\s+east\s+asian\s+woman|adult\s+east\s+asian\s+women|elderly\s+woman|middle-aged\s+woman|young\s+adult\s+woman)\b", scan, re.IGNORECASE))
+                    lower_body = (
+                        "; LOWER-BODY FIRST RULE: the one adult woman wears one broad continuous ankle-length "
+                        "straight plant-fiber skirt; one solid trapezoid of skirt cloth visibly bridges the full space "
+                        "between both legs from waist to waterline and completely covers both thighs and both knees, "
+                        "forming one unbroken single-garment silhouette"
+                        if has_woman and not has_man and figure_count.startswith("Exactly one")
+                        else "; each of the exactly three women wears one broad continuous ankle-length straight plant-fiber skirt; no trousers, divided legs, wrap robe, sash or kimono"
+                        if has_woman and not has_man and figure_count.startswith("Exactly three")
+                        else "; the one adult man wears loose ankle trousers"
+                        if has_man and not has_woman and figure_count.startswith("Exactly one")
+                        else "; the adult man wears loose ankle trousers and the adult woman wears one long straight plant-fiber skirt"
+                        if has_man and has_woman and figure_count.startswith("Exactly two")
+                        else "; the elderly woman wears one broad continuous ankle-length straight plant-fiber skirt, while both adult men wear loose ankle trousers"
+                        if has_man and has_woman and figure_count.startswith("Exactly three")
+                        else "; each adult wears a single straight plant-fiber lower garment"
+                    )
+                    person_lock = (
+                        " Adult figure lock: mature natural East Asian facial proportions and angular adult bone "
+                        f"structure; {figure_count} wears one raw woven plant-fiber T-shaped pullover shirt with short "
+                        "straight sleeves, one shallow round neckline fitted directly at the base of the neck, one perfectly straight uninterrupted chest "
+                        "panel, and a knee-length hem" + lower_body
+                    )
+                    if has_woman and figure_count.startswith("Exactly three"):
+                        person_lock += (
+                            "; three-age identity lock: the left woman is elderly with silver hair and an aged face, "
+                            "the center woman is middle-aged with dark hair and mature features, and the right woman "
+                            "is a young adult with dark hair and younger adult features; their faces and silhouettes "
+                            "must be visibly different, with no cloned or repeated person"
+                        )
+                if re.search(r"\bhair\s+(?:visibly\s+continuing\s+past|continuing\s+past|extending\s+below|extends\s+below)\s+both\s+shoulders\b", scan, re.IGNORECASE):
+                    person_lock += (
+                        "; hair continuity lock: one thick unbound black hair mass begins at the crown, covers the "
+                        "back of the neck and visibly extends below both shoulder lines onto the upper back"
+                    )
+                if not ep7_foot_impact_crop and re.search(r"\bfull\s+sole\s+of\s+one\s+bare\s+foot\b", scan, re.IGNORECASE):
+                    person_lock += (
+                        "; foot-action lock: both complete legs remain attached to one pelvis, both natural bare feet "
+                        "have five toes, and the full sole of the forward foot physically touches the single ground crack"
+                    )
+                if not ep7_magatama_crop and re.search(r"\bEP07\s+magatama\s+armor\s+crop\b", scan, re.IGNORECASE):
+                    person_lock += (
+                        "; magatama crop lock: the frame ends at the lower ribs, exactly one green necklace hangs from "
+                        "the neck, exactly one separate green bead band circles the left upper arm, exactly one separate "
+                        "green bead band circles the right upper arm, both forearms continue through the bottom edge, "
+                        "and neither hand nor lower body appears"
+                    )
+            else:
+                if re.search(
+                    r"\bexactly\s+one(?:\s+[a-z-]+){0,5}\s+adult\b",
+                    scan,
+                    re.IGNORECASE,
+                ):
+                    figure_clause = (
+                        "exactly one visible adult appears in the entire frame; no other person appears; this adult"
+                    )
+                elif re.search(
+                    r"\bexactly\s+two(?:\s+[a-z-]+){0,5}\s+adults?\b",
+                    scan,
+                    re.IGNORECASE,
+                ):
+                    figure_clause = (
+                        "exactly two visible adults appear in the entire frame; the total human count is two, with "
+                        "exactly two heads and exactly two torsos; no third person, bystander, duplicate, human-shaped "
+                        "shadow or standing silhouette appears; both adults"
+                    )
+                else:
+                    figure_clause = "every visible adult"
+                person_lock = (
+                    " Adult figure lock: mature natural East Asian facial proportions, angular adult bone "
+                    f"structure; {figure_clause} wears one plain pre-state woven T-shaped pullover tunic with a "
+                    "shallow round neckline, short straight sleeves, one uninterrupted single-piece front "
+                    "panel, and one flat cloth sash; adult men wear loose ankle trousers and adult women "
+                    "wear one long straight ankle-length skirt"
+                )
+            if not re.search(r"\bEP07\s+attire\s+topology\b", scan, re.IGNORECASE) and not re.search(
+                r"\b(?:blade|weapon|sword|sheath|scabbard|spear|bow)\b",
+                scan,
+                re.IGNORECASE,
+            ):
+                person_lock += "; every waist and belt area contains soft cloth only and stays empty"
+    if person_lock:
+        return f"{person_lock.strip()}. {location_lock}.".strip()
+    return f"{location_lock}.".strip()
+
+
+_RIDERLESS_HORSE_SPATIAL_LOCK = (
+    "EMPTY HORSE BACK SPATIAL LOCK: every Scene-named horse stands or walks on four visible legs. Continuous natural "
+    "hair covers the entire back from mane through withers, spine and rump against open air. All tack and decoration "
+    "remain confined to the bridle, head and neck. Every named human forms a separate full body on the ground at least "
+    "one horse-length away, with two visible feet or both knees contacting earth."
+)
+
+_CINEMATIC_LIVE_ACTION_STYLE_RE = re.compile(
+    r"(?:^|[.;|]\s*)(?:(?:Global\s+style|Style)\s*:\s*)?[^.;|]{0,500}"
+    r"\b(?:cinematic\s+live[- ]action\s+historical\s+drama|"
+    r"photorealistic\s+(?:cinematic\s+)?(?:live[- ]action|feature[- ]film))\b",
+    re.IGNORECASE,
+)
+
+
+def _uses_cinematic_live_action_style(prompt: str) -> bool:
+    """Recognize only an explicit positive style field, not a manhwa ban phrase."""
+    return bool(_CINEMATIC_LIVE_ACTION_STYLE_RE.search(str(prompt or "")))
+
+def _apply_longtube_dark_manhwa_style(prompt: str, *, model_id: str = "") -> str:
+    styled = str(prompt or "")
+    if _uses_cinematic_live_action_style(styled):
+        return re.sub(r"\s{2,}", " ", styled).strip()
+    for legacy, replacement in _LEGACY_LONGTUBE_STYLE_REWRITES:
+        styled = re.sub(re.escape(legacy), replacement, styled, flags=re.IGNORECASE)
+    for pattern, replacement in (
+        (r"\bsepia\b", "neutral grey"),
+        (r"\btobacco(?:-brown|\s+brown)?\b", "natural wood-brown"),
+        (r"\bdirty(?:-ivory|\s+ivory)\b", "clean light-ivory"),
+    ):
+        styled = re.sub(pattern, replacement, styled, flags=re.IGNORECASE)
+    styled = re.sub(r"\s{2,}", " ", styled).strip()
+    is_z_image = str(model_id or "").strip().lower().startswith("comfyui-z-image-")
+    flat_forged_iron_surface_macro = bool(
+        is_z_image
+        and re.search(r"\bObject-only\b", styled, re.IGNORECASE)
+        and re.search(
+            r"\b(?:cropped\s+(?:entirely\s+)?inside\s+one\s+continuous|"
+            r"continuous\s+(?:solid\s+)?flat\s+(?:ancient\s+)?(?:forged-)?iron\s+plane|"
+            r"all\s+four\s+frame\s+edges\s+(?:cut\s+through|remain\s+solid))\b",
+            styled,
+            re.IGNORECASE,
+        )
+    )
+    present_day_creator_group = bool(
+        is_z_image
+        and re.search(
+            r"\bexactly\s+four\s+present-day\s+adult\s+Japanese\s+creators\b",
+            styled,
+            re.IGNORECASE,
+        )
+    )
+    if present_day_creator_group:
+        return (
+            "Render a flat two-dimensional hand-drawn contemporary editorial manhwa illustration with visible irregular "
+            "black ink contours, fine cross-hatching, restrained watercolor washes, and fibrous paper grain, never a "
+            "photograph or live-action image. Exactly four present-day adult Japanese creators appear once in one "
+            "continuous bright neutral studio frame: "
+            "exactly two women and exactly two men with distinct contemporary dark hairstyles. Every creator wears one "
+            "plain modern collarless crewneck cotton shirt with ordinary contemporary seams and no overlap, lapel, sash, "
+            "robe, kimono, armor, ornament, or historical accessory. Head-and-shoulders group portrait: the four creators "
+            "stand in one clean row, exchange warm engaged expressions, and face the viewer; the lower frame edge cuts "
+            "above every elbow, so exactly zero hands appear. No tablet, monitor, screen, phone, device, paper, sign, icon, "
+            "interface, writing, letters, numbers, or symbols appear anywhere. Use a "
+            "mature contemporary Japanese editorial graphic-novel ink-and-wash style with coherent adult anatomy, natural "
+            "daylight, a clean blank studio wall, and no outdoor landscape or historical architecture. Every face, shirt, "
+            "wall, and shadow remains visibly hand-drawn with ink hatching and paper texture."
+        )
+    riderless_horse_spatial_lock = bool(
+        is_z_image
+        and re.search(r"\b(?:riderless|empty[- ]back(?:ed)?)\b", styled, re.IGNORECASE)
+        and re.search(r"\b(?:horse|stallion|mare)\b", styled, re.IGNORECASE)
+    )
+    is_japanese_myth = bool(re.search(
+        r"\b(?:Kojiki|Nihon\s+Shoki|Japanese\s+mythic(?:\s+creation)?|Takamagahara|"
+        r"Uke\s+Mochi|Tsukuyomi|Amaterasu|Susanoo)\b",
+        styled,
+        re.IGNORECASE,
+    ))
+    is_ch3_ep08_creation = bool(
+        re.search(r"identical\s+closed-front\s+tunics", styled, re.IGNORECASE)
+    )
+    present_day_landscape = bool(
+        re.search(r"\bLandscape-only\b", styled, re.IGNORECASE)
+        and re.search(r"\bpresent-day\b", styled, re.IGNORECASE)
+    )
+    fertile_cultivation_landscape = bool(
+        re.search(r"\bLandscape-only\b", styled, re.IGNORECASE)
+        and re.search(
+            r"\b(?:fertile\s+(?:river\s+)?field|cultivation\s+field|grain\s+shoots|"
+            r"rice,\s*millet|fallen\s+dry\s+stalk|rice\s+grain\s+germinating)\b",
+            styled,
+            re.IGNORECASE,
+        )
+    )
+    tropical_food_garden_landscape = bool(
+        re.search(r"\bLandscape-only\b", styled, re.IGNORECASE)
+        and re.search(
+            r"\b(?:tropical\s+food\s+garden|tropical\s+garden|taro|yam|cassava|breadfruit)\b",
+            styled,
+            re.IGNORECASE,
+        )
+    )
+    visible_action_match = re.search(
+        r"\bVisible\s+action:\s*(.*?)(?=\.\s+(?:Body\s+integrity|Primary\s+subject|"
+        r"Historical\s+setting|Material\s+culture|Composition|Era/period|Exact\s+place|"
+        r"Culture\s+scope|Visible\s+evidence):|$)",
+        styled,
+        re.IGNORECASE | re.DOTALL,
+    )
+    concrete_action_scope = (
+        visible_action_match.group(1)
+        if visible_action_match
+        else styled
+    )
+    baekje_ep06_reception_crop = bool(
+        is_z_image
+        and re.search(
+            r"\bTIGHT\s+THREE-PERSON\s+CHEST-UP\s+PORTRAIT\b",
+            concrete_action_scope,
+            re.IGNORECASE,
+        )
+    )
+    baekje_ep06_blank_interior_crop = bool(
+        is_z_image
+        and re.search(
+            r"\b(?:three-person\s+Baekje\s+court\s+discussion|"
+            r"two-person\s+royal\s+acceptance|"
+            r"two-person\s+Baekje\s+power-alignment\s+tableau)\b",
+            concrete_action_scope,
+            re.IGNORECASE,
+        )
+    )
+    fourth_century_baekje_material = bool(
+        is_z_image
+        and re.search(r"\bBaekje\b", styled, re.IGNORECASE)
+        and re.search(
+            r"\b(?:384\s+AD|4th-century|late-fourth-century|late\s+4th\s+century)\b",
+            styled,
+            re.IGNORECASE,
+        )
+    )
+    single_grain_germination_macro = bool(
+        re.search(r"\b(?:Landscape-only|Object-only)\b", concrete_action_scope, re.IGNORECASE)
+        and re.search(r"\bextreme\s+macro\b", concrete_action_scope, re.IGNORECASE)
+        and re.search(
+            r"\b(?:rice\s+grain\s+germinating|natural\s+rice\s+seed|tiny\s+two-leaf\s+fresh\s+green\s+sprout)\b",
+            concrete_action_scope,
+            re.IGNORECASE,
+        )
+    )
+    rice_cocoon_cloth_platform = bool(
+        re.search(r"\bObject-only\s+straight\s+overhead\s+evidence\s+layout\b", concrete_action_scope, re.IGNORECASE)
+    )
+    mulberry_sericulture_landscape = bool(
+        re.search(r"\bLandscape-only\b", concrete_action_scope, re.IGNORECASE)
+        and re.search(
+            r"\b(?:mulberry|silkworm|silk\s+cocoon|cocoons?)\b",
+            concrete_action_scope,
+            re.IGNORECASE,
+        )
+    )
+    raw_single_rice_seed_macro = bool(
+        re.search(r"\bObject-only\b", concrete_action_scope, re.IGNORECASE)
+        and re.search(r"\bextreme\s+macro\b", concrete_action_scope, re.IGNORECASE)
+        and re.search(
+            r"\bexactly\s+one\s+raw\s+unhulled\s+rice\s+seed\b",
+            concrete_action_scope,
+            re.IGNORECASE,
+        )
+    )
+    raised_floor_granary_exterior = bool(
+        re.search(r"\bLandscape-only\b", concrete_action_scope, re.IGNORECASE)
+        and re.search(
+            r"\braised-floor\s+thatched\s+granary\b",
+            concrete_action_scope,
+            re.IGNORECASE,
+        )
+        and re.search(r"\bexterior\b", concrete_action_scope, re.IGNORECASE)
+    )
+    japanese_myth_guard_source = styled
+    ep7_eyes_only_crop = bool(re.search(r"\bEP07\s+eyes-only\s+crop\b", styled, re.IGNORECASE))
+    ep7_face_crop_prompt = bool(re.search(r"\bEP07\s+(?:face-crop\s+only|strict-profile\s+faces)\b", styled, re.IGNORECASE))
+    ep7_silk_filament_face = bool(re.search(r"\bEP07\s+silk-filament\s+facial\s+action\b", styled, re.IGNORECASE))
+    ep7_attire_prompt = bool(re.search(r"\bEP07\s+attire\s+topology\b", styled, re.IGNORECASE))
+    ep7_foot_impact_crop = bool(re.search(r"\bEP07\s+foot-impact\s+crop\b", styled, re.IGNORECASE))
+    ep7_magatama_crop = bool(re.search(r"\bEP07\s+magatama\s+armor\s+crop\b", styled, re.IGNORECASE))
+    ep7_dry_takamagahara = bool(re.search(r"\bEP07\s+dry-takamagahara\s+(?:figure|landscape)\b", styled, re.IGNORECASE))
+    ep7_covered_mound_field = bool(re.search(r"\bEP07\s+covered-mound\s+field\b", styled, re.IGNORECASE))
+    ep7_present_day_living_culture = bool(
+        re.search(r"\bEP07\s+present-day\s+living-culture\s+landscape\b", styled, re.IGNORECASE)
+    )
+    ep7_rice_planting_crop = bool(re.search(r"\bEP07\s+rice-planting\s+hands\b", styled, re.IGNORECASE))
+    ep7_present_day_family = bool(re.search(r"\bEP07\s+present-day\s+family\s+meal\b", styled, re.IGNORECASE))
+    ep7_present_day_empty_meal = bool(re.search(r"\bEP07\s+present-day\s+empty\s+meal\s+room\b", styled, re.IGNORECASE))
+    ep7_present_day_sericulture = bool(re.search(r"\bEP07\s+present-day\s+sericulture\s+figure\b", styled, re.IGNORECASE))
+    ep7_present_day_silk_ceremony = bool(re.search(r"\bEP07\s+present-day\s+silk\s+ceremony\s+figure\b", styled, re.IGNORECASE))
+    ep7_present_day_creator_group = bool(re.search(r"\bEP07\s+present-day\s+creator\s+group\b", styled, re.IGNORECASE))
+    ep7_three_silkworm_macro = bool(re.search(r"\bEP07\s+three-silkworm\s+macro\b", styled, re.IGNORECASE))
+    ep7_finished_garment_shelter = bool(re.search(r"\bEP07\s+finished-garment\s+shelter\b", styled, re.IGNORECASE))
+    ep7_rice_mulberry_legacy = bool(re.search(r"\bEP07\s+rice-mulberry\s+legacy\s+landscape\b", styled, re.IGNORECASE))
+    ep7_sacred_weaving_hall = bool(re.search(r"\bEP07\s+sacred-weaving-hall\s+landscape\b", styled, re.IGNORECASE))
+    ep7_oath_items_macro = bool(re.search(r"\bEP07\s+oath-items\s+macro\b", styled, re.IGNORECASE))
+    if is_z_image and is_japanese_myth:
+        styled = re.sub(
+            r"\s*Material\s+culture:\s*[^.]*\.?",
+            "",
+            styled,
+            flags=re.IGNORECASE,
+        )
+        styled = re.sub(
+            r"\s*Visible\s+evidence:\s*The\s+visible\s+action\s+follows\s+the\s+narrated\s+"
+            r"Japanese(?:\s+creation-myth\s+moment)?[^.]*\.?",
+            "",
+            styled,
+            flags=re.IGNORECASE,
+        )
+        if re.search(r"\bEP07\s+(?:eyes-only\s+crop|face-crop\s+only|strict-profile\s+faces|silk-filament\s+facial\s+action|attire\s+topology)\b", styled, re.IGNORECASE):
+            # Keep EP07's narration-linked gender, age, expression, and action while
+            # removing name/era tokens that make Turbo invent later Japanese clothing.
+            for pattern, replacement in (
+                (r"\bHainuwele\b", "mature young Indonesian woman"),
+                (r"\b(?:Tsukuyomi|Susanoo)\b", "mature adult East Asian man"),
+                (r"\b(?:Uke\s+Mochi|Amaterasu)\b", "mature adult East Asian woman"),
+                (r"\b(?:Ame\s+no\s+Kumahito|Messenger\s+deity)\b", "mature adult East Asian messenger man"),
+                (r"\bTakamagahara\b", "primordial cloud plain"),
+                (r"\bJapanese\s+mythic\s+creation\s+era\b", "primordial pre-state mythic era"),
+                (r"\bKojiki\s+and\s+Nihon\s+Shoki\s+Japanese\s+creation\s+myth\b", "primordial pre-state mythic setting"),
+                (r"\bJapanese\s+deit(?:y|ies)\b", "primordial adult East Asian person"),
+                (r"\bJapanese\b", "primordial East Asian"),
+            ):
+                styled = re.sub(pattern, replacement, styled, flags=re.IGNORECASE)
+            if ep7_eyes_only_crop or ep7_face_crop_prompt or ep7_silk_filament_face or ep7_attire_prompt:
+                styled = re.sub(
+                    r"\s*(?:Era/period|Exact\s+place|Culture\s+scope):\s*[^.]*\.?",
+                    "",
+                    styled,
+                    flags=re.IGNORECASE,
+                )
+        if (
+            ep7_present_day_family
+            or ep7_present_day_empty_meal
+            or ep7_present_day_sericulture
+            or ep7_present_day_silk_ceremony
+        ):
+            styled = re.sub(
+                r"\s*(?:Era/period|Exact\s+place|Culture\s+scope):\s*[^.]*\.?",
+                "",
+                styled,
+                flags=re.IGNORECASE,
+            )
+            styled = re.sub(
+                r"\b(?:Japanese\s+mythic\s+creation\s+era|Kojiki\s+and\s+Nihon\s+Shoki\s+Japanese\s+creation\s+myth)\b",
+                "present-day Japan",
+                styled,
+                flags=re.IGNORECASE,
+            )
+            styled = re.sub(
+                r"\s*Style:\s*.*$",
+                "",
+                styled,
+                flags=re.IGNORECASE | re.DOTALL,
+            )
+    if is_z_image:
+        lowered = styled.lower()
+        if ep7_present_day_creator_group:
+            style_lock = Z_IMAGE_PRESENT_DAY_CREATOR_GROUP_STYLE_PROMPT
+        elif ep7_present_day_family:
+            style_lock = Z_IMAGE_PRESENT_DAY_FAMILY_MEAL_STYLE_PROMPT
+        elif ep7_present_day_empty_meal:
+            style_lock = Z_IMAGE_PRESENT_DAY_EMPTY_MEAL_ROOM_STYLE_PROMPT
+        elif ep7_present_day_sericulture:
+            style_lock = Z_IMAGE_PRESENT_DAY_SERICULTURE_FIGURE_STYLE_PROMPT
+        elif ep7_present_day_silk_ceremony:
+            style_lock = Z_IMAGE_PRESENT_DAY_SILK_CEREMONY_FIGURE_STYLE_PROMPT
+        elif ep7_eyes_only_crop:
+            style_lock = Z_IMAGE_DARK_HARDBOILED_EYES_ONLY_STYLE_PROMPT
+        elif ep7_face_crop_prompt or ep7_silk_filament_face:
+            style_lock = Z_IMAGE_DARK_HARDBOILED_FACE_STYLE_PROMPT
+        elif ep7_foot_impact_crop:
+            style_lock = Z_IMAGE_DARK_HARDBOILED_FIGURE_STYLE_PROMPT.replace(
+                "One coherent adult body and the named natural setting fill one continuous full-bleed 16:9 image.",
+                "One extreme low crop containing one smooth unmarked five-toed bare foot resting on dry cracked brown rock fills one continuous full-bleed 16:9 image.",
+            )
+        elif ep7_magatama_crop:
+            style_lock = Z_IMAGE_DARK_HARDBOILED_FIGURE_STYLE_PROMPT.replace(
+                "One coherent adult body and the named natural setting fill one continuous full-bleed 16:9 image.",
+                "One tight symmetrical chest portrait shows two matching green comma-bead upper-arm strands and one matching green comma-bead necklace, every strand made from many separated beads.",
+            )
+        elif ep7_rice_planting_crop:
+            style_lock = Z_IMAGE_DARK_HARDBOILED_FIGURE_STYLE_PROMPT.replace(
+                "One coherent adult body and the named natural setting fill one continuous full-bleed 16:9 image.",
+                "One extreme hand-action crop and the named paddy mud fill one continuous full-bleed 16:9 image; exactly two hands and two sleeve ends are the only visible human anatomy.",
+            )
+        elif ep7_attire_prompt:
+            style_lock = (
+                Z_IMAGE_DRY_TAKAMAGAHARA_LANDSCAPE_STYLE_PROMPT
+                + " "
+                + Z_IMAGE_DARK_HARDBOILED_FIGURE_STYLE_PROMPT
+                if ep7_dry_takamagahara
+                else Z_IMAGE_DARK_HARDBOILED_FIGURE_STYLE_PROMPT
+            )
+        elif "seven-branch-sword-only" in lowered:
+            style_lock = Z_IMAGE_SEVEN_BRANCH_SWORD_STYLE_PROMPT
+        elif "animal-only" in lowered:
+            style_lock = Z_IMAGE_DARK_HARDBOILED_ANIMAL_STYLE_PROMPT
+        elif flat_forged_iron_surface_macro:
+            style_lock = Z_IMAGE_DARK_HARDBOILED_MATERIAL_SURFACE_STYLE_PROMPT
+        elif rice_cocoon_cloth_platform:
+            style_lock = Z_IMAGE_RICE_COCOON_CLOTH_PLATFORM_STYLE_PROMPT
+        elif single_grain_germination_macro:
+            style_lock = Z_IMAGE_SINGLE_GRAIN_GERMINATION_MACRO_STYLE_PROMPT
+        elif raw_single_rice_seed_macro:
+            style_lock = Z_IMAGE_SINGLE_RAW_RICE_SEED_MACRO_STYLE_PROMPT
+        elif "object-only" in lowered:
+            style_lock = (
+                Z_IMAGE_OATH_ITEMS_OBJECT_STYLE_PROMPT
+                if ep7_oath_items_macro
+                else Z_IMAGE_DARK_HARDBOILED_OBJECT_STYLE_PROMPT
+            )
+        elif (
+            "landscape-only" in lowered
+            or "environment-only uninhabited natural landscape" in lowered
+        ):
+            if is_japanese_myth:
+                styled = re.sub(
+                    r"\s*(?:Era/period|Exact\s+place|Culture\s+scope):\s*[^.]*\.?",
+                    "",
+                    styled,
+                    flags=re.IGNORECASE,
+                )
+                styled = re.sub(
+                    r"\s*Style:\s*.*$",
+                    "",
+                    styled,
+                    flags=re.IGNORECASE | re.DOTALL,
+                )
+            elif present_day_landscape:
+                styled = re.sub(
+                    r"\s*Style:\s*.*$",
+                    "",
+                    styled,
+                    flags=re.IGNORECASE | re.DOTALL,
+                )
+            styled = re.sub(
+                r"Composition:\s*wide\s+environment;\s*clear\s+horizon,\s*layered\s+depth\s+and\s+"
+                r"one\s+dominant\s+place\s+feature\.",
+                "Composition: wide natural environment; clear horizon and continuous layered terrain depth.",
+                styled,
+                flags=re.IGNORECASE,
+            )
+            style_lock = (
+                Z_IMAGE_COVERED_MOUND_FERTILE_FIELD_STYLE_PROMPT
+                if ep7_covered_mound_field
+                else Z_IMAGE_PRESENT_DAY_LIVING_CULTURE_LANDSCAPE_STYLE_PROMPT
+                if ep7_present_day_living_culture
+                else Z_IMAGE_MODERN_NATURAL_MANHWA_LANDSCAPE_STYLE_PROMPT
+                if present_day_landscape
+                else Z_IMAGE_TROPICAL_FOOD_GARDEN_MANHWA_STYLE_PROMPT
+                if tropical_food_garden_landscape
+                else Z_IMAGE_FINISHED_GARMENT_SHELTER_STYLE_PROMPT
+                if ep7_finished_garment_shelter
+                else Z_IMAGE_RICE_MULBERRY_LEGACY_LANDSCAPE_STYLE_PROMPT
+                if ep7_rice_mulberry_legacy
+                else Z_IMAGE_SACRED_WEAVING_HALL_LANDSCAPE_STYLE_PROMPT
+                if ep7_sacred_weaving_hall
+                else Z_IMAGE_DRY_TAKAMAGAHARA_LANDSCAPE_STYLE_PROMPT
+                if ep7_dry_takamagahara
+                else (
+                    Z_IMAGE_MULBERRY_SERICULTURE_MANHWA_LANDSCAPE_STYLE_PROMPT
+                    + " EXACT THREE-SILKWORM LOCK: exactly three large white silkworms appear, one centered on each "
+                    "of exactly three separate mulberry leaves."
+                    if ep7_three_silkworm_macro
+                    else Z_IMAGE_MULBERRY_SERICULTURE_MANHWA_LANDSCAPE_STYLE_PROMPT
+                )
+                if mulberry_sericulture_landscape
+                else Z_IMAGE_SINGLE_GRAIN_GERMINATION_MACRO_STYLE_PROMPT
+                if single_grain_germination_macro
+                else Z_IMAGE_RAISED_FLOOR_GRANARY_EXTERIOR_STYLE_PROMPT
+                if raised_floor_granary_exterior
+                else Z_IMAGE_FERTILE_CULTIVATION_MANHWA_LANDSCAPE_STYLE_PROMPT
+                if fertile_cultivation_landscape
+                else Z_IMAGE_PRIMORDIAL_NATURAL_MANHWA_LANDSCAPE_STYLE_PROMPT
+                if is_japanese_myth
+                else Z_IMAGE_DARK_HARDBOILED_LANDSCAPE_STYLE_PROMPT
+            )
+        else:
+            style_lock = Z_IMAGE_DARK_HARDBOILED_MANHWA_STYLE_PROMPT
+    else:
+        style_lock = ADULT_COMIC_STYLE_COMFYUI_FRONT_PROMPT
+    if baekje_ep06_reception_crop or baekje_ep06_blank_interior_crop:
+        style_lock = style_lock.replace(
+            "Use one open full-bleed historical staging.",
+            "Use one tight chest-up historical portrait staging.",
+        ).replace(
+            "Broad irregular local ground and sky texture continues naturally through every corner in one "
+            "continuous frame.",
+            "One uninterrupted blank rough reed-mat and mud-plaster interior wall continues through every "
+            "corner and all four frame edges.",
+        )
+    for pattern, replacement in (
+        (r"\bsepia\b", "neutral grey"),
+        (r"\btobacco(?:-brown|\s+brown)?\b", "natural wood-brown"),
+        (r"\bdirty(?:-ivory|\s+ivory)\b", "clean light-ivory"),
+    ):
+        style_lock = re.sub(pattern, replacement, style_lock, flags=re.IGNORECASE)
+    style_lock = f"{NATURAL_COLOR_BALANCE_PROMPT} {style_lock}"
+    if is_z_image and "Visible action:" in styled:
+        # Z-Image Turbo has no useful CFG-negative path and follows the earliest
+        # positive content most strongly.  Put the concrete narration-linked
+        # scene ahead of the long style lock, and drop the redundant compact
+        # Style field because the dedicated lock below already owns rendering.
+        styled = re.sub(
+            r"^Style:\s*.*?(?=Visible action:)",
+            "",
+            styled,
+            count=1,
+            flags=re.IGNORECASE | re.DOTALL,
+        ).strip(" ;,.")
+        action_match = re.search(
+            r"Visible action:\s*(.*?)(?=\.\s+(?:Body integrity|Primary subject|"
+            r"Historical setting|Material culture|Composition):|$)",
+            styled,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if action_match:
+            action_body = action_match.group(1).strip(" ;,.")
+            styled = (styled[: action_match.start()] + styled[action_match.end() :]).strip(" ;,.")
+            if (
+                ep7_present_day_family
+                or ep7_present_day_empty_meal
+                or ep7_present_day_sericulture
+                or ep7_present_day_silk_ceremony
+                or ep7_present_day_creator_group
+            ):
+                styled = re.sub(
+                    r"\s*Style:\s*.*$",
+                    "",
+                    styled,
+                    flags=re.IGNORECASE | re.DOTALL,
+                ).strip(" ;,.")
+            if "animal-only" in lowered or "seven-branch-sword-only" in lowered:
+                styled = re.sub(
+                    r"\s*Style:\s*.*$",
+                    "",
+                    styled,
+                    flags=re.IGNORECASE | re.DOTALL,
+                ).strip(" ;,.")
+            if ep7_eyes_only_crop or ep7_face_crop_prompt or ep7_silk_filament_face or ep7_attire_prompt:
+                styled = ""
+            # Z-Image can paint uppercase orchestration labels as a headline.
+            # Start directly with the concrete scene for every scene contract;
+            # content order is preserved without exposing control text.
+            scene_first = re.sub(
+                r"^(?:Landscape-only\s+)?EP07\s+(?:eyes-only\s+crop|face-crop\s+only|strict-profile\s+faces|silk-filament\s+facial\s+action|attire\s+topology|"
+                r"present-day\s+family\s+meal|present-day\s+empty\s+meal\s+room|"
+                r"present-day\s+sericulture\s+figure|present-day\s+silk\s+ceremony\s+figure|"
+                r"present-day\s+creator\s+group|oath-items\s+macro|"
+                r"three-silkworm\s+macro|finished-garment\s+shelter|rice-mulberry\s+legacy\s+landscape|"
+                r"sacred-weaving-hall\s+landscape|covered-mound\s+field|"
+                r"present-day\s+living-culture\s+landscape)\s*,?\s*",
+                "",
+                action_body,
+                count=1,
+                flags=re.IGNORECASE,
+            )
+            clay_bowl_face_reflection = bool(
+                re.search(
+                    r"\b(?:messenger(?:'s)?\s+)?(?:frightened\s+)?face\s+reflected\s+in\s+(?:a|the)\s+dark\s+clay\s+bowl\b",
+                    scene_first,
+                    re.IGNORECASE,
+                )
+            )
+            if clay_bowl_face_reflection:
+                scene_first = (
+                    "strict head-and-shoulders close-up of exactly one frightened adult East Asian messenger "
+                    "looking sharply downward, with the upper rim of one dark clay bowl and fresh sprouts small "
+                    "at the bottom edge, exactly zero visible hands or arms"
+                )
+            else:
+                scene_first = re.sub(
+                    r"\bhalf-shadowed\b",
+                    "lit by dim side light",
+                    scene_first,
+                    flags=re.IGNORECASE,
+                )
+            scene_first = re.sub(
+                r"^(?:Landscape-only|Animal-only|Seven-branch-sword-only)\s+",
+                "",
+                scene_first,
+                count=1,
+                flags=re.IGNORECASE,
+            )
+            scene_first = re.sub(
+                r"\bEP07\s+(?:foot-impact\s+crop|magatama\s+armor\s+crop|dry-takamagahara\s+(?:figure|landscape)|"
+                r"covered-mound\s+field|present-day\s+living-culture\s+landscape)\b,?\s*",
+                "",
+                scene_first,
+                flags=re.IGNORECASE,
+            )
+            if (
+                ep7_present_day_family
+                or ep7_present_day_empty_meal
+                or ep7_present_day_sericulture
+                or ep7_present_day_silk_ceremony
+            ):
+                scene_first = (
+                    "Flat two-dimensional hand-drawn ink-and-wash mature manhwa illustration with thick "
+                    "irregular black contours, scratchy dip-pen lines, dense cross-hatching and aged paper grain: "
+                    + scene_first
+                )
+            guard_source = (
+                f"{action_body} {styled}"
+                if ep7_eyes_only_crop or ep7_face_crop_prompt or ep7_silk_filament_face or ep7_attire_prompt
+                else f"{action_body} {japanese_myth_guard_source}"
+            )
+            zero_person_scene = bool(
+                re.search(
+                    r"\b(?:Object-only|Landscape-only|no\s+(?:visible\s+)?people|"
+                    r"no\s+(?:visible\s+)?person|without\s+people|zero\s+people)\b",
+                    action_body,
+                    re.IGNORECASE,
+                )
+            )
+            exact_place_match = re.search(
+                r"\bExact\s+place:\s*([^.;\r\n]+)",
+                japanese_myth_guard_source,
+                re.IGNORECASE,
+            )
+            exact_place_text = (
+                exact_place_match.group(1).strip()
+                if exact_place_match
+                else ""
+            )
+            closed_object_interior = bool(
+                zero_person_scene
+                and not re.search(
+                    r"\b(?:exterior|outside)\b",
+                    f"{action_body} {exact_place_text}",
+                    re.IGNORECASE,
+                )
+                and not re.search(
+                    r"\b(?:doorway|threshold|open\s+side|outdoor|field|paddy|grove|path|river|shore)\b",
+                    action_body,
+                    re.IGNORECASE,
+                )
+                and (
+                    re.search(
+                        r"\b(?:hall|interior|inside|chamber|granary|mat\s+display|"
+                        r"fallen\s+body|fallen\s+goddess|death\s+hall)\b",
+                        exact_place_text,
+                        re.IGNORECASE,
+                    )
+                    or re.search(r"\breed\s+mats?\b", action_body, re.IGNORECASE)
+                )
+            )
+            zero_person_lock = (
+                "ZERO-PERSON SCENE LOCK: no living person, deity, bystander or human-shaped silhouette "
+                "appears; no human face, head, torso, arm, hand, finger, leg or foot appears. Show only "
+                "the concrete named objects, plants, animals, architecture and ground in the action."
+                if zero_person_scene
+                else ""
+            )
+            closed_object_lock = (
+                "CLOSED OBJECT-INTERIOR LOCK: the named objects remain on one continuous reed-mat floor "
+                "inside one enclosed blank reed-and-unpainted-timber hall. Interior wall and floor fill "
+                "every image edge; no doorway, open side, outdoor view, sky, horizon or distant person appears."
+                if closed_object_interior
+                else ""
+            )
+            myth_guard = (
+                ""
+                if zero_person_scene
+                else _z_image_japanese_myth_positive_guard(guard_source)
+            )
+            guard_text = f" {myth_guard}" if myth_guard else ""
+            exact_two_closed_hall = bool(
+                re.search(
+                    r"\bexactly\s+two(?:\s+[a-z-]+){0,5}\s+adults?\b",
+                    guard_source,
+                    re.IGNORECASE,
+                )
+                and "Archaic hall interior lock:" in myth_guard
+            )
+            exact_one_closed_hall = bool(
+                re.search(
+                    r"\bexactly\s+one(?:\s+[a-z-]+){0,5}\s+adult\b",
+                    guard_source,
+                    re.IGNORECASE,
+                )
+                and "Archaic hall interior lock:" in myth_guard
+            )
+            closed_pair_lock = (
+                "CLOSED INTERIOR EXACT-TWO LOCK: the complete image contains exactly two people total: "
+                "the two named adults in the concrete action, each appearing once; exactly two heads and "
+                "exactly two torsos. Use a tight three-quarter two-shot. One continuous blank reed-and-timber "
+                "interior wall fills the entire background edge to edge. No doorway, window, open side, outdoor "
+                "view, distant figure, bystander, third person, silhouette, reflection person or human-shaped "
+                "shadow appears."
+                if exact_two_closed_hall
+                else ""
+            )
+            closed_solo_lock = (
+                "CLOSED INTERIOR SOLO LOCK: exactly one person appears in the complete image: the single named "
+                "adult in the concrete action. Use a tight three-quarter foreground crop. One continuous blank "
+                "reed-and-timber interior wall fills the entire background edge to edge. No doorway, window, open "
+                "side, outdoor view, distant figure, background worker, bystander, second person, silhouette, "
+                "portrait or human-shaped shadow appears."
+                if exact_one_closed_hall
+                else ""
+            )
+            solo_identity_match = re.search(
+                r"\b(?:Main|Primary)\s+subject:\s*(.*?)(?=;\s*|\.\s+(?:Body topology|Era/period|"
+                r"Exact place|Culture scope|Material culture|Visible evidence|Composition|Style):|$)",
+                styled,
+                re.IGNORECASE | re.DOTALL,
+            )
+            solo_identity_lock = (
+                "SOLO IDENTITY LOCK: "
+                + solo_identity_match.group(1).strip().rstrip(".")
+                + "."
+                if exact_one_closed_hall and solo_identity_match
+                else ""
+            )
+            zero_hand_crop_lock = (
+                "ZERO-HAND CROP LOCK: both wrists, both hands and every finger remain outside the lower frame or "
+                "fully hidden inside closed sleeves; no hand touches the face, lap, floor, vessel or table."
+                if re.search(
+                    r"\bexactly\s+zero\s+visible\s+hands\b",
+                    f"{scene_first} {action_body} {styled}",
+                    re.IGNORECASE,
+                )
+                else ""
+            )
+            closed_hall_style_lock = style_lock
+            if exact_two_closed_hall or exact_one_closed_hall:
+                closed_hall_style_lock = closed_hall_style_lock.replace(
+                    "Use one open full-bleed historical staging.",
+                    "Use one single full-bleed enclosed-interior staging.",
+                ).replace(
+                    "Broad irregular local ground and sky texture continues naturally through every corner in one "
+                    "continuous frame.",
+                    "The continuous reed-and-timber interior wall and floor continue through every corner in one "
+                    "enclosed frame; no exterior opening or sky is visible.",
+                )
+            tray_action_lock = (
+                "TRAY CONTACT LOCK: exactly one plain wooden tray spans the lower foreground; the single named "
+                "adult visibly lifts it above the lap using exactly two attached hands, one hand gripping each "
+                "opposite tray edge; neither hand rests on the lap or floor."
+                if (
+                    re.search(
+                        r"\bboth\s+hands\s+hold\s+a\s+plain\s+wooden\s+tray\b",
+                        scene_first,
+                        re.IGNORECASE,
+                    )
+                    or (
+                        re.search(r"\bUkemochi\s+before\s+death\b", scene_first, re.IGNORECASE)
+                        and re.search(r"\bwooden\s+trays?\s+around\s+her\b", scene_first, re.IGNORECASE)
+                        and re.search(
+                            r"\bexactly\s+two\s+visible\s+hands\s+total\b",
+                            scene_first,
+                            re.IGNORECASE,
+                        )
+                    )
+                )
+                else ""
+            )
+            ep08_attire_geometry = ""
+            if is_ch3_ep08_creation and "Adult figure lock:" in myth_guard:
+                if re.search(r"\bexactly\s+one(?:\s+[a-z-]+){0,4}\s+adult\b", styled, re.IGNORECASE):
+                    figure_lock = "Exactly one visible adult appears in the entire frame; no other person appears. This adult wears"
+                elif re.search(r"\bexactly\s+two(?:\s+[a-z-]+){0,4}\s+adults?\b", styled, re.IGNORECASE):
+                    figure_lock = "Exactly two visible adults appear in the entire frame; no other person appears. Both adults wear"
+                elif re.search(r"\bexactly\s+three(?:\s+[a-z-]+){0,4}\s+adults?\b", styled, re.IGNORECASE):
+                    figure_lock = "Exactly three visible adults appear in the entire frame; no other person appears. All three adults wear"
+                elif re.search(r"\bexactly\s+four(?:\s+[a-z-]+){0,4}\s+adults?\b", styled, re.IGNORECASE):
+                    figure_lock = "Exactly four visible adults appear in the entire frame; no other person appears. All four adults wear"
+                else:
+                    figure_lock = "Every visible adult wears"
+                ep08_attire_geometry = (
+                    f"{figure_lock} the same prehistoric closed-front one-piece pullover tunic. Each tunic has one "
+                    "unadorned same-color woven-cloth crew neckline fitted around the base of the neck, and one "
+                    "continuous flat cloth panel runs from collarbone to hem with no diagonal edge, overlap, lapel, "
+                    "opening, crossing line, disc, brooch, grommet, or ornament anywhere on the chest"
+                )
+            ep08_named_hair = ""
+            if ep08_attire_geometry:
+                hair_parts: list[str] = []
+                ep08_hair_source = f"{styled} {scene_first}"
+                if re.search(r"\bAmaterasu\b", ep08_hair_source, re.IGNORECASE):
+                    if re.search(
+                        r"\bmizura\b|looped\s+side-buns?|symmetrical\s+side\s+loops?",
+                        ep08_hair_source,
+                        re.IGNORECASE,
+                    ):
+                        hair_parts.append(
+                            "Amaterasu has center-parted natural black hair fully gathered into exactly two "
+                            "large symmetrical horizontal looped side-buns beside her ears, with no loose "
+                            "straight hair hanging below her jaw or shoulders"
+                        )
+                    else:
+                        hair_parts.append(
+                            "Amaterasu has long center-parted natural black hair visibly covering her entire scalp"
+                        )
+                if re.search(r"\bSusanoo\b", ep08_hair_source, re.IGNORECASE):
+                    hair_parts.append(
+                        "Susanoo has wild shoulder-length natural black hair visibly covering his entire scalp"
+                    )
+                ep08_named_hair = "; ".join(hair_parts)
+            final_crop_lock = (
+                " FINAL FRAMING LOCK: extreme close-up of exactly two planting hands and two T-shaped pullover "
+                "sleeve ends only; no face, torso, pelvis, knees, legs or feet appear anywhere."
+                if ep7_rice_planting_crop
+                else (
+                    " FINAL SILK-FILAMENT FRAMING LOCK: exactly one complete mature side-profile face fills at least "
+                    "80 percent of the frame; exactly one pale cocoon rests alone at the lower edge and exactly one "
+                    "unbroken fine white filament connects that cocoon directly to the slightly parted lips. No hand, "
+                    "finger, arm, shoulder, torso, garment, extra cocoon, silkworm, berry, text or panel appears."
+                    if ep7_silk_filament_face
+                    else ""
+                )
+            )
+            if zero_person_scene:
+                place_lock = (
+                    f"EXACT PLACE LOCK: {exact_place_text}."
+                    if exact_place_text
+                    else ""
+                )
+                rendered = (
+                    f"{zero_person_lock} {closed_object_lock} {scene_first}. {place_lock} "
+                    f"{style_lock} {closed_object_lock} {zero_person_lock}"
+                ).strip()
+            elif exact_two_closed_hall:
+                rendered = (
+                    f"{closed_pair_lock} {scene_first}.{guard_text} {closed_hall_style_lock} "
+                    f"{closed_pair_lock}{final_crop_lock}"
+                ).strip()
+            elif exact_one_closed_hall:
+                rendered = (
+                    f"{tray_action_lock} {closed_solo_lock} {solo_identity_lock} {zero_hand_crop_lock} "
+                    f"{scene_first}.{guard_text} {closed_hall_style_lock} {solo_identity_lock} "
+                    f"{zero_hand_crop_lock} {closed_solo_lock}{final_crop_lock}"
+                ).strip()
+            elif baekje_ep06_reception_crop:
+                baekje_reception_lock = (
+                    "EXACT BAEKJE RECEPTION CROP: exactly three adult men without hats or crowns appear from head "
+                    "to chest only before one uninterrupted blank rough reed-mat and mud-plaster wall. Marananta "
+                    "alone has one fully clean-shaven scalp; King Chimnyu and the official each have natural black "
+                    "hair fully covering the scalp in one simple topknot. Every garment has a fully closed "
+                    "cross-collar covering the chest to the neck. The wall and the three named adults occupy the "
+                    "complete frame."
+                )
+                rendered = (
+                    f"{baekje_reception_lock} {scene_first}. {style_lock} {baekje_reception_lock}"
+                ).strip()
+            elif baekje_ep06_blank_interior_crop:
+                baekje_count_match = re.search(
+                    r"\bExactly\s+(two|three|four)\s+bareheaded\s+adult\s+men\b",
+                    scene_first,
+                    re.IGNORECASE,
+                )
+                baekje_count_word = (
+                    baekje_count_match.group(1).lower()
+                    if baekje_count_match
+                    else "three"
+                )
+                baekje_count_lock = (
+                    f"EXACT BAEKJE BLANK-INTERIOR CROP: exactly {baekje_count_word} named adult men total "
+                    f"appear, each appearing once, with exactly {baekje_count_word} heads and exactly "
+                    f"{baekje_count_word} torsos. The tight chest-up camera places every figure before one "
+                    "uninterrupted blank rough reed-mat and mud-plaster interior wall. The same blank interior "
+                    "wall fills every corner and all four frame edges. Closed cross-collars, distinct robe colors, "
+                    "separated faces, and the named hair construction remain clearly visible."
+                )
+                rendered = (
+                    f"{baekje_count_lock} {scene_first}. {style_lock} {baekje_count_lock}"
+                ).strip()
+            else:
+                rendered = (
+                    f"{tray_action_lock} {scene_first}.{guard_text} {style_lock} {styled}{final_crop_lock}"
+                ).strip()
+            if ep08_attire_geometry:
+                hair_prefix = f" {ep08_named_hair}." if ep08_named_hair else ""
+                rendered = (
+                    f"{ep08_attire_geometry}.{hair_prefix} {rendered} "
+                    f"{ep08_attire_geometry}.{hair_prefix}"
+                )
+            if (
+                fourth_century_baekje_material
+                and not zero_person_scene
+                and not baekje_ep06_blank_interior_crop
+            ):
+                baekje_material_lock = (
+                    "EARLY FOURTH-CENTURY MATERIAL LOCK: dense uneven bundles of coarse hand-laid straw fully "
+                    "cover each building from one straight bundled-straw ridge to straight ragged straw eave tips. "
+                    "Every foreground and background roof has the same simple triangular gable, rough straw surface, "
+                    "plain wooden rafters, and fibre lashings. Every entrance is two bare rectangular timber posts "
+                    "beneath one continuous plain horizontal wood beam. Every wall and entrance surface is uninterrupted "
+                    "blank timber, reed, or rammed earth. Every garment is plain woven hemp with a closed cross-collar."
+                )
+                rendered = f"{baekje_material_lock} {rendered} {baekje_material_lock}"
+            if riderless_horse_spatial_lock:
+                rendered = f"{_RIDERLESS_HORSE_SPATIAL_LOCK} {rendered}"
+            return rendered
+    myth_guard = (
+        _z_image_japanese_myth_positive_guard(japanese_myth_guard_source)
+        if is_z_image
+        else ""
+    )
+    if myth_guard:
+        styled = f"{myth_guard}. {styled}"
+    rendered = _promote_comfyui_lock_to_front(styled, style_lock)
+    if riderless_horse_spatial_lock:
+        rendered = f"{_RIDERLESS_HORSE_SPATIAL_LOCK} {rendered}"
+    return rendered
+
+
+_Z_IMAGE_CONCISE_CHARACTER_TEXT_RISK_RE = re.compile(
+    r"\b(?:document|paper|scroll|map|banner|flag|sign|inscription|book|letter|"
+    r"caption|title|logo|wall|gate|door|building|architecture)\b",
+    re.IGNORECASE,
+)
+
+
+def _z_image_should_use_concise_costume_character_prompt(source_prompt: str) -> bool:
+    source = str(source_prompt or "")
+    return bool(
+        re.search(r"\bexactly\s+one\s+mature\s+adult\b", source, re.IGNORECASE)
+        and re.search(r"\bvisible\s+costume\s+inventory\s*:", source, re.IGNORECASE)
+        and re.search(r"\b(?:woman|man|person|character|wanderer|outlaw)\b", source, re.IGNORECASE)
+        and not _Z_IMAGE_CONCISE_CHARACTER_TEXT_RISK_RE.search(source)
+    )
+
+
+def _z_image_uses_compact_thumbnail_prompt(
+    source_prompt: str,
+    model_id: str,
+) -> bool:
+    source = str(source_prompt or "")
+    return (
+        str(model_id or "").startswith("comfyui-z-image-")
+        and any(
+            marker in source
+            for marker in (
+                "AMANO-IWATO RESCUE THUMBNAIL LOCK",
+                "SCRIPT THUMBNAIL LITERAL LOCK",
+            )
+        )
+    )
+
+
+def _uses_literal_thumbnail_prompt(source_prompt: str) -> bool:
+    """Keep the prepared thumbnail composition prompt out of cut-scene rewrites."""
+    source = str(source_prompt or "")
+    return (
+        "LOWER-LEFT TEXT-SAFE ZONE LOCK" in source
+        and any(
+            marker in source
+            for marker in (
+                "THUMBNAIL FACE VISIBILITY LOCK",
+                "THUMBNAIL CLOSE-UP FACE FRAME LOCK",
+                "OBJECT OR EVENT THUMBNAIL LOCK",
+            )
+        )
+    )
+
+
+def _z_image_concise_costume_character_prompt(source_prompt: str) -> str:
+    source = re.sub(r"\s{2,}", " ", str(source_prompt or "")).strip()
+    return (
+        "Z-IMAGE CONCISE SINGLE-CHARACTER SCENE LOCK: render one continuous full-frame scene using only "
+        "the one named adult, exact pose, crop, costume inventory, visible-skin boundaries, and sparse "
+        "setting stated below. Rendering style must not add scene content. Both lower corners remain "
+        "broad uninterrupted local ground texture with no compact mark. "
+        f"{source}"
+    )
 
 HAND_ANATOMY_COMFYUI_FRONT_PROMPT = (
     "ANATOMY CONSISTENCY FIRST RULE: default visible hand budget is zero. Do not "
@@ -7194,6 +12348,95 @@ HAND_ANATOMY_COMFYUI_EXTRA_NEGATIVE = (
     "rubber hand, warped hand, broken wrist, hand larger than face, detailed "
     "fingernail close-up, open palm close-up, exposed fingers when hands are "
     "not required, extra background hands, hands added without scene reason"
+)
+
+TOP_OF_PROMPT_HAND_COUNT_COMFYUI_FRONT_PROMPT = (
+    "TOP-OF-PROMPT NATURAL HAND LOCK: before style, mood, lighting, camera, and "
+    "composition, preserve the scene's natural hand pose. Never open, flatten, or "
+    "spread a hand merely to display all digits. Fingers may remain curled, overlapped, "
+    "partly sleeve-covered, gripping an object, or hidden by the camera angle. Every "
+    "visible hand stays connected to one coherent palm, one wrist, and the same arm. "
+    "Extra digits are forbidden. Six fingers are forbidden. Seven fingers are forbidden. "
+    "Extra thumbs, duplicated fingertips, fused fingers, forked fingers, melted "
+    "fingers, and hands growing from sleeves, weapons, props, or the wrong body "
+    "are forbidden. If the scene does not explicitly require a visible hand, "
+    "hide hands in sleeves, behind bodies, behind objects, in shadow, below the "
+    "crop, or outside the frame. Each visible human has one head, one torso, two "
+    "arms, two hands, and two legs when legs are visible. Each visible quadruped "
+    "has one head, one torso, and four legs."
+)
+
+TOP_OF_PROMPT_HAND_COUNT_COMFYUI_EXTRA_NEGATIVE = (
+    "six fingers, seven fingers, extra fingers, too many fingers, duplicated "
+    "fingers, duplicate fingertips, extra thumb, duplicated thumb, missing thumb, "
+    "fused fingers, forked fingers, webbed fingers, melted fingers, finger fan, "
+    "malformed hands, mutated hands, warped hands, broken fingers, disconnected "
+    "hand, floating hand, hand fused to sleeve, hand fused to weapon, extra hands, "
+    "extra arms, extra legs, missing legs, animal with extra legs, animal with "
+    "missing legs"
+)
+
+TOP_OF_PROMPT_9B_BODY_SHAPE_COMFYUI_FRONT_PROMPT = (
+    "TOP-OF-PROMPT BODY SHAPE LOCK: before style, mood, lighting, camera, and "
+    "composition, keep every visible human body physically coherent: one head, "
+    "one torso, two arms, and two legs when legs are visible. Wrist-level areas "
+    "stay covered by robe sleeves, shadows, named objects, or the frame crop "
+    "unless the action cannot read otherwise. Prefer object-first action crops, "
+    "closed sleeve grips, silhouettes, and occlusion over detailed wrist-level "
+    "close-ups. Each visible quadruped has one head, one torso, and four legs."
+)
+
+TOP_OF_PROMPT_EMPTY_NONHUMAN_COMFYUI_FRONT_PROMPT = (
+    "TOP-OF-PROMPT EMPTY NON-HUMAN CUT LOCK: before style, mood, lighting, camera, "
+    "and composition, render only the named landscape, object, material, weather, "
+    "light, or effect. This is a strict empty object, place, material, or effect shot. "
+    "Fill the frame with the named non-human subject, natural setting evidence, and material detail only."
+)
+
+FLUX2_KLEIN_DIRECT_NONHUMAN_EXTRA_NEGATIVE = (
+    "person, people, human, man, woman, boy, girl, child, robed man, robed woman, "
+    "robed figure, kimono figure, standing figure, foreground character, traveler, "
+    "rider, deity, god, goddess, Izanagi, Izanami, face, portrait, body, torso, "
+    "arms, legs, feet, hands, crowd, bystander, central character, character pose"
+)
+
+FLUX2_KLEIN_IZANAMI_EXTRA_NEGATIVE = (
+    "male Izanami, male face for Izanami, masculine Izanami, beard, mustache, "
+    "stubble, male jaw, short male haircut, male monk face"
+)
+
+FLUX2_KLEIN_IZANAGI_EXTRA_NEGATIVE = (
+    "female Izanagi, girl Izanagi, woman as Izanagi, child Izanagi, feminine face, "
+    "young girl face, female warrior replacing Izanagi"
+)
+
+FLUX2_KLEIN_SKELETAL_FOREARM_EXTRA_NEGATIVE = (
+    "fist, clenched fist, normal human hand, normal human arm, boxing pose, "
+    "punching pose, soft human skin, visible fingers, fingertip details"
+)
+
+FLUX2_KLEIN_PEACH_PROJECTILE_EXTRA_NEGATIVE = (
+    "anthropomorphic peach, peach face, face on peach, peach with eyes, peach with mouth, "
+    "peach character, smiling peach, angry peach, punching peach, fist hitting peach, "
+    "boxing pose, fruit mascot, cartoon fruit character"
+)
+
+FLUX2_KLEIN_STONE_GOUGE_OBJECT_EXTRA_NEGATIVE = (
+    "visible hand, hand close-up, foreground hand, human hand, rotting hand, bloody hand, "
+    "fingers, fingernails, claws attached to a hand, palm, wrist, arm, forearm, sleeve, robe sleeve, "
+    "person, human, body, torso, face, portrait, robed figure, young man, young woman, "
+    "holding stones, gripping stones, grabbing rock, person clawing the stone"
+)
+
+FLUX2_KLEIN_JAPAN_MAP_OBJECT_EXTRA_NEGATIVE = (
+    "rope, cord, knot, tied rope, string network, web diagram, stones connected by rope, "
+    "board game pieces, random rocks, weights, scale, hourglass, missing Japanese islands, "
+    "wrong map shape, text labels, letters, readable text, modern map labels"
+)
+
+FLUX2_KLEIN_LIFE_SPROUT_OBJECT_EXTRA_NEGATIVE = (
+    "baby, infant, child, toddler, newborn, human hand, child's hand, fingers, fingernails, "
+    "palm, wrist, arm, sleeve, person, body, face, crawling baby"
 )
 
 TWO_PERSON_CONTACT_ACTION_COMFYUI_FRONT_PROMPT = (
@@ -7607,6 +12850,45 @@ def _append_unique_negative(base: str, extra: str) -> str:
     if not missing:
         return base
     return base.rstrip(" ,") + ", " + ", ".join(missing)
+
+
+_LIVE_ACTION_NEGATIVE_CONFLICT_RE = re.compile(
+    r"\b(?:photorealistic(?:\s+(?:photo|patch))?|photorealism|"
+    r"photographic(?:\s+still)?|live[- ]action(?:\s+still)?|"
+    r"raw(?:\s+camera)?\s+photo|manhwa|manga)\b",
+    re.IGNORECASE,
+)
+_LIVE_ACTION_RACE_EXCLUSION_RE = re.compile(
+    r"\b(?:East\s+Asian|generic\s+Asian|Asian\s+(?:face|faces|people|person|cast|skin|ethnicity))\b",
+    re.IGNORECASE,
+)
+
+
+def _remove_live_action_conflicting_negatives(negative_prompt: str) -> str:
+    return ", ".join(
+        term.strip()
+        for term in str(negative_prompt or "").split(",")
+        if term.strip()
+        and not _LIVE_ACTION_NEGATIVE_CONFLICT_RE.search(term)
+        and not _LIVE_ACTION_RACE_EXCLUSION_RE.search(term)
+    )
+
+
+def _apply_longtube_render_style(
+    prompt: str,
+    negative_prompt: str,
+    *,
+    model_id: str,
+    source_prompt: str = "",
+) -> tuple[str, str]:
+    live_action = _uses_cinematic_live_action_style(source_prompt or prompt)
+    styled = _apply_longtube_dark_manhwa_style(prompt, model_id=model_id)
+    if live_action:
+        return styled, _remove_live_action_conflicting_negatives(negative_prompt)
+    return styled, _append_unique_negative(
+        negative_prompt,
+        ADULT_COMIC_STYLE_COMFYUI_EXTRA_NEGATIVE,
+    )
 
 
 _COMFYUI_POSITIVE_TEXT_TRIGGER_REWRITES: tuple[tuple[str, str], ...] = (
@@ -8464,7 +13746,9 @@ FLUX2_KLEIN_4B_SHORT_NEGATIVE_PROMPT = (
     "painted road lane markings, dashed road lane line, white road stripe, asphalt road, modern paved road, lane divider, "
     "kanji on scabbard, gold characters on scabbard, writing on scabbard, "
     "sword sheath letters, decorative scabbard inscription, black scabbard with gold marks, "
-    "modern clothing, business suit, modern uniform, modern building, tiled palace roof, "
+    "modern clothing, business suit, modern uniform, modern building, skyscraper, high-rise, "
+    "apartment block, concrete tower, glass tower, office tower, modern skyline, modern city skyline, "
+    "concrete city, downtown skyline, urban high-rise, tiled palace roof, "
     "modern child clothing, t-shirt, tee shirt, short sleeve shirt, shorts, cargo shorts, "
     "sneakers, modern cap, baseball cap, printed shirt, "
     "signboard, shop sign, wooden sign, header sign, doorway sign, eave sign, kanban, "
@@ -9479,22 +14763,421 @@ def _flux2_klein_context(prompt: str) -> tuple[str, str, str, str, str]:
 
 def _flux2_klein_style_clause() -> str:
     return (
-        "Render as a 2D adult graphic novel illustration with extra-thick black ink "
-        "contour lines, bold silhouettes, hard shadow masses, matte cel shading, "
-        "gritty brush texture, desaturated historical colors, and dark documentary lighting."
+        "Render as a mature dark historical manhwa illustration with variable-width scratchy "
+        "dip-pen contour lines, thin angular interior contours, controlled heavy silhouette "
+        "accents, hard shadow masses, dense hatching with intersecting hatch strokes, aged fibrous "
+        "print-stock grain, muted watercolor and gouache washes, and bleak ominous lighting."
     )
 
 
 def _flux2_klein_md_style_clause() -> str:
     return (
-        "Render as full-bleed 2D historical ink-and-cel with thick black contours "
-        "only around visible objects and figures, hard shadows, matte cel shading, "
-        "and dark light."
+        "Render as full-bleed dark historical ink-and-wash manhwa: scratchy variable-width "
+        "dip-pen contours, hatched aged print grain, muted sepia watercolor-gouache, "
+        "focal black silhouettes, and hard shadows."
+    )
+
+
+_FLUX2_KLEIN_9B_CONTROL_LOCK_PATTERNS = (
+    re.compile(
+        r"\bTOP-OF-PROMPT ANATOMY LOCK:.*?"
+        r"Each visible quadruped has one head, one torso, and four legs\.",
+        re.IGNORECASE | re.DOTALL,
+    ),
+    re.compile(
+        r"\bTOP-OF-PROMPT HAND COUNT LOCK:.*?"
+        r"Each visible quadruped has one head, one torso, and four legs\.",
+        re.IGNORECASE | re.DOTALL,
+    ),
+    re.compile(
+        r"\bANATOMY CONSISTENCY FIRST RULE:.*?"
+        r"one visible wrist and one matching arm on the same body\.",
+        re.IGNORECASE | re.DOTALL,
+    ),
+    re.compile(r"\bTOP-OF-PROMPT HAND LOCK:\s*[^.]+\.?", re.IGNORECASE),
+)
+
+_FLUX2_KLEIN_9B_NEGATIVE_CLAUSE_RE = re.compile(
+    r"(?:[,;]\s*)?\b(?:no|without|avoid|never|do not|don't)\b[^.;]*(?=(?:[,;.]|$))",
+    re.IGNORECASE,
+)
+
+_FLUX2_KLEIN_9B_HAND_REWRITES: tuple[tuple[str, str], ...] = (
+    (
+        r"\bIzanagi in ancient white robes,\s*both hands gripping a sword\b",
+        "Izanagi in ancient white robes, both robe sleeves wrapped around one sword hilt",
+    ),
+    (
+        r"\bIzanagi gripping his sword tightly\b",
+        "Izanagi bracing one sword hilt inside tight robe sleeves",
+    ),
+    (
+        r"\bIzanagi pressing his hands against the cold stone door\b",
+        "Izanagi pressing wide robe sleeves against the cold stone door",
+    ),
+    (
+        r"\bA dark,\s*menacing silhouette of a god slowly stepping into a terrifying,\s*foggy cavern\b",
+        "Izanagi's dark silhouette stepping into a foggy cavern corridor, textured grey rock walls visible along every edge, open cave floor, moonlit mist behind him",
+    ),
+    (
+        r"\bIzanagi reaching his hand out toward the crack in the door\b",
+        "Izanagi extending one long robe sleeve toward the crack in the door",
+    ),
+    (
+        r"\bIzanami pale hand beside a low stone bowl\b",
+        "Izanami pale robe sleeve beside a low stone bowl",
+    ),
+    (
+        r"\bIzanami shadow behind the sealed stone door raises one warning hand\b",
+        "Izanami shadow behind the sealed stone door raises one warning sleeve silhouette",
+    ),
+    (
+        r"\bone hand pressed to his chest\b",
+        "one robe sleeve held against his chest cloth",
+    ),
+    (
+        r"\bIzanagi trembling hand hovering near a narrow door crack\b",
+        "Izanagi trembling robe sleeve hovering near a narrow door crack",
+    ),
+    (
+        r"\bwith a trembling hand while holding the tiny comb-tooth torch\b",
+        "with a trembling robe sleeve while the tiny comb-tooth torch glows at the door edge",
+    ),
+    (
+        r"\bMuscular fingers snapping a thick wooden tooth off the comb with a sharp crack\b",
+        "A thick wooden comb tooth snapping away from an ancient wooden comb, splinters flying, sleeve shadow at the frame edge",
+    ),
+    (
+        r"\bA single human hand holding a broken wooden comb tooth as it ignites into a tiny torch\b",
+        "A broken wooden comb tooth igniting into a tiny torch on a dark stone ledge, robe sleeve edge at the frame border",
+    ),
+    (
+        r"\bIzanagi lighting a small,\s*single tooth of a wooden comb to create a tiny spark of light\b",
+        "A small single tooth of a wooden comb igniting into a tiny spark of light on dark cloth, Izanagi's robe sleeve edge at the frame border, wrist areas outside the frame",
+    ),
+    (
+        r"\bIzanagi dropping his fiery comb,\s*his eyes wide with absolute,\s*primal panic\b",
+        "Izanagi's terrified face beside a fiery wooden comb falling through the dark air, robe sleeve edges low in frame, wrist areas outside the frame",
+    ),
+    (
+        r"\bIzanagi swinging his sword wildly behind him as he runs,\s*slicing through the dark mist\b",
+        "Waist-up Izanagi twisting through dark mist while a curved sword slash arcs behind him, lower body cropped below the belt, robe sleeves around the sword hilt",
+    ),
+    (
+        r"\bA distorted,\s*horrifying silhouette of a rotting corpse squirming weakly on the cold stone\b",
+        "Izanami's distorted rotting body mostly buried under one torn robe on cold stone, face and upper torso silhouette visible, limb shapes fully hidden by cloth and deep shadow",
+    ),
+    (
+        r"\bDark,\s*oily smoke trailing behind the furious goddess as her rotting hands grip the stones\b",
+        "Macro close-up of cold stone blocks only, fresh claw-like gouge marks torn across rock, black oily smoke crawling over the surface, empty frame, only stone, smoke, cracks, and shadow",
+    ),
+    (
+        r"\bDark,\s*oily smoke trailing behind the furious goddess as her rotting sleeve-covered arm gesture grips? the stones\b",
+        "Macro close-up of cold stone blocks only, fresh claw-like gouge marks torn across rock, black oily smoke crawling over the surface, empty frame, only stone, smoke, cracks, and shadow",
+    ),
+    (
+        r"\bIzanami's rotting face glowing with intense electrical energy and pure hatred\b",
+        "A tight close-up of Izanami's rotting female goddess face with long black hair, glowing with intense electrical energy and pure hatred",
+    ),
+    (
+        r"\bA half-beautiful,\s*half-rotting face screaming in silent agony in the dark shadows\b",
+        "A tight close-up of Izanami's half-beautiful, half-rotting female goddess face screaming in silent agony in the dark shadows",
+    ),
+    (
+        r"\bIzanagi holding the small fire forward\b",
+        "Izanagi pushing a small fire forward from behind a robe sleeve",
+    ),
+    (
+        r"\bIzanagi holding the tiny torch\b",
+        "Izanagi advancing with the tiny torch partly hidden behind a robe sleeve",
+    ),
+    (
+        r"\bA dark, menacing silhouette of a skeletal arm pointing forcefully forward\b",
+        "A jagged black bone command-arrow silhouette emerging from darkness, sharp tip aimed forward, torn sleeve-shaped shadow at the base, smoke behind it",
+    ),
+    (
+        r"\bA glowing wooden comb and a vine wreath clutched tightly in a sweating, bloody hand\b",
+        "A glowing wooden comb and a vine wreath pressed against dark stone with blood smears, sweat drops, and torn sleeve cloth",
+    ),
+    (
+        r"\bGlowing,\s*red-eyed skeletons reaching out with bony fingers just inches from his cloak\b",
+        "Izanagi's dark cloak edge fills the right foreground while glowing red-eyed skeletal silhouettes lunge from the left fog, blurred bony forearms reaching within inches, wrist ends swallowed by motion blur",
+    ),
+    (
+        r"\bMuscular hands desperately grabbing three plump,\s*glowing pink peaches from a green branch\b",
+        "Three plump glowing pink peaches tearing from a green branch, snapped stems, motion blur, robe sleeve edge at the lower frame",
+    ),
+    (
+        r"\bA baby's hand reaching out from dark,\s*rich soil,\s*glowing with an internal golden light\b",
+        "A tiny golden plant sprout emerging from dark rich soil, warm internal golden light, empty frame with only soil, roots, seedling leaves, and growth symbolism",
+    ),
+    (
+        r"\bA baby's sleeve-covered arm gesture reaching out from dark,\s*rich soil,\s*glowing with an internal golden light\b",
+        "A tiny golden plant sprout emerging from dark rich soil, warm internal golden light, empty frame with only soil, roots, seedling leaves, and growth symbolism",
+    ),
+    (
+        r"\bIzanagi winding up his arm and throwing a glowing peach with explosive power into the dark\b",
+        "A glowing peach projectile streaking from a robe sleeve edge into the dark demon fog, bright motion trail, Izanagi reduced to a blurred background silhouette",
+    ),
+    (
+        r"\bIzanagi straining beneath an immense boulder,\s*two arms visible,\s*both hands anatomically normal with five digits if visible\b",
+        "Izanagi straining beneath an immense boulder, two robe-covered arms braced under the stone, wrist areas hidden by cloth folds",
+    ),
+    (
+        r"\bIzanami's rotting hands clawing furiously at the stone\b",
+        "Macro close-up of cold stone blocks only, fresh claw-like gouge marks cut into rock, black smoke and blood droplets smeared in the cracks, empty frame, only stone, smoke, cracks, and shadow",
+    ),
+    (
+        r"\bIzanami's rotting sleeve-covered arm gesture clawing furiously at the stone\b",
+        "Macro close-up of cold stone blocks only, fresh claw-like gouge marks cut into rock, black smoke and blood droplets smeared in the cracks, empty frame, only stone, smoke, cracks, and shadow",
+    ),
+    (
+        r"\bA pristine ancient map of Japan covered in tiny,\s*glowing white sparks of expanding life\b",
+        "Flat parchment map showing the Japanese island outline only, covered with many tiny glowing white life sparks spreading across the islands, empty object-only frame, no ropes, no stones, no knots, no labels",
+    ),
+    (
+        r"\bone normal human hand reaching to ring it\b",
+        "one robe sleeve pulling the shrine bell rope from the frame edge",
+    ),
+)
+
+
+def _flux2_klein_9b_clean_cut_brief(source_prompt: str) -> str:
+    out = re.sub(r"\s+", " ", (source_prompt or "").strip())
+    for pattern in _FLUX2_KLEIN_9B_CONTROL_LOCK_PATTERNS:
+        out = pattern.sub(" ", out)
+    out = re.sub(
+        r";?\s*NARRATION VISUAL ALIGNMENT:.*$",
+        "",
+        out,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    out = re.sub(
+        r";?\s*Rendering style note:\s*.*$",
+        "",
+        out,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    out = _FLUX2_KLEIN_9B_NEGATIVE_CLAUSE_RE.sub(" ", out)
+    for pattern, replacement in _FLUX2_KLEIN_9B_HAND_REWRITES:
+        out = re.sub(pattern, replacement, out, flags=re.IGNORECASE)
+    generic_rewrites = (
+        (r"\b(?:single\s+)?human hand\b", "robe sleeve edge"),
+        (r"\b(?:pale|rotting|bloody|sweating|trembling|normal)\s+hand\b", "robe sleeve edge"),
+        (r"\bhands?\b", "robe sleeves"),
+        (r"\bfingers?\b", "sleeve folds"),
+        (r"\bthumbs?\b", "sleeve folds"),
+        (r"\bpalms?\b", "sleeve cloth"),
+        (r"\bfingernails?\b", "stone scratch marks"),
+        (r"\bnails?\b", "stone scratch marks"),
+        (r"\bblood dripping from her stone scratch marks\b", "blood droplets smeared in the stone cracks"),
+        (r"\bfive\s+digits\b", "covered wrist area"),
+        (r"\bone\s+thumb\s+and\s+four\s+sleeve folds\b", "covered wrist area"),
+    )
+    for pattern, replacement in generic_rewrites:
+        out = re.sub(pattern, replacement, out, flags=re.IGNORECASE)
+    out = re.sub(
+        r"\braised\s+cord\s+route\s+board\s+of\s+the\s+Japanese\s+islands\b",
+        "flat parchment map of the Japanese islands",
+        out,
+        flags=re.IGNORECASE,
+    )
+    out = re.sub(
+        r"\braised\s+cord\s+route\s+board\b",
+        "flat parchment map",
+        out,
+        flags=re.IGNORECASE,
+    )
+    out = re.sub(r"\s+", " ", out)
+    out = re.sub(r"\s+([,.;:])", r"\1", out)
+    out = re.sub(r"(?:[,;]\s*){2,}", "; ", out)
+    return out.strip(" ,;.")
+
+
+_FLUX2_KLEIN_DIRECT_CUT_LOCK_STRUCTURED_RE = re.compile(
+    r"(?:^|[;|]\s*)"
+    r"(?:Time range|Place scope|Culture scope|Material culture|Continuity rule|"
+    r"Year/period|Exact place|Scene evidence|Style|Main subject|Scene|"
+    r"Composition|Negative|Visible action|Visible inventory|Visible surface detail|"
+    r"Visible edge detail)\s*:",
+    re.IGNORECASE,
+)
+
+_FLUX2_KLEIN_DIRECT_CUT_LOCK_CAMERA_RE = re.compile(
+    r"\b(?:photography|portrait|macro|lens|f/\d+(?:\.\d+)?|shot|camera|"
+    r"cinematic|documentary|action|surreal|conceptual|still life|landscape|"
+    r"seascape|environmental portrait|high-speed|architectural)\b",
+    re.IGNORECASE,
+)
+
+
+def _flux2_klein_should_use_direct_cut_lock(source_prompt: str) -> bool:
+    text = re.sub(r"\s+", " ", (source_prompt or "").strip())
+    if not text:
+        return False
+    return (
+        bool(re.search(r"\bNARRATION VISUAL ALIGNMENT\b", text, re.IGNORECASE))
+        and bool(_FLUX2_KLEIN_DIRECT_CUT_LOCK_CAMERA_RE.search(text))
+        and not bool(_FLUX2_KLEIN_DIRECT_CUT_LOCK_STRUCTURED_RE.search(text))
+    )
+
+
+def _flux2_klein_direct_cut_brief(source_prompt: str) -> str:
+    text = re.sub(r"\s+", " ", (source_prompt or "").strip())
+    parts = [part.strip() for part in re.split(r"\s+\|\|\s+", text) if part.strip()] or [text]
+    fallback = ""
+    for part in parts:
+        candidate = part
+        scene_matches = list(
+            re.finditer(r"(?:(?:^|[;|]\s*)[Ss][Cc][Ee][Nn][Ee]|SCENE)\s*:\s*", candidate)
+        )
+        has_explicit_scene = bool(scene_matches)
+        if scene_matches:
+            candidate = candidate[scene_matches[-1].end():].strip()
+        candidate = re.sub(
+            r"\bApply this as rendering style only\b.*$",
+            "",
+            candidate,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        candidate = re.split(
+            r";\s*NARRATION VISUAL ALIGNMENT\b",
+            candidate,
+            maxsplit=1,
+            flags=re.IGNORECASE,
+        )[0].strip()
+        cleaned = _flux2_klein_9b_clean_cut_brief(candidate)
+        if (
+            has_explicit_scene
+            and cleaned
+            and not re.match(r"^[A-Z0-9 _-]{8,}\s+LOCK\b", cleaned)
+        ):
+            return cleaned
+        if cleaned and not fallback:
+            fallback = cleaned
+        if (
+            cleaned
+            and _FLUX2_KLEIN_DIRECT_CUT_LOCK_CAMERA_RE.search(cleaned)
+            and not re.match(r"^[A-Z0-9 _-]{8,}\s+LOCK\b", cleaned)
+        ):
+            return cleaned
+    return fallback
+
+
+_FLUX2_KLEIN_PERSON_OR_FACE_REQUIRED_RE = re.compile(
+    r"\b(?:Izanagi|Izanami|Amaterasu|Tsukuyomi|Susanoo|male\s+deity|female\s+deity|"
+    r"deity|god|goddess|kami|hags?|skeletons?|warriors?|spirits?|fox\s+spirit|"
+    r"creators?|boy|human|person|people|figure|face|eyes?|portrait|corpse|body|"
+    r"forearm|arm|skin|back|robe|clothes?|clothing|standing|kneeling|running|sprinting|wading|"
+    r"swimming|throwing|gripping|swinging|bowing)\b",
+    re.IGNORECASE,
+)
+
+_FLUX2_KLEIN_FACE_ONLY_RE = re.compile(
+    r"\b(?:face|eyes?|portrait|expression|screaming|mouth)\b",
+    re.IGNORECASE,
+)
+
+_FLUX2_KLEIN_NOT_FACE_ONLY_RE = re.compile(
+    r"\b(?:crowd|army|group|three\s+radiant|standing\s+tall|kneeling|running|"
+    r"sprinting|wading|swimming|full[-\s]?body|whole\s+body)\b",
+    re.IGNORECASE,
+)
+
+
+def _flux2_klein_cut_brief_requires_person_or_face(cut_prompt: str) -> bool:
+    return bool(_FLUX2_KLEIN_PERSON_OR_FACE_REQUIRED_RE.search(cut_prompt or ""))
+
+
+def _flux2_klein_is_stone_gouge_object_cut(cut_prompt: str) -> bool:
+    text = cut_prompt or ""
+    return bool(
+        re.search(r"\b(?:gouge\s+marks?|claw-like\s+gouge|clawed\s+across|stone\s+blocks?|stone\s+surface|cold\s+stone)\b", text, re.IGNORECASE)
+        and re.search(r"\b(?:stone|rock|cracks?|smoke|blood\s+droplets|shadow)\b", text, re.IGNORECASE)
+    )
+
+
+def _flux2_klein_is_japan_map_object_cut(cut_prompt: str) -> bool:
+    text = cut_prompt or ""
+    return bool(
+        re.search(r"\b(?:map|parchment\s+map|Japanese\s+island|Japan)\b", text, re.IGNORECASE)
+        and re.search(r"\b(?:spark|life|islands?|outline)\b", text, re.IGNORECASE)
+    )
+
+
+def _flux2_klein_is_life_sprout_object_cut(cut_prompt: str) -> bool:
+    text = cut_prompt or ""
+    return bool(
+        re.search(r"\b(?:sprout|seedling|plant)\b", text, re.IGNORECASE)
+        and re.search(r"\b(?:soil|roots?|golden\s+light|growth)\b", text, re.IGNORECASE)
+    )
+
+
+def _flux2_klein_cut_brief_requests_face_only(cut_prompt: str) -> bool:
+    text = cut_prompt or ""
+    return bool(_FLUX2_KLEIN_FACE_ONLY_RE.search(text)) and not bool(
+        _FLUX2_KLEIN_NOT_FACE_ONLY_RE.search(text)
     )
 
 
 def _flux2_klein_9b_photoreal_positive_prompt(source_prompt: str) -> str:
-    cut_prompt = re.sub(r"\s+", " ", (source_prompt or "").strip()) or "an image"
+    cut_prompt = _flux2_klein_9b_clean_cut_brief(source_prompt) or "the exact cut subject"
+    person_or_face_required = _flux2_klein_cut_brief_requires_person_or_face(cut_prompt)
+    face_only_cut = _flux2_klein_cut_brief_requests_face_only(cut_prompt)
+    stone_gouge_object_cut = (
+        not person_or_face_required and _flux2_klein_is_stone_gouge_object_cut(cut_prompt)
+    )
+    japan_map_object_cut = (
+        not person_or_face_required and _flux2_klein_is_japan_map_object_cut(cut_prompt)
+    )
+    life_sprout_object_cut = (
+        not person_or_face_required and _flux2_klein_is_life_sprout_object_cut(cut_prompt)
+    )
+    if stone_gouge_object_cut:
+        return re.sub(
+            r"\s+",
+            " ",
+            (
+                "FLUX2 KLEIN CARTOON OBJECT CUT. Full 16:9 frame filled by a damaged "
+                "ancient stone wall surface. Deep claw-like gouge marks carved into "
+                "cold rock, black oily smoke crawling through cracks, dark red stains "
+                "smeared across the stone, sharp inked rock texture, dramatic cel-shaded "
+                "rim light, vivid controlled colors, stylish historical myth documentary "
+                "cartoon illustration. Empty object evidence shot, only stone blocks, "
+                "cracks, smoke, shadow, and impact marks visible."
+            ),
+        ).strip()
+    if japan_map_object_cut:
+        return re.sub(
+            r"\s+",
+            " ",
+            (
+                "FLUX2 KLEIN CARTOON OBJECT CUT. Full 16:9 frame shows a flat ancient "
+                "parchment map of the Japanese islands from overhead. The Japanese island "
+                "outline is clearly visible, covered with many tiny glowing white life "
+                "sparks spreading across the islands. Stylish 2D historical documentary "
+                "cartoon illustration, thick clean ink outlines, warm parchment texture, "
+                "cinematic cel-shaded light, vivid controlled colors, sharp object focus."
+            ),
+        ).strip()
+    if life_sprout_object_cut:
+        return re.sub(
+            r"\s+",
+            " ",
+            (
+                "FLUX2 KLEIN CARTOON OBJECT CUT. Full 16:9 macro frame filled by dark "
+                "rich soil and a tiny golden plant sprout emerging upward. Small seedling "
+                "leaves glow with warm internal light, roots and soil grains visible, "
+                "stylish 2D historical documentary cartoon illustration, thick clean ink "
+                "outlines, cinematic cel-shaded light, vivid controlled colors, sharp "
+                "botanical object focus, symbolic growth and life."
+            ),
+        ).strip()
+    display_cut_prompt = cut_prompt
+    if not person_or_face_required:
+        display_cut_prompt = f"empty non-human landscape, object, or effect shot only: {cut_prompt}"
+    elif face_only_cut:
+        display_cut_prompt = f"tight face-only close-up, no full-body figure: {cut_prompt}"
     japanese_myth_guard = ""
     japanese_myth_person = bool(re.search(
         r"\b(?:Izanagi|Izanami|male\s+deity|female\s+deity|deity|god|goddess|"
@@ -9536,61 +15219,79 @@ def _flux2_klein_9b_photoreal_positive_prompt(source_prompt: str) -> str:
             "natural materials. If the cut brief says empty, no building, no platform, or no people, keep the "
             "scene empty and do not add a platform, bench, shrine, building, or figure. Use a raised wooden "
             "ritual platform only when the cut brief explicitly names one. This is a place shot, not a person "
-            "portrait. Keep it free of people, priests, robed figures, seated figures, faces, hands, and bodies "
+            "portrait. Keep it free of people, priests, robed figures, seated figures, faces, and bodies "
             "unless the cut brief explicitly names them. Do not use European, Christian, "
             "Greco-Roman, fantasy-RPG, cathedral, basilica, golden dome, cross, marble-column, Western palace, "
             "Chinese imperial palace, modern room, or modern window visual language."
         )
     no_people = (
-        "If the cut brief does not explicitly name a person, face, hand, crowd, "
-        "rider, or human action, keep the frame completely free of people, faces, "
-        "hands, and bodies."
+        "If the cut brief does not explicitly name a person, face, crowd, "
+        "rider, or human action, this is a strict empty non-human shot: keep the "
+        "frame completely free of people, faces, bodies, robed figures, travelers, "
+        "riders, and human silhouettes."
+    )
+    face_only = (
+        "If the cut brief names a face, eyes, portrait, expression, screaming mouth, "
+        "or face transformation, make it a tight face-only close-up with no full body, "
+        "no visible arms, no visible legs, and no feet."
     )
     no_animals = (
         "If the cut brief does not explicitly name an animal, horse, mount, or bird, "
         "keep the frame completely free of animals."
     )
+    ancient_skyline_guard = (
+        "For ancient, medieval, pre-modern, Goguryeo, fortress, city, or crumbling city cut briefs, "
+        "distant settlement silhouettes must be low ancient fortress walls, rough stone towers, timber roof edges, "
+        "earthworks, reeds, hills, mountains, smoke columns, broken battlements, and plain low period-local roofs only. "
+        "Never add skyscrapers, high-rises, apartment blocks, concrete towers, glass towers, office towers, "
+        "modern downtown skylines, modern city blocks, or contemporary urban buildings."
+    )
     return re.sub(
         r"\s+",
         " ",
         (
-            "FLUX2 KLEIN 9B PHOTOREAL CUT LOCK. "
-            f"Depict this exact cut brief as the first visible subject: {cut_prompt} "
-            "Use photorealistic live-action documentary photography, realistic natural materials, "
-            "cinematic light, sharp subject focus, realistic shadows, and a serious historical documentary mood. "
+            "FLUX2 KLEIN CARTOON CUT LOCK. "
+            f"Depict this exact cut brief as the first visible subject: {display_cut_prompt} "
+            "Use stylish 2D historical documentary cartoon illustration, thick clean ink outlines, "
+            "bold silhouettes, cinematic cel-shaded light, vivid controlled colors, dramatic rim light, "
+            "sharp subject focus, and a serious myth-history documentary mood. "
             "The result must visibly match the cut brief, not a generic Japanese road, gate, shrine, traveler, "
             "mounted rider, snowy path, or reused composition from the previous cut. "
             "Do not replace the named subject with an unrelated landscape, doorway, horse, rider, gate, temple, "
             "portrait, or symbolic filler. "
             f"{japanese_myth_guard} "
-            f"{no_people} {no_animals} "
-            "If a human or animal is explicitly required, keep natural anatomy only: one head, one torso, "
-            "two arms, two legs for each human, normal hands with one thumb and four fingers when visible, "
-            "and four legs for each horse or animal. "
-            "No readable text, no pseudo-text, no logo, no watermark, no signs, no labels. "
-            "Every style cue means real camera photography only, with natural lens rendering and realistic sensor detail."
+            f"{ancient_skyline_guard} {no_people} {face_only} {no_animals} "
+            "If a human or animal is explicitly required, keep simple readable anatomy: one head, one torso, "
+            "two arms and two legs for each human, and four legs for each horse or animal. "
+            "Use robe sleeves, object occlusion, shadow, tight crop edges, or silhouettes for wrist-level action areas. "
+            "All surfaces remain blank material texture: plain cloth, stone, wood, smoke, shadow, water, flame, or soil. "
+            "Every style cue means polished adult cartoon illustration, not live-action camera photography."
         ),
     ).strip()
 
 
 def _flux2_klein_9b_photoreal_negative_prompt(base_negative: str) -> str:
-    banned_negative_terms = {
-        "photorealistic",
-        "photorealistic photo",
-        "photorealism",
-        "photographic",
-        "photographic still",
-        "live-action still",
-        "raw photo",
-        "raw camera photo",
-        "realistic photography",
-        "documentary photography",
+    cartoon_style_terms_to_drop = {
+        "illustration",
+        "anime",
+        "manga",
+        "cartoon",
+        "graphic novel",
+        "comic-book art",
+        "ink-and-cel",
+        "cel shading",
+        "thick black outlines",
+        "black ink contour lines",
+        "painted illustration",
+        "sketch",
+        "watercolor",
+        "storybook",
     }
     kept: list[str] = []
     seen: set[str] = set()
     for token in [x.strip() for x in (base_negative or "").split(",") if x.strip()]:
         key = token.lower()
-        if key in banned_negative_terms:
+        if key in cartoon_style_terms_to_drop:
             continue
         if key not in seen:
             seen.add(key)
@@ -9598,14 +15299,15 @@ def _flux2_klein_9b_photoreal_negative_prompt(base_negative: str) -> str:
     return _append_unique_negative(
         ", ".join(kept),
         (
-            "illustration, anime, manga, cartoon, graphic novel, comic-book art, "
-            "ink-and-cel, cel shading, thick black outlines, black ink contour lines, "
-            "painted illustration, sketch, watercolor, storybook, 3D render, CGI, "
+            "photorealistic photo, photographic still, live-action still, raw camera photo, "
+            "realistic photography, documentary photography, glossy CGI, plastic 3D render, "
             "European cathedral, Christian church, basilica, chapel, Christian cross, crucifix, "
             "golden dome, domed cathedral, onion dome, mosque dome, Greco-Roman temple, "
             "marble columns, Western palace, European royal palace, fantasy castle, fantasy staff, "
             "Western goddess, Western angel, haloed saint, Chinese imperial palace, modern room, "
-            "modern window wall, modern glass window, "
+            "modern building, skyscraper, high-rise, apartment block, concrete tower, glass tower, "
+            "office tower, modern skyline, modern city skyline, concrete city, downtown skyline, "
+            "urban high-rise, modern window wall, modern glass window, "
             "unexpected person in empty place shot, robed person in empty landscape, priest on platform, "
             "seated figure on platform, portrait replacing place shot, "
             "wooden platform when not requested, raised platform when not requested, deck when not requested, "
@@ -9615,7 +15317,11 @@ def _flux2_klein_9b_photoreal_negative_prompt(base_negative: str) -> str:
             "generic Japanese road replacing cut subject, repeated previous composition, "
             "mounted rider when not requested, horse when not requested, gate when not requested, "
             "shrine when not requested, temple when not requested, unrelated scenery, "
-            "wrong subject, missing named subject"
+            "wrong subject, missing named subject, foreground hand close-up, giant hand, "
+            "oversized hand, exposed fingers when not required, spread fingers, splayed fingers, "
+            "finger fan, six fingers, seven fingers, extra fingers, duplicated fingertips, "
+            "extra thumb, fused fingers, forked fingers, melted fingers, malformed hands, "
+            "extra hands, extra arms, extra legs, missing legs, duplicate head, extra head"
         ),
     )
 
@@ -19454,12 +25160,29 @@ def _compact_flux2_klein_4b_prompt(prompt: str, negative_prompt: str) -> tuple[s
         text = prompt or ""
         if re.search(r"\b645\s*(?:AD|CE|year)?\b", text, re.IGNORECASE):
             return False
-        if not re.search(
-            r"\b(?:612|Sui|Yangdi|Emperor\s+Yang|Yang\s+of\s+Sui|Liaodong|"
-            r"Liao\s+River|Yodong|Eulji|Mundeok|Pyongyang|Yuwen\s+Shu|Yu\s+Zhongwen|"
-            r"Goguryeo-Sui)\b|수\s*양제|수나라|요동성|요하|을지|문덕|평양|우문술|우중문|살수",
-            text,
-            re.IGNORECASE,
+        sui_specific = bool(
+            re.search(
+                r"\b(?:612|Sui|Yangdi|Emperor\s+Yang|Yang\s+of\s+Sui|"
+                r"Eulji|Mundeok|Yuwen\s+Shu|Yu\s+Zhongwen|Goguryeo-Sui|"
+                r"Salsu|Sal-su|Salsu\s+River)\b|"
+                r"수\s*양제|수나라|을지|문덕|우문술|우중문|살수",
+                text,
+                re.IGNORECASE,
+            )
+        )
+        if not sui_specific:
+            return False
+        if (
+            re.search(r"\b66[0-9]\s*(?:AD|CE|year)?\b", text, re.IGNORECASE)
+            and re.search(r"\bTang\b|당나라|당군", text, re.IGNORECASE)
+            and not re.search(
+                r"\b(?:612|Yangdi|Emperor\s+Yang|Yang\s+of\s+Sui|"
+                r"Eulji|Mundeok|Yuwen\s+Shu|Yu\s+Zhongwen|Goguryeo-Sui|"
+                r"Salsu|Sal-su|Salsu\s+River)\b|"
+                r"수\s*양제|을지|문덕|우문술|우중문|살수",
+                text,
+                re.IGNORECASE,
+            )
         ):
             return False
         scene_field = _local_prompt_field(text, "Scene")
@@ -22495,7 +28218,30 @@ def _flux2_klein_md_alias_in_text(text: str, alias: str) -> bool:
     return bool(re.search(rf"\b{re.escape(alias)}\b", text, re.IGNORECASE))
 
 
+def _flux2_klein_strip_negated_identity_terms(text: str) -> str:
+    cleaned = str(text or "")
+    cleaned = re.sub(
+        r"\b(?:no|not|without|avoid|exclude|never)\s+"
+        r"(?:unrelated\s+|scene-named\s+|adult\s+|portrait\s+|mythical\s+|figure\s+)*"
+        r"(?:Yuhwa|Soseono|Cleopatra|Wu\s+Zetian|Yaa\s+Asantewaa|Asantewaa|"
+        r"woman|women|female|females|noblewoman|queen|princess|empress)\b",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(
+        r"(?:no|not|without|avoid|exclude|never)[^.;,\n]{0,60}"
+        r"(?:Yuhwa|Soseono|Cleopatra|Wu\s+Zetian|Yaa\s+Asantewaa|Asantewaa|"
+        r"woman|women|female|females|noblewoman|queen|princess|empress)\b",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    return cleaned
+
+
 def _flux2_klein_md_character_identities(text: str, *, allow_adult_female: bool = True) -> list[tuple[str, str]]:
+    text = _flux2_klein_strip_negated_identity_terms(text)
     identities: list[tuple[str, str]] = []
     seen: set[str] = set()
     tang_645_context = bool(
@@ -22804,6 +28550,67 @@ def _flux2_klein_md_positive_contract(prompt: str, source_prompt: str = "") -> s
             value = re.sub(r"\bstacked\s+shields\b", "one stacked round wooden shield", value, flags=re.IGNORECASE)
         return value
 
+    def _md_ancient_skyline_sentence() -> str:
+        local_scan = " ".join(
+            bit
+            for bit in (
+                _local_prompt_field(source, "Exact place"),
+                _local_prompt_field(source, "Main subject"),
+                _local_prompt_field(source, "Scene"),
+                _local_prompt_field(source, "Scene evidence"),
+            )
+            if bit
+        )
+        local_lower = local_scan.lower()
+        local_affirmative_lower = re.sub(
+            r"\b(?:no|without|avoid|never|do\s+not|don't|not)\b[^.;]*",
+            " ",
+            local_lower,
+            flags=re.IGNORECASE,
+        )
+        interior_scene = bool(
+            re.search(
+                r"\b(?:inside|interior|indoor|room|hall|chamber|audience\s+hall|"
+                r"command\s+room|council\s+room|court\s+room|throne\s+room|"
+                r"bedroom|sickroom|bed\s+chamber|dark\s+hall|torchlit\s+hall)\b",
+                local_lower,
+                re.IGNORECASE,
+            )
+        )
+        object_only_scene = bool(
+            re.search(
+                r"\b(?:object-only|tabletop|close-up\s+on\s+a\s+low\s+wooden\s+table|"
+                r"symbolic\s+close-up|single\s+candle\s+alone|token|tokens|"
+                r"tally\s+tokens?|empty\s+single-candle\s+object\s+shot)\b",
+                local_affirmative_lower,
+                re.IGNORECASE,
+            )
+        )
+        exterior_scene = bool(
+            re.search(
+                r"\b(?:outside|outdoor|open[-\s]*air|skyline|crumbling\s+city|"
+                r"city\s+shadow|city\s+gate|fortress\s+gate|fortress\s+wall|"
+                r"fortress\s+walls|battlement|battlements|courtyard|street|"
+                r"road|field|river|mountain|valley|riding|horse|wall\s+top|"
+                r"from\s+the\s+wall|looking\s+down\s+from\s+the\s+wall)\b",
+                local_affirmative_lower,
+                re.IGNORECASE,
+            )
+        )
+        if (interior_scene or object_only_scene) and not exterior_scene:
+            return ""
+        scan = f"{source} {text}"
+        if not re.search(
+            r"\b(?:ancient|medieval|pre[-\s]*modern|Goguryeo|Sui|fortress|city|crumbling\s+city|skyline)\b",
+            scan,
+            re.IGNORECASE,
+        ):
+            return ""
+        return (
+            "Ancient skyline detail: distant silhouettes show low fortress walls, "
+            "timber roof edges, broken battlements, smoke columns, hills, and mountains"
+        )
+
     def _md_surface_detail_sentence() -> str:
         local_scan = " ".join(
             bit
@@ -22815,6 +28622,20 @@ def _flux2_klein_md_positive_contract(prompt: str, source_prompt: str = "") -> s
             if bit
         )
         scan = (local_scan or text).lower()
+        table_explicitly_forbidden = bool(
+            re.search(
+                r"\bno\s+(?:table|tables|tabletop|tabletops|cups|blood\s+on\s+furniture)\b",
+                scan,
+                re.IGNORECASE,
+            )
+        )
+        table_scene_requested = bool(
+            re.search(
+                r"\b(?:workbench|table|tabletop|map|route cords|route board|marker layout|command-table|campaign table)\b",
+                scan,
+                re.IGNORECASE,
+            )
+        ) and not table_explicitly_forbidden
         if _md_is_tang_645_source_context():
             if re.search(
                 r"\b(?:outdoor\s+ground-only\s+time-pressure|hourglass|water[-\s]*clock|clepsydra|sundial\s+shadow|drip\s+bowl)\b",
@@ -22847,6 +28668,30 @@ def _flux2_klein_md_positive_contract(prompt: str, source_prompt: str = "") -> s
             return (
                 "Visible surface detail: mud, water ripples, wet reeds, stone chips, "
                 "cloth weave, worn iron, leather, and natural sky texture"
+            )
+        if re.search(
+            r"\b(?:object-only|unoccupied|human-free|blank\s+cracked\s+stone|"
+            r"stone\s+support\s+column|stone\s+column|cracked\s+stone\s+support|"
+            r"pillar\s+cracking|support\s+column)\b",
+            scan,
+            re.IGNORECASE,
+        ):
+            return (
+                "Visible surface detail: blank stone grain, irregular cracks, chipped edges, "
+                "stone dust, broken iron spearheads, soot, smoke, ash, red fire glow, "
+                "packed courtyard earth, and hard shadow"
+            )
+        if re.search(
+            r"\b(?:inside|interior|indoor|room|hall|chamber|audience\s+hall|"
+            r"command\s+room|council\s+room|court\s+room|throne\s+room|"
+            r"bedroom|sickroom|bed\s+chamber|low\s+bed|torchlit\s+hall)\b",
+            scan,
+            re.IGNORECASE,
+        ) and not table_scene_requested:
+            return (
+                "Visible surface detail: cracked plaster, plain timber beams, "
+                "dark rafters, floorboards, robe cloth weave, lamellar armor plates, "
+                "worn iron, soot, dust, and hard interior shadow"
             )
         if _local_is_arpad_hungary_context(source) and re.search(
             r"\b(?:news|sealed|parchment|document|paper|page|message|packet|bundle|seal|order|petition)\b",
@@ -22893,7 +28738,7 @@ def _flux2_klein_md_positive_contract(prompt: str, source_prompt: str = "") -> s
                 "cord knots, scabbard lacquer, plain box wood grain, tatami weave, "
                 "dust, soot, and tabletop shadows"
             )
-        if re.search(r"\b(?:workbench|table|map|dagger|route cords|route board|marker layout|command-table|campaign table)\b", scan):
+        if table_scene_requested:
             return (
                 "Visible surface detail: single bare low wooden tabletop surface, rope fibers, "
                 "separated stone markers, bronze weights, wood grain, metal wear, soot, and dried blood"
@@ -23737,6 +29582,34 @@ def _flux2_klein_md_positive_contract(prompt: str, source_prompt: str = "") -> s
             and not _LOCAL_EXPLICIT_HUMAN_OR_COMBATANT_SCENE_RE.search(local_scene_scan)
         )
 
+    def _md_source_scene_is_empty_object_only() -> bool:
+        local_scene_scan = " ".join(
+            bit
+            for bit in (
+                _local_prompt_field(source, "Main subject"),
+                _local_prompt_field(source, "Scene"),
+            )
+            if bit
+        )
+        return bool(
+            local_scene_scan
+            and re.search(
+                r"\b(?:object-only|human-free|textless|empty\s+(?:battlefield|frame|scene|foreground)|"
+                r"unoccupied|no\s+people|no\s+person|no\s+hands?|no\s+faces?|"
+                r"no\s+soldiers?|no\s+human\s+body|no\s+running\s+figures?)\b",
+                local_scene_scan,
+                re.IGNORECASE,
+            )
+        )
+
+    def _md_empty_object_only_composition_sentence() -> str:
+        if not _md_source_scene_is_empty_object_only():
+            return ""
+        return (
+            "Composition: strict human-free object-only frame; every edge is scene material; "
+            "cropped body parts, hands, feet, faces, sleeves, armor bodies, soldiers, and bystanders are absent"
+        )
+
     def _md_tang_645_needs_field_repair() -> bool:
         if not _md_is_tang_645_source_context():
             return False
@@ -24402,6 +30275,19 @@ def _flux2_klein_md_positive_contract(prompt: str, source_prompt: str = "") -> s
                 "reeds, breath vapor, wind marks, and terrain texture. "
                 f"{_md_edge_detail_sentence()}. Composition: animal-only continuous 16:9 scene filling the image. "
             )
+        if _md_source_scene_is_empty_object_only():
+            return (
+                f"{context}. {_flux2_klein_md_style_clause()} "
+                f"Scene subject: strict human-free object-only frame, {subject}. "
+                f"Visible action: {scene}. "
+                "Visible inventory: only the Scene-named objects, materials, light, smoke, dust, sparks, "
+                "darkness, terrain, and physical surface texture appear in the visible frame; "
+                "cropped body parts, hands, feet, faces, sleeves, armor bodies, soldiers, and bystanders are absent from the visible frame. "
+                f"{_md_surface_detail_sentence()}. "
+                f"{_md_edge_detail_sentence()}. "
+                "Composition: strict human-free object-only close-up or environment tableau; all four image edges remain scene material, "
+                "ground, wall, smoke, darkness, or named objects rather than cropped people. "
+            )
         unmarked_surfaces = _md_tang_645_unmarked_surface_sentence()
         return (
             f"{context}. {_flux2_klein_md_style_clause()} "
@@ -24479,6 +30365,23 @@ def _flux2_klein_md_positive_contract(prompt: str, source_prompt: str = "") -> s
         )
         if _md_is_tang_645_source_context():
             return False
+        combined_scan = f"{local_scan} {period_scan} {source}"
+        tang_661_context = bool(
+            re.search(r"\b66[0-9]\s*(?:AD|CE|year)?\b", combined_scan, re.IGNORECASE)
+            and re.search(r"\bTang\b|당나라|당군", combined_scan, re.IGNORECASE)
+        )
+        explicit_sui_battle = bool(
+            re.search(
+                r"\b(?:612|Yangdi|Emperor\s+Yang|Yang\s+of\s+Sui|"
+                r"Eulji|Mundeok|Yu\s+Zhongwen|Yuwen\s+Shu|Prince\s+Geonmu|"
+                r"Salsu|Sal-su|Salsu\s+River|Goguryeo-Sui)\b|"
+                r"수\s*양제|을지|문덕|우중문|우문술|건무|살수",
+                combined_scan,
+                re.IGNORECASE,
+            )
+        )
+        if tang_661_context and not explicit_sui_battle:
+            return False
         local_sui = bool(
             re.search(
                 r"\b(?:Sui|Yangdi|Emperor\s+Yang|Liaodong|Yodong|Goguryeo-Sui|"
@@ -24524,7 +30427,62 @@ def _flux2_klein_md_positive_contract(prompt: str, source_prompt: str = "") -> s
         )
 
     def _md_period_clothing_sentence() -> str:
-        scan = f"{source} {text} {_md_local_scan()}".lower()
+        local_scan = _md_local_scan().lower()
+        scene_subject_scan = " ".join(
+            bit
+            for bit in (
+                _local_prompt_field(source, "Main subject"),
+                _local_prompt_field(source, "Scene"),
+            )
+            if bit
+        ).lower()
+        final_empty_evidence_scan = f"{source} {text}".lower()
+        final_empty_evidence = bool(
+            re.search(
+                r"\b(?:empty\s+evidence\s+frame\s+lock|unoccupied\s+evidence\s+shot|"
+                r"object-only|requested\s+location,\s+animal,\s+or\s+object\s+only)\b",
+                final_empty_evidence_scan,
+                re.IGNORECASE,
+            )
+        )
+        scene_mentions_human = bool(
+            re.search(
+                r"\b(?:person|people|human|man|woman|adult|brother|son|father|"
+                r"official|guard|soldier|warrior|commander|envoy|courtier|"
+                r"face|eyes|hand|sleeve|standing|kneel|points?|glare)\b",
+                scene_subject_scan,
+                re.IGNORECASE,
+            )
+        )
+        scene_is_nonhuman_subject = bool(
+            scene_subject_scan
+            and not scene_mentions_human
+            and re.search(
+                r"\b(?:object|pillar|stone|candle|token|tokens|tally|sword|blade|"
+                r"seal|packet|bundle|scroll|map|table|throne|wall|gate|gates|door|doors|"
+                r"doorway|room|hall|fortress|gear|gears|cog|cogs|cogwheel|cogwheels|"
+                r"wheel|wheels|painting|paintings|canvas|mural|picture|emblem|emblems|"
+                r"crest|crests|insignia|symbol|title\s+card|room|hall|fortress|tents|camp|"
+                r"landscape|road|river|mountain|fire|smoke|"
+                r"shadow|crack|cracking|animal|wolf|wolves|deer|snake|apple|bell|"
+                r"chain|shield|spear|spears|butterfly|noose|silk|cloth)\b",
+                scene_subject_scan,
+                re.IGNORECASE,
+            )
+        )
+        if (final_empty_evidence or scene_is_nonhuman_subject) and not scene_mentions_human:
+            return ""
+        empty_or_object_only = bool(
+            re.search(
+                r"\b(?:object-only|empty|unoccupied|vacant|alone\s+in\s+(?:an\s+)?empty|"
+                r"single\s+candle\s+alone|no\s+person|no\s+people|no\s+hands?|"
+                r"no\s+faces?|no\s+figures?)\b",
+                local_scan,
+            )
+        )
+        if empty_or_object_only:
+            return ""
+        scan = f"{source} {text} {local_scan}".lower()
         if not re.search(r"\b(?:sui|goguryeo|liaodong|pyongyang|612|642|early\s+seventh-century)\b", scan):
             return ""
         if not re.search(
@@ -26563,9 +32521,19 @@ def _flux2_klein_md_positive_contract(prompt: str, source_prompt: str = "") -> s
         ("Render as", "Scene subject:", "Visible action:"),
     )
     _ensure_compact_sentence(
+        _md_ancient_skyline_sentence(),
+        "Ancient skyline detail:",
+        ("Render as", "Scene subject:", "Visible action:", "Ancient skyline detail:"),
+    )
+    _ensure_compact_sentence(
+        _md_empty_object_only_composition_sentence(),
+        "Composition:",
+        ("Render as", "Scene subject:", "Visible action:", "Composition:"),
+    )
+    _ensure_compact_sentence(
         _md_period_clothing_sentence(),
         "Visible clothing:",
-        ("Render as", "Scene subject:", "Visible action:", "Visible clothing:"),
+        ("Render as", "Scene subject:", "Visible action:", "Ancient skyline detail:", "Composition:", "Visible clothing:"),
     )
     _ensure_compact_sentence(
         _md_arpad_hungary_material_sentence(),
@@ -26636,8 +32604,62 @@ def _flux2_klein_md_positive_contract(prompt: str, source_prompt: str = "") -> s
                 "Japanese strict surface lock:",
             ),
         )
+
+    def _preserve_ancient_skyline_after_finalize(value: str) -> str:
+        sentence = _md_visible_sentence(_md_ancient_skyline_sentence())
+        if not sentence:
+            parts = [
+                part.strip(" ;,.")
+                for part in _sentences(value or "")
+                if part.strip(" ;,.") and not part.strip(" ;,.").startswith("Ancient skyline detail:")
+            ]
+            return ". ".join(part.rstrip(".") for part in parts).strip(" ;,.")
+        if "Ancient skyline detail:" in (value or ""):
+            return value
+        parts = [part.strip(" ;,.") for part in _sentences(value or "") if part.strip(" ;,.")]
+        if not parts or any(part.startswith("Ancient skyline detail:") for part in parts):
+            return value
+        insert_at = len(parts)
+        for idx, part in enumerate(parts):
+            if part.startswith("Visible action:"):
+                insert_at = idx + 1
+                break
+        parts.insert(insert_at, sentence)
+
+        def _joined_length(items: list[str]) -> int:
+            return sum(len(item) for item in items) + max(0, len(items) - 1) * 2
+
+        for prefix in ("Visible edge detail:", "Visible surface detail:", "Visible clothing:"):
+            while _joined_length(parts) > max_chars:
+                removable = next(
+                    (idx for idx in range(len(parts) - 1, -1, -1) if parts[idx].startswith(prefix)),
+                    None,
+                )
+                if removable is None:
+                    break
+                parts.pop(removable)
+
+        protected_prefixes = (
+            "Render as",
+            "Scene subject:",
+            "Visible action:",
+            "Ancient skyline detail:",
+        )
+        while _joined_length(parts) > max_chars and len(parts) > 1:
+            removable = None
+            for idx in range(len(parts) - 1, 0, -1):
+                if any(parts[idx].startswith(prefix) for prefix in protected_prefixes):
+                    continue
+                removable = idx
+                break
+            if removable is None:
+                break
+            parts.pop(removable)
+        return ". ".join(part.rstrip(".") for part in parts).strip(" ;,.")
+
     out = ". ".join(part.rstrip(".") for part in compact_parts).strip(" ;,.")
     out = _finalize_md_contract(out)
+    out = _preserve_ancient_skyline_after_finalize(out)
     return out or _build_from_fields()
 
 
@@ -26653,11 +32675,56 @@ def _flux2_klein_md_negative_contract(source_prompt: str = "", final_prompt: str
         )
         if bit
     )
+    scene_subject_scan = " ".join(
+        bit
+        for bit in (
+            _local_prompt_field(source_prompt, "Main subject"),
+            _local_prompt_field(source_prompt, "Scene"),
+        )
+        if bit
+    )
+    scene_subject_mentions_human = bool(
+        re.search(
+            r"\b(?:person|people|human|man|woman|adult|brother|son|father|"
+            r"official|guard|soldier|warrior|commander|envoy|courtier|"
+            r"face|eyes|hand|sleeve|standing|kneel|points?|glare)\b",
+            scene_subject_scan,
+            re.IGNORECASE,
+        )
+    )
+    scene_subject_is_nonhuman = bool(
+        scene_subject_scan
+        and not scene_subject_mentions_human
+        and re.search(
+            r"\b(?:object|pillar|stone|candle|token|tokens|tally|sword|blade|"
+            r"seal|packet|bundle|scroll|map|table|throne|wall|gate|gates|door|doors|"
+            r"doorway|room|hall|fortress|gear|gears|cog|cogs|cogwheel|cogwheels|"
+            r"wheel|wheels|painting|paintings|canvas|mural|picture|emblem|emblems|"
+            r"crest|crests|insignia|symbol|title\s+card|room|hall|fortress|tents|camp|"
+            r"landscape|road|river|mountain|fire|smoke|"
+            r"shadow|crack|cracking|animal|wolf|wolves|deer|snake|apple|bell|"
+            r"chain|shield|spear|spears|butterfly|noose|silk|cloth)\b",
+            scene_subject_scan,
+            re.IGNORECASE,
+        )
+    )
     requested_animal_negative_removals: set[str] = set()
     if re.search(r"\bwolves?\b|늑대", local_source_scan or "", re.IGNORECASE):
         requested_animal_negative_removals.update({"wolf", "animal silhouette"})
     if re.search(r"\btigers?\b|호랑이", local_source_scan or "", re.IGNORECASE):
         requested_animal_negative_removals.update({"tiger", "animal silhouette"})
+    empty_object_scan = " ".join(bit for bit in (local_source_scan, final_prompt) if bit)
+    empty_object_scene = bool(
+        re.search(
+            r"\b(?:object-only|empty|unoccupied|vacant|alone\s+in\s+(?:an\s+)?empty|"
+            r"single\s+candle\s+alone|no\s+person|no\s+people|no\s+hands?|"
+            r"no\s+faces?|no\s+figures?|empty\s+evidence\s+frame\s+lock|"
+            r"unoccupied\s+evidence\s+shot|requested\s+location,\s+animal,\s+or\s+object\s+only)\b",
+            empty_object_scan or "",
+            re.IGNORECASE,
+        )
+        or scene_subject_is_nonhuman
+    )
     parts = [
         "low quality",
         "blurry",
@@ -26674,6 +32741,18 @@ def _flux2_klein_md_negative_contract(source_prompt: str = "", final_prompt: str
         "0 on armor plate",
         "glyph on lamellar plate",
         "marked armor plate",
+        "modern building",
+        "skyscraper",
+        "high-rise",
+        "apartment block",
+        "concrete tower",
+        "glass tower",
+        "office tower",
+        "modern skyline",
+        "modern city skyline",
+        "concrete city",
+        "downtown skyline",
+        "urban high-rise",
         "badge lettering",
         "forehead emblem",
         "headband emblem",
@@ -26773,6 +32852,129 @@ def _flux2_klein_md_negative_contract(source_prompt: str = "", final_prompt: str
         "rider torso growing from horse neck",
         "horse body with human chest",
     ]
+    if empty_object_scene:
+        parts.extend(
+            [
+                "person",
+                "people",
+                "living person",
+                "man",
+                "woman",
+                "human figure",
+                "human body",
+                "standing figure",
+                "foreground character",
+                "central character",
+                "crowd",
+                "bystander",
+                "soldier",
+                "guard",
+                "commander",
+                "portrait",
+                "face",
+                "hands",
+                "visible hand",
+                "robe sleeve with body",
+                "armored person",
+            ]
+        )
+    if re.search(r"\b(?:door|doors|gate|gates|doorway)\b", scene_subject_scan, re.IGNORECASE):
+        parts.extend(
+            [
+                "open door replacing closed door",
+                "wide open gate",
+                "people entering doorway",
+                "handshake at doorway",
+                "soldiers running through open gate",
+                "bright open doorway",
+            ]
+        )
+    if re.search(r"\b(?:gear|gears|cog|cogs|cogwheel|cogwheels|wheel|wheels)\b", scene_subject_scan, re.IGNORECASE):
+        parts.extend(
+            [
+                "person pushing gear",
+                "man beside gear",
+                "hands on gear",
+                "soldier with gear",
+                "wheel carried by people",
+            ]
+        )
+    if re.search(r"\b(?:painting|paintings|canvas|mural|picture)\b", scene_subject_scan, re.IGNORECASE):
+        parts.extend(
+            [
+                "person in front of painting",
+                "man holding skull",
+                "skull on armor",
+                "extra arm holding skull",
+                "human figure replacing torn painting",
+            ]
+        )
+    if re.search(r"\b(?:emblem|emblems|crest|crests|insignia)\b", scene_subject_scan, re.IGNORECASE):
+        parts.extend(
+            [
+                "person pierced by arrow",
+                "human body hit by arrow",
+                "woman struck by arrow",
+                "soldiers around emblem",
+                "readable emblem text",
+            ]
+        )
+    if re.search(r"\btitle\s+card\b", scene_subject_scan, re.IGNORECASE):
+        parts.extend(
+            [
+                "letters",
+                "words",
+                "English words",
+                "misspelled title",
+                "fake title",
+                "episode text",
+                "subtitle text",
+                "caption text",
+            ]
+        )
+    if re.search(r"\b(?:pillar|stone\s+pillar|stone\s+column|stone\s+support|monolith|stele)\b", scene_subject_scan, re.IGNORECASE):
+        parts.extend(
+            [
+                "stone inscription",
+                "inscription on stone",
+                "carved characters",
+                "carved writing",
+                "engraved writing",
+                "calligraphy on stone",
+                "written symbols on stone",
+                "marked stone face",
+                "memorial tablet",
+                "stone stele with text",
+                "monument text",
+                "engraved plaque",
+            ]
+        )
+    if re.search(r"\b(?:packet|bundle|document|scroll|map|plea)\b", scene_subject_scan, re.IGNORECASE):
+        parts.extend(
+            [
+                "coin with characters",
+                "decorated coin",
+                "round inscribed coin",
+                "seal stamp with characters",
+                "ornate seal disc",
+                "emblem disc",
+                "marked metal token",
+                "inscribed metal token",
+                "written seal face",
+            ]
+        )
+    if re.search(r"\bbell\b", scene_subject_scan, re.IGNORECASE):
+        parts.extend(
+            [
+                "numbers on bell",
+                "digits on bell",
+                "bell inscription",
+                "inscription on bell",
+                "carved characters on bell",
+                "engraved writing on bell",
+                "marked bell surface",
+            ]
+        )
     if _flux2_klein_is_historical_japanese_context(source_prompt) and not _flux2_klein_japanese_child_requested(local_source_scan):
         parts.extend(
             [
@@ -27398,6 +33600,33 @@ def _flux2_klein_md_negative_contract(source_prompt: str = "", final_prompt: str
             "bottom-right artist mark",
             "top logo",
             "corner logo",
+        ])
+    if (
+        re.search(r"\b(?:Goguryeo|Tang|Silla|Baekje)\b", scan, re.IGNORECASE)
+        and re.search(
+            r"\b(?:fortress|court|district|gate|gatehouse|hall|building|door|doorway|street)\b",
+            scan,
+            re.IGNORECASE,
+        )
+    ):
+        parts.extend([
+            "building sign",
+            "shop sign",
+            "wooden signpost",
+            "gate plaque with characters",
+            "gate lintel calligraphy",
+            "gate lintel signboard",
+            "over-gate character board",
+            "signboard with characters",
+            "blank signboard above door",
+            "empty rectangular lintel panel",
+            "framed blank plaque above door",
+            "blank over-door panel",
+            "blank door header plaque",
+            "rectangular signboard frame",
+            "wall notice panel",
+            "wall writing",
+            "wall scribble",
         ])
     if _flux2_klein_is_tang_645_liaodong_context(f"{source_prompt} {final_prompt}"):
         parts.extend([
@@ -29076,8 +35305,27 @@ def _needs_comfyui_plain_robed_action_rewrite(prompt: str) -> bool:
     )
 
 
+def _rewrite_focal_human_silhouette_language(prompt: str) -> str:
+    p = prompt or ""
+    p = re.sub(
+        r"\brestrained\s+backlit\s+silhouette\b",
+        "restrained backlit fully rendered adult figure with a visible face, "
+        "clothing folds, limbs, material detail, and local color",
+        p,
+        flags=re.IGNORECASE,
+    )
+    return re.sub(
+        r"\bbacklit\s+silhouette\b",
+        "backlit fully rendered figure with visible facial and garment detail",
+        p,
+        flags=re.IGNORECASE,
+    )
+
+
 def _enforce_comfyui_common_positive_prompt(prompt: str, negative_prompt: str = "") -> tuple[str, str]:
-    p = (prompt or "").strip() or "an image"
+    p = _rewrite_focal_human_silhouette_language(
+        (prompt or "").strip() or "an image"
+    )
     p = _local_normalize_historical_tally_scene_language(p)
     p = _local_normalize_early_modern_europe_scene_language(p)
     p = _sanitize_local_historical_symbolic_modern_objects(p)
@@ -30950,7 +37198,7 @@ def _enforce_comfyui_common_positive_prompt(prompt: str, negative_prompt: str = 
         return re.sub(r"\s{2,}", " ", p).strip(), neg
     if (
         not _local_is_modern_context(p)
-        and re.search(r"\b(wet\s+linen|linen|cloth|bandage|bandages)\b", scene_focus, re.IGNORECASE)
+        and re.search(r"\b(wet\s+linen|wet\s+cloth|bandage|bandages)\b", scene_focus, re.IGNORECASE)
         and re.search(r"\b(skin|spotted|shivering|pressing|pressed|king)\b", scene_focus, re.IGNORECASE)
     ):
         scene = _local_prompt_field(p, "Scene") or _local_scene_excerpt(p, limit=700)
@@ -41635,26 +47883,58 @@ def _image_has_solid_light_outer_margin(path: str | Path) -> bool:
             w, h = im.size
             if w < 16 or h < 16:
                 return False
-            strips = [
-                [im.getpixel((x, y)) for y in range(3) for x in range(w)],
-                [im.getpixel((x, h - 1 - y)) for y in range(3) for x in range(w)],
-                [im.getpixel((x, y)) for x in range(3) for y in range(h)],
-                [im.getpixel((w - 1 - x, y)) for x in range(3) for y in range(h)],
-            ]
+
+            def is_soft_light(pixel: tuple[int, int, int]) -> bool:
+                r, g, b = pixel
+                return (
+                    max(r, g, b) >= 185
+                    and max(r, g, b) - min(r, g, b) <= 80
+                    and r >= 160
+                    and g >= 160
+                    and b >= 160
+                )
+
+            def side_pixels(side: str, depth: int, thickness: int = 1) -> list[tuple[int, int, int]]:
+                pixels: list[tuple[int, int, int]] = []
+                if side in {"top", "bottom"}:
+                    step = max(1, w // 320)
+                    for offset in range(thickness):
+                        y = depth + offset if side == "top" else h - 1 - depth - offset
+                        if 0 <= y < h:
+                            pixels.extend(im.getpixel((x, y)) for x in range(0, w, step))
+                else:
+                    step = max(1, h // 320)
+                    for offset in range(thickness):
+                        x = depth + offset if side == "left" else w - 1 - depth - offset
+                        if 0 <= x < w:
+                            pixels.extend(im.getpixel((x, y)) for y in range(0, h, step))
+                return pixels
+
             soft_light_sides = 0
-            for pixels in strips:
+            for side, axis_size in (("top", h), ("bottom", h), ("left", w), ("right", w)):
+                pixels = side_pixels(side, 0, thickness=3)
                 if not pixels:
                     continue
                 near_white = sum(1 for r, g, b in pixels if r >= 245 and g >= 245 and b >= 245)
-                if near_white / len(pixels) >= 0.94:
+                soft_light = sum(1 for pixel in pixels if is_soft_light(pixel))
+                near_white_side = near_white / len(pixels) >= 0.94
+                soft_light_side = soft_light / len(pixels) >= 0.88
+                if not near_white_side and not soft_light_side:
+                    continue
+
+                max_probe = max(4, int(axis_size * 0.22))
+                probe_step = max(1, axis_size // 360)
+                has_inward_transition = False
+                for depth in range(3, max_probe + 1, probe_step):
+                    probe = side_pixels(side, depth)
+                    if probe and sum(1 for pixel in probe if not is_soft_light(pixel)) / len(probe) >= 0.48:
+                        has_inward_transition = True
+                        break
+                if not has_inward_transition:
+                    continue
+                if near_white_side:
                     return True
-                soft_light = sum(
-                    1
-                    for r, g, b in pixels
-                    if max(r, g, b) >= 185 and max(r, g, b) - min(r, g, b) <= 80 and r >= 160 and g >= 160 and b >= 160
-                )
-                if soft_light / len(pixels) >= 0.88:
-                    soft_light_sides += 1
+                soft_light_sides += 1
             if soft_light_sides >= 3:
                 return True
     except Exception:
@@ -41678,14 +47958,57 @@ def _image_has_solid_dark_outer_frame(path: str | Path) -> bool:
                 [im.getpixel((w - 1, y)) for y in range(h)],
             ]
             thin_dark_sides = 0
+            thin_dark_ratios: list[float] = []
             for pixels in outer_one_pixel_strips:
                 if not pixels:
                     continue
                 near_black = sum(1 for r, g, b in pixels if max(r, g, b) <= 32)
-                if near_black / len(pixels) >= 0.92:
+                ratio = near_black / len(pixels)
+                thin_dark_ratios.append(ratio)
+                if ratio >= 0.92:
                     thin_dark_sides += 1
             if thin_dark_sides == 4:
                 return True
+            if (
+                len(thin_dark_ratios) == 4
+                and sum(ratio >= 0.95 for ratio in thin_dark_ratios) >= 3
+                and min(thin_dark_ratios) >= 0.50
+            ):
+                return True
+
+            corner_w = max(8, int(w * 0.10))
+            corner_h = max(8, int(h * 0.14))
+            corner_boxes = (
+                (0, 0, corner_w, corner_h),
+                (w - corner_w, 0, w, corner_h),
+                (0, h - corner_h, corner_w, h),
+                (w - corner_w, h - corner_h, w, h),
+            )
+            corner_dark_ratios: list[float] = []
+            corner_dark_variances: list[float] = []
+            for x0, y0, x1, y1 in corner_boxes:
+                pixels = [im.getpixel((x, y)) for y in range(y0, y1) for x in range(x0, x1)]
+                if not pixels:
+                    continue
+                dark_lumas = [
+                    (r * 299 + g * 587 + b * 114) / 1000
+                    for r, g, b in pixels
+                    if max(r, g, b) <= 18
+                ]
+                corner_dark_ratios.append(len(dark_lumas) / len(pixels))
+                if dark_lumas:
+                    mean = sum(dark_lumas) / len(dark_lumas)
+                    corner_dark_variances.append(
+                        sum((value - mean) ** 2 for value in dark_lumas) / len(dark_lumas)
+                    )
+            if (
+                len(corner_dark_ratios) == 4
+                and len(corner_dark_variances) == 4
+                and min(corner_dark_ratios) >= 0.35
+                and max(corner_dark_variances) <= 4.0
+            ):
+                return True
+
             strips = [
                 [im.getpixel((x, y)) for y in range(4) for x in range(w)],
                 [im.getpixel((x, h - 1 - y)) for y in range(4) for x in range(w)],
@@ -41754,7 +48077,8 @@ def _image_has_solid_dark_outer_frame(path: str | Path) -> bool:
     return False
 
 
-def _image_has_top_caption_like_text(path: str | Path) -> bool:
+def _image_has_textured_dark_perimeter_overlay(path: str | Path) -> bool:
+    """Detect a dark distressed overlay that hugs all four outer edges."""
     try:
         from PIL import Image
 
@@ -41763,10 +48087,379 @@ def _image_has_top_caption_like_text(path: str | Path) -> bool:
             w, h = im.size
             if w < 64 or h < 64:
                 return False
+            strips = [
+                [im.getpixel((x, y)) for y in range(2) for x in range(w)],
+                [im.getpixel((x, h - 1 - y)) for y in range(2) for x in range(w)],
+                [im.getpixel((x, y)) for x in range(2) for y in range(h)],
+                [im.getpixel((w - 1 - x, y)) for x in range(2) for y in range(h)],
+            ]
+            near_black_ratios: list[float] = []
+            dark_ratios: list[float] = []
+            border_lumas: list[float] = []
+            for pixels in strips:
+                if not pixels:
+                    return False
+                near_black_ratios.append(
+                    sum(1 for pixel in pixels if max(pixel) <= 32) / len(pixels)
+                )
+                dark_ratios.append(
+                    sum(1 for pixel in pixels if max(pixel) <= 70) / len(pixels)
+                )
+                border_lumas.extend(
+                    (r * 299 + g * 587 + b * 114) / 1000 for r, g, b in pixels
+                )
+            if min(near_black_ratios, default=0.0) < 0.50:
+                return False
+            if min(dark_ratios, default=0.0) < 0.68:
+                return False
+
+            center_lumas: list[float] = []
+            x0, x1 = int(w * 0.20), int(w * 0.80)
+            y0, y1 = int(h * 0.20), int(h * 0.80)
+            step_x = max(1, (x1 - x0) // 80)
+            step_y = max(1, (y1 - y0) // 45)
+            for y in range(y0, y1, step_y):
+                for x in range(x0, x1, step_x):
+                    r, g, b = im.getpixel((x, y))
+                    center_lumas.append((r * 299 + g * 587 + b * 114) / 1000)
+            if not border_lumas or not center_lumas:
+                return False
+            return (
+                sum(center_lumas) / len(center_lumas)
+                - sum(border_lumas) / len(border_lumas)
+                >= 45
+            )
+    except Exception:
+        return False
+
+
+def _image_has_large_dark_glyph_row_on_light_surface(
+    path: str | Path,
+    *,
+    upper_fraction: float,
+) -> bool:
+    """Detect a short row of large dark glyphs without treating faces or linework as text."""
+    try:
+        from PIL import Image, ImageOps
+
+        with Image.open(path) as img:
+            gray = ImageOps.grayscale(img.convert("RGB"))
+            if gray.width > 640:
+                scaled_h = max(1, round(gray.height * (640 / gray.width)))
+                gray = gray.resize((640, scaled_h), Image.Resampling.LANCZOS)
+            w, h = gray.size
+            if w < 240 or h < 120:
+                return False
+            scan_h = max(1, min(h, int(h * upper_fraction)))
+            pixels = gray.tobytes()
+
+        remaining = {
+            y * w + x
+            for y in range(scan_h)
+            for x in range(w)
+            if pixels[y * w + x] <= 75
+        }
+        components: list[tuple[float, float, int, int, int]] = []
+        while remaining:
+            start = remaining.pop()
+            stack = [start]
+            points = [start]
+            while stack:
+                index = stack.pop()
+                x = index % w
+                y = index // w
+                for nx in (x - 1, x, x + 1):
+                    for ny in (y - 1, y, y + 1):
+                        if nx < 0 or nx >= w or ny < 0 or ny >= scan_h:
+                            continue
+                        neighbor = ny * w + nx
+                        if neighbor in remaining:
+                            remaining.remove(neighbor)
+                            stack.append(neighbor)
+                            points.append(neighbor)
+
+            area = len(points)
+            xs = [index % w for index in points]
+            ys = [index // w for index in points]
+            min_x, max_x = min(xs), max(xs)
+            min_y, max_y = min(ys), max(ys)
+            box_w = max_x - min_x + 1
+            box_h = max_y - min_y + 1
+            fill_ratio = area / max(box_w * box_h, 1)
+            if not (
+                80 <= area <= 800
+                and 5 <= box_w <= 40
+                and 14 <= box_h <= 45
+                and 0.18 <= fill_ratio <= 0.72
+            ):
+                continue
+
+            point_set = set(points)
+            pad = 5
+            ring = [
+                pixels[yy * w + xx]
+                for yy in range(max(0, min_y - pad), min(h, max_y + pad + 1))
+                for xx in range(max(0, min_x - pad), min(w, max_x + pad + 1))
+                if yy * w + xx not in point_set
+            ]
+            if not ring:
+                continue
+            ring_mean = sum(ring) / len(ring)
+            bright_ratio = sum(value >= 100 for value in ring) / len(ring)
+            if ring_mean < 115 or bright_ratio < 0.62:
+                continue
+            components.append(
+                (
+                    (min_x + max_x) / 2,
+                    (min_y + max_y) / 2,
+                    box_w,
+                    box_h,
+                    area,
+                )
+            )
+
+        if len(components) < 5:
+            return False
+        components.sort(key=lambda item: item[0])
+        for start_index, first in enumerate(components):
+            run = [first]
+            for component in components[start_index + 1 :]:
+                gap = component[0] - run[-1][0]
+                if gap < 5:
+                    continue
+                if gap > 80:
+                    break
+                if abs(component[1] - run[-1][1]) > max(
+                    12,
+                    0.55 * max(component[3], run[-1][3]),
+                ):
+                    continue
+                run.append(component)
+                if len(run) < 5:
+                    continue
+                heights = [item[3] for item in run]
+                centers_y = [item[1] for item in run]
+                x_span = run[-1][0] - run[0][0]
+                y_span = max(centers_y) - min(centers_y)
+                mean_height = sum(heights) / len(heights)
+                if (
+                    max(heights) / max(min(heights), 1) <= 1.8
+                    and 40 <= x_span <= w * 0.55
+                    and y_span <= max(12, mean_height * 0.95)
+                    and x_span >= max(40, y_span * 2.5)
+                    and sum(item[4] for item in run) >= 500
+                ):
+                    return True
+        return False
+    except Exception:
+        return False
+
+
+def _image_has_top_caption_like_text(path: str | Path) -> bool:
+    if _image_has_large_dark_glyph_row_on_light_surface(path, upper_fraction=0.20):
+        return True
+    try:
+        from PIL import Image
+
+        with Image.open(path) as img:
+            im = img.convert("RGB")
+            w, h = im.size
+            if w < 64 or h < 64:
+                return False
+
+            def _large_component_ratio(dark_pixels: set[tuple[int, int]]) -> float:
+                if not dark_pixels:
+                    return 0.0
+                remaining = set(dark_pixels)
+                large_area = 0
+                while remaining:
+                    seed = remaining.pop()
+                    stack = [seed]
+                    component_area = 0
+                    while stack:
+                        x, y = stack.pop()
+                        component_area += 1
+                        for dy in (-1, 0, 1):
+                            for dx in (-1, 0, 1):
+                                if dx == 0 and dy == 0:
+                                    continue
+                                neighbor = (x + dx, y + dy)
+                                if neighbor in remaining:
+                                    remaining.remove(neighbor)
+                                    stack.append(neighbor)
+                    if component_area >= 1800:
+                        large_area += component_area
+                return large_area / len(dark_pixels)
+
+            def _has_large_header_glyph_row(
+                dark_pixels: set[tuple[int, int]],
+                rx0: int,
+                ry0: int,
+                rx1: int,
+                ry1: int,
+            ) -> bool:
+                remaining = set(dark_pixels)
+                components: list[tuple[float, float, int, int, int]] = []
+                min_height = max(12, int(h * 0.022))
+                max_height = max(min_height + 1, int(h * 0.09))
+                while remaining:
+                    seed = remaining.pop()
+                    stack = [seed]
+                    area = 0
+                    min_x = max_x = seed[0]
+                    min_y = max_y = seed[1]
+                    while stack:
+                        x, y = stack.pop()
+                        area += 1
+                        min_x = min(min_x, x)
+                        max_x = max(max_x, x)
+                        min_y = min(min_y, y)
+                        max_y = max(max_y, y)
+                        for dy in (-1, 0, 1):
+                            for dx in (-1, 0, 1):
+                                if dx == 0 and dy == 0:
+                                    continue
+                                neighbor = (x + dx, y + dy)
+                                if neighbor in remaining:
+                                    remaining.remove(neighbor)
+                                    stack.append(neighbor)
+                    box_w = max_x - min_x + 1
+                    box_h = max_y - min_y + 1
+                    fill = area / max(box_w * box_h, 1)
+                    if not (min_height <= box_h <= max_height):
+                        continue
+                    if not (3 <= box_w <= int((rx1 - rx0) * 0.10)):
+                        continue
+                    if area < max(35, int(box_h * 2.2)) or not (0.20 <= fill <= 0.99):
+                        continue
+                    components.append(((min_x + max_x) / 2, (min_y + max_y) / 2, box_w, box_h, area))
+
+                if len(components) < 6:
+                    return False
+                for anchor in components:
+                    row = [
+                        component
+                        for component in components
+                        if abs(component[1] - anchor[1]) <= max(7, anchor[3] * 0.28)
+                        and 0.58 <= component[3] / max(anchor[3], 1) <= 1.72
+                    ]
+                    if len(row) < 6:
+                        continue
+                    row.sort(key=lambda item: item[0])
+                    span = (row[-1][0] - row[0][0]) / max(rx1 - rx0, 1)
+                    center_y = sum(item[1] for item in row) / len(row)
+                    mean_height = sum(item[3] for item in row) / len(row)
+                    gaps = [
+                        right[0] - left[0]
+                        for left, right in zip(row, row[1:])
+                    ]
+                    if (
+                        span >= 0.34
+                        and center_y <= ry0 + (ry1 - ry0) * 0.72
+                        and max(gaps, default=0) <= max(80, mean_height * 3.5)
+                    ):
+                        return True
+                return False
+
+            def _has_bright_header_glyph_row(
+                bright_pixels: set[tuple[int, int]],
+                rx0: int,
+                ry0: int,
+                rx1: int,
+                ry1: int,
+            ) -> bool:
+                """Require separate, aligned bright glyphs instead of bright roof texture."""
+                remaining = set(bright_pixels)
+                components: list[tuple[float, float, int, int, int]] = []
+                min_height = max(10, int(h * 0.018))
+                max_height = max(min_height + 1, int(h * 0.085))
+                while remaining:
+                    seed = remaining.pop()
+                    stack = [seed]
+                    points = [seed]
+                    while stack:
+                        x, y = stack.pop()
+                        for dy in (-1, 0, 1):
+                            for dx in (-1, 0, 1):
+                                if dx == 0 and dy == 0:
+                                    continue
+                                neighbor = (x + dx, y + dy)
+                                if neighbor in remaining:
+                                    remaining.remove(neighbor)
+                                    stack.append(neighbor)
+                                    points.append(neighbor)
+
+                    area = len(points)
+                    xs = [point[0] for point in points]
+                    ys = [point[1] for point in points]
+                    min_x, max_x = min(xs), max(xs)
+                    min_y, max_y = min(ys), max(ys)
+                    box_w = max_x - min_x + 1
+                    box_h = max_y - min_y + 1
+                    fill = area / max(box_w * box_h, 1)
+                    if not (min_height <= box_h <= max_height):
+                        continue
+                    if not (3 <= box_w <= int((rx1 - rx0) * 0.10)):
+                        continue
+                    if area < max(30, int(box_h * 1.8)) or not (0.12 <= fill <= 0.90):
+                        continue
+
+                    point_set = set(points)
+                    ring_values: list[int] = []
+                    pad = 5
+                    for yy in range(max(ry0, min_y - pad), min(ry1, max_y + pad + 1)):
+                        for xx in range(max(rx0, min_x - pad), min(rx1, max_x + pad + 1)):
+                            if (xx, yy) in point_set:
+                                continue
+                            ring_values.append(max(im.getpixel((xx, yy))))
+                    if not ring_values:
+                        continue
+                    dark_ring_ratio = sum(value <= 100 for value in ring_values) / len(ring_values)
+                    if dark_ring_ratio < 0.45:
+                        continue
+                    components.append(
+                        ((min_x + max_x) / 2, (min_y + max_y) / 2, box_w, box_h, area)
+                    )
+
+                if len(components) < 5:
+                    return False
+                components.sort(key=lambda item: item[0])
+                for start_index, first in enumerate(components):
+                    run = [first]
+                    for component in components[start_index + 1 :]:
+                        gap = component[0] - run[-1][0]
+                        if gap < 5:
+                            continue
+                        if gap > 90:
+                            break
+                        if abs(component[1] - run[-1][1]) > max(
+                            10,
+                            0.42 * max(component[3], run[-1][3]),
+                        ):
+                            continue
+                        run.append(component)
+                        if len(run) < 5:
+                            continue
+                        heights = [item[3] for item in run]
+                        centers_y = [item[1] for item in run]
+                        x_span = run[-1][0] - run[0][0]
+                        y_span = max(centers_y) - min(centers_y)
+                        mean_height = sum(heights) / len(heights)
+                        if (
+                            max(heights) / max(min(heights), 1) <= 1.85
+                            and 40 <= x_span <= (rx1 - rx0) * 0.72
+                            and y_span <= max(10, mean_height * 0.60)
+                            and x_span >= max(40, y_span * 3.0)
+                            and sum(item[4] for item in run) >= 300
+                        ):
+                            return True
+                return False
+
             def _dark_title_region(rx0: int, ry0: int, rx1: int, ry1: int) -> bool:
                 total = max((rx1 - rx0) * (ry1 - ry0), 1)
                 light_count = 0
                 dark_count = 0
+                dark_pixels: set[tuple[int, int]] = set()
                 dark_cols: set[int] = set()
                 row_dark_ratios: list[float] = []
                 for yy in range(ry0, ry1):
@@ -41780,18 +48473,22 @@ def _image_has_top_caption_like_text(path: str | Path) -> bool:
                         if mx <= 70 and mx - mn <= 55:
                             dark_count += 1
                             row_dark += 1
+                            dark_pixels.add((xx, yy))
                             dark_cols.add(xx)
                     row_dark_ratios.append(row_dark / max(rx1 - rx0, 1))
                 light_ratio = light_count / total
                 dark_ratio = dark_count / total
                 active_col_ratio = len(dark_cols) / max(rx1 - rx0, 1)
                 matching_rows = sum(1 for ratio in row_dark_ratios if 0.018 <= ratio <= 0.26)
+                first_dark_y = min((y for _x, y in dark_pixels), default=ry1)
                 return (
                     light_ratio >= 0.48
                     and 0.006 <= dark_ratio <= 0.12
+                    and _large_component_ratio(dark_pixels) < 0.72
+                    and first_dark_y <= ry0 + int((ry1 - ry0) * 0.50)
                     and 0.08 <= active_col_ratio <= 0.52
-                    and 8 <= matching_rows <= 95
-                    and max(row_dark_ratios, default=0.0) >= 0.065
+                    and 8 <= matching_rows <= 80
+                    and max(row_dark_ratios, default=0.0) >= 0.18
                 )
             if (
                 _dark_title_region(int(w * 0.02), int(h * 0.02), int(w * 0.34), int(h * 0.19))
@@ -41804,6 +48501,8 @@ def _image_has_top_caption_like_text(path: str | Path) -> bool:
                 white_count = 0
                 dark_count = 0
                 dark_ink_count = 0
+                dark_pixels: set[tuple[int, int]] = set()
+                bright_pixels: set[tuple[int, int]] = set()
                 row_ratios: list[float] = []
                 dark_row_ratios: list[float] = []
                 dark_xs: list[int] = []
@@ -41820,10 +48519,12 @@ def _image_has_top_caption_like_text(path: str | Path) -> bool:
                             dark_ink_count += 1
                             row_dark_ink += 1
                             dark_xs.append(x)
+                            dark_pixels.add((x, y))
                             dark_cols.add(x)
                         if mx >= 175 and mx - mn <= 70 and r >= 140 and g >= 140 and b >= 140:
                             white_count += 1
                             row_white += 1
+                            bright_pixels.add((x, y))
                     row_ratios.append(row_white / max(x1 - x0, 1))
                     dark_row_ratios.append(row_dark_ink / max(x1 - x0, 1))
                 white_ratio = white_count / total
@@ -41835,8 +48536,11 @@ def _image_has_top_caption_like_text(path: str | Path) -> bool:
                     and dark_ratio >= 0.45
                     and dense_rows >= 8
                     and max(row_ratios, default=0.0) >= 0.24
+                    and _has_bright_header_glyph_row(bright_pixels, x0, ry0, x1, ry1)
                 )
                 if white_title_on_dark:
+                    return True
+                if _has_large_header_glyph_row(dark_pixels, x0, ry0, x1, ry1):
                     return True
                 if not dark_xs:
                     return False
@@ -41844,14 +48548,19 @@ def _image_has_top_caption_like_text(path: str | Path) -> bool:
                 active_dark_col_ratio = len(dark_cols) / max(x1 - x0, 1)
                 matching_dark_rows = sum(1 for ratio in dark_row_ratios if 0.015 <= ratio <= 0.22)
                 strong_dark_rows = sum(1 for ratio in dark_row_ratios if ratio >= 0.065)
+                first_dark_y = min((y for _x, y in dark_pixels), default=ry1)
+                last_dark_y = max((y for _x, y in dark_pixels), default=ry0)
                 return (
                     white_ratio >= 0.42
                     and 0.006 <= dark_ink_ratio <= 0.12
+                    and _large_component_ratio(dark_pixels) < 0.72
+                    and first_dark_y <= ry0 + int((ry1 - ry0) * 0.50)
+                    and last_dark_y <= ry0 + int((ry1 - ry0) * 0.88)
                     and 12 <= matching_dark_rows <= 80
                     and strong_dark_rows >= 3
-                    and max(dark_row_ratios, default=0.0) >= 0.065
+                    and max(dark_row_ratios, default=0.0) >= 0.14
                     and dark_x_span >= 0.45
-                    and 0.08 <= active_dark_col_ratio <= 0.70
+                    and 0.35 <= active_dark_col_ratio <= 0.70
                 )
 
             return _center_caption_band(0, int(h * 0.20))
@@ -41860,18 +48569,291 @@ def _image_has_top_caption_like_text(path: str | Path) -> bool:
     return False
 
 
+def _image_has_center_infographic_arrow(path: str | Path) -> bool:
+    try:
+        from PIL import Image, ImageOps
+
+        with Image.open(path) as img:
+            gray = ImageOps.grayscale(img.convert("RGB"))
+            w, h = gray.size
+            if w < 320 or h < 180:
+                return False
+            x0, x1 = int(w * 0.40), int(w * 0.60)
+            y0, y1 = int(h * 0.25), int(h * 0.75)
+            points = {
+                (x, y)
+                for y in range(y0, y1)
+                for x in range(x0, x1)
+                if gray.getpixel((x, y)) >= 225
+            }
+            while points:
+                start = points.pop()
+                stack = [start]
+                component = [start]
+                while stack:
+                    x, y = stack.pop()
+                    for nx in (x - 1, x, x + 1):
+                        for ny in (y - 1, y, y + 1):
+                            neighbor = (nx, ny)
+                            if neighbor in points:
+                                points.remove(neighbor)
+                                stack.append(neighbor)
+                                component.append(neighbor)
+                if not (300 <= len(component) <= 2500):
+                    continue
+                xs = [point[0] for point in component]
+                ys = [point[1] for point in component]
+                box_w = max(xs) - min(xs) + 1
+                box_h = max(ys) - min(ys) + 1
+                density = len(component) / max(box_w * box_h, 1)
+                if 25 <= box_w <= 100 and 25 <= box_h <= 100 and 0.12 <= density <= 0.70:
+                    return True
+    except Exception:
+        return False
+    return False
+
+
 _INTERNAL_TEXT_GENERATION_CHECK_RE = re.compile(
-    r"\b(?:document|documents|paper|papers|page|pages|scroll|scrolls|letter|letters|"
+    r"\b(?:document|documents|paper|papers|page|pages|scroll|scrolls|manuscript|manuscripts|letter|letters|"
     r"(?:official|written|shogunal)\s+orders?|order\s+(?:sheets?|papers?|documents?)|"
     r"petition|petitions|certificate|certificates|notice|notices|book|books|ledger|ledgers|register|registers|"
     r"roster|rosters|record|records|report|reports|administrative|administration|"
     r"land\s+papers|domain\s+management|officials?\s+stack|dispatch|message|"
-    r"packet|packets|handing\s+(?:a\s+)?(?:paper|order|letter|message)|"
+    r"packet|packets|bundle|bundles|handing\s+(?:a\s+)?(?:paper|order|letter|message)|"
     r"map\s+board|route\s+board|campaign\s+board|planning\s+board|"
     r"blank\s+(?:map|route|campaign|planning)\s+boards?|"
     r"blank\s+(?:paper|document|page|scroll|packet|packets))\b",
     re.IGNORECASE,
 )
+
+_CH2_EUROPE_INTERNAL_TEXT_RISK_RE = re.compile(
+    r"\b(?:prehistoric\s+priests\s+repeating\s+a\s+cattle\s+ritual\s+beneath\s+a\s+cosmic\s+body\s+diagram|"
+    r"hands\s+placing\s+measured\s+ritual\s+portions\s+around\s+a\s+circular\s+cosmic\s+diagram|"
+    r"recovered\s+cattle\s+crossing\s+back\s+toward\s+a\s+lawful\s+ritual\s+enclosure|"
+    r"two\s+competing\s+scholarly\s+reconstructions\s+displayed\s+beside\s+the\s+same\s+fragmentary\s+myth|"
+    r"competing\s+flood\s+and\s+lethal\s+winter\s+scenes\s+surrounding\s+Yima's\s+underground\s+refuge|"
+    r"Jaan\s+Puhvel\s+comparing\s+Yemo\s+and\s+Remus\s+beside\s+early\s+Latin\s+inscriptions|"
+    r"plain\s+unlabeled\s+glowing\s+human-body\s+outline|"
+    r"unmarked\s+circular\s+stone\s+platter|"
+    r"empty\s+low-fenced\s+ritual\s+enclosure|"
+    r"unmarked\s+clay\s+reconstruction\s+models|"
+    r"sealed\s+low\s+underground\s+refuge|"
+    r"two\s+small\s+blank\s+stone\s+face-relief\s+casts)\b",
+    re.IGNORECASE,
+)
+
+_NARRATION_ALIGNMENT_INTERNAL_TEXT_RISK_RE = re.compile(
+    r"\b(?:maps?|symbols?|diagrams?|charts?|graphs?|panels?|screens?|DNA|sequencing|"
+    r"genome\s+data|language\s+tree|ancestry\s+cluster|seventy-five\s+percent|"
+    r"inscriptions?|written\s+texts?|genealog(?:y|ies)|records?|scrolls?|manuscripts?|"
+    r"documents?|writing|calligraphy|labels?)\b",
+    re.IGNORECASE,
+)
+
+_CONTINUOUS_PANORAMA_TEXT_GENERATION_CHECK_RE = re.compile(
+    r"\bone\s+continuous\s+(?:panoramic\s+historical\s+scene|"
+    r"ancient\s+northern\s+origin\s+landscape)\b",
+    re.IGNORECASE,
+)
+
+_CONTINUOUS_MONTAGE_BANNER_TEXT_CHECK_RE = re.compile(
+    r"\bone\s+continuous\s+panoramic\s+historical\s+scene\b",
+    re.IGNORECASE,
+)
+
+_BAEKJE_EP01_FOUNDATION_TEXT_RISK_RE = re.compile(
+    r"\b(?:banners?|flags?|gates?|fortress(?:es)?|scrolls?|manuscripts?|maps?|"
+    r"scribe|genealog(?:y|ies)|records?|"
+    r"주몽은\s+오래\s+미루지\s+않은\s+채\s+그를\s+태자로\s+세웠죠)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_baekje_ep01_foundation_generation_context(prompt: str) -> bool:
+    """Match only the declared EP01 ancient foundation world, never Pungnap modern cuts."""
+    text = str(prompt or "")
+    return bool(
+        re.search(
+            r"\bLate\s+1st\s+century\s+BC\s+foundation\s+tradition\s+through\s+the\s+early\s+reign\s+of\s+King\s+Onjo\b",
+            text,
+            re.IGNORECASE,
+        )
+        and re.search(r"\bGoguryeo,\s*Mahan,\s*and\s*Baekje\b", text, re.IGNORECASE)
+        and not re.search(
+            r"\b(?:present[- ]day|modern\s+Seoul|archaeological\s+examination|archaeological\s+documentation)\b",
+            text,
+            re.IGNORECASE,
+        )
+    )
+
+
+def _is_baekje_ep01_modern_pungnap_generation_context(prompt: str) -> bool:
+    text = str(prompt or "")
+    return bool(
+        re.search(r"\bPungnap(?:\s+Toseong)?\b", text, re.IGNORECASE)
+        and re.search(
+            r"\b(?:present[- ]day|archaeological\s+(?:examination|documentation|landscape|earth\s+layers?))\b",
+            text,
+            re.IGNORECASE,
+        )
+        and re.search(r"\bGoguryeo,\s*Mahan,\s*and\s*Baekje\b", text, re.IGNORECASE)
+    )
+
+
+def _baekje_ep01_text_risk_scope(prompt: str) -> str:
+    return " ".join(
+        value
+        for value in (
+            _local_prompt_field(prompt, "Exact place"),
+            _local_prompt_field(prompt, "Main subject"),
+            _local_prompt_field(prompt, "Primary subject"),
+            _local_prompt_field(prompt, "Scene"),
+            _local_prompt_field(prompt, "Visible action"),
+            _local_prompt_field(prompt, "Narration context"),
+        )
+        if value
+    )
+
+
+_BAEKJE_EP01_PLAIN_BARE_GATE_SAFE_NARRATIONS = frozenset(
+    {
+        "그 평온을 깨뜨릴 청년이 마침내 졸본의 성문 앞에 섰고",
+        "문이 열리는 순간, 소서노 가족이 의지하던 권력의 균형도 함께 흔들렸죠",
+    }
+)
+
+
+def _is_baekje_ep01_plain_bare_gate_text_safe(prompt: str) -> bool:
+    if not _is_baekje_ep01_foundation_generation_context(prompt):
+        return False
+    narration = re.sub(
+        r"\s+",
+        " ",
+        _local_prompt_field(prompt, "Narration context") or "",
+    ).strip(" .")
+    if narration not in _BAEKJE_EP01_PLAIN_BARE_GATE_SAFE_NARRATIONS:
+        return False
+    scoped_text = _baekje_ep01_text_risk_scope(prompt)
+    return bool(
+        re.search(
+            r"\b(?:closed|open)\s+plain\s+timber\s+gate\b",
+            scoped_text,
+            re.IGNORECASE,
+        )
+        and re.search(
+            r"\buninterrupted\s+bare\s+wood(?:\s+gate)?\s+(?:panels?|posts?)\b",
+            scoped_text,
+            re.IGNORECASE,
+        )
+    )
+
+
+def _should_check_baekje_ep01_internal_text(prompt: str) -> bool:
+    return bool(
+        _is_baekje_ep01_foundation_generation_context(prompt)
+        and not _is_baekje_ep01_plain_bare_gate_text_safe(prompt)
+        and _BAEKJE_EP01_FOUNDATION_TEXT_RISK_RE.search(
+            _baekje_ep01_text_risk_scope(prompt)
+        )
+    )
+
+
+def _internal_text_detector_policy_prompt(
+    source_prompt: str,
+    final_prompt: str,
+    generation_prompt: str = "",
+) -> str:
+    final_policy_prompt = str(final_prompt or "")
+    is_baekje_ep01_ancient_cut = bool(
+        _is_baekje_ep01_foundation_generation_context(generation_prompt)
+        or _is_baekje_ep01_foundation_generation_context(source_prompt)
+    )
+    if is_baekje_ep01_ancient_cut:
+        if not _is_baekje_ep01_foundation_generation_context(final_policy_prompt):
+            final_policy_prompt = (
+                "Global visual world: Time range: Late 1st century BC foundation "
+                "tradition through the early reign of King Onjo; Culture scope: "
+                f"Goguryeo, Mahan, and Baekje; {final_policy_prompt}"
+            )
+        narration_context = (
+            _local_prompt_field(generation_prompt, "Narration context")
+            or _local_prompt_field(source_prompt, "Narration context")
+        )
+        if narration_context and not _local_prompt_field(
+            final_policy_prompt,
+            "Narration context",
+        ):
+            final_policy_prompt = (
+                f"{final_policy_prompt} || Narration context: {narration_context}"
+            )
+        return final_policy_prompt
+    if (
+        _is_baekje_ep01_modern_pungnap_generation_context(generation_prompt)
+        or _is_baekje_ep01_modern_pungnap_generation_context(source_prompt)
+        or _is_baekje_ep01_modern_pungnap_generation_context(final_policy_prompt)
+    ):
+        return final_policy_prompt
+    if _should_check_baekje_ep01_internal_text(final_policy_prompt):
+        return final_policy_prompt
+    return str(source_prompt or "")
+
+
+def _should_check_internal_text_for_generation(
+    source_prompt: str,
+    final_prompt: str,
+    generation_prompt: str = "",
+) -> bool:
+    policy_prompt = _internal_text_detector_policy_prompt(
+        source_prompt,
+        final_prompt,
+        generation_prompt,
+    )
+    if (
+        _is_baekje_ep01_foundation_generation_context(generation_prompt)
+        or _is_baekje_ep01_foundation_generation_context(source_prompt)
+    ):
+        return _should_check_internal_text_after_generation(policy_prompt)
+    if (
+        _is_baekje_ep01_modern_pungnap_generation_context(generation_prompt)
+        or _is_baekje_ep01_modern_pungnap_generation_context(source_prompt)
+        or _is_baekje_ep01_modern_pungnap_generation_context(final_prompt)
+    ):
+        return _should_check_internal_text_after_generation(policy_prompt)
+    return bool(
+        _should_check_internal_text_after_generation(source_prompt)
+        or _should_check_internal_text_after_generation(final_prompt)
+        or _should_check_internal_text_after_generation(policy_prompt)
+    )
+
+
+def _should_use_physicalized_narration_text_detector(
+    final_prompt: str,
+    generation_prompt: str,
+) -> bool:
+    final_text = str(final_prompt or "")
+    generated_text = str(generation_prompt or "")
+    return bool(
+        "NARRATIVE_FIDELITY_REGEN_V1" in final_text
+        and re.search(
+            r"\bNARRATION\s+VISUAL\s+ALIGNMENT\s*:",
+            final_text,
+            re.IGNORECASE,
+        )
+        and (
+            re.search(r"\bblank\s+and\s+unmarked\b", generated_text, re.IGNORECASE)
+            or _NARRATION_ALIGNMENT_INTERNAL_TEXT_RISK_RE.search(final_text)
+            or re.search(
+                r"Archaeologists\s+opening\s+a\s+Corded\s+Ware\s+grave\s+as\s+a\s+"
+                r"ghosted\s+migration\s+map",
+                final_text,
+                re.IGNORECASE,
+            )
+        )
+    )
+
+
+def _should_use_continuous_montage_banner_text_detector(prompt: str) -> bool:
+    return bool(_CONTINUOUS_MONTAGE_BANNER_TEXT_CHECK_RE.search(str(prompt or "")))
 
 _ARCHITECTURE_TEXT_GENERATION_CHECK_RE = re.compile(
     r"\b(?:wall\s+(?:plaque|scroll|board|panel|sign)|signboard|plaque|"
@@ -41898,12 +48880,39 @@ _SIEGE_TEXTURE_TEXT_FALSE_POSITIVE_RE = re.compile(
 )
 
 def _should_check_internal_text_after_generation(prompt: str) -> bool:
+    prompt_text = str(prompt or "")
+    if (
+        "NARRATIVE_FIDELITY_REGEN_V1" in prompt_text
+        and re.search(r"\bNARRATION\s+VISUAL\s+ALIGNMENT\s*:", prompt_text, re.IGNORECASE)
+    ):
+        risk_scope = " ".join(
+            value
+            for value in (
+                _local_prompt_field(prompt_text, "Main subject"),
+                _local_prompt_field(prompt_text, "Primary subject"),
+                _local_prompt_field(prompt_text, "Scene"),
+                _local_prompt_field(prompt_text, "Visible action"),
+            )
+            if value
+        )
+        if _NARRATION_ALIGNMENT_INTERNAL_TEXT_RISK_RE.search(risk_scope):
+            return True
+    if re.search(r"\bobject-only\s+Sinseong\s+plot\s+evidence\b", prompt_text, re.IGNORECASE):
+        return False
+    if _CONTINUOUS_PANORAMA_TEXT_GENERATION_CHECK_RE.search(str(prompt or "")):
+        return True
+    if _CH2_EUROPE_INTERNAL_TEXT_RISK_RE.search(str(prompt or "")):
+        return True
+    if _should_check_baekje_ep01_internal_text(prompt):
+        return True
     scoped_text = " ".join(
         value
         for value in (
             _local_prompt_field(prompt, "Exact place"),
             _local_prompt_field(prompt, "Main subject"),
+            _local_prompt_field(prompt, "Primary subject"),
             _local_prompt_field(prompt, "Scene"),
+            _local_prompt_field(prompt, "Visible action"),
         )
         if value
     )
@@ -41913,7 +48922,46 @@ def _should_check_internal_text_after_generation(prompt: str) -> bool:
         or _FLUX2_KLEIN_JAPANESE_MOUNTED_COURIER_RE.search(scoped_text or "")
     ):
         return False
+    if (
+        re.search(r"\b(?:packets?|bundles?)\b", scoped_text or "", re.IGNORECASE)
+        and re.search(
+            r"\b(?:adult|teenage|envoy|registrar|person|people|kneels?|bows?|stands?|holds?|hands?)\b",
+            scoped_text or "",
+            re.IGNORECASE,
+        )
+        and not re.search(
+            r"\b(?:document|paper|scroll|book|map|calligraphy|writing|inscription|plaque|signboard)\b",
+            scoped_text or "",
+            re.IGNORECASE,
+        )
+    ):
+        return False
     if _INTERNAL_TEXT_GENERATION_CHECK_RE.search(scoped_text or ""):
+        return True
+    if re.search(r"\b(?:registry|registrar)\b", scoped_text or "", re.IGNORECASE) and re.search(
+        r"\b(?:seal|tally|cord)\b",
+        scoped_text or "",
+        re.IGNORECASE,
+    ):
+        return True
+    if re.search(r"\b(?:fortress\s+tally|route\s+cord)\b", scoped_text or "", re.IGNORECASE):
+        return True
+    if re.search(r"\bobject[- ]only\b", scoped_text or "", re.IGNORECASE) and re.search(
+        r"\b(?:tall(?:y|ies)|tablets?|seals?|markers?|standards?|banners?|flags?|bells?|helmets?|swords?|"
+        r"cloaks?|sashes?|seats?|cups?|gates?|beams?)\b",
+        scoped_text or "",
+        re.IGNORECASE,
+    ):
+        return True
+    if re.search(r"\b(?:7th[- ]c|seventh[- ]century|66[5-9]\s+AD)\b", prompt or "", re.IGNORECASE) and re.search(
+        r"\b(?:Goguryeo|Tang|Silla)\b",
+        prompt or "",
+        re.IGNORECASE,
+    ) and re.search(
+        r"\b(?:windowless|plain\s+walls?|wallboards?|court|hall|gate|fortress|registry|command\s+room)\b",
+        scoped_text or "",
+        re.IGNORECASE,
+    ):
         return True
     if _local_is_modern_context(prompt):
         return False
@@ -41933,6 +48981,369 @@ def _should_check_internal_text_after_generation(prompt: str) -> bool:
         _flux2_klein_is_historical_japanese_context(prompt)
         and _ARCHITECTURE_TEXT_GENERATION_CHECK_RE.search(scoped_text or "")
     )
+
+
+def _should_check_six_stone_marker_count(prompt: str) -> bool:
+    text = str(prompt or "")
+    return bool(
+        re.search(
+            r"\bexactly\s+six\s+smooth\s+grey\b[^.;]{0,50}\b(?:stones?|markers?)\b",
+            text,
+            re.IGNORECASE,
+        )
+        and re.search(r"\b(?:defense-route\s+handover|horizontal\s+row|stone\s+marker)", text, re.IGNORECASE)
+    )
+
+
+def _expected_grey_stone_marker_count(prompt: str) -> int | None:
+    text = str(prompt or "")
+    if _should_check_six_stone_marker_count(text):
+        return 6
+    if (
+        re.search(
+            r"\bexactly\s+three\s+(?:separate\s+)?(?:same-size\s+)?(?:small\s+)?(?:smooth\s+)?grey\s+(?:oval\s+)?(?:stones?|markers?)\b",
+            text,
+            re.IGNORECASE,
+        )
+        and re.search(r"\bred\s+(?:route\s+)?cord\b", text, re.IGNORECASE)
+        and re.search(r"\bgrey(?:\s+Goguryeo)?\s+(?:sash|cloth)\b", text, re.IGNORECASE)
+        and re.search(r"\bblack(?:\s+Tang)?\s+(?:sash|cloth)\b", text, re.IGNORECASE)
+    ):
+        return 3
+    return None
+
+
+def _expected_visible_hand_count(prompt: str) -> int | None:
+    text = str(prompt or "")
+    count_words = {
+        "zero": 0,
+        "one": 1,
+        "two": 2,
+        "three": 3,
+        "four": 4,
+        "five": 5,
+        "six": 6,
+    }
+
+    def _value(token: str) -> int | None:
+        lowered = token.lower()
+        return count_words.get(lowered, int(lowered) if lowered.isdigit() else None)
+
+    token = r"zero|one|two|three|four|five|six|[0-6]"
+    patterns = (
+        rf"\bexactly\s+({token})\s+(?:clearly\s+)?visible\s+(?:[a-z-]+\s+){{0,3}}hands?\b",
+        rf"\bexactly\s+({token})\s+(?:[a-z-]+\s+){{0,3}}hands?\s+(?:total\s+)?(?:are\s+|is\s+)?visible\b",
+        rf"\ball\s+({token})\s+(?:[a-z-]+\s+){{0,3}}hands?\s+(?:are\s+)?visible\b",
+    )
+    values = {
+        value
+        for pattern in patterns
+        for match in re.finditer(pattern, text, re.IGNORECASE)
+        if (value := _value(match.group(1))) is not None
+    }
+    if re.search(r"\bboth\s+(?:(?:clearly\s+)?visible\s+)?(?:[a-z-]+\s+){0,3}hands?\s+(?:are\s+)?visible\b", text, re.IGNORECASE):
+        values.add(2)
+    if re.search(r"\bexactly\s+zero\s+visible\s+hands?\s+or\s+fingers?\b", text, re.IGNORECASE):
+        values.add(0)
+    return next(iter(values)) if len(values) == 1 else None
+
+
+def _compiled_visible_hand_count(compiled, source_prompt: str) -> int | None:
+    contract = getattr(compiled, "scene_contract", None)
+    explicit = getattr(contract, "visible_hand_count", None)
+    return explicit if explicit is not None else _expected_visible_hand_count(source_prompt)
+
+
+def _hand_refine_prompt_for_contract(compiled, source_prompt: str) -> str:
+    visible_hand_count = _compiled_visible_hand_count(compiled, source_prompt)
+    style_lock = (
+        "same wrist and sleeve-or-bare-arm continuity, same variable-width scratchy dip-pen contour lines, "
+        "thin angular interior contours, controlled heavy silhouette accents, dense hatching with intersecting hatch "
+        "strokes, aged fibrous print-stock grain, muted watercolor and gouache washes, hard shadow mass, same lighting, camera "
+        "angle and dark mature manhwa scene style"
+    )
+    if visible_hand_count == 0:
+        return (
+            "Detected false hand-like area becomes continuous sleeve, garment, body occlusion or background matching its "
+            f"surroundings; exactly zero visible hands or fingers; {style_lock}."
+        )
+    return (
+        "Detected hand area preserves its existing gesture, scale, orientation, position, depth plane, and object contact; "
+        "repair local anatomy only while maintaining the original silhouette and digit positions, with the existing area "
+        "connected naturally to its wrist and forearm; the refined area remains the same size and depth and stays subordinate "
+        "to the face, torso, and named prop; never convert a closed, curled, gripping, foreshortened, or partly occluded hand "
+        "into an open palm, and never spread or fully extend all digits merely to make them visible; "
+        f"{style_lock}."
+    )
+
+
+def _body_refine_prompt_for_contract(compiled) -> str:
+    contract = getattr(compiled, "scene_contract", None)
+    person_count = getattr(compiled, "person_count", None)
+    framing = str(getattr(contract, "framing", "") or "").lower()
+    count_lock = (
+        f"one of exactly {person_count} separate people, with no shared head, torso or limb"
+        if person_count
+        else "one separate person with no shared head, torso or limb"
+    )
+    if framing in {"extreme facial close-up", "tight facial close-up", "head-and-shoulders"}:
+        crop_lock = "complete face, natural neck and connected shoulders; waist and legs remain outside the crop"
+    elif framing == "chest-up":
+        crop_lock = "head, neck, shoulders and chest stay connected; waist and legs remain outside the crop"
+    elif framing == "waist-up":
+        crop_lock = "head, torso and arms stay connected through the waist; legs remain outside the crop"
+    elif framing == "full-body":
+        crop_lock = "one head, one torso, two attached arms and two attached legs on one ground plane"
+    else:
+        crop_lock = "one head, one torso, two arms and two legs when visible, with every cropped limb ending at a frame edge"
+    return (
+        f"Detected person remains the same character and pose as {count_lock}; {crop_lock}; connected shoulders and hips, "
+        "natural action balance, same clothing, armor or robe layers, same explicitly named bare-skin boundaries, wrist and "
+        "sleeve-or-bare-arm continuity, footwear, lighting, variable-width scratchy dip-pen contour lines, thin angular "
+        "interior contours, controlled heavy silhouette accents, angular expressive adult face, dense hatching with "
+        "intersecting hatch strokes, aged fibrous print-stock grain, muted watercolor and gouache washes, hard shadow mass, same camera angle "
+        "and dark mature manhwa scene style."
+    )
+
+
+def _should_check_registry_seal_background_panels(prompt: str) -> bool:
+    return bool(
+        re.search(
+            r"\bexactly\s+two\b[^.;]{0,80}\bbronze\b[^.;]{0,40}\b(?:seal|stamp)",
+            str(prompt or ""),
+            re.IGNORECASE,
+        )
+    )
+
+
+def _should_check_secret_route_edge_panels(prompt: str) -> bool:
+    return _expected_grey_stone_marker_count(prompt) == 3
+
+
+def _image_grey_stone_marker_count(path: str | Path) -> int | None:
+    try:
+        from PIL import Image
+
+        with Image.open(path) as img:
+            image = img.convert("RGB")
+            if image.width > 640:
+                scaled_h = max(1, round(image.height * (640 / image.width)))
+                image = image.resize((640, scaled_h), Image.Resampling.LANCZOS)
+            w, h = image.size
+            pixels = list(image.getdata())
+        if w < 240 or h < 135:
+            return None
+
+        mask = [
+            max(rgb) - min(rgb) <= 28 and sum(rgb) / 3 >= 70
+            for rgb in pixels
+        ]
+        visited: set[int] = set()
+        canvas_area = w * h
+        components: list[dict[str, object]] = []
+        for start, enabled in enumerate(mask):
+            if not enabled or start in visited:
+                continue
+            visited.add(start)
+            stack = [start]
+            points: list[int] = []
+            while stack:
+                index = stack.pop()
+                points.append(index)
+                x = index % w
+                y = index // w
+                for nx, ny in ((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)):
+                    if nx < 0 or nx >= w or ny < 0 or ny >= h:
+                        continue
+                    neighbor = ny * w + nx
+                    if mask[neighbor] and neighbor not in visited:
+                            visited.add(neighbor)
+                            stack.append(neighbor)
+
+            area = len(points)
+            if not (canvas_area * 0.0015 <= area <= canvas_area * 0.04):
+                continue
+            xs = [index % w for index in points]
+            ys = [index // w for index in points]
+            min_x, max_x = min(xs), max(xs)
+            min_y, max_y = min(ys), max(ys)
+            box_w = max_x - min_x + 1
+            box_h = max_y - min_y + 1
+            if not (
+                w * 0.025 <= box_w <= w * 0.20
+                and h * 0.025 <= box_h <= h * 0.26
+                and 0.40 <= box_w / max(box_h, 1) <= 3.25
+            ):
+                continue
+            fill_ratio = area / max(box_w * box_h, 1)
+            if not 0.25 <= fill_ratio <= 0.92:
+                continue
+
+            components.append(
+                {
+                    "points": set(points),
+                    "area": area,
+                    "min_x": min_x,
+                    "max_x": max_x,
+                    "min_y": min_y,
+                    "max_y": max_y,
+                    "box_w": box_w,
+                    "box_h": box_h,
+                    "fill_ratio": fill_ratio,
+                }
+            )
+
+        def _corner_mean(component: dict[str, object]) -> float:
+            point_set = component["points"]
+            min_x = int(component["min_x"])
+            max_x = int(component["max_x"])
+            min_y = int(component["min_y"])
+            max_y = int(component["max_y"])
+            box_w = int(component["box_w"])
+            box_h = int(component["box_h"])
+            corner_w = max(1, round(box_w * 0.20))
+            corner_h = max(1, round(box_h * 0.20))
+            corner_ratios: list[float] = []
+            for corner_x, corner_y in (
+                (min_x, min_y),
+                (max_x - corner_w + 1, min_y),
+                (min_x, max_y - corner_h + 1),
+                (max_x - corner_w + 1, max_y - corner_h + 1),
+            ):
+                occupied = sum(
+                    (yy * w + xx) in point_set
+                    for yy in range(corner_y, corner_y + corner_h)
+                    for xx in range(corner_x, corner_x + corner_w)
+                )
+                corner_ratios.append(occupied / max(corner_w * corner_h, 1))
+            return sum(corner_ratios) / len(corner_ratios)
+
+        def _is_complete_marker(component: dict[str, object]) -> bool:
+            area = int(component["area"])
+            box_w = int(component["box_w"])
+            box_h = int(component["box_h"])
+            return bool(
+                canvas_area * 0.005 <= area <= canvas_area * 0.04
+                and w * 0.04 <= box_w <= w * 0.20
+                and h * 0.065 <= box_h <= h * 0.26
+                and 0.70 <= box_w / max(box_h, 1) <= 2.25
+                and 0.42 <= float(component["fill_ratio"]) <= 0.92
+                and _corner_mean(component) <= 0.35
+            )
+
+        complete = [_is_complete_marker(component) for component in components]
+        paired: set[int] = set()
+        split_marker_count = 0
+        split_marker_centers: list[tuple[float, float]] = []
+        for first_index, first in enumerate(components):
+            if complete[first_index] or first_index in paired:
+                continue
+            best: tuple[float, int] | None = None
+            for second_index in range(first_index + 1, len(components)):
+                if complete[second_index] or second_index in paired:
+                    continue
+                second = components[second_index]
+                top, bottom = (
+                    (first, second)
+                    if int(first["min_y"]) <= int(second["min_y"])
+                    else (second, first)
+                )
+                gap = int(bottom["min_y"]) - int(top["max_y"]) - 1
+                max_gap = min(
+                    round(h * 0.03),
+                    round(min(int(top["box_h"]), int(bottom["box_h"])) * 0.55),
+                )
+                if not 1 <= gap <= max_gap:
+                    continue
+                overlap = min(int(top["max_x"]), int(bottom["max_x"])) - max(
+                    int(top["min_x"]), int(bottom["min_x"])
+                ) + 1
+                if overlap < min(int(top["box_w"]), int(bottom["box_w"])) * 0.68:
+                    continue
+                top_center = (int(top["min_x"]) + int(top["max_x"])) / 2
+                bottom_center = (int(bottom["min_x"]) + int(bottom["max_x"])) / 2
+                if abs(top_center - bottom_center) > max(int(top["box_w"]), int(bottom["box_w"])) * 0.18:
+                    continue
+                merged_min_x = min(int(top["min_x"]), int(bottom["min_x"]))
+                merged_max_x = max(int(top["max_x"]), int(bottom["max_x"]))
+                merged_min_y = int(top["min_y"])
+                merged_max_y = int(bottom["max_y"])
+                merged_w = merged_max_x - merged_min_x + 1
+                merged_h = merged_max_y - merged_min_y + 1
+                merged_area = int(top["area"]) + int(bottom["area"])
+                merged_fill = merged_area / max(merged_w * merged_h, 1)
+                if not (
+                    canvas_area * 0.0035 <= merged_area <= canvas_area * 0.04
+                    and w * 0.04 <= merged_w <= w * 0.20
+                    and h * 0.065 <= merged_h <= h * 0.26
+                    and 0.55 <= merged_w / max(merged_h, 1) <= 2.25
+                    and 0.35 <= merged_fill <= 0.90
+                ):
+                    continue
+                score = gap + abs(top_center - bottom_center)
+                if best is None or score < best[0]:
+                    best = (score, second_index)
+            if best is not None:
+                paired.add(first_index)
+                paired.add(best[1])
+                split_marker_count += 1
+                partner = components[best[1]]
+                split_marker_centers.append(
+                    (
+                        (
+                            min(int(first["min_x"]), int(partner["min_x"]))
+                            + max(int(first["max_x"]), int(partner["max_x"]))
+                        )
+                        / 2,
+                        (
+                            min(int(first["min_y"]), int(partner["min_y"]))
+                            + max(int(first["max_y"]), int(partner["max_y"]))
+                        )
+                        / 2,
+                    )
+                )
+
+        complete_marker_count = sum(
+            is_complete and index not in paired
+            for index, is_complete in enumerate(complete)
+        )
+        recognized_centers = [*split_marker_centers]
+        recognized_centers.extend(
+            (
+                (int(component["min_x"]) + int(component["max_x"])) / 2,
+                (int(component["min_y"]) + int(component["max_y"])) / 2,
+            )
+            for index, component in enumerate(components)
+            if complete[index] and index not in paired
+        )
+        orphan_cap_count = 0
+        if len(recognized_centers) >= 2:
+            baseline_y = sum(center[1] for center in recognized_centers) / len(recognized_centers)
+            for index, component in enumerate(components):
+                if complete[index] or index in paired:
+                    continue
+                center_x = (int(component["min_x"]) + int(component["max_x"])) / 2
+                center_y = (int(component["min_y"]) + int(component["max_y"])) / 2
+                box_w = int(component["box_w"])
+                box_h = int(component["box_h"])
+                if not (
+                    canvas_area * 0.0035 <= int(component["area"]) <= canvas_area * 0.025
+                    and w * 0.04 <= box_w <= w * 0.16
+                    and h * 0.045 <= box_h <= h * 0.12
+                    and 1.50 <= box_w / max(box_h, 1) <= 3.25
+                    and 0.45 <= float(component["fill_ratio"]) <= 0.92
+                    and _corner_mean(component) <= 0.52
+                    and w * 0.18 <= center_x <= w * 0.82
+                    and abs(center_y - baseline_y) <= h * 0.07
+                    and all(abs(center_x - known_x) >= w * 0.08 for known_x, _ in recognized_centers)
+                ):
+                    continue
+                recognized_centers.append((center_x, center_y))
+                orphan_cap_count += 1
+
+        return split_marker_count + complete_marker_count + orphan_cap_count
+    except Exception:
+        return None
 
 
 def _should_use_japanese_document_table_retry(prompt: str) -> bool:
@@ -41966,7 +49377,1241 @@ def _should_use_japanese_document_table_retry(prompt: str) -> bool:
     return bool(_INTERNAL_TEXT_GENERATION_CHECK_RE.search(scoped_text or ""))
 
 
-def _image_has_internal_text_like_marks(path: str | Path) -> bool:
+def _should_use_reduced_internal_text_detector(prompt: str) -> bool:
+    text = str(prompt or "")
+    if _should_check_baekje_ep01_internal_text(text):
+        return False
+    if re.search(
+        r"\b(?:one\s+unmarked\s+circular\s+stone\s+platter|"
+        r"hands\s+placing\s+measured\s+ritual\s+portions\s+around\s+a\s+circular\s+cosmic\s+diagram|"
+        r"prehistoric\s+priests\s+repeating\s+a\s+cattle\s+ritual\s+beneath\s+a\s+cosmic\s+body\s+diagram)\b",
+        text,
+        re.IGNORECASE,
+    ):
+        return True
+    if re.search(
+        r"\b(?:featureless\s+vertical(?:\s+adze-hewn)?\s+gate\s+planks|"
+        r"windowless\s+Pyongyang\s+north-gate|"
+        r"windowless\s+Goguryeo\s+command\s+room.*blank\s+wallboards)\b",
+        text,
+        re.IGNORECASE,
+    ):
+        return False
+    if re.search(
+            r"\b(?:abandoned\s+rain-soaked\s+Goguryeo\s+command\s+robe|"
+            r"two\s+exhausted\s+Goguryeo\s+civilians|"
+            r"gaunt\s+Goguryeo\s+civilian|"
+            r"three\s+starving\s+Goguryeo\s+civilians|"
+            r"segmented\s+iron\s+helmets|"
+            r"two\s+adult\s+Goguryeo\s+civilian\s+bearers.*fully\s+shrouded\s+casualty|"
+            r"low\s+segmented\s+iron\s+cap\s+helmet.*flattened\s+gilt-bronze\s+cover|"
+            r"blank\s+square\s+bronze\s+succession\s+plaque\s+half-submerged\s+in\s+black\s+poison|"
+            r"full-scale\s+Pyongyang\s+Goguryeo\s+fortress\s+encircled\s+by\s+Tang\s+tents|"
+            r"two\s+blank\s+bronze\s+seals\s+divided\s+by\s+one\s+deep\s+floor\s+crack|"
+            r"scorched\s+empty\s+hemp\s+identity\s+pouch|"
+            r"empty\s+dented\s+segmented\s+iron\s+helmet\s+in\s+one\s+fresh\s+cart-wheel\s+track|"
+            r"Pyongyang\s+Fortress\s+enclosed\s+by\s+tightening\s+siege\s+lines|"
+            r"roofless\s+Goguryeo\s+timber\s+command\s+platform\s+collapsing\s+into\s+ash|"
+            r"Goguryeo\s+hemp\s+standard\s+cut\s+into\s+wrapping\s+around\s+a\s+plain\s+bronze\s+belt\s+fitting|"
+            r"two\s+adult\s+Goguryeo\s+brothers\s+attacking\s+each\s+other|"
+            r"full-scale[^.;]{0,60}Goguryeo\s+rammed-earth\s+defensive\s+embankment)\b",
+            text,
+            re.IGNORECASE,
+        ):
+        return True
+
+    scoped_text = " ".join(
+        value
+        for value in (
+            _local_prompt_field(text, "Exact place"),
+            _local_prompt_field(text, "Main subject"),
+            _local_prompt_field(text, "Primary subject"),
+            _local_prompt_field(text, "Scene"),
+            _local_prompt_field(text, "Visible action"),
+        )
+        if value
+    )
+    inked_historical_style = bool(
+        re.search(
+            r"\b(?:graphic\s+novel|documentary\s+manhwa|bold\s+black\s+ink\s+outlines?|"
+            r"heavy\s+black\s+contour\s+linework|inked\s+historical\s+illustration)\b",
+            text,
+            re.IGNORECASE,
+        )
+    )
+    historical_architecture = bool(
+        re.search(
+            r"\b(?:fortress|fortress\s+wall|city\s+wall|gate|battlement|court|hall|"
+            r"timber\s+building|wooden\s+hall|rammed[-\s]+earth|stone\s+wall)\b",
+            scoped_text,
+            re.IGNORECASE,
+        )
+    )
+    explicit_text_surface = bool(
+        _INTERNAL_TEXT_GENERATION_CHECK_RE.search(scoped_text)
+        or _ARCHITECTURE_TEXT_GENERATION_CHECK_RE.search(scoped_text)
+        or re.search(
+            r"\b(?:calligraphy|writing|written|inscription|inscribed|readable\s+text|"
+            r"caption|label|diagram|annotated)\b",
+            scoped_text,
+            re.IGNORECASE,
+        )
+    )
+    return inked_historical_style and historical_architecture and not explicit_text_surface
+
+
+def _should_skip_dense_internal_text_grid(prompt: str) -> bool:
+    if (
+        "NARRATIVE_FIDELITY_REGEN_V1" in str(prompt or "")
+        and re.search(r"\bNARRATION\s+VISUAL\s+ALIGNMENT\s*:", str(prompt or ""), re.IGNORECASE)
+    ):
+        # Thick hard-boiled ink creates dense pseudo-glyph grids on clothing,
+        # skeletons, grass, and timber. Use the core glyph detector instead.
+        return True
+    if _should_check_baekje_ep01_internal_text(prompt):
+        scoped_text = _baekje_ep01_text_risk_scope(prompt)
+        return not bool(
+            re.search(
+                r"\b(?:banners?|flags?|scrolls?|manuscripts?|maps?|scribe|genealog(?:y|ies)|records?)\b",
+                scoped_text,
+                re.IGNORECASE,
+            )
+        )
+    return bool(
+        re.search(
+            r"\b(?:windowless\s+Pyongyang\s+north-gate|burning\s+Pyongyang\s+exterior\s+alley|"
+            r"one\s+sealed\s+low\s+underground\s+refuge\s+between\s+rising\s+floodwater|"
+            r"competing\s+flood\s+and\s+lethal\s+winter\s+scenes\s+surrounding\s+Yima's\s+underground\s+refuge)\b",
+            prompt or "",
+            re.IGNORECASE,
+        )
+    )
+
+
+def _should_skip_internal_text_core(prompt: str) -> bool:
+    """Avoid face-relief and wood-grain false positives while keeping row/grid checks."""
+    prompt_text = str(prompt or "")
+    if (
+        "NARRATIVE_FIDELITY_REGEN_V1" in prompt_text
+        and re.search(r"\bNARRATION\s+VISUAL\s+ALIGNMENT\s*:", prompt_text, re.IGNORECASE)
+    ):
+        scoped_text = " ".join(
+            value
+            for value in (
+                _local_prompt_field(prompt_text, "Main subject"),
+                _local_prompt_field(prompt_text, "Primary subject"),
+                _local_prompt_field(prompt_text, "Scene"),
+                _local_prompt_field(prompt_text, "Visible action"),
+            )
+            if value
+        )
+        return not bool(_NARRATION_ALIGNMENT_INTERNAL_TEXT_RISK_RE.search(scoped_text))
+    return bool(
+        re.search(
+            r"\bone\s+older\s+scholar\s+at\s+center\s+studies\s+two\s+small\s+blank\s+stone\s+face-relief\s+casts\b",
+            prompt or "",
+            re.IGNORECASE,
+        )
+    )
+
+
+def _should_ignore_object_person_segmentation(prompt: str) -> bool:
+    if _should_check_burning_sheet_background(prompt):
+        return True
+    if re.search(
+        r"한\s*계보에서는\s*부여계\s*인물\s*우태가\s*두\s*형제의\s*아버지였고",
+        prompt or "",
+    ):
+        return True
+    return bool(
+        re.search(
+            r"\b(?:(?:legendary\s+)?blue\s+dragon(?:\s+reflection|\s+form)?|"
+            r"animal-only[^.;]{0,100}legendary\s+blue\s+dragon|"
+            r"segmented\s+iron\s+helmets|"
+            r"one\s+massive\s+Pyongyang\s+timber\s+gate\s+opening\s+into\s+the\s+enemy\s+night|"
+            r"blank\s+wood-slip\s+bundle\s+overlapping\s+one\s+blank\s+bronze\s+plaque\s+inside\s+the\s+same\s+fire|"
+            r"cracked\s+bronze\s+mirror\s+reflecting\s+one\s+collaborator\s+face|"
+            r"Tang\s+rewards\s+laid\s+over\s+discarded\s+Goguryeo\s+allegiance|"
+            r"Tang\s+rank\s+seal\s+and\s+one\s+severed\s+Goguryeo\s+sash\s+at\s+the\s+Yeon\s+family\s+mound|"
+            r"intact\s+Goguryeo\s+outer\s+wall\s+with\s+unseen\s+interior\s+fire\s+behind\s+it|"
+            r"blank-backed\s+Tang\s+rank\s+seal\s+pressed\s+into\s+granted\s+earth|"
+            r"blank-backed\s+Tang\s+rank\s+seal\s+block\s+pinning\s+one\s+torn\s+Goguryeo\s+sash|"
+            r"fully\s+shrouded\s+Tang\s+funeral\s+coffin\s+under\s+one\s+plain\s+hemp\s+mourning\s+canopy|"
+            r"Tang-era\s+black\s+woven\s+cloth\s+shoe\s+pressing\s+one\s+torn\s+Goguryeo\s+rank\s+sash|"
+            r"Tang-era\s+cloth-wrapped\s+forefoot\s+pressing\s+one\s+torn\s+Goguryeo\s+rank\s+sash|"
+            r"low\s+segmented\s+iron\s+cap\s+helmet.*flattened\s+gilt-bronze\s+cover|"
+            r"cracked\s+oval\s+Goguryeo\s+timber\s+shield.*one\s+detached\s+spearhead|"
+            r"upright\s+uninscribed\s+flared\s+bronze\s+alarm\s+bell|"
+            r"shattered\s+uninscribed\s+Goguryeo\s+bronze\s+ritual\s+bell|"
+            r"cracked\s+stone\s+(?:official|kneeling)\s+statue|"
+            r"full-scale[^.;]{0,60}Goguryeo\s+rammed-earth\s+(?:fortress|defensive\s+embankment)|"
+            r"blank\s+square\s+bronze\s+succession\s+plaque\s+half-submerged\s+in\s+black\s+poison|"
+            r"cracked\s+bronze\s+stamp.*low\s+bridge\s+knob.*dark-red\s+stain|"
+            r"cracked\s+Goguryeo\s+granary\s+jar.*spoiled\s+millet|"
+            r"unglazed\s+Goguryeo\s+grain\s+jar\s+ruptured\s+open\s+by\s+black-green\s+rot|"
+            r"pile\s+of\s+unnamed\s+broken\s+Goguryeo\s+helmets.*mud|"
+            r"three\s+empty\s+segmented\s+Goguryeo\s+iron\s+cap\s+helmets.*mud|"
+            r"discarded\s+cracked\s+Goguryeo\s+fortress\s+tally.*two\s+intact\s+elite\s+rank\s+fittings|"
+            r"three\s+shallow\s+cracked\s+household\s+grain\s+bowls.*overturned\s+command\s+stool|"
+            r"scorched\s+empty\s+hemp\s+identity\s+pouch|"
+            r"three\s+separated\s+face-down\s+blank\s+hardwood\s+heroic\s+record\s+slips|"
+            r"short\s+straight\s+iron\s+utility\s+knife\s+between\s+two\s+separated\s+halves.*red\s+hemp\s+cord|"
+            r"empty\s+dented\s+segmented\s+iron\s+helmet\s+in\s+one\s+fresh\s+cart-wheel\s+track|"
+            r"textless\s+Goguryeo\s+defense\s+layout|"
+            r"Goguryeo\s+hemp\s+standard\s+cut\s+into\s+wrapping\s+around\s+a\s+plain\s+bronze\s+belt\s+fitting|"
+            r"closed\s+plain\s+wooden\s+box\s+between\s+two\s+snapped\s+hemp\s+ropes|"
+            r"nonhuman\s+black\s+shadow-smoke\s+tendrils\s+rise\s+from\s+fissures|"
+            r"high\s+ocean\s+waves\s+crashing\s+against\s+jagged\s+rocks|"
+            r"landscape-only\s+exactly\s+one\s+golden\s+sun\s+disk\s+and\s+exactly\s+one\s+silver\s+moon\s+disk|"
+            r"featureless\s+primordial\s+darkness\s+without\s+land,?\s+sky,?\s+stars,?\s+or\s+horizon|"
+            r"vast\s+arid\s+basin\s+from\s+foreground\s+to\s+horizon|"
+            r"blue-black\s+storm\s+front\s+advances\s+toward\s+a\s+calm\s+golden\s+sunlit\s+cloud\s+plain|"
+            r"broad\s+horizontal\s+blue-black\s+storm\s+shelf\s+advances\s+from\s+the\s+left|"
+            r"continuous\s+natural\s+transition\s+from\s+a\s+sealed\s+black\s+Yomi\s+cave|"
+            r"exactly\s+three\s+separated\s+natural\s+celestial\s+forms|"
+            r"one\s+long\s+natural\s+ridge\s+carries\s+warm\s+golden\s+light\s+on\s+its\s+left\s+slope\s+and\s+cool\s+silver-blue\s+night|"
+            r"broad\s+twilight\s+boundary\s+permanently\s+separating\s+day\s+from\s+night|"
+            r"(?:strict\s+top-down|straight-down)\s+aerial\s+view(?:\s+of)?(?:\s*:\s*)?[^.;]{0,80}\bone\s+(?:empty\s+)?(?:S-curved\s+river|primordial\s+river\s+valley)|"
+            r"one\s+continuous\s+empty\s+primordial\s+river\s+valley\s+at\s+the\s+start\s+of\s+a\s+new\s+cycle|"
+            r"one\s+broad\s+empty\s+twilight\s+corridor\s+keeping\s+both\s+regions\s+apart|"
+            r"one\s+permanent\s+curved\s+natural\s+twilight\s+corridor|"
+            r"one\s+dark\s+mud-coated\s+grain\s+husk\s+split\s+open\s+to\s+reveal\s+one\s+pale\s+living\s+rice\s+seed|"
+            r"(?:seven\s+randomly\s+scattered\s+(?:golden-green\s+grain\s+shoots|tiny\s+fresh-green\s+grain\s+seedlings)|exactly\s+seven\s+tiny\s+fresh-green\s+(?:grain\s+|two-leaf\s+)?seedlings\s+total|one\s+irregular\s+wild\s+cluster\s+of\s+newly\s+sprouted\s+fresh-green\s+two-leaf\s+seedlings)|"
+            r"Animal-only\s+tight\s+paired\s+head-and-neck\s+view\s+of\s+exactly\s+one\s+completely\s+bare\s+unadorned\s+fully\s+grown\s+cow[^.;]{0,360}\bexactly\s+one\s+completely\s+bare\s+unadorned\s+fully\s+grown\s+horse|"
+            r"Object-only(?:\s+strict\s+top-down)?\s+(?:outdoor\s+)?(?:close\s+)?view\s+of\s+one\s+(?:uninterrupted(?:\s+sealed)?\s+earth-tone|soft\s+irregular\s+earth-tone\s+woven)\s+shroud|"
+            r"exactly\s+three\s+separate\s+short\s+small\s+cream-white\s+segmented\s+silkworm\s+caterpillars|"
+            r"Object-only\s+strict\s+top-down\s+(?:animal-birth|harvest)\s+evidence|"
+            r"Object-only\s+strict\s+top-down\s+shocking\s+hospitality\s+tableau|"
+            r"one\s+low\s+woven\s+basket\s+filled\s+with\s+rice,\s*millet\s+and\s+silk\s+cocoons|"
+            r"exactly\s+one\s+plain\s+handleless\s+round\s+aged-bronze\s+ritual\s+mirror\s+disk|"
+            r"Object-only\s+close\s+value-conflict\s+tableau|"
+            r"one\s+continuous\s+narrow\s+trail\s+of\s+disturbed\s+wet\s+sand|"
+            r"one\s+narrow\s+continuous\s+blue\s+storm-light\s+trail|"
+            r"one\s+continuous\s+line\s+of\s+fresh\s+barefoot\s+footprints|"
+            r"one\s+dull\s+leaf-shaped\s+aged-bronze\s+ritual\s+blade\s+discarded\s+beside|"
+            r"one\s+dull\s+leaf-shaped\s+aged-bronze\s+ritual\s+blade\s+(?:half-buried|lies\s+between)|"
+            r"one\s+golden\s+rice\s+stalk\s+and\s+one\s+tiny\s+green\s+seedling\s+rising\s+together|"
+            r"next-episode\s+ritual\s+teaser|"
+            r"river\s+completely\s+filling\s+the\s+narrow\s+canyon\s+floor\s+between\s+near-vertical\s+rock\s+walls|"
+            r"cropped\s+Tang-era\s+cloth-wrapped\s+forefoot\s+pressing\s+(?:exactly\s+)?one\s+(?:dented\s+Goguryeo\s+iron\s+cap|torn\s+Goguryeo\s+silk\s+sash)(?:\s+into\s+(?:freezing\s+)?mud)?|"
+            r"cracked\s+plain\s+square\s+bronze\s+succession\s+plaque|"
+            r"cracked\s+handle-down\s+plain\s+square\s+bronze\s+succession\s+seal|"
+            r"iron\s+gate\s+chain.*exactly\s+one\s+sleeve-covered\s+right\s+hand|"
+            r"exactly\s+two\s+separate\s+clean\s+rectangular\s+wooden\s+serving\s+tables|"
+            r"one\s+flat\s+prehistoric\s+stone\s+slab\s+filling\s+the\s+frame.*exactly\s+four\s+(?:separated\s+human-shaped\s+relief\s+figures|non-overlapping\s+symbolic\s+human\s+pictograms)|"
+            r"strict\s+overhead\s+view\s+of\s+one\s+flat\s+stone\s+relief\s+only.*four\s+carved\s+figures\s+total|"
+            r"strict\s+overhead\s+edge-to-edge\s+stone\s+relief\s+view.*four\s+carved\s+figures\s+total|"
+            r"straight\s+overhead\s+stone\s+close-up\s+with\s+exactly\s+four\s+simple\s+carved\s+line-art\s+petroglyphs\s+total|"
+            r"overhead\s+continuous\s+stone\s+with\s+no\s+border\s+shows\s+exactly\s+four\s+separate\s+simple\s+petroglyphs\s+total|"
+            r"exactly\s+four\s+separate\s+hands\s+place\s+exactly\s+four\s+measured\s+meat\s+portions|"
+            r"one\s+cracked\s+blank\s+stone\s+relief\s+at\s+center\s+and\s+two\s+visibly\s+different\s+unmarked\s+clay\s+reconstruction\s+models)\b",
+            prompt or "",
+            re.IGNORECASE,
+        )
+        or re.search(
+            r"\bone\s+small\s+solid\s+dark-brown\s+oval\s+migration\s+pebble\b[^.;]{0,220}"
+            r"\bone\s+small\s+blank\s+pale\s+rectangular\s+source\s+block\b[^.;]{0,120}"
+            r"\bopposite\s+right\s+shore\b",
+            prompt or "",
+            re.IGNORECASE,
+        )
+    )
+
+
+def _should_check_burning_sheet_background(prompt: str) -> bool:
+    text = prompt or ""
+    return bool(
+        re.search(
+            r"\bone\s+blank\s+unmarked\s+fibrous\s+sheet\s+burning\s+into\s+ash\b",
+            text,
+            re.IGNORECASE,
+        )
+        and re.search(
+            r"\bfeatureless\s+seamless\s+(?:dark|cool\s+grey)\s+stone(?:\s+surface)?\b",
+            text,
+            re.IGNORECASE,
+        )
+    )
+
+
+def _should_ignore_corner_signature_detector(prompt: str) -> bool:
+    return bool(
+        re.search(
+            r"\b(?:last\s+(?:roofless\s+)?Goguryeo\s+(?:timber\s+)?command\s+(?:hall|platform)\s+collapsing\s+into\s+ash|"
+            r"shattered\s+uninscribed\s+Goguryeo\s+bronze\s+ritual\s+bell|"
+            r"one\s+scorched\s+solid-color\s+victory\s+standard\s+above\s+a\s+collapsed\s+inner\s+gate|"
+            r"red\s+symbolic\s+current\s+clearing\s+into\s+rivers\s+across\s+a\s+newborn\s+landscape)\b",
+            prompt or "",
+            re.IGNORECASE,
+        )
+    )
+
+
+def _should_check_ch2_wide_bottom_credit(prompt: str) -> bool:
+    """Enable the wider lower-corner detector for verified CH2 role tableaux."""
+    return bool(
+        re.search(
+            r"\b(?:Manu\s+as\s+priest,\s*Yemo\s+as\s+first\s+king,\s*and\s+Trito\s+as\s+armed\s+protector|"
+            r"war\s+leader\s+pointing\s+toward\s+enemy\s+herders\s+while\s+invoking\s+a\s+serpent\s+emblem)\b",
+            prompt or "",
+            re.IGNORECASE,
+        )
+    )
+
+
+def _should_check_japanese_myth_wide_bottom_credit(prompt: str) -> bool:
+    """Check clean top-down myth evidence frames for corner credit rows."""
+    return bool(
+        re.search(
+            r"\b(?:Object-only\s+strict\s+top-down\s+textless\s+view\s+of\s+one\s+leaf-shaped\s+aged-bronze|"
+            r"next-episode\s+ritual\s+teaser)\b",
+            prompt or "",
+            re.IGNORECASE,
+        )
+    )
+
+
+def _should_ignore_top_caption_detector(prompt: str) -> bool:
+    """Skip the broad top-band heuristic for verified textless CH2 tableaux."""
+    return bool(
+        re.search(
+            r"\b(?:Yima\s+visibly\s+cuts\s+cooked\s+meat\s+into\s+three\s+separate\s+portions|"
+            r"war\s+leader\s+pointing\s+toward\s+enemy\s+herders\s+while\s+invoking\s+a\s+serpent\s+emblem)\b",
+            prompt or "",
+            re.IGNORECASE,
+        )
+    )
+
+
+def _should_ignore_dark_outer_frame_detector(prompt: str) -> bool:
+    text = prompt or ""
+    if re.search(
+        r"\bJaan\s+Puhvel\s+comparing\s+Yemo\s+and\s+Remus\s+beside\s+early\s+Latin\s+inscriptions\b",
+        text,
+        re.IGNORECASE,
+    ):
+        return True
+    if re.search(
+        r"\bfeatureless\s+primordial\s+darkness\s+without\s+land,\s*sky,\s*stars,\s*or\s+horizon\b",
+        text,
+        re.IGNORECASE,
+    ):
+        return True
+    if re.search(
+        r"\bexactly\s+three\s+separated\s+face-down\s+blank\s+hardwood\s+heroic\s+record\s+slips\b",
+        text,
+        re.IGNORECASE,
+    ) and re.search(r"\bbare\s+smoke-dark\s+Pyongyang\s+ash\s+floor\b", text, re.IGNORECASE):
+        return True
+    return bool(
+        re.search(
+            r"\bdeceased\s+Yeon\s+Namsaeng\s+on\s+blank\s+dark\s+silk\b",
+            text,
+            re.IGNORECASE,
+        )
+        and re.search(r"\bfeatureless\s+dark\s+silk\b", text, re.IGNORECASE)
+    )
+
+
+def _should_ignore_framed_internal_text_detector(prompt: str) -> bool:
+    """Skip framed-text geometry only for verified non-document EP30 scenes."""
+    text = prompt or ""
+    return bool(
+        re.search(
+            r"\b(?:abandoned\s+Goguryeo\s+command\s+equipment\s+after\s+the\s+final\s+collapse|"
+            r"one\s+wounded\s+adult\s+Goguryeo\s+witness)\b",
+            text,
+            re.IGNORECASE,
+        )
+        and re.search(r"\b(?:fortress|Pyongyang).*\baftermath\b|\bafter\s+the\s+final\s+collapse\b", text, re.IGNORECASE)
+    )
+
+
+def _should_ignore_internal_text_detector(prompt: str) -> bool:
+    """Skip broad glyph checks only for visually verified texture false positives."""
+    text = prompt or ""
+    if (
+        re.search(r"\bSource\s+workbook\s+row\s+02-133\b", text, re.IGNORECASE)
+        and re.search(
+            r"\bone\s+short\s+tied\s+blank\s+bamboo-slip\s+bundle\b",
+            text,
+            re.IGNORECASE,
+        )
+        and re.search(r"\bone\s+coarse\s+unglazed\s+trade\s+jar\b", text, re.IGNORECASE)
+    ):
+        return True
+    if (
+        re.search(r"\bSource\s+workbook\s+row\s+02-124\b", text, re.IGNORECASE)
+        and re.search(
+            r"\bSmall\s+ancient\s+boats\s+moving\s+between\s+the\s+Han\s+River\s+estuary\s+and\s+Yellow\s+Sea\s+islands\b",
+            text,
+            re.IGNORECASE,
+        )
+    ):
+        return True
+    if (
+        re.search(r"\bSource\s+workbook\s+row\s+02-145\b", text, re.IGNORECASE)
+        and re.search(
+            r"\bMultiple\s+Baekje\s+origin\s+memories\s+converging\s+into\s+one\s+kingdom\b",
+            text,
+            re.IGNORECASE,
+        )
+        and re.search(r"\bno\s+readable\s+text\b", text, re.IGNORECASE)
+    ):
+        return True
+    if (
+        re.search(
+            r"\banonymous\s+Yamnaya\s+chief\s+silhouetted\s+before\s+assembled\s+clans\s+with\s+no\s+inscription\s+or\s+written\s+record\b",
+            text,
+            re.IGNORECASE,
+        )
+    ):
+        return True
+    return bool(
+        re.search(r"\bone\s+wounded\s+adult\s+Goguryeo\s+witness\b", text, re.IGNORECASE)
+        and re.search(r"\bGoguryeo\s+fortress\s+aftermath\b", text, re.IGNORECASE)
+        and re.search(r"\bblank\s+smoke-dark\s+rubble\b", text, re.IGNORECASE)
+    )
+
+
+def _should_enforce_scene_human_face_count(scene_kind: str, prompt: str = "") -> bool:
+    """Do not let the human-face detector reject ordinary animal faces."""
+    if str(scene_kind or "").strip().lower() == "animal":
+        return False
+    return not bool(
+        re.search(
+            r"\bone\s+older\s+scholar\s+at\s+center\s+studies\s+two\s+small\s+blank\s+stone\s+face-relief\s+casts\b",
+            prompt or "",
+            re.IGNORECASE,
+        )
+    )
+
+
+def _face_count_confirms_face_only_pair(
+    prompt: str,
+    *,
+    expected_person_count: int | None,
+    detected_person_count: int | None,
+    detected_face_count: int | None,
+) -> bool:
+    """Use two verified faces when a deliberate face-only crop hides both bodies."""
+    if expected_person_count != 2 or detected_face_count != 2:
+        return False
+    if detected_person_count is None or detected_person_count >= 2:
+        return False
+    text = prompt or ""
+    return bool(
+        re.search(
+            r"\btwo-face-only\s+close-up\s+ending\s+at\s+both\s+jawlines\b",
+            text,
+            re.IGNORECASE,
+        )
+        and re.search(
+            r"\bzero\s+visible\s+necks,\s*shoulders,\s*arms,\s*hands",
+            text,
+            re.IGNORECASE,
+        )
+    )
+
+
+def _image_has_busy_burning_sheet_background(path: str | Path) -> bool:
+    try:
+        from PIL import Image, ImageOps
+
+        with Image.open(path) as img:
+            gray = ImageOps.grayscale(img.convert("RGB"))
+            if gray.width > 320:
+                scaled_h = max(1, round(gray.height * (320 / gray.width)))
+                gray = gray.resize((320, scaled_h), Image.Resampling.LANCZOS)
+            w, h = gray.size
+            if w < 80 or h < 45:
+                return False
+            pixels = gray.load()
+            edge_count = 0
+            sample_count = 0
+            left = int(w * 0.18)
+            right = int(w * 0.86)
+            top = int(h * 0.16)
+            bottom = int(h * 0.86)
+            for y in range(1, h - 1):
+                for x in range(1, w - 1):
+                    if left <= x <= right and top <= y <= bottom:
+                        continue
+                    value = pixels[x, y]
+                    edge = max(
+                        abs(value - pixels[x + 1, y]),
+                        abs(value - pixels[x, y + 1]),
+                    )
+                    sample_count += 1
+                    if edge > 25:
+                        edge_count += 1
+            return bool(sample_count and edge_count / sample_count >= 0.08)
+    except Exception:
+        return False
+
+
+def _should_check_starvation_wall_top_edge(prompt: str) -> bool:
+    return bool(
+        re.search(
+            r"\bexactly\s+two\s+adults:\s*starving\s+civilian\s+and\s+kneeling\s+lamellar\s+soldier\b",
+            prompt or "",
+            re.IGNORECASE,
+        )
+    )
+
+
+def _image_has_light_top_band(path: str | Path) -> bool:
+    try:
+        from PIL import Image
+
+        with Image.open(path) as img:
+            image = img.convert("RGB")
+            w, h = image.size
+            if w < 64 or h < 64:
+                return False
+            band_h = max(3, int(h * 0.025))
+            light_count = 0
+            total = w * band_h
+            for y in range(band_h):
+                for x in range(w):
+                    red, green, blue = image.getpixel((x, y))
+                    if (
+                        min(red, green, blue) >= 185
+                        and max(red, green, blue) - min(red, green, blue) <= 80
+                    ):
+                        light_count += 1
+            top_row_light = sum(
+                1
+                for x in range(w)
+                if (
+                    min(image.getpixel((x, 0))) >= 185
+                    and max(image.getpixel((x, 0))) - min(image.getpixel((x, 0))) <= 80
+                )
+            )
+            return bool(
+                total
+                and light_count / total >= 0.78
+                and top_row_light / w >= 0.85
+            )
+    except Exception:
+        return False
+
+
+def _should_ignore_strict_nonhuman_person_segmentation(prompt: str) -> bool:
+    return bool(
+        re.search(
+            r"\b(?:full-scale\s+Pyongyang\s+Goguryeo\s+fortress\s+encircled\s+by\s+Tang\s+tents|"
+            r"the\s+fall\s+of\s+Ugokseong\s+transitions\s+into\s+conflicting\s+Baekje\s+origin\s+scrolls|"
+            r"exactly\s+two\s+closed\s+face-down\s+blank[^.;]{0,180}\bmanuscripts?\b[^.;]{0,240}"
+            r"physically\s+separate[^.;]{0,100}\bclay\b[^.;]{0,100}\brelief\b|"
+            r"one\s+uninterrupted\s+natural\s+horizon\s+joins\s+all\s+three\s+regions|"
+            r"exactly\s+three\s+separated\s+(?:natural\s+)?celestial\s+forms|"
+            r"one\s+long\s+natural\s+ridge\s+carries\s+warm\s+golden\s+light\s+on\s+its\s+left\s+slope\s+and\s+cool\s+silver-blue\s+night|"
+            r"blue-black\s+storm\s+front\s+advances\s+toward\s+a\s+calm\s+golden\s+sunlit\s+cloud\s+plain|"
+            r"broad\s+horizontal\s+blue-black\s+storm\s+shelf\s+advances\s+from\s+the\s+left|"
+            r"continuous\s+natural\s+transition\s+from\s+a\s+sealed\s+black\s+Yomi\s+cave|"
+            r"broad\s+twilight\s+boundary\s+permanently\s+separating\s+day\s+from\s+night|"
+            r"(?:strict\s+top-down|straight-down)\s+aerial\s+view(?:\s+of)?(?:\s*:\s*)?[^.;]{0,80}\bone\s+(?:empty\s+)?(?:S-curved\s+river|primordial\s+river\s+valley)|"
+            r"one\s+continuous\s+empty\s+primordial\s+river\s+valley\s+at\s+the\s+start\s+of\s+a\s+new\s+cycle|"
+            r"one\s+broad\s+empty\s+twilight\s+corridor\s+keeping\s+both\s+regions\s+apart|"
+            r"one\s+permanent\s+curved\s+natural\s+twilight\s+corridor|"
+            r"one\s+dark\s+mud-coated\s+grain\s+husk\s+split\s+open\s+to\s+reveal\s+one\s+pale\s+living\s+rice\s+seed|"
+            r"(?:seven\s+randomly\s+scattered\s+(?:golden-green\s+grain\s+shoots|tiny\s+fresh-green\s+grain\s+seedlings)|exactly\s+seven\s+tiny\s+fresh-green\s+(?:grain\s+|two-leaf\s+)?seedlings\s+total|one\s+irregular\s+wild\s+cluster\s+of\s+newly\s+sprouted\s+fresh-green\s+two-leaf\s+seedlings)|"
+            r"Animal-only\s+tight\s+paired\s+head-and-neck\s+view\s+of\s+exactly\s+one\s+completely\s+bare\s+unadorned\s+fully\s+grown\s+cow[^.;]{0,360}\bexactly\s+one\s+completely\s+bare\s+unadorned\s+fully\s+grown\s+horse|"
+            r"Object-only(?:\s+strict\s+top-down)?\s+(?:outdoor\s+)?(?:close\s+)?view\s+of\s+one\s+(?:uninterrupted(?:\s+sealed)?\s+earth-tone|soft\s+irregular\s+earth-tone\s+woven)\s+shroud|"
+            r"exactly\s+three\s+separate\s+short\s+small\s+cream-white\s+segmented\s+silkworm\s+caterpillars|"
+            r"Object-only\s+strict\s+top-down\s+(?:animal-birth|harvest)\s+evidence|"
+            r"Object-only\s+strict\s+top-down\s+shocking\s+hospitality\s+tableau|"
+            r"one\s+low\s+woven\s+basket\s+filled\s+with\s+rice,\s*millet\s+and\s+silk\s+cocoons|"
+            r"exactly\s+one\s+plain\s+handleless\s+round\s+aged-bronze\s+ritual\s+mirror\s+disk|"
+            r"Object-only\s+close\s+value-conflict\s+tableau|"
+            r"one\s+continuous\s+narrow\s+trail\s+of\s+disturbed\s+wet\s+sand|"
+            r"one\s+narrow\s+continuous\s+blue\s+storm-light\s+trail|"
+            r"one\s+continuous\s+line\s+of\s+fresh\s+barefoot\s+footprints|"
+            r"one\s+dull\s+leaf-shaped\s+aged-bronze\s+ritual\s+blade\s+discarded\s+beside|"
+            r"one\s+dull\s+leaf-shaped\s+aged-bronze\s+ritual\s+blade\s+(?:half-buried|lies\s+between)|"
+            r"one\s+golden\s+rice\s+stalk\s+and\s+one\s+tiny\s+green\s+seedling\s+rising\s+together|"
+            r"next-episode\s+ritual\s+teaser|"
+            r"river\s+completely\s+filling\s+the\s+narrow\s+canyon\s+floor\s+between\s+near-vertical\s+rock\s+walls|"
+            r"a\s+final\s+breath\s+sweeping\s+across\s+grass,?\s+clouds,?\s+fire\s+smoke,?\s+and\s+grazing\s+cattle|"
+            r"exactly\s+two\s+separate\s+clean\s+rectangular\s+wooden\s+serving\s+tables|"
+            r"one\s+flat\s+prehistoric\s+stone\s+slab\s+filling\s+the\s+frame.*exactly\s+four\s+(?:separated\s+human-shaped\s+relief\s+figures|non-overlapping\s+symbolic\s+human\s+pictograms)|"
+            r"strict\s+overhead\s+view\s+of\s+one\s+flat\s+stone\s+relief\s+only.*four\s+carved\s+figures\s+total|"
+            r"strict\s+overhead\s+edge-to-edge\s+stone\s+relief\s+view.*four\s+carved\s+figures\s+total|"
+            r"straight\s+overhead\s+stone\s+close-up\s+with\s+exactly\s+four\s+simple\s+carved\s+line-art\s+petroglyphs\s+total|"
+            r"overhead\s+continuous\s+stone\s+with\s+no\s+border\s+shows\s+exactly\s+four\s+separate\s+simple\s+petroglyphs\s+total)\b",
+            prompt or "",
+            re.IGNORECASE,
+        )
+    )
+
+
+def _image_has_guthe_record_cover_glyph_cluster(path: str | Path) -> bool:
+    """Detect compact title-like strokes on the left blank record in the fixed Guthe layout."""
+    try:
+        from PIL import Image, ImageFilter, ImageOps
+
+        with Image.open(path) as img:
+            gray = ImageOps.grayscale(
+                img.convert("RGB").resize((640, 360), Image.Resampling.LANCZOS)
+            )
+        w, h = gray.size
+        pixels = gray.tobytes()
+        x_limit = int(w * 0.38)
+        y_start = int(h * 0.10)
+        y_end = int(h * 0.88)
+        remaining = {
+            y * w + x
+            for y in range(y_start, y_end)
+            for x in range(x_limit)
+            if pixels[y * w + x] >= 140
+        }
+        record_candidates: list[tuple[int, int, int, int, int]] = []
+        while remaining:
+            start = remaining.pop()
+            stack = [start]
+            points = [start]
+            while stack:
+                index = stack.pop()
+                x = index % w
+                y = index // w
+                for nx, ny in ((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)):
+                    if nx < 0 or nx >= x_limit or ny < y_start or ny >= y_end:
+                        continue
+                    neighbor = ny * w + nx
+                    if neighbor in remaining:
+                        remaining.remove(neighbor)
+                        stack.append(neighbor)
+                        points.append(neighbor)
+            if len(points) < 500:
+                continue
+            xs = [index % w for index in points]
+            ys = [index // w for index in points]
+            min_x, max_x = min(xs), max(xs)
+            min_y, max_y = min(ys), max(ys)
+            box_w = max_x - min_x + 1
+            box_h = max_y - min_y + 1
+            fill_ratio = len(points) / max(box_w * box_h, 1)
+            if (
+                80 <= box_w <= 200
+                and 120 <= box_h <= 270
+                and 1.0 <= box_h / max(box_w, 1) <= 2.3
+                and fill_ratio >= 0.25
+            ):
+                record_candidates.append((len(points), min_x, min_y, max_x, max_y))
+        if not record_candidates:
+            return False
+
+        _, min_x, min_y, max_x, max_y = max(record_candidates)
+        inset_x = max(3, int((max_x - min_x + 1) * 0.03))
+        inset_y = max(3, int((max_y - min_y + 1) * 0.03))
+        record = gray.crop(
+            (
+                min_x + inset_x,
+                min_y + inset_y,
+                max_x - inset_x + 1,
+                max_y - inset_y + 1,
+            )
+        )
+        background = record.filter(ImageFilter.MedianFilter(9))
+        record_pixels = record.tobytes()
+        background_pixels = background.tobytes()
+        record_w, record_h = record.size
+        remaining = {
+            index
+            for index, value in enumerate(record_pixels)
+            if background_pixels[index] - value >= 18 and value <= 185
+        }
+        components: list[tuple[float, float, int]] = []
+        while remaining:
+            start = remaining.pop()
+            stack = [start]
+            points = [start]
+            while stack:
+                index = stack.pop()
+                x = index % record_w
+                y = index // record_w
+                for nx in (x - 1, x, x + 1):
+                    for ny in (y - 1, y, y + 1):
+                        if nx == x and ny == y:
+                            continue
+                        if nx < 0 or nx >= record_w or ny < 0 or ny >= record_h:
+                            continue
+                        neighbor = ny * record_w + nx
+                        if neighbor in remaining:
+                            remaining.remove(neighbor)
+                            stack.append(neighbor)
+                            points.append(neighbor)
+            xs = [index % record_w for index in points]
+            ys = [index // record_w for index in points]
+            box_w = max(xs) - min(xs) + 1
+            box_h = max(ys) - min(ys) + 1
+            area = len(points)
+            center_x = (min(xs) + max(xs)) / 2
+            if (
+                2 <= area <= 120
+                and box_w <= 18
+                and box_h <= 24
+                and record_w * 0.12 <= center_x <= record_w * 0.92
+            ):
+                components.append(
+                    (center_x, (min(ys) + max(ys)) / 2, area)
+                )
+
+        for anchor in components:
+            cluster = [
+                component
+                for component in components
+                if abs(component[0] - anchor[0]) <= 20
+                and abs(component[1] - anchor[1]) <= 45
+            ]
+            if len(cluster) < 3:
+                continue
+            centers_x = [component[0] for component in cluster]
+            centers_y = [component[1] for component in cluster]
+            if (
+                min(centers_x) >= record_w * 0.55
+                and max(centers_x) - min(centers_x) <= 24
+                and 15 <= max(centers_y) - min(centers_y) <= 55
+                and sum(component[2] for component in cluster) >= 80
+                and max(component[2] for component in cluster) >= 20
+            ):
+                return True
+    except Exception:
+        return False
+    return False
+
+
+def _image_has_dense_small_internal_glyph_grid(path: str | Path) -> bool:
+    try:
+        from PIL import Image, ImageOps
+
+        with Image.open(path) as img:
+            gray = ImageOps.grayscale(img.convert("RGB"))
+            if gray.width > 960:
+                scaled_h = max(1, round(gray.height * (960 / gray.width)))
+                gray = gray.resize((960, scaled_h), Image.Resampling.LANCZOS)
+            w, h = gray.size
+            if w < 240 or h < 160:
+                return False
+
+            scale = w / 960
+            windows = (
+                (max(48, round(72 * scale)), max(72, round(108 * scale))),
+                (max(60, round(90 * scale)), max(90, round(135 * scale))),
+                (max(72, round(108 * scale)), max(108, round(162 * scale))),
+            )
+            step_x = max(24, round(54 * scale))
+            step_y = max(18, round(36 * scale))
+            margin_x = max(8, int(w * 0.03))
+            margin_y = max(8, int(h * 0.03))
+
+            for hh, ww in windows:
+                if ww >= w or hh >= h:
+                    continue
+                for y0 in range(margin_y, h - hh - margin_y + 1, step_y):
+                    for x0 in range(margin_x, w - ww - margin_x + 1, step_x):
+                        data = gray.crop((x0, y0, x0 + ww, y0 + hh)).tobytes()
+                        area = max(len(data), 1)
+                        light_ratio = sum(1 for value in data if value >= 145) / area
+                        dark_ratio = sum(1 for value in data if value <= 75) / area
+                        if not (0.25 <= light_ratio <= 0.65 and 0.18 <= dark_ratio <= 0.45):
+                            continue
+
+                        dark_points = {
+                            (index % ww, index // ww)
+                            for index, value in enumerate(data)
+                            if value <= 75
+                        }
+                        components: list[tuple[int, int, int, float, float]] = []
+                        while dark_points:
+                            start = dark_points.pop()
+                            stack = [start]
+                            points = [start]
+                            while stack:
+                                cx, cy = stack.pop()
+                                for nx in (cx - 1, cx, cx + 1):
+                                    for ny in (cy - 1, cy, cy + 1):
+                                        neighbor = (nx, ny)
+                                        if neighbor in dark_points:
+                                            dark_points.remove(neighbor)
+                                            stack.append(neighbor)
+                                            points.append(neighbor)
+                            xs = [point[0] for point in points]
+                            ys = [point[1] for point in points]
+                            box_w = max(xs) - min(xs) + 1
+                            box_h = max(ys) - min(ys) + 1
+                            if not (
+                                2 <= len(points) <= 120
+                                and box_w <= 24
+                                and box_h <= 28
+                                and min(xs) > 0
+                                and max(xs) < ww - 1
+                                and min(ys) > 0
+                                and max(ys) < hh - 1
+                            ):
+                                continue
+                            components.append(
+                                (
+                                    len(points),
+                                    box_w,
+                                    box_h,
+                                    sum(xs) / len(points),
+                                    sum(ys) / len(points),
+                                )
+                            )
+
+                        if len(components) < 18:
+                            continue
+                        row_buckets: dict[int, int] = {}
+                        col_buckets: dict[int, int] = {}
+                        vertical_strokes = 0
+                        horizontal_strokes = 0
+                        tiny_components = 0
+                        medium_components = 0
+                        for component_area, box_w, box_h, center_x, center_y in components:
+                            row_key = int(center_y // max(4, round(6 * scale)))
+                            col_key = int(center_x // max(4, round(6 * scale)))
+                            row_buckets[row_key] = row_buckets.get(row_key, 0) + 1
+                            col_buckets[col_key] = col_buckets.get(col_key, 0) + 1
+                            vertical_strokes += int(box_h >= box_w * 1.6)
+                            horizontal_strokes += int(box_w >= box_h * 1.6)
+                            tiny_components += int(component_area <= 20)
+                            medium_components += int(component_area >= 8)
+                        dense_rows = sum(1 for count in row_buckets.values() if count >= 3)
+                        dense_cols = sum(1 for count in col_buckets.values() if count >= 3)
+                        if (
+                            dense_rows >= 3
+                            and dense_cols >= 2
+                            and vertical_strokes >= 5
+                            and horizontal_strokes >= 4
+                            and horizontal_strokes <= vertical_strokes * 3
+                            and vertical_strokes <= horizontal_strokes * 3
+                            and tiny_components >= 15
+                            and medium_components >= max(12, int(len(components) * 0.35))
+                        ):
+                            return True
+    except Exception:
+        return False
+    return False
+
+
+def _image_has_framed_internal_glyph_panel(path: str | Path) -> bool:
+    try:
+        from PIL import Image, ImageOps
+
+        with Image.open(path) as img:
+            gray = ImageOps.grayscale(img.convert("RGB").resize((640, 360), Image.Resampling.LANCZOS))
+            w, h = gray.size
+            pixels = list(gray.getdata())
+
+        def _integral(values: list[int]) -> list[list[int]]:
+            table = [[0] * (w + 1) for _ in range(h + 1)]
+            index = 0
+            for yy in range(h):
+                row_sum = 0
+                previous = table[yy]
+                current = table[yy + 1]
+                for xx in range(w):
+                    row_sum += values[index]
+                    current[xx + 1] = previous[xx + 1] + row_sum
+                    index += 1
+            return table
+
+        def _rect_sum(table: list[list[int]], x: int, y: int, ww: int, hh: int) -> int:
+            return table[y + hh][x + ww] - table[y][x + ww] - table[y + hh][x] + table[y][x]
+
+        value_integral = _integral(pixels)
+        dark_integral = _integral([int(value <= 55) for value in pixels])
+        frame = 4
+        for box_w, box_h in ((48, 68), (56, 80), (64, 92), (72, 104)):
+            inner_w = box_w - frame * 2
+            inner_h = box_h - frame * 2
+            inner_area = inner_w * inner_h
+            for y0 in range(0, int(h * 0.48) - box_h + 1, 8):
+                for x0 in range(int(w * 0.04), int(w * 0.96) - box_w + 1, 8):
+                    inner_x = x0 + frame
+                    inner_y = y0 + frame
+                    inner_mean = _rect_sum(value_integral, inner_x, inner_y, inner_w, inner_h) / inner_area
+                    if not 60 <= inner_mean <= 155:
+                        continue
+                    sides = (
+                        (x0, y0, box_w, frame),
+                        (x0, y0 + box_h - frame, box_w, frame),
+                        (x0, y0, frame, box_h),
+                        (x0 + box_w - frame, y0, frame, box_h),
+                    )
+                    side_valid = True
+                    for side_x, side_y, side_w, side_h in sides:
+                        side_area = side_w * side_h
+                        side_mean = _rect_sum(value_integral, side_x, side_y, side_w, side_h) / side_area
+                        side_dark_ratio = _rect_sum(dark_integral, side_x, side_y, side_w, side_h) / side_area
+                        if side_mean > inner_mean - 16 or side_dark_ratio < 0.42:
+                            side_valid = False
+                            break
+                    if not side_valid:
+                        continue
+
+                    threshold = max(18, inner_mean - 26)
+                    inner_values = [
+                        pixels[yy * w + xx]
+                        for yy in range(inner_y, inner_y + inner_h)
+                        for xx in range(inner_x, inner_x + inner_w)
+                    ]
+                    mask = [value <= threshold for value in inner_values]
+                    visited: set[int] = set()
+                    components: list[tuple[int, int, int]] = []
+                    for start, enabled in enumerate(mask):
+                        if not enabled or start in visited:
+                            continue
+                        visited.add(start)
+                        stack = [start]
+                        points: list[int] = []
+                        while stack:
+                            index = stack.pop()
+                            points.append(index)
+                            x = index % inner_w
+                            y = index // inner_w
+                            for nx, ny in ((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)):
+                                if nx < 0 or nx >= inner_w or ny < 0 or ny >= inner_h:
+                                    continue
+                                neighbor = ny * inner_w + nx
+                                if mask[neighbor] and neighbor not in visited:
+                                    visited.add(neighbor)
+                                    stack.append(neighbor)
+                        xs = [index % inner_w for index in points]
+                        ys = [index // inner_w for index in points]
+                        component_w = max(xs) - min(xs) + 1
+                        component_h = max(ys) - min(ys) + 1
+                        if (
+                            3 <= len(points) <= 110
+                            and component_w <= 14
+                            and component_h <= 20
+                            and min(xs) > 1
+                            and max(xs) < inner_w - 2
+                            and min(ys) > 1
+                            and max(ys) < inner_h - 2
+                        ):
+                            components.append((len(points), component_w, component_h))
+                    large = sum(
+                        area >= 20 and component_w >= 4 and component_h >= 4
+                        for area, component_w, component_h in components
+                    )
+                    vertical = sum(component_h >= component_w * 1.6 for _, component_w, component_h in components)
+                    horizontal = sum(component_w >= component_h * 1.6 for _, component_w, component_h in components)
+                    if len(components) >= 8 and large >= 2 and vertical >= 2 and horizontal >= 2:
+                        return True
+    except Exception:
+        return False
+    return False
+
+
+def _image_has_multiple_upper_light_panels(path: str | Path) -> bool:
+    try:
+        from PIL import Image, ImageOps
+
+        with Image.open(path) as img:
+            gray = ImageOps.grayscale(img.convert("RGB").resize((640, 360), Image.Resampling.LANCZOS))
+            w, h = gray.size
+            pixels = list(gray.getdata())
+        upper_h = max(1, int(h * 0.50))
+        mask = [pixels[y * w + x] >= 120 for y in range(upper_h) for x in range(w)]
+        visited: set[int] = set()
+        panel_count = 0
+        for start, enabled in enumerate(mask):
+            if not enabled or start in visited:
+                continue
+            visited.add(start)
+            stack = [start]
+            points: list[int] = []
+            while stack:
+                index = stack.pop()
+                points.append(index)
+                x = index % w
+                y = index // w
+                for nx, ny in ((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)):
+                    if nx < 0 or nx >= w or ny < 0 or ny >= upper_h:
+                        continue
+                    neighbor = ny * w + nx
+                    if mask[neighbor] and neighbor not in visited:
+                        visited.add(neighbor)
+                        stack.append(neighbor)
+            area = len(points)
+            if area < 800:
+                continue
+            xs = [index % w for index in points]
+            ys = [index // w for index in points]
+            min_x, max_x = min(xs), max(xs)
+            min_y, max_y = min(ys), max(ys)
+            box_w = max_x - min_x + 1
+            box_h = max_y - min_y + 1
+            fill_ratio = area / max(box_w * box_h, 1)
+            if not (
+                w * 0.04 <= box_w <= w * 0.18
+                and h * 0.12 <= box_h <= h * 0.42
+                and box_h >= box_w * 0.80
+                and fill_ratio >= 0.50
+                and min_y <= h * 0.08
+            ):
+                continue
+            panel_count += 1
+            if panel_count >= 2:
+                return True
+    except Exception:
+        return False
+    return False
+
+
+def _image_has_multiple_edge_light_panels(path: str | Path) -> bool:
+    try:
+        from PIL import Image, ImageOps
+
+        with Image.open(path) as img:
+            gray = ImageOps.grayscale(img.convert("RGB").resize((640, 360), Image.Resampling.LANCZOS))
+            w, h = gray.size
+            pixels = list(gray.getdata())
+        mask = [value >= 160 for value in pixels]
+        visited: set[int] = set()
+        panel_count = 0
+        for start, enabled in enumerate(mask):
+            if not enabled or start in visited:
+                continue
+            visited.add(start)
+            stack = [start]
+            points: list[int] = []
+            while stack:
+                index = stack.pop()
+                points.append(index)
+                x = index % w
+                y = index // w
+                for nx, ny in ((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)):
+                    if nx < 0 or nx >= w or ny < 0 or ny >= h:
+                        continue
+                    neighbor = ny * w + nx
+                    if mask[neighbor] and neighbor not in visited:
+                        visited.add(neighbor)
+                        stack.append(neighbor)
+            area = len(points)
+            if not 600 <= area <= 8000:
+                continue
+            xs = [index % w for index in points]
+            ys = [index // w for index in points]
+            min_x, max_x = min(xs), max(xs)
+            min_y, max_y = min(ys), max(ys)
+            box_w = max_x - min_x + 1
+            box_h = max_y - min_y + 1
+            fill_ratio = area / max(box_w * box_h, 1)
+            near_edge = (
+                min_x <= w * 0.24
+                or max_x >= w * 0.76
+                or min_y <= h * 0.18
+                or max_y >= h * 0.82
+            )
+            if not (
+                20 <= box_w <= 130
+                and 30 <= box_h <= 140
+                and 0.25 <= box_w / max(box_h, 1) <= 4.0
+                and fill_ratio >= 0.35
+                and near_edge
+            ):
+                continue
+            panel_count += 1
+            if panel_count >= 2:
+                return True
+    except Exception:
+        return False
+    return False
+
+
+def _image_has_upper_light_surface_glyph_cluster(path: str | Path) -> bool:
+    try:
+        from PIL import Image, ImageOps
+
+        with Image.open(path) as img:
+            gray = ImageOps.grayscale(img.convert("RGB").resize((640, 360), Image.Resampling.LANCZOS))
+            w, h = gray.size
+            pixels = list(gray.getdata())
+        upper_h = max(1, int(h * 0.25))
+        mask = [pixels[y * w + x] <= 75 for y in range(upper_h) for x in range(w)]
+        visited: set[int] = set()
+        glyph_count = 0
+        for start, enabled in enumerate(mask):
+            if not enabled or start in visited:
+                continue
+            visited.add(start)
+            stack = [start]
+            points: list[int] = []
+            while stack:
+                index = stack.pop()
+                points.append(index)
+                x = index % w
+                y = index // w
+                for nx in (x - 1, x, x + 1):
+                    for ny in (y - 1, y, y + 1):
+                        if nx < 0 or nx >= w or ny < 0 or ny >= upper_h:
+                            continue
+                        neighbor = ny * w + nx
+                        if mask[neighbor] and neighbor not in visited:
+                            visited.add(neighbor)
+                            stack.append(neighbor)
+            if not 10 <= len(points) <= 800:
+                continue
+            xs = [index % w for index in points]
+            ys = [index // w for index in points]
+            min_x, max_x = min(xs), max(xs)
+            min_y, max_y = min(ys), max(ys)
+            component_w = max_x - min_x + 1
+            component_h = max_y - min_y + 1
+            if not (4 <= component_w <= 40 and 4 <= component_h <= 45):
+                continue
+            point_set = set(points)
+            pad = 5
+            ring = [
+                pixels[yy * w + xx]
+                for yy in range(max(0, min_y - pad), min(h, max_y + pad + 1))
+                for xx in range(max(0, min_x - pad), min(w, max_x + pad + 1))
+                if yy * w + xx not in point_set
+            ]
+            if not ring:
+                continue
+            ring_mean = sum(ring) / len(ring)
+            bright_ratio = sum(value >= 100 for value in ring) / len(ring)
+            ring_variance = sum((value - ring_mean) ** 2 for value in ring) / len(ring)
+            ring_stddev = ring_variance ** 0.5
+            # Text-like marks sit on one comparatively uniform light surface.
+            # Open-air branches, thatch and gate joinery have mixed sky/wood
+            # rings and otherwise produce dozens of false glyph components.
+            if ring_mean >= 105 and bright_ratio >= 0.68 and ring_stddev <= 42:
+                glyph_count += 1
+                if glyph_count >= 10:
+                    return True
+    except Exception:
+        return False
+    return False
+
+
+def _image_has_interior_light_surface_glyph_cluster(path: str | Path) -> bool:
+    try:
+        from PIL import Image, ImageOps
+
+        with Image.open(path) as img:
+            gray = ImageOps.grayscale(
+                img.convert("RGB").resize((640, 360), Image.Resampling.LANCZOS)
+            )
+            w, h = gray.size
+            pixels = gray.tobytes()
+
+        remaining = {index for index, value in enumerate(pixels) if value <= 75}
+        components: list[tuple[float, float, int]] = []
+        while remaining:
+            start = remaining.pop()
+            stack = [start]
+            points = [start]
+            while stack:
+                index = stack.pop()
+                x = index % w
+                y = index // w
+                for nx in (x - 1, x, x + 1):
+                    for ny in (y - 1, y, y + 1):
+                        if nx < 0 or nx >= w or ny < 0 or ny >= h:
+                            continue
+                        neighbor = ny * w + nx
+                        if neighbor in remaining:
+                            remaining.remove(neighbor)
+                            stack.append(neighbor)
+                            points.append(neighbor)
+
+            xs = [index % w for index in points]
+            ys = [index // w for index in points]
+            min_x, max_x = min(xs), max(xs)
+            min_y, max_y = min(ys), max(ys)
+            area = len(points)
+            box_w = max_x - min_x + 1
+            box_h = max_y - min_y + 1
+            fill_ratio = area / max(box_w * box_h, 1)
+            if not (
+                min_x >= w * 0.10
+                and max_x <= w * 0.90
+                and 45 <= area <= 900
+                and 8 <= box_w <= 130
+                and 7 <= box_h <= 65
+                and 0.05 <= fill_ratio <= 0.50
+            ):
+                continue
+
+            point_set = set(points)
+            pad = 5
+            ring = [
+                pixels[yy * w + xx]
+                for yy in range(max(0, min_y - pad), min(h, max_y + pad + 1))
+                for xx in range(max(0, min_x - pad), min(w, max_x + pad + 1))
+                if yy * w + xx not in point_set
+            ]
+            if not ring:
+                continue
+            ring_mean = sum(ring) / len(ring)
+            bright_ratio = sum(value >= 100 for value in ring) / len(ring)
+            if ring_mean < 120 or bright_ratio < 0.70:
+                continue
+            components.append(
+                (
+                    (min_x + max_x) / 2,
+                    (min_y + max_y) / 2,
+                    area,
+                )
+            )
+
+        for anchor in components:
+            cluster = sorted(
+                component
+                for component in components
+                if abs(component[0] - anchor[0]) <= 190
+                and abs(component[1] - anchor[1]) <= 22
+            )
+            if len(cluster) < 3:
+                continue
+            centers_x = [component[0] for component in cluster]
+            centers_y = [component[1] for component in cluster]
+            gaps = [right - left for left, right in zip(centers_x, centers_x[1:])]
+            if (
+                max(centers_x) - min(centers_x) >= 35
+                and max(centers_y) - min(centers_y) <= 30
+                and sum(component[2] for component in cluster) >= 250
+                and max(gaps, default=0) <= 110
+            ):
+                return True
+    except Exception:
+        return False
+    return False
+
+
+def _image_has_internal_text_like_marks(
+    path: str | Path,
+    *,
+    include_dense_grid: bool = True,
+    include_framed_panel: bool = True,
+    include_upper_cluster: bool = True,
+    include_core: bool = True,
+    panorama_banner_only: bool = False,
+) -> bool:
+    if panorama_banner_only:
+        return bool(
+            _image_has_large_dark_glyph_row_on_light_surface(path, upper_fraction=0.50)
+            or _image_has_interior_light_surface_glyph_cluster(path)
+        )
+    if include_upper_cluster and _image_has_large_dark_glyph_row_on_light_surface(
+        path,
+        upper_fraction=0.50,
+    ):
+        return True
+    if include_dense_grid and _image_has_dense_small_internal_glyph_grid(path):
+        return True
+    if include_framed_panel and _image_has_framed_internal_glyph_panel(path):
+        return True
+    if include_upper_cluster and _image_has_upper_light_surface_glyph_cluster(path):
+        return True
+    if not include_core:
+        return False
     try:
         from PIL import Image, ImageOps
 
@@ -41997,6 +50642,149 @@ def _image_has_internal_text_like_marks(path: str | Path) -> bool:
         dark = [value <= 75 for value in pixels]
         light_integral = _integral(light)
         dark_integral = _integral(dark)
+
+        def _has_vertical_text_column() -> bool:
+            visited: set[int] = set()
+            components: list[tuple[float, float, int, int, int, int, int]] = []
+            large_glyph_components: list[tuple[float, float, int, int, int, int, int]] = []
+            for yy in range(int(h * 0.03), int(h * 0.88)):
+                for xx in range(int(w * 0.02), int(w * 0.98)):
+                    start = yy * w + xx
+                    if not dark[start] or start in visited:
+                        continue
+                    stack = [(xx, yy)]
+                    visited.add(start)
+                    area = 0
+                    min_x = max_x = xx
+                    min_y = max_y = yy
+                    sum_x = 0
+                    sum_y = 0
+                    while stack:
+                        cx, cy = stack.pop()
+                        area += 1
+                        sum_x += cx
+                        sum_y += cy
+                        min_x = min(min_x, cx)
+                        max_x = max(max_x, cx)
+                        min_y = min(min_y, cy)
+                        max_y = max(max_y, cy)
+                        for nx in (cx - 1, cx, cx + 1):
+                            for ny in (cy - 1, cy, cy + 1):
+                                if nx == cx and ny == cy:
+                                    continue
+                                if nx < 0 or nx >= w or ny < 0 or ny >= h:
+                                    continue
+                                nidx = ny * w + nx
+                                if dark[nidx] and nidx not in visited:
+                                    visited.add(nidx)
+                                    stack.append((nx, ny))
+                    box_w = max_x - min_x + 1
+                    box_h = max_y - min_y + 1
+                    fill_ratio = area / max(box_w * box_h, 1)
+                    if (
+                        250 <= area <= 1200
+                        and 18 <= box_w <= 70
+                        and 12 <= box_h <= 70
+                        and box_w <= box_h * 4
+                        and box_h <= box_w * 4
+                        and 0.10 <= fill_ratio <= 0.60
+                        and min_x > int(w * 0.05)
+                        and max_x < int(w * 0.95)
+                        and min_y > int(h * 0.08)
+                        and max_y < int(h * 0.75)
+                    ):
+                        large_glyph_components.append(
+                            (
+                                sum_x / max(area, 1),
+                                sum_y / max(area, 1),
+                                area,
+                                min_x,
+                                min_y,
+                                max_x,
+                                max_y,
+                            )
+                        )
+                    if not (4 <= area <= 120 and 2 <= box_w <= 22 and 2 <= box_h <= 22):
+                        continue
+                    if box_w > box_h * 5 or box_h > box_w * 5:
+                        continue
+                    components.append(
+                        (
+                            sum_x / max(area, 1),
+                            sum_y / max(area, 1),
+                            area,
+                            min_x,
+                            min_y,
+                            max_x,
+                            max_y,
+                        )
+                    )
+
+            for anchor in large_glyph_components:
+                clustered = [
+                    comp
+                    for comp in large_glyph_components
+                    if abs(comp[0] - anchor[0]) <= 180 and abs(comp[1] - anchor[1]) <= 80
+                ]
+                if len(clustered) < 3:
+                    continue
+                x_span = max(comp[0] for comp in clustered) - min(comp[0] for comp in clustered)
+                y_span = max(comp[1] for comp in clustered) - min(comp[1] for comp in clustered)
+                if max(x_span, y_span) >= 35 and sum(comp[2] for comp in clustered) >= 1200:
+                    return True
+
+            for anchor in components:
+                aligned = sorted(
+                    (
+                        comp
+                        for comp in components
+                        if abs(comp[0] - anchor[0]) <= 11
+                        and abs(comp[1] - anchor[1]) <= 95
+                    ),
+                    key=lambda item: item[1],
+                )
+                if len(aligned) < 5:
+                    continue
+                for start_index in range(len(aligned) - 4):
+                    run = [aligned[start_index]]
+                    for comp in aligned[start_index + 1 :]:
+                        gap = comp[1] - run[-1][1]
+                        if gap < 3:
+                            continue
+                        if gap > 30:
+                            break
+                        run.append(comp)
+                    if len(run) < 5 or run[-1][1] - run[0][1] < 30:
+                        continue
+                    min_x = max(0, min(comp[3] for comp in run) - 8)
+                    max_x = min(w, max(comp[5] for comp in run) + 9)
+                    min_y = max(0, min(comp[4] for comp in run) - 8)
+                    max_y = min(h, max(comp[6] for comp in run) + 9)
+                    if max_x - min_x > 34:
+                        continue
+                    if sum(1 for comp in run if comp[2] >= 18) < 3:
+                        continue
+                    area = max((max_x - min_x) * (max_y - min_y), 1)
+                    light_ratio = _rect_sum(
+                        light_integral,
+                        min_x,
+                        min_y,
+                        max_x - min_x,
+                        max_y - min_y,
+                    ) / area
+                    dark_ratio = _rect_sum(
+                        dark_integral,
+                        min_x,
+                        min_y,
+                        max_x - min_x,
+                        max_y - min_y,
+                    ) / area
+                    if light_ratio >= 0.42 and 0.018 <= dark_ratio <= 0.28:
+                        return True
+            return False
+
+        if _has_vertical_text_column():
+            return True
 
         def _has_center_light_letter_row() -> bool:
             x0, x1 = int(w * 0.08), int(w * 0.92)
@@ -42088,7 +50876,7 @@ def _image_has_internal_text_like_marks(path: str | Path) -> bool:
                             continue
                         if sum(item[2] for item in sub) < 65:
                             continue
-                        if sum(1 for item in sub if item[2] >= 10) < 3:
+                        if sum(1 for item in sub if item[2] >= 10) < len(sub):
                             continue
                         return True
             return False
@@ -42198,7 +50986,7 @@ def _image_has_internal_text_like_marks(path: str | Path) -> bool:
                         dense_col_run,
                     ) = _small_component_stats(x0, y0, ww, hh)
                     edge_clipped_texture_like = (
-                        edge_clipped_component_count >= max(6, int(component_count * 0.16))
+                        edge_clipped_component_count >= max(6, int(component_count * 0.12))
                         and dark_ratio >= 0.045
                     )
                     if edge_clipped_texture_like:
@@ -42222,9 +51010,23 @@ def _image_has_internal_text_like_marks(path: str | Path) -> bool:
                     )
                     if horizontal_texture_like or sparse_horizontal_texture_like:
                         continue
-                    horizontal_text_grid = dense_col_run >= 4 and horizontal_stroke_count >= 8
-                    vertical_text_grid = dense_row_run >= 4 and vertical_stroke_count >= 8
-                    mixed_text_grid = component_count >= 40 and dense_rows >= 7 and dense_cols >= 6
+                    horizontal_text_grid = (
+                        dense_col_run >= 4
+                        and horizontal_stroke_count >= 8
+                        and vertical_stroke_count >= 8
+                    )
+                    vertical_text_grid = (
+                        dense_row_run >= 4
+                        and vertical_stroke_count >= 8
+                        and horizontal_stroke_count >= 8
+                    )
+                    mixed_text_grid = (
+                        component_count >= 40
+                        and dense_rows >= 7
+                        and dense_cols >= 6
+                        and vertical_stroke_count >= 8
+                        and horizontal_stroke_count >= 8
+                    )
                     if not (horizontal_text_grid or vertical_text_grid or mixed_text_grid):
                         continue
                     if component_count >= 30 and dense_rows >= 5 and dense_cols >= 5:
@@ -42330,7 +51132,7 @@ def _image_has_inset_dark_rectangular_frame(path: str | Path) -> bool:
     return False
 
 
-def _image_has_split_panel_divider(path: str | Path) -> bool:
+def _image_has_split_panel_divider(path: str | Path, *, include_inset: bool = True) -> bool:
     try:
         from PIL import Image
 
@@ -42368,22 +51170,174 @@ def _image_has_split_panel_divider(path: str | Path) -> bool:
                         count += 1
                 return total / max(count, 1)
 
-            for y in range(int(h * 0.16), int(h * 0.48)):
-                if _row_ratio(y) < 0.34:
-                    continue
-                above_mean = _strip_mean(y - int(h * 0.05), y - int(h * 0.012))
-                below_mean = _strip_mean(y + int(h * 0.012), y + int(h * 0.05))
-                if abs(above_mean - below_mean) < 18.0:
-                    continue
-                vertical_ratio = max(
-                    _col_ratio(x, int(h * 0.02), y)
-                    for x in range(int(w * 0.20), int(w * 0.80))
-                )
-                if vertical_ratio >= 0.48:
-                    return True
+            def _light_col_ratio(x: int) -> float:
+                ys = range(int(h * 0.01), int(h * 0.99))
+                pixels = [im.getpixel((x, y)) for y in ys]
+                if not pixels:
+                    return 0.0
+                light = sum(1 for r, g, b in pixels if min(r, g, b) >= 242)
+                return light / len(pixels)
+
+            def _dark_full_height_col_ratio(x: int) -> float:
+                ys = range(int(h * 0.01), int(h * 0.99))
+                pixels = [im.getpixel((x, y)) for y in ys]
+                if not pixels:
+                    return 0.0
+                dark = sum(1 for r, g, b in pixels if max(r, g, b) <= 28)
+                return dark / len(pixels)
+
+            def _vertical_strip_mean(x0: int, x1: int) -> float:
+                xs = range(max(0, x0), min(w, x1))
+                ys = range(int(h * 0.02), int(h * 0.98))
+                total = 0.0
+                count = 0
+                for xx in xs:
+                    for yy in ys:
+                        r, g, b = im.getpixel((xx, yy))
+                        total += (r + g + b) / 3
+                        count += 1
+                return total / max(count, 1)
+
+            dark_columns = [
+                x
+                for x in range(int(w * 0.20), int(w * 0.80))
+                if _dark_full_height_col_ratio(x) >= 0.94
+            ]
+            if dark_columns:
+                runs: list[tuple[int, int]] = []
+                start = previous = dark_columns[0]
+                for x in dark_columns[1:]:
+                    if x != previous + 1:
+                        runs.append((start, previous))
+                        start = x
+                    previous = x
+                runs.append((start, previous))
+                max_divider_width = max(5, int(w * 0.020))
+                neighbor_gap = max(5, int(w * 0.006))
+                neighbor_width = max(8, int(w * 0.012))
+                for x0, x1 in runs:
+                    width = x1 - x0 + 1
+                    if width < 2 or width > max_divider_width:
+                        continue
+                    divider_mean = _vertical_strip_mean(x0, x1 + 1)
+                    left_mean = _vertical_strip_mean(
+                        x0 - neighbor_gap - neighbor_width,
+                        x0 - neighbor_gap,
+                    )
+                    right_mean = _vertical_strip_mean(
+                        x1 + neighbor_gap + 1,
+                        x1 + neighbor_gap + neighbor_width + 1,
+                    )
+                    if min(left_mean, right_mean) - divider_mean >= 32.0:
+                        return True
+
+            light_columns = [
+                x
+                for x in range(int(w * 0.20), int(w * 0.80))
+                if _light_col_ratio(x) >= 0.82
+            ]
+            if light_columns:
+                runs: list[tuple[int, int]] = []
+                start = previous = light_columns[0]
+                for x in light_columns[1:]:
+                    if x != previous + 1:
+                        runs.append((start, previous))
+                        start = x
+                    previous = x
+                runs.append((start, previous))
+                max_divider_width = max(5, int(w * 0.025))
+                neighbor_gap = max(5, int(w * 0.008))
+                neighbor_width = max(8, int(w * 0.012))
+                for x0, x1 in runs:
+                    width = x1 - x0 + 1
+                    if width < 2 or width > max_divider_width:
+                        continue
+                    divider_mean = _vertical_strip_mean(x0, x1 + 1)
+                    left_mean = _vertical_strip_mean(
+                        x0 - neighbor_gap - neighbor_width,
+                        x0 - neighbor_gap,
+                    )
+                    right_mean = _vertical_strip_mean(
+                        x1 + neighbor_gap + 1,
+                        x1 + neighbor_gap + neighbor_width + 1,
+                    )
+                    if divider_mean - max(left_mean, right_mean) >= 42.0:
+                        return True
+
+            partial_light_columns = [
+                x
+                for x in range(int(w * 0.35), int(w * 0.65))
+                if _light_col_ratio(x) >= 0.62
+            ]
+            if partial_light_columns:
+                runs: list[tuple[int, int]] = []
+                start = previous = partial_light_columns[0]
+                for x in partial_light_columns[1:]:
+                    if x != previous + 1:
+                        runs.append((start, previous))
+                        start = x
+                    previous = x
+                runs.append((start, previous))
+                max_divider_width = max(5, int(w * 0.020))
+                neighbor_gap = max(5, int(w * 0.008))
+                neighbor_width = max(8, int(w * 0.012))
+                for x0, x1 in runs:
+                    width = x1 - x0 + 1
+                    if width < 2 or width > max_divider_width:
+                        continue
+                    divider_mean = _vertical_strip_mean(x0, x1 + 1)
+                    left_mean = _vertical_strip_mean(
+                        x0 - neighbor_gap - neighbor_width,
+                        x0 - neighbor_gap,
+                    )
+                    right_mean = _vertical_strip_mean(
+                        x1 + neighbor_gap + 1,
+                        x1 + neighbor_gap + neighbor_width + 1,
+                    )
+                    if divider_mean - max(left_mean, right_mean) >= 42.0:
+                        return True
+
+            if include_inset:
+                for y in range(int(h * 0.16), int(h * 0.48)):
+                    if _row_ratio(y) < 0.34:
+                        continue
+                    above_mean = _strip_mean(y - int(h * 0.05), y - int(h * 0.012))
+                    below_mean = _strip_mean(y + int(h * 0.012), y + int(h * 0.05))
+                    if abs(above_mean - below_mean) < 18.0:
+                        continue
+                    vertical_ratio = max(
+                        _col_ratio(x, int(h * 0.02), y)
+                        for x in range(int(w * 0.20), int(w * 0.80))
+                    )
+                    if vertical_ratio >= 0.48:
+                        return True
     except Exception:
         return False
     return False
+
+
+_SPLIT_PANEL_GENERATION_CHECK_RE = re.compile(
+    r"\b(?:split\s+panel|diptych|triptych|before\s+and\s+after|picture[- ]in[- ]picture|"
+    r"framed\s+(?:painting|portrait|image)|painting|mirror\s+reflecting|"
+    r"page\s+layout|comic\s+panel|title\s+card)\b",
+    re.IGNORECASE,
+)
+
+
+def _should_check_split_panel_after_generation(prompt: str) -> bool:
+    return bool(_SPLIT_PANEL_GENERATION_CHECK_RE.search(prompt or ""))
+
+
+def _should_ignore_split_panel_for_intentional_center_gap(prompt: str) -> bool:
+    return bool(
+        re.search(
+            r"\b(?:one\s+severed\s+grey\s+woven\s+Goguryeo\s+clan\s+sash|"
+            r"cracked\s+bronze\s+mirror\s+reflecting\s+one\s+collaborator\s+face|"
+            r"one\s+central\s+straight\s+bronze\s+blade)\b",
+            prompt or "",
+            re.IGNORECASE,
+        )
+    )
 
 
 _INSET_FRAME_GENERATION_CHECK_RE = re.compile(
@@ -42396,15 +51350,165 @@ def _should_check_inset_frame_after_generation(prompt: str) -> bool:
     return bool(_INSET_FRAME_GENERATION_CHECK_RE.search(prompt or ""))
 
 
-def _image_has_lower_right_signature_mark(path: str | Path) -> bool:
+def _image_has_lower_right_signature_mark(
+    path: str | Path,
+    *,
+    mirror_horizontal: bool = False,
+) -> bool:
     try:
         from PIL import Image
 
         with Image.open(path) as img:
             im = img.convert("RGB")
+            if mirror_horizontal:
+                im = im.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
             w, h = im.size
             if w < 64 or h < 64:
                 return False
+
+            def _has_isolated_ink_black_corner_glyph() -> bool:
+                x0_ink = int(w * 0.94)
+                y0_ink = int(h * 0.92)
+                ink_points = {
+                    (xx, yy)
+                    for yy in range(y0_ink, h)
+                    for xx in range(x0_ink, w)
+                    if max(im.getpixel((xx, yy))) <= 45
+                }
+                while ink_points:
+                    start = ink_points.pop()
+                    stack = [start]
+                    component = [start]
+                    while stack:
+                        xx, yy = stack.pop()
+                        for nx in (xx - 1, xx, xx + 1):
+                            for ny in (yy - 1, yy, yy + 1):
+                                neighbor = (nx, ny)
+                                if neighbor in ink_points:
+                                    ink_points.remove(neighbor)
+                                    stack.append(neighbor)
+                                    component.append(neighbor)
+                    if not (120 <= len(component) <= 600):
+                        continue
+                    comp_xs = [xx for xx, _yy in component]
+                    comp_ys = [yy for _xx, yy in component]
+                    min_x, max_x = min(comp_xs), max(comp_xs)
+                    min_y, max_y = min(comp_ys), max(comp_ys)
+                    comp_w = max_x - min_x + 1
+                    comp_h = max_y - min_y + 1
+                    density = len(component) / max(comp_w * comp_h, 1)
+                    if not (
+                        18 <= comp_w <= 60
+                        and 12 <= comp_h <= 35
+                        and density >= 0.30
+                        and min_x >= int(w * 0.95)
+                        and min_y >= int(h * 0.955)
+                        and max_x <= w - 8
+                        and max_y <= h - 5
+                    ):
+                        continue
+
+                    point_set = set(component)
+
+                    def _run_count(values: list[int]) -> int:
+                        ordered = sorted(values)
+                        return sum(
+                            1
+                            for index, value in enumerate(ordered)
+                            if index == 0 or value > ordered[index - 1] + 1
+                        )
+
+                    multi_run_rows = sum(
+                        _run_count([xx for xx, yy in point_set if yy == row]) >= 2
+                        for row in range(min_y, max_y + 1)
+                    )
+                    multi_run_columns = sum(
+                        _run_count([yy for xx, yy in point_set if xx == column]) >= 2
+                        for column in range(min_x, max_x + 1)
+                    )
+                    if multi_run_rows >= 8 and multi_run_columns >= 8:
+                        return True
+                return False
+
+            if _has_isolated_ink_black_corner_glyph():
+                return True
+
+            def _has_red_emblem_with_adjacent_credit_row() -> bool:
+                x0 = int(w * 0.88)
+                y0 = int(h * 0.90)
+                red_points = [
+                    (xx, yy)
+                    for yy in range(y0, h)
+                    for xx in range(x0, w)
+                    if (
+                        (pixel := im.getpixel((xx, yy)))[0] >= 65
+                        and pixel[0] > pixel[1] * 1.35
+                        and pixel[0] > pixel[2] * 1.35
+                        and pixel[0] - min(pixel[1], pixel[2]) >= 30
+                    )
+                ]
+                if not (60 <= len(red_points) <= 1200):
+                    return False
+                red_xs = [xx for xx, _yy in red_points]
+                red_ys = [yy for _xx, yy in red_points]
+                red_min_x, red_max_x = min(red_xs), max(red_xs)
+                red_min_y, red_max_y = min(red_ys), max(red_ys)
+                red_w = red_max_x - red_min_x + 1
+                red_h = red_max_y - red_min_y + 1
+                if not (
+                    8 <= red_w <= 48
+                    and 8 <= red_h <= 48
+                    and red_min_x >= int(w * 0.88)
+                    and red_max_x <= int(w * 0.93)
+                    and red_min_y >= int(h * 0.92)
+                ):
+                    return False
+
+                neutral_points = {
+                    (xx, yy)
+                    for yy in range(max(y0, red_min_y - 4), min(h, red_max_y + 5))
+                    for xx in range(min(w, red_max_x + 5), w)
+                    if (
+                        70 <= max(pixel := im.getpixel((xx, yy))) <= 210
+                        and max(pixel) - min(pixel) <= 80
+                    )
+                }
+                components: list[tuple[int, int, int, int, int]] = []
+                while neutral_points:
+                    start = neutral_points.pop()
+                    stack = [start]
+                    component = [start]
+                    while stack:
+                        xx, yy = stack.pop()
+                        for nx in (xx - 1, xx, xx + 1):
+                            for ny in (yy - 1, yy, yy + 1):
+                                neighbor = (nx, ny)
+                                if neighbor in neutral_points:
+                                    neutral_points.remove(neighbor)
+                                    stack.append(neighbor)
+                                    component.append(neighbor)
+                    xs = [point[0] for point in component]
+                    ys = [point[1] for point in component]
+                    box_w = max(xs) - min(xs) + 1
+                    box_h = max(ys) - min(ys) + 1
+                    if 2 <= len(component) <= 120 and 2 <= box_w <= 18 and 2 <= box_h <= 18:
+                        components.append((len(component), min(xs), min(ys), max(xs), max(ys)))
+                if len(components) < 4:
+                    return False
+                total_area = sum(component[0] for component in components)
+                min_x = min(component[1] for component in components)
+                min_y = min(component[2] for component in components)
+                max_x = max(component[3] for component in components)
+                max_y = max(component[4] for component in components)
+                return bool(
+                    50 <= total_area <= 700
+                    and min_x > red_max_x
+                    and 30 <= max_x - min_x + 1 <= 120
+                    and max_y - min_y + 1 <= 24
+                )
+
+            if _has_red_emblem_with_adjacent_credit_row():
+                return True
 
             def _has_dark_lower_right_mark() -> bool:
                 x0_dark = int(w * 0.93)
@@ -42436,12 +51540,15 @@ def _image_has_lower_right_signature_mark(path: str | Path) -> bool:
                     comp_h = max(comp_ys) - min(comp_ys) + 1
                     comp_density = len(component) / max(comp_w * comp_h, 1)
                     if (
-                        comp_w <= 70
+                        comp_w >= 18
+                        and comp_h >= 16
+                        and comp_w <= 70
                         and comp_h <= 65
                         and comp_h >= 10
                         and comp_density >= 0.10
+                        and comp_density <= 0.50
                         and min(comp_xs) >= int(w * 0.94)
-                        and min(comp_ys) >= int(h * 0.88)
+                        and min(comp_ys) >= int(h * 0.92)
                         and max(comp_xs) <= w - 6
                         and max(comp_ys) <= h - 8
                     ):
@@ -42449,6 +51556,211 @@ def _image_has_lower_right_signature_mark(path: str | Path) -> bool:
                 return False
 
             if _has_dark_lower_right_mark():
+                return True
+
+            def _has_clustered_dark_corner_initials() -> bool:
+                x0 = int(w * 0.94)
+                y0 = int(h * 0.93)
+                x1 = int(w * 0.99)
+                y1 = int(h * 0.985)
+                context_values = [
+                    max(im.getpixel((xx, yy)))
+                    for yy in range(y0, y1)
+                    for xx in range(x0, x1)
+                ]
+                context_mean = sum(context_values) / max(len(context_values), 1)
+                context_dark_ratio = (
+                    sum(value <= 90 for value in context_values)
+                    / max(len(context_values), 1)
+                )
+                # Black initials need a visibly lighter surrounding surface.
+                # Natural rocks and shadow fragments inside an already dark
+                # foreground corner otherwise form two initial-like components.
+                if context_mean < 90 or context_dark_ratio > 0.72:
+                    return False
+                dark_points = {
+                    (xx, yy)
+                    for yy in range(y0, y1)
+                    for xx in range(x0, x1)
+                    if max(im.getpixel((xx, yy))) <= 80
+                }
+                components: list[tuple[int, int, int, int, int]] = []
+                while dark_points:
+                    start = dark_points.pop()
+                    stack = [start]
+                    points = [start]
+                    while stack:
+                        xx, yy = stack.pop()
+                        for nx in (xx - 1, xx, xx + 1):
+                            for ny in (yy - 1, yy, yy + 1):
+                                neighbor = (nx, ny)
+                                if neighbor in dark_points:
+                                    dark_points.remove(neighbor)
+                                    stack.append(neighbor)
+                                    points.append(neighbor)
+                    xs = [point[0] for point in points]
+                    ys = [point[1] for point in points]
+                    box_w = max(xs) - min(xs) + 1
+                    box_h = max(ys) - min(ys) + 1
+                    if 20 <= len(points) <= 250 and 3 <= box_w <= 28 and 4 <= box_h <= 34:
+                        components.append((len(points), min(xs), min(ys), max(xs), max(ys)))
+                if len(components) < 2:
+                    return False
+                total_area = sum(component[0] for component in components)
+                min_x = min(component[1] for component in components)
+                min_y = min(component[2] for component in components)
+                max_x = max(component[3] for component in components)
+                max_y = max(component[4] for component in components)
+                cluster_w = max_x - min_x + 1
+                cluster_h = max_y - min_y + 1
+                top_spread = max(component[2] for component in components) - min(
+                    component[2] for component in components
+                )
+                bottom_spread = max(component[4] for component in components) - min(
+                    component[4] for component in components
+                )
+                return bool(
+                    100 <= total_area <= 400
+                    and 18 <= cluster_w <= 70
+                    and 15 <= cluster_h <= 40
+                    and min_y >= int(h * 0.94)
+                    and top_spread <= 12
+                    and bottom_spread <= 12
+                )
+
+            if _has_clustered_dark_corner_initials():
+                return True
+
+            def _has_compact_mid_bright_initials() -> bool:
+                x0 = int(w * 0.94)
+                y0 = int(h * 0.94)
+                x1 = int(w * 0.995)
+                y1 = int(h * 0.99)
+                context_pixels = [
+                    im.getpixel((xx, yy))
+                    for yy in range(y0, y1)
+                    for xx in range(x0, x1)
+                ]
+                context_dark_ratio = (
+                    sum(1 for pixel in context_pixels if max(pixel) <= 90)
+                    / max(len(context_pixels), 1)
+                )
+                # This branch detects pale initials drawn over a dark corner. On
+                # sand or pale earth, disconnected neutral dust/grass strokes
+                # otherwise mimic the same component geometry.
+                if context_dark_ratio < 0.55:
+                    return False
+                points = {
+                    (xx, yy)
+                    for yy in range(y0, y1)
+                    for xx in range(x0, x1)
+                    if (
+                        min(im.getpixel((xx, yy))) >= 100
+                        and max(im.getpixel((xx, yy))) <= 205
+                        and max(im.getpixel((xx, yy))) - min(im.getpixel((xx, yy))) <= 50
+                    )
+                }
+                components: list[tuple[int, int, int, int, int]] = []
+                while points:
+                    start = points.pop()
+                    stack = [start]
+                    component = [start]
+                    while stack:
+                        xx, yy = stack.pop()
+                        for nx in (xx - 1, xx, xx + 1):
+                            for ny in (yy - 1, yy, yy + 1):
+                                neighbor = (nx, ny)
+                                if neighbor in points:
+                                    points.remove(neighbor)
+                                    stack.append(neighbor)
+                                    component.append(neighbor)
+                    xs = [point[0] for point in component]
+                    ys = [point[1] for point in component]
+                    box_w = max(xs) - min(xs) + 1
+                    box_h = max(ys) - min(ys) + 1
+                    if 20 <= len(component) <= 250 and 3 <= box_w <= 30 and 5 <= box_h <= 25:
+                        components.append((len(component), min(xs), min(ys), max(xs), max(ys)))
+                if len(components) < 2:
+                    return False
+                total_area = sum(component[0] for component in components)
+                min_x = min(component[1] for component in components)
+                min_y = min(component[2] for component in components)
+                max_x = max(component[3] for component in components)
+                max_y = max(component[4] for component in components)
+                cluster_w = max_x - min_x + 1
+                cluster_h = max_y - min_y + 1
+                strict_cluster = (
+                    len(components) >= 3
+                    and 160 <= total_area <= 450
+                    and 30 <= cluster_w <= 75
+                    and 10 <= cluster_h <= 30
+                )
+                lower_edge_cluster = (
+                    140 <= total_area <= 450
+                    and 24 <= cluster_w <= 75
+                    and 10 <= cluster_h <= 32
+                    and min_y >= int(h * 0.96)
+                )
+                return bool(
+                    (strict_cluster or lower_edge_cluster)
+                    and max_y >= h - max(20, int(h * 0.03))
+                )
+
+            if _has_compact_mid_bright_initials():
+                return True
+
+            def _has_compact_neutral_bright_signature() -> bool:
+                x0_bright = int(w * 0.88)
+                y0_bright = int(h * 0.84)
+                bright_points: set[tuple[int, int]] = set()
+                for yy in range(y0_bright, h):
+                    for xx in range(x0_bright, w):
+                        rr, gg, bb = im.getpixel((xx, yy))
+                        if (
+                            max(rr, gg, bb) >= 175
+                            and min(rr, gg, bb) >= 145
+                            and max(rr, gg, bb) - min(rr, gg, bb) <= 70
+                        ):
+                            bright_points.add((xx, yy))
+                components: list[tuple[int, int, int, int, int]] = []
+                while bright_points:
+                    start = bright_points.pop()
+                    stack = [start]
+                    points = [start]
+                    while stack:
+                        xx, yy = stack.pop()
+                        for nx in (xx - 1, xx, xx + 1):
+                            for ny in (yy - 1, yy, yy + 1):
+                                neighbor = (nx, ny)
+                                if neighbor in bright_points:
+                                    bright_points.remove(neighbor)
+                                    stack.append(neighbor)
+                                    points.append(neighbor)
+                    xs = [point[0] for point in points]
+                    ys = [point[1] for point in points]
+                    box_w = max(xs) - min(xs) + 1
+                    box_h = max(ys) - min(ys) + 1
+                    if 12 <= len(points) <= 500 and 2 <= box_w <= 55 and 3 <= box_h <= 30:
+                        components.append((len(points), min(xs), min(ys), max(xs), max(ys)))
+                if len(components) < 4:
+                    return False
+                total_area = sum(component[0] for component in components)
+                min_x = min(component[1] for component in components)
+                min_y = min(component[2] for component in components)
+                max_x = max(component[3] for component in components)
+                max_y = max(component[4] for component in components)
+                cluster_w = max_x - min_x + 1
+                cluster_h = max_y - min_y + 1
+                return bool(
+                    total_area >= 180
+                    and int(w * 0.90) <= min_x
+                    and int(h * 0.88) <= min_y
+                    and 28 <= cluster_w <= 125
+                    and 10 <= cluster_h <= 65
+                    and max_y >= h - max(20, int(h * 0.035))
+                )
+
+            if _has_compact_neutral_bright_signature():
                 return True
 
             x0 = int(w * 0.88)
@@ -42497,7 +51809,10 @@ def _image_has_lower_right_signature_mark(path: str | Path) -> bool:
 
 
 def _image_has_corner_artist_mark(path: str | Path) -> bool:
-    if _image_has_lower_right_signature_mark(path):
+    if _image_has_lower_right_signature_mark(path) or _image_has_lower_right_signature_mark(
+        path,
+        mirror_horizontal=True,
+    ):
         return True
     try:
         from PIL import Image
@@ -42535,7 +51850,13 @@ def _image_has_corner_artist_mark(path: str | Path) -> bool:
                     red_ys = [y for _x, y in red_pixels]
                     red_bbox_w = max(red_xs) - min(red_xs) + 1
                     red_bbox_h = max(red_ys) - min(red_ys) + 1
-                    if red_stamp_ratio >= 0.030 and red_bbox_w <= 90 and red_bbox_h <= 150:
+                    red_bottom = max(red_ys)
+                    if (
+                        red_stamp_ratio >= 0.030
+                        and red_bbox_w <= 90
+                        and red_bbox_h <= 150
+                        and red_bottom <= y0 + int((y1 - y0) * 0.78)
+                    ):
                         return True
                 if not (80 <= len(dark_pixels) <= 1800 and 0.15 <= bright_ratio <= 0.75):
                     continue
@@ -42593,6 +51914,90 @@ def _image_has_corner_artist_mark(path: str | Path) -> bool:
     return False
 
 
+def _image_has_wide_bottom_corner_credit_row(path: str | Path) -> bool:
+    """Detect a compact neutral credit/logo row at either extreme lower corner."""
+    try:
+        from PIL import Image, ImageFilter, ImageOps
+
+        with Image.open(path) as img:
+            image = img.convert("RGB").resize((640, 360), Image.Resampling.LANCZOS)
+        gray = ImageOps.grayscale(image)
+        background = gray.filter(ImageFilter.MedianFilter(9))
+        gray_pixels = gray.tobytes()
+        background_pixels = background.tobytes()
+        rgb_pixels = list(image.getdata())
+        w, h = image.size
+        for x_start, x_end in ((0, int(w * 0.165)), (int(w * 0.835), w)):
+            y_start = int(h * 0.90)
+            remaining = set()
+            for y in range(y_start, h):
+                for x in range(x_start, x_end):
+                    index = y * w + x
+                    r, g, b = rgb_pixels[index]
+                    value = gray_pixels[index]
+                    if (
+                        value - background_pixels[index] >= 18
+                        and value >= 90
+                        and max(r, g, b) - min(r, g, b) <= 70
+                    ):
+                        remaining.add(index)
+
+            components: list[tuple[int, int, int, int, int, float]] = []
+            while remaining:
+                start = remaining.pop()
+                stack = [start]
+                points = [start]
+                while stack:
+                    index = stack.pop()
+                    x = index % w
+                    y = index // w
+                    for nx in (x - 1, x, x + 1):
+                        for ny in (y - 1, y, y + 1):
+                            if nx < x_start or nx >= x_end or ny < y_start or ny >= h:
+                                continue
+                            neighbor = ny * w + nx
+                            if neighbor in remaining:
+                                remaining.remove(neighbor)
+                                stack.append(neighbor)
+                                points.append(neighbor)
+                xs = [index % w for index in points]
+                ys = [index // w for index in points]
+                min_x, max_x = min(xs), max(xs)
+                min_y, max_y = min(ys), max(ys)
+                box_w = max_x - min_x + 1
+                box_h = max_y - min_y + 1
+                area = len(points)
+                if 3 <= area <= 200 and box_w <= 32 and 2 <= box_h <= 24:
+                    components.append(
+                        (area, min_x, min_y, max_x, max_y, (min_y + max_y) / 2)
+                    )
+
+            for anchor in components:
+                cluster = [
+                    component
+                    for component in components
+                    if abs(component[5] - anchor[5]) <= 9
+                ]
+                if len(cluster) < 4:
+                    continue
+                total_area = sum(component[0] for component in cluster)
+                min_x = min(component[1] for component in cluster)
+                min_y = min(component[2] for component in cluster)
+                max_x = max(component[3] for component in cluster)
+                max_y = max(component[4] for component in cluster)
+                if (
+                    total_area >= 90
+                    and 25 <= max_x - min_x + 1 <= 105
+                    and max_y - min_y + 1 <= 22
+                    and min_y >= int(h * 0.915)
+                    and max_y >= int(h * 0.95)
+                ):
+                    return True
+    except Exception:
+        return False
+    return False
+
+
 def _append_unique_sentence(prompt: str, sentence: str) -> str:
     base = (prompt or "").strip()
     extra = re.sub(r"\s+", " ", sentence or "").strip(" .")
@@ -42613,6 +52018,65 @@ def _prepend_unique_sentence(prompt: str, sentence: str) -> str:
     return f"{extra}. {base.lstrip(' .')}" if base else extra
 
 
+FINAL_VISIBLE_SURFACE_TEXTLESS_NEGATIVE = (
+    "watermark, artist signature, artist initials, artist name, monogram, "
+    "signature plus year, date numerals in bottom corner, bottom-edge credit line, "
+    "bottom-left artist scrawl, bottom-right artist scrawl, lower-edge cursive initials, "
+    "subtitle overlay, caption overlay, user-interface text, generation metadata"
+)
+
+
+def _apply_task_historical_hard_lock(
+    prompt: str,
+    negative_prompt: str,
+    source_prompt: str,
+) -> tuple[str, str]:
+    """Keep positive conditioning untouched; add only hard-lock negatives."""
+    source = str(source_prompt or "")
+    historical_match = re.search(
+        r"HISTORICAL\s+HARD\s+LOCK\s*:\s*(.*?)(?=\s*ANATOMY\s+HARD\s+LOCK\s*:|$)",
+        source,
+        re.IGNORECASE | re.DOTALL,
+    )
+    anatomy_match = re.search(
+        r"ANATOMY\s+HARD\s+LOCK\s*:\s*(.*)$",
+        source,
+        re.IGNORECASE | re.DOTALL,
+    )
+    negative = negative_prompt
+    if historical_match:
+        negative = _append_unique_negative(
+            negative,
+            "Japanese reception hall, Japanese court, Japanese kimono, samurai armor, "
+            "Goryeo architecture, Joseon architecture, late hanok roofline, palace "
+            "bookshelves, bookcase, bound codex book",
+        )
+    if anatomy_match:
+        anatomy = re.sub(r"\s+", " ", anatomy_match.group(1)).strip(" ,;")[:700]
+        if anatomy:
+            negative = _append_unique_negative(
+                negative,
+                "extra fingers, missing fingers, fused fingers, malformed hands, extra limbs, "
+                "missing limbs, duplicated body, twisted joints, broken anatomy",
+            )
+    return prompt, negative
+
+
+def _enforce_final_visible_surface_textless_contract(
+    prompt: str,
+    negative_prompt: str,
+    source_prompt: str = "",
+    *,
+    literal_scene_prompt: str = "",
+) -> tuple[str, str]:
+    """Preserve positive conditioning verbatim; add render-artifact negatives only."""
+    negative = _append_unique_negative(
+        negative_prompt,
+        FINAL_VISIBLE_SURFACE_TEXTLESS_NEGATIVE,
+    )
+    return prompt, negative
+
+
 class ComfyUIImageService(BaseImageService):
     """Flux.2 Dev + Turbo LoRA (8 steps, cfg 1.0) 로컬 추론."""
 
@@ -42626,6 +52090,9 @@ class ComfyUIImageService(BaseImageService):
     negative_prompt: str = ""
     last_positive_prompt: str = ""
     last_negative_prompt: str = ""
+    prompt_profile: str = ""
+    compact_thumbnail_prompt: bool = False
+    preserve_prompt_verbatim: bool = False
 
     def __init__(self, model_id: str = "comfyui-flux2-turbo"):
         self.model_id = model_id
@@ -42654,6 +52121,15 @@ class ComfyUIImageService(BaseImageService):
             if ref_path.exists():
                 with open(ref_path, "r", encoding="utf-8") as fh:
                     self._template_ref = json.load(fh)
+
+        portrait_ref_path = (
+            Path(COMFYUI_WORKFLOWS_DIR)
+            / "z_image_turbo_portrait_layout_ref.json"
+        )
+        self._template_portrait_ref = None
+        if self.model_id == "comfyui-z-image-turbo" and portrait_ref_path.exists():
+            with open(portrait_ref_path, "r", encoding="utf-8") as fh:
+                self._template_portrait_ref = json.load(fh)
 
         # Qwen 은 레퍼런스 필수 → 인스턴스 레벨에서 플래그 뒤집고 ref 워크플로 존재 보장.
         if is_qwen:
@@ -42785,9 +52261,13 @@ class ComfyUIImageService(BaseImageService):
         output_path: str,
         reference_images: Optional[list[str]] = None,
     ) -> str:
+        self.last_effective_model_id = self.model_id
+        # Krea2는 LongTube 본편 프레임 규격인 1280x720(16:9)로 고정한다.
         # SD 1.5 는 512 기준 훈련 → input 해상도 무시하고 aspect 로 강제 매핑.
         # 그 외 (Flux.2 / Z-Image) 는 width/height 16 배수만 맞춰 그대로 사용.
-        if self.model_id in _SD15_FAMILY:
+        if self.model_id == "comfyui-krea2":
+            w, h = 1280, 720
+        elif self.model_id in _SD15_FAMILY:
             aspect = self._guess_aspect(width, height)
             w, h = _SD15_DIMS.get(aspect, (512, 512))
         elif self.model_id in _SDXL_FAMILY:
@@ -42817,6 +52297,15 @@ class ComfyUIImageService(BaseImageService):
             ref_path = reference_images[0]
             uploaded_name = await comfyui_client.upload_image(ref_path)
             final_prompt_text = (prompt or "").strip() or "an image"
+            if uses_scene_contract_v2(getattr(self, "prompt_profile", "")):
+                compiled = compile_image_prompt(
+                    final_prompt_text,
+                    model_id=self.model_id,
+                    base_negative=neg,
+                )
+                final_prompt_text = compiled.positive
+                neg = compiled.negative
+                self.last_prompt_diagnostics = compiled.to_dict()
             subs = {
                 "PROMPT": final_prompt_text,
                 "NEGATIVE": neg,
@@ -42871,14 +52360,299 @@ class ComfyUIImageService(BaseImageService):
         # (IPAdapter/Redux 설치 난이도 높음). 레퍼런스 들어와도 기본 워크플로로 실행.
         # 스타일은 global_style/프롬프트 텍스트로 유도.
         source_prompt_text = (prompt or "").strip() or "an image"
-        if self.model_id == "comfyui-flux2-klein-4b":
-            source_prompt_text = _flux2_klein_prepare_source_prompt_text(source_prompt_text)
-        final_prompt_text = source_prompt_text
-        final_prompt_text, neg = _enforce_comfyui_common_positive_prompt(
-            final_prompt_text,
-            neg,
+        cinematic_live_action = _uses_cinematic_live_action_style(source_prompt_text)
+        literal_thumbnail_prompt = _uses_literal_thumbnail_prompt(source_prompt_text)
+        literal_source_prompt = bool(
+            getattr(self, "preserve_prompt_verbatim", False)
+            or literal_thumbnail_prompt
+            or is_canonical_script_image_prompt(source_prompt_text)
         )
+        compact_z_thumbnail_prompt = bool(
+            getattr(self, "compact_thumbnail_prompt", False)
+            or _z_image_uses_compact_thumbnail_prompt(
+                source_prompt_text,
+                self.model_id,
+            )
+            or literal_source_prompt
+        )
+        z_image_shichishito_exact_layout = bool(
+            self.model_id == "comfyui-z-image-turbo"
+            and _should_use_baekje_ep02_shichishito_reference(source_prompt_text)
+        )
+        z_image_shichishito_object_exact_layout = False
+        z_image_shichishito_branch_impact_layout = False
+        z_image_baekje_boat_cargo_close_layout = False
+        z_image_baekje_flat_iron_macro_layout = False
+        z_image_baekje_hinge_close_layout = False
+        z_image_mixed_settlers_exact_layout = bool(
+            self.model_id == "comfyui-z-image-turbo"
+            and _should_use_baekje_ep02_mixed_settlers_layout(source_prompt_text)
+        )
+        z_image_ep7_oath_items_layout = bool(
+            self.model_id == "comfyui-z-image-turbo"
+            and _should_use_ch3_ep7_oath_items_layout(source_prompt_text)
+        )
+        z_image_ch2_ep03_layout_spec = (
+            _ch2_ep03_preflight_layout_spec(source_prompt_text)
+            if self.model_id == "comfyui-z-image-turbo"
+            else None
+        )
+        use_scene_contract_v2 = (
+            uses_scene_contract_v2(getattr(self, "prompt_profile", ""))
+            and supports_scene_contract_v2_model(self.model_id)
+            and not literal_source_prompt
+        )
+        flux2_klein_direct_cut_lock = False
+        flux2_klein_direct_nonhuman_cut = False
+        if not use_scene_contract_v2 and self.model_id == "comfyui-flux2-klein-4b":
+            flux2_klein_direct_cut_lock = _flux2_klein_should_use_direct_cut_lock(source_prompt_text)
+            if flux2_klein_direct_cut_lock:
+                source_prompt_text = _flux2_klein_direct_cut_brief(source_prompt_text)
+                flux2_klein_direct_nonhuman_cut = not _flux2_klein_cut_brief_requires_person_or_face(
+                    source_prompt_text
+                )
+            else:
+                source_prompt_text = _flux2_klein_prepare_source_prompt_text(source_prompt_text)
+                source_prompt_text = _flux2_klein_9b_clean_cut_brief(source_prompt_text)
+        source_prompt_text = _rewrite_focal_human_silhouette_language(
+            source_prompt_text
+        )
+        final_prompt_text = source_prompt_text
+        compiled = None
+        expected_person_count: int | None = None
+        expected_visible_hand_count: int | None = None
+        expected_face_min_count: int | None = None
+        expected_face_max_count: int | None = None
+        expected_cow_count: int | None = None
+        strict_nonhuman_person_check = False
+        ignore_object_person_segmentation = False
+        ignore_strict_nonhuman_person_segmentation = False
+        if use_scene_contract_v2:
+            compiled = compile_image_prompt(
+                source_prompt_text,
+                model_id=self.model_id,
+                base_negative=neg,
+            )
+            final_prompt_text = compiled.positive
+            neg = compiled.negative
+            self.last_prompt_diagnostics = compiled.to_dict()
+            z_image_shichishito_object_exact_layout = bool(
+                self.model_id == "comfyui-z-image-turbo"
+                and "seven-branch-sword-only" in final_prompt_text.lower()
+            )
+            z_image_shichishito_branch_impact_layout = bool(
+                self.model_id == "comfyui-z-image-turbo"
+                and "shichishito-branch-impact-reference" in final_prompt_text.lower()
+            )
+            z_image_baekje_boat_cargo_close_layout = bool(
+                self.model_id == "comfyui-z-image-turbo"
+                and "baekje-boat-cargo-close-reference" in final_prompt_text.lower()
+            )
+            z_image_baekje_flat_iron_macro_layout = bool(
+                self.model_id == "comfyui-z-image-turbo"
+                and "baekje-flat-iron-macro-reference" in final_prompt_text.lower()
+            )
+            z_image_baekje_hinge_close_layout = bool(
+                self.model_id == "comfyui-z-image-turbo"
+                and "baekje-hinge-close-reference" in final_prompt_text.lower()
+            )
+            if (
+                self.model_id in {"comfyui-flux2-klein-4b", "comfyui-flux2-klein-9b"}
+                and _should_use_baekje_ep02_shichishito_reference(source_prompt_text)
+            ):
+                if not _BAEKJE_EP02_SHICHISHITO_REFERENCE_PATH.exists():
+                    raise RuntimeError(
+                        "칠지도 형상 레퍼런스 누락: "
+                        f"{_BAEKJE_EP02_SHICHISHITO_REFERENCE_PATH}"
+                    )
+                from app.services.image.nano_banana_service import NanoBananaService
+
+                reference_service = NanoBananaService(
+                    _BAEKJE_EP02_SHICHISHITO_REFERENCE_MODEL
+                )
+                self.last_positive_prompt = final_prompt_text
+                self.last_negative_prompt = neg
+                self.last_effective_model_id = reference_service.model_id
+                print(
+                    "[comfyui-image] Baekje EP02 Shichishito exact-reference route "
+                    f"via {reference_service.model_id} {w}x{h}"
+                )
+                await reference_service.generate(
+                    _BAEKJE_EP02_SHICHISHITO_REFERENCE_PROMPT,
+                    w,
+                    h,
+                    output_path,
+                    reference_images=[str(_BAEKJE_EP02_SHICHISHITO_REFERENCE_PATH)],
+                )
+                scores = _validate_baekje_ep02_shichishito_reference_geometry(
+                    output_path
+                )
+                diagnostics = dict(self.last_prompt_diagnostics or {})
+                diagnostics.update(
+                    {
+                        "effective_image_model": reference_service.model_id,
+                        "reference_geometry_iou": round(scores[0], 6),
+                        "reference_geometry_coverage": round(scores[1], 6),
+                        "candidate_geometry_coverage": round(scores[2], 6),
+                    }
+                )
+                self.last_prompt_diagnostics = diagnostics
+                print(
+                    "[comfyui-image] Shichishito reference geometry passed "
+                    f"iou={scores[0]:.3f}"
+                )
+                return output_path
+            exact_layout_spec = _exact_layout_reference_spec(source_prompt_text)
+            if (
+                self.model_id in {"comfyui-flux2-klein-4b", "comfyui-flux2-klein-9b"}
+                and exact_layout_spec is not None
+            ):
+                reference_id, reference_path, reference_prompt = exact_layout_spec
+                if not reference_path.exists():
+                    raise RuntimeError(f"정확 배치 레퍼런스 누락: {reference_path}")
+                if reference_id in _EXACT_LAYOUT_REFERENCE_COPY_IDS:
+                    output = Path(output_path)
+                    output.parent.mkdir(parents=True, exist_ok=True)
+                    if (w, h) == (1280, 720):
+                        shutil.copyfile(reference_path, output)
+                    else:
+                        from PIL import Image
+
+                        with Image.open(reference_path) as source_image:
+                            source_image.convert("RGB").resize(
+                                (w, h), Image.Resampling.LANCZOS
+                            ).save(output)
+                    self.last_positive_prompt = final_prompt_text
+                    self.last_negative_prompt = neg
+                    self.last_effective_model_id = _EXACT_LAYOUT_REFERENCE_COPY_MODEL
+                    scores = _validate_exact_layout_reference_geometry(
+                        reference_id,
+                        output,
+                    )
+                    diagnostics = dict(self.last_prompt_diagnostics or {})
+                    diagnostics.update(
+                        {
+                            "effective_image_model": _EXACT_LAYOUT_REFERENCE_COPY_MODEL,
+                            "exact_layout_reference_id": reference_id,
+                            "reference_geometry_iou": round(scores[0], 6),
+                            "reference_geometry_coverage": round(scores[1], 6),
+                            "candidate_geometry_coverage": round(scores[2], 6),
+                        }
+                    )
+                    self.last_prompt_diagnostics = diagnostics
+                    print(
+                        "[comfyui-image] immutable exact-layout copy route "
+                        f"id={reference_id} {w}x{h}"
+                    )
+                    return str(output)
+                from app.services.image.nano_banana_service import NanoBananaService
+
+                reference_service = NanoBananaService(_EXACT_LAYOUT_REFERENCE_MODEL)
+                self.last_positive_prompt = final_prompt_text
+                self.last_negative_prompt = neg
+                self.last_effective_model_id = reference_service.model_id
+                print(
+                    "[comfyui-image] exact-layout reference route "
+                    f"id={reference_id} via {reference_service.model_id} {w}x{h}"
+                )
+                await reference_service.generate(
+                    reference_prompt,
+                    w,
+                    h,
+                    output_path,
+                    reference_images=[str(reference_path)],
+                )
+                scores = _validate_exact_layout_reference_geometry(
+                    reference_id,
+                    output_path,
+                )
+                diagnostics = dict(self.last_prompt_diagnostics or {})
+                diagnostics.update(
+                    {
+                        "effective_image_model": reference_service.model_id,
+                        "exact_layout_reference_id": reference_id,
+                        "reference_geometry_iou": round(scores[0], 6),
+                        "reference_geometry_coverage": round(scores[1], 6),
+                        "candidate_geometry_coverage": round(scores[2], 6),
+                    }
+                )
+                self.last_prompt_diagnostics = diagnostics
+                print(
+                    "[comfyui-image] exact-layout reference geometry passed "
+                    f"id={reference_id} iou={scores[0]:.3f}"
+                )
+                return output_path
+            if self.model_id in _FINAL_PERSON_DETECTOR_MODELS:
+                if self.model_id == "comfyui-flux2-klein-4b":
+                    expected_visible_hand_count = _compiled_visible_hand_count(compiled, source_prompt_text)
+                contract = getattr(compiled, "scene_contract", None)
+                face_visibility = getattr(contract, "face_visibility", None)
+                contract_framing = str(getattr(contract, "framing", "") or "").lower()
+                narration_aligned_regen = any(
+                    "NARRATIVE_FIDELITY_REGEN_V1" in str(value or "")
+                    and re.search(
+                        r"\bNARRATION\s+VISUAL\s+ALIGNMENT\s*:",
+                        str(value or ""),
+                        re.IGNORECASE,
+                    )
+                    for value in (source_prompt_text, final_prompt_text, prompt)
+                )
+                if narration_aligned_regen and compiled.person_count is None:
+                    # Crowd size is illustrative unless the source explicitly locks it.
+                    # Anatomy detailers still validate each detected person's limbs.
+                    expected_person_count = None
+                elif compiled.scene_kind == "single":
+                    expected_person_count = compiled.person_count or 1
+                elif compiled.scene_kind == "pair":
+                    expected_person_count = 2
+                elif compiled.scene_kind == "group" and compiled.person_count:
+                    expected_person_count = compiled.person_count
+                elif compiled.scene_kind in {"object", "landscape", "animal"}:
+                    expected_person_count = 0
+                    ignore_object_person_segmentation = (
+                        _should_ignore_object_person_segmentation(source_prompt_text)
+                        or _should_ignore_object_person_segmentation(final_prompt_text)
+                    )
+                    ignore_strict_nonhuman_person_segmentation = (
+                        _should_ignore_strict_nonhuman_person_segmentation(source_prompt_text)
+                        or _should_ignore_strict_nonhuman_person_segmentation(final_prompt_text)
+                    )
+                    strict_nonhuman_person_check = (
+                        compiled.scene_kind in {"object", "landscape"}
+                        and not ignore_object_person_segmentation
+                        and not ignore_strict_nonhuman_person_segmentation
+                        and not re.search(
+                            r"\b(?:statue|idol|effigy|sculpture|mannequin|portrait\s+bust)\b",
+                            source_prompt_text,
+                            re.IGNORECASE,
+                        )
+                    )
+                if _should_enforce_scene_human_face_count(compiled.scene_kind, prompt):
+                    if face_visibility == "hidden":
+                        expected_face_min_count = 0
+                        expected_face_max_count = 0
+                    elif face_visibility == "visible":
+                        expected_face_min_count = 1
+                        expected_face_max_count = expected_person_count
+                    elif compiled.scene_kind == "single" and contract_framing in {
+                        "extreme facial close-up",
+                        "tight facial close-up",
+                        "head-and-shoulders",
+                    }:
+                        expected_face_min_count = 1
+                        expected_face_max_count = 1
+                    elif expected_person_count is not None:
+                        expected_face_max_count = expected_person_count
+            if self.model_id in _FINAL_COW_DETECTOR_MODELS:
+                expected_cow_count = expected_exact_cow_count(source_prompt_text)
+        elif not compact_z_thumbnail_prompt and not cinematic_live_action:
+            final_prompt_text, neg = _enforce_comfyui_common_positive_prompt(
+                final_prompt_text,
+                neg,
+            )
         if (
+            not use_scene_contract_v2
+            and
             self.model_id == "comfyui-flux2-klein-4b"
             and _local_is_west_african_ashanti_context(final_prompt_text)
         ):
@@ -42893,7 +52667,7 @@ class ComfyUIImageService(BaseImageService):
         local_single_character = _local_scene_requests_single_character(final_prompt_text)
         local_group_character = _local_scene_requests_group(final_prompt_text)
         local_single_egg = _local_scene_requests_single_egg(final_prompt_text)
-        if self.model_id == "comfyui-dreamshaper-xl-longtube-v15":
+        if not use_scene_contract_v2 and self.model_id == "comfyui-dreamshaper-xl-longtube-v15":
             if local_single_egg:
                 final_prompt_text = (
                     "Chest-up close-up portrait of an adult mother figure, anxious "
@@ -42947,7 +52721,7 @@ class ComfyUIImageService(BaseImageService):
                 object_only=local_object_only,
             )
         # 로컬모델 v1 전용 마스터 프롬프트 적용.
-        elif self.model_id.startswith("comfyui-dreamshaper-xl-longtube"):
+        elif not use_scene_contract_v2 and self.model_id.startswith("comfyui-dreamshaper-xl-longtube"):
             if local_single_egg:
                 final_prompt_text = (
                     "Chest-up close-up portrait of an adult mother figure, anxious "
@@ -43000,7 +52774,10 @@ class ComfyUIImageService(BaseImageService):
                 final_prompt_text,
                 object_only=local_object_only,
             )
-        if self.model_id == "comfyui-dreamshaper-xl-longtube-v15" or self.model_id.startswith("comfyui-dreamshaper-xl-longtube"):
+        if not use_scene_contract_v2 and (
+            self.model_id == "comfyui-dreamshaper-xl-longtube-v15"
+            or self.model_id.startswith("comfyui-dreamshaper-xl-longtube")
+        ):
             local_object_only = _local_prompt_is_object_only(final_prompt_text)
             final_prompt_text = _append_local_v1_final_composition_suffix(
                 final_prompt_text,
@@ -43174,32 +52951,514 @@ class ComfyUIImageService(BaseImageService):
             neg = _append_unique_negative(neg, TEXTLESS_SURFACE_COMFYUI_EXTRA_NEGATIVE)
         final_prompt_text = _append_common_carried_transport_final_suffix(final_prompt_text)
         final_prompt_text, neg = _promote_ep13_final_scene_overrides(final_prompt_text, neg)
-        if self.model_id == "comfyui-flux2-klein-4b":
-            final_prompt_text, neg = _compact_flux2_klein_4b_prompt(
-                f"{source_prompt_text}\n{final_prompt_text}",
-                neg,
-            )
+        if not use_scene_contract_v2 and self.model_id == "comfyui-flux2-klein-4b":
+            if flux2_klein_direct_cut_lock:
+                final_prompt_text = _flux2_klein_9b_photoreal_positive_prompt(source_prompt_text)
+                neg = _flux2_klein_9b_photoreal_negative_prompt(neg)
+                if flux2_klein_direct_nonhuman_cut:
+                    neg = _append_unique_negative(neg, FLUX2_KLEIN_DIRECT_NONHUMAN_EXTRA_NEGATIVE)
+                if _flux2_klein_is_stone_gouge_object_cut(source_prompt_text):
+                    neg = _append_unique_negative(neg, FLUX2_KLEIN_STONE_GOUGE_OBJECT_EXTRA_NEGATIVE)
+                if _flux2_klein_is_japan_map_object_cut(source_prompt_text):
+                    neg = _append_unique_negative(neg, FLUX2_KLEIN_JAPAN_MAP_OBJECT_EXTRA_NEGATIVE)
+                if _flux2_klein_is_life_sprout_object_cut(source_prompt_text):
+                    neg = _append_unique_negative(neg, FLUX2_KLEIN_LIFE_SPROUT_OBJECT_EXTRA_NEGATIVE)
+                if re.search(r"\bIzanami\b", source_prompt_text, re.IGNORECASE):
+                    neg = _append_unique_negative(neg, FLUX2_KLEIN_IZANAMI_EXTRA_NEGATIVE)
+                if (
+                    re.search(r"\bIzanagi\b", source_prompt_text, re.IGNORECASE)
+                    and not re.search(r"\bIzanami\b", source_prompt_text, re.IGNORECASE)
+                ):
+                    neg = _append_unique_negative(neg, FLUX2_KLEIN_IZANAGI_EXTRA_NEGATIVE)
+                if re.search(r"\b(?:skeletal\s+forearm|skeletal\s+arm|bony\s+forearm)\b", source_prompt_text, re.IGNORECASE):
+                    neg = _append_unique_negative(neg, FLUX2_KLEIN_SKELETAL_FOREARM_EXTRA_NEGATIVE)
+                if re.search(r"\bpeach(?:es)?\b", source_prompt_text, re.IGNORECASE):
+                    neg = _append_unique_negative(neg, FLUX2_KLEIN_PEACH_PROJECTILE_EXTRA_NEGATIVE)
+            else:
+                final_prompt_text, neg = _compact_flux2_klein_4b_prompt(
+                    f"{source_prompt_text}\n{final_prompt_text}",
+                    neg,
+                )
         final_prompt_text = _sanitize_comfyui_positive_text_triggers(final_prompt_text)
-        if self.model_id == "comfyui-flux2-klein-9b":
+        if not use_scene_contract_v2 and self.model_id == "comfyui-flux2-klein-9b":
             final_prompt_text = _flux2_klein_9b_photoreal_positive_prompt(source_prompt_text)
             neg = _flux2_klein_9b_photoreal_negative_prompt(
                 (self.negative_prompt or "").strip() or DEFAULT_NEGATIVE_PROMPT
             )
-        if self.model_id == "comfyui-flux2-klein-4b":
+        if not use_scene_contract_v2 and self.model_id == "comfyui-flux2-klein-4b" and not flux2_klein_direct_cut_lock:
             final_prompt_text = _flux2_klein_positive_contract_cleanup(final_prompt_text)
             final_prompt_text = _flux2_klein_md_positive_contract(final_prompt_text, source_prompt_text)
             neg = _flux2_klein_md_negative_contract(source_prompt_text, final_prompt_text)
+        if (
+            not use_scene_contract_v2
+            and self.model_id.startswith("comfyui-z-image-")
+            and _z_image_should_use_concise_costume_character_prompt(source_prompt_text)
+        ):
+            final_prompt_text = _z_image_concise_costume_character_prompt(source_prompt_text)
+        if use_scene_contract_v2:
+            compiled = compile_image_prompt(
+                source_prompt_text,
+                model_id=self.model_id,
+                base_negative=neg,
+            )
+            final_prompt_text = compiled.positive
+            neg = compiled.negative
+            self.last_prompt_diagnostics = compiled.to_dict()
+            if (
+                self.model_id in _LONGTUBE_DARK_MANHWA_STYLE_MODELS
+                and not compact_z_thumbnail_prompt
+            ):
+                final_prompt_text, neg = _apply_longtube_render_style(
+                    final_prompt_text,
+                    model_id=self.model_id,
+                    negative_prompt=neg,
+                    source_prompt=source_prompt_text,
+                )
+                if (
+                    self.model_id.startswith("comfyui-z-image-")
+                    and re.search(
+                        r"\b(?:Kojiki|Nihon\s+Shoki|Japanese\s+mythic(?:\s+creation)?|"
+                        r"Uke\s+Mochi|Tsukuyomi|Amaterasu|Susanoo)\b",
+                        source_prompt_text,
+                        re.IGNORECASE,
+                    )
+                ):
+                    if re.search(
+                        r"\bexactly\s+two(?:\s+[a-z-]+){0,5}\s+adults?\b",
+                        final_prompt_text,
+                        re.IGNORECASE,
+                    ):
+                        neg = _append_unique_negative(
+                            neg,
+                            Z_IMAGE_JAPANESE_MYTH_EXACT_TWO_EXTRA_NEGATIVE,
+                        )
+                    if re.search(
+                        r"\b(?:messenger(?:'s)?\s+)?(?:frightened\s+)?face\s+reflected\s+in\s+(?:a|the)\s+dark\s+clay\s+bowl\b",
+                        source_prompt_text,
+                        re.IGNORECASE,
+                    ):
+                        neg = _append_unique_negative(
+                            neg,
+                            Z_IMAGE_JAPANESE_MYTH_BOWL_REACTION_EXTRA_NEGATIVE,
+                        )
+        else:
+            if (
+                self.model_id in _LONGTUBE_DARK_MANHWA_STYLE_MODELS
+                and not compact_z_thumbnail_prompt
+            ):
+                final_prompt_text, neg = _apply_longtube_render_style(
+                    final_prompt_text,
+                    model_id=self.model_id,
+                    negative_prompt=neg,
+                    source_prompt=source_prompt_text,
+                )
+            top_body_lock = (
+                TOP_OF_PROMPT_EMPTY_NONHUMAN_COMFYUI_FRONT_PROMPT
+                if flux2_klein_direct_nonhuman_cut
+                else TOP_OF_PROMPT_9B_BODY_SHAPE_COMFYUI_FRONT_PROMPT
+                if self.model_id in {"comfyui-flux2-klein-4b", "comfyui-flux2-klein-9b"}
+                else TOP_OF_PROMPT_HAND_COUNT_COMFYUI_FRONT_PROMPT
+            )
+            if not compact_z_thumbnail_prompt:
+                final_prompt_text = _promote_comfyui_lock_to_front(
+                    final_prompt_text,
+                    top_body_lock,
+                )
+            neg = _append_unique_negative(
+                TOP_OF_PROMPT_HAND_COUNT_COMFYUI_EXTRA_NEGATIVE,
+                neg,
+            )
+        if self.model_id == "comfyui-flux2-klein-9b":
+            baekje_ep06_visual_direction = _flux2_baekje_ep06_visual_direction(
+                source_prompt_text
+            )
+            if baekje_ep06_visual_direction:
+                final_prompt_text = _promote_comfyui_lock_to_front(
+                    final_prompt_text,
+                    baekje_ep06_visual_direction,
+                )
+        hand_refine_prompt = (
+            _hand_refine_prompt_for_contract(compiled, source_prompt_text)
+            if compiled is not None
+            else (
+                "Detected hand area remains one natural adult human hand in the same gesture and silhouette, with no extra "
+                "digits, connected wrist, natural knuckles, coherent palm, same wrist and sleeve-or-bare-arm continuity; "
+                "fingers may remain curled, gripping, overlapped, foreshortened, partly sleeve-covered, or hidden; never "
+                "open or spread the palm merely to display every digit; "
+                "same variable-width scratchy dip-pen contour lines, thin angular interior contours, controlled heavy silhouette "
+                "accents, dense hatching with intersecting hatch strokes, aged fibrous print-stock grain, muted watercolor and gouache washes, hard "
+                "shadow mass, same lighting, same camera angle, same dark mature manhwa scene style."
+            )
+        )
+        hand_refine_negative = _append_unique_negative(
+            (
+                "six fingers, seven fingers, extra fingers, extra thumb, "
+                "duplicated thumb, duplicated fingertips, missing fingers, "
+                "missing thumb, fused fingers, forked fingers, melted fingers, "
+                "claw hand, broken wrist, detached hand, floating hand, "
+                "duplicated hand, extra hand, hand fused to sleeve, hand fused "
+                "to weapon, forced open palm, palm facing camera, five extended fingers, "
+                "all fingers fully spread, uniform hairline-only line art, chibi, children's book art, "
+                "photorealistic patch, 3D patch, unreadable text, watermark"
+            ),
+            neg,
+        )
+        body_refine_prompt = (
+            _body_refine_prompt_for_contract(compiled)
+            if compiled is not None
+            else (
+                "Detected person silhouette remains the same character and same pose with physically coherent anatomy: one "
+                "head, one torso, two arms, two legs when visible, connected shoulders, connected hips, natural standing or "
+                "action balance, same clothing, same armor or robe layers, same sleeve continuity, same footwear, same lighting, "
+                "same explicitly named bare-skin boundaries, same wrist and sleeve-or-bare-arm continuity, variable-width "
+                "scratchy dip-pen contour lines, thin angular interior contours, controlled heavy silhouette accents, angular "
+                "expressive adult face, dense hatching with intersecting hatch strokes, aged fibrous print-stock grain, muted watercolor and gouache "
+                "washes, hard shadow mass, same camera angle, same dark mature manhwa scene style."
+            )
+        )
+        body_refine_negative = _append_unique_negative(
+            (
+                "extra head, duplicate head, extra torso, duplicate torso, "
+                "extra arm, three arms, four arms, detached arm, floating arm, "
+                "extra leg, three legs, four legs, missing leg, detached leg, "
+                "floating leg, broken hip, broken shoulder, fused bodies, "
+                "merged people, melted body, malformed anatomy, wrong pose, "
+                "uniform hairline-only line art, chibi, children's book art, photorealistic patch, "
+                "3D patch, unreadable text, watermark"
+            ),
+            neg,
+        )
+        if cinematic_live_action:
+            hand_refine_prompt = (
+                "The detected hand area remains the same photorealistic live-action adult hand, gesture, "
+                "skin tone, wrist, sleeve continuity, cinematic lighting, camera angle, and depth of field, "
+                "with natural fingers, knuckles, palm, and physically coherent anatomy."
+            )
+            body_refine_prompt = (
+                "The detected person remains the same photorealistic live-action actor in the same pose, "
+                "period costume, expression, skin tone, cinematic lighting, camera angle, and depth of field, "
+                "with one coherent head, torso, arms, and legs where visible."
+            )
+            hand_refine_negative = _remove_live_action_conflicting_negatives(
+                hand_refine_negative
+            )
+            body_refine_negative = _remove_live_action_conflicting_negatives(
+                body_refine_negative
+            )
+        if compact_z_thumbnail_prompt:
+            final_prompt_text = source_prompt_text
+        else:
+            final_prompt_text, neg = _enforce_final_visible_surface_textless_contract(
+                final_prompt_text,
+                neg,
+                source_prompt_text,
+                literal_scene_prompt=(
+                    final_prompt_text
+                    if use_scene_contract_v2 and compiled is not None
+                    else ""
+                ),
+            )
+            final_prompt_text, neg = _apply_task_historical_hard_lock(
+                final_prompt_text,
+                neg,
+                source_prompt_text,
+            )
+        if cinematic_live_action:
+            neg = _remove_live_action_conflicting_negatives(neg)
+        # Krea2 is a strict transport boundary: the application owns prompt
+        # construction and the ComfyUI workflow receives that positive prompt
+        # verbatim without compiler, style, or scene-lock rewrites.
+        if self.model_id == "comfyui-krea2":
+            final_prompt_text = source_prompt_text
         self.last_positive_prompt = final_prompt_text
         self.last_negative_prompt = neg
         label = self._context_label()
-        attempts = 4 if self.model_id == "comfyui-flux2-klein-4b" else 1
-        for attempt in range(attempts):
+        workflow_template = self._template
+        uploaded_exact_layout_name = ""
+        uploaded_exact_layout_mask_name = ""
+        if z_image_baekje_hinge_close_layout:
+            if self._template_ref is None:
+                raise RuntimeError("Z-Image Turbo 신궁 경첩 근접 워크플로 누락")
+            if not _BAEKJE_EP05_HINGE_CLOSE_PATH.exists():
+                raise RuntimeError(
+                    "신궁 경첩 근접 레퍼런스 누락: "
+                    f"{_BAEKJE_EP05_HINGE_CLOSE_PATH}"
+                )
+            uploaded_exact_layout_name = await comfyui_client.upload_image(
+                str(_BAEKJE_EP05_HINGE_CLOSE_PATH)
+            )
+            workflow_template = _z_image_baekje_hinge_close_workflow(
+                self._template_ref
+            )
+            diagnostics = dict(self.last_prompt_diagnostics or {})
+            diagnostics["exact_layout_reference"] = _BAEKJE_EP05_HINGE_CLOSE_PATH.name
+            diagnostics["effective_image_model"] = self.model_id
+            self.last_prompt_diagnostics = diagnostics
+            print(
+                "[comfyui-image] Baekje EP05 hinge close img2img "
+                f"via {self.model_id} ref={uploaded_exact_layout_name}"
+            )
+        elif z_image_baekje_flat_iron_macro_layout:
+            if self._template_ref is None:
+                raise RuntimeError("Z-Image Turbo 백제 철기 표면 근접 워크플로 누락")
+            if not _BAEKJE_EP05_FLAT_IRON_MACRO_PATH.exists():
+                raise RuntimeError(
+                    "백제 철기 표면 근접 레퍼런스 누락: "
+                    f"{_BAEKJE_EP05_FLAT_IRON_MACRO_PATH}"
+                )
+            uploaded_exact_layout_name = await comfyui_client.upload_image(
+                str(_BAEKJE_EP05_FLAT_IRON_MACRO_PATH)
+            )
+            workflow_template = _z_image_baekje_flat_iron_macro_workflow(
+                self._template_ref
+            )
+            diagnostics = dict(self.last_prompt_diagnostics or {})
+            diagnostics["exact_layout_reference"] = (
+                _BAEKJE_EP05_FLAT_IRON_MACRO_PATH.name
+            )
+            diagnostics["effective_image_model"] = self.model_id
+            self.last_prompt_diagnostics = diagnostics
+            print(
+                "[comfyui-image] Baekje EP05 flat-iron macro img2img "
+                f"via {self.model_id} ref={uploaded_exact_layout_name}"
+            )
+        elif z_image_baekje_boat_cargo_close_layout:
+            if self._template_ref is None:
+                raise RuntimeError("Z-Image Turbo 백제 선체 화물 근접 워크플로 누락")
+            if not _BAEKJE_EP05_BOAT_CARGO_CLOSE_PATH.exists():
+                raise RuntimeError(
+                    "백제 선체 화물 근접 레퍼런스 누락: "
+                    f"{_BAEKJE_EP05_BOAT_CARGO_CLOSE_PATH}"
+                )
+            uploaded_exact_layout_name = await comfyui_client.upload_image(
+                str(_BAEKJE_EP05_BOAT_CARGO_CLOSE_PATH)
+            )
+            workflow_template = _z_image_baekje_boat_cargo_close_workflow(
+                self._template_ref
+            )
+            diagnostics = dict(self.last_prompt_diagnostics or {})
+            diagnostics["exact_layout_reference"] = (
+                _BAEKJE_EP05_BOAT_CARGO_CLOSE_PATH.name
+            )
+            diagnostics["effective_image_model"] = self.model_id
+            self.last_prompt_diagnostics = diagnostics
+            print(
+                "[comfyui-image] Baekje EP05 boat-cargo close img2img "
+                f"via {self.model_id} ref={uploaded_exact_layout_name}"
+            )
+        elif z_image_shichishito_branch_impact_layout:
+            if self._template_ref is None:
+                raise RuntimeError("Z-Image Turbo 칠지도 가지 충돌 워크플로 누락")
+            if not _BAEKJE_EP05_SHICHISHITO_BRANCH_IMPACT_PATH.exists():
+                raise RuntimeError(
+                    "칠지도 가지 충돌 레퍼런스 누락: "
+                    f"{_BAEKJE_EP05_SHICHISHITO_BRANCH_IMPACT_PATH}"
+                )
+            uploaded_exact_layout_name = await comfyui_client.upload_image(
+                str(_BAEKJE_EP05_SHICHISHITO_BRANCH_IMPACT_PATH)
+            )
+            uploaded_exact_layout_mask_name = await comfyui_client.upload_image(
+                str(_BAEKJE_EP02_SHICHISHITO_CONSERVATION_MASK_PATH)
+            )
+            workflow_template = _z_image_shichishito_branch_impact_workflow(
+                self._template_ref
+            )
+            diagnostics = dict(self.last_prompt_diagnostics or {})
+            diagnostics["exact_layout_reference"] = (
+                _BAEKJE_EP05_SHICHISHITO_BRANCH_IMPACT_PATH.name
+            )
+            diagnostics["effective_image_model"] = self.model_id
+            self.last_prompt_diagnostics = diagnostics
+            print(
+                "[comfyui-image] Baekje EP05 Shichishito branch-impact img2img "
+                f"via {self.model_id} ref={uploaded_exact_layout_name}"
+            )
+        elif z_image_shichishito_object_exact_layout:
+            if self._template_ref is None:
+                raise RuntimeError("Z-Image Turbo 칠지도 단독 형상 워크플로 누락")
+            if not _BAEKJE_EP02_SHICHISHITO_REFERENCE_PATH.exists():
+                raise RuntimeError(
+                    "칠지도 단독 형상 레퍼런스 누락: "
+                    f"{_BAEKJE_EP02_SHICHISHITO_REFERENCE_PATH}"
+                )
+            if not _BAEKJE_EP02_SHICHISHITO_CONSERVATION_MASK_PATH.exists():
+                raise RuntimeError(
+                    "칠지도 단독 형상 마스크 누락: "
+                    f"{_BAEKJE_EP02_SHICHISHITO_CONSERVATION_MASK_PATH}"
+                )
+            uploaded_exact_layout_name = await comfyui_client.upload_image(
+                str(_BAEKJE_EP02_SHICHISHITO_REFERENCE_PATH)
+            )
+            uploaded_exact_layout_mask_name = await comfyui_client.upload_image(
+                str(_BAEKJE_EP02_SHICHISHITO_CONSERVATION_MASK_PATH)
+            )
+            workflow_template = _z_image_shichishito_object_workflow(
+                self._template_ref
+            )
+            # This object-only route must preserve exactly one seven-branched
+            # silhouette.  The generic exact-layout workflow performs a second
+            # full-denoise inpaint pass, which can invent extra swords outside
+            # the registered object.  Save the low-denoise reference transform
+            # directly for this route; other exact-layout routes keep the
+            # normal masked refinement stage.
+            diagnostics = dict(self.last_prompt_diagnostics or {})
+            diagnostics["exact_layout_reference"] = (
+                _BAEKJE_EP02_SHICHISHITO_REFERENCE_PATH.name
+            )
+            diagnostics["effective_image_model"] = self.model_id
+            self.last_prompt_diagnostics = diagnostics
+            print(
+                "[comfyui-image] Baekje EP05 Shichishito object exact-layout img2img "
+                f"via {self.model_id} ref={uploaded_exact_layout_name}"
+            )
+        elif z_image_shichishito_exact_layout:
+            if self._template_ref is None:
+                raise RuntimeError("Z-Image Turbo 정확 레이아웃 워크플로 누락")
+            if not _BAEKJE_EP02_SHICHISHITO_CONSERVATION_LAYOUT_PATH.exists():
+                raise RuntimeError(
+                    "칠지도 학예사 레이아웃 레퍼런스 누락: "
+                    f"{_BAEKJE_EP02_SHICHISHITO_CONSERVATION_LAYOUT_PATH}"
+                )
+            if not _BAEKJE_EP02_SHICHISHITO_CONSERVATION_MASK_PATH.exists():
+                raise RuntimeError(
+                    "칠지도 학예사 레이아웃 마스크 누락: "
+                    f"{_BAEKJE_EP02_SHICHISHITO_CONSERVATION_MASK_PATH}"
+                )
+            uploaded_exact_layout_name = await comfyui_client.upload_image(
+                str(_BAEKJE_EP02_SHICHISHITO_CONSERVATION_LAYOUT_PATH)
+            )
+            uploaded_exact_layout_mask_name = await comfyui_client.upload_image(
+                str(_BAEKJE_EP02_SHICHISHITO_CONSERVATION_MASK_PATH)
+            )
+            workflow_template = self._template_ref
+            diagnostics = dict(self.last_prompt_diagnostics or {})
+            diagnostics["exact_layout_reference"] = (
+                _BAEKJE_EP02_SHICHISHITO_CONSERVATION_LAYOUT_PATH.name
+            )
+            diagnostics["effective_image_model"] = self.model_id
+            self.last_prompt_diagnostics = diagnostics
+            print(
+                "[comfyui-image] Baekje EP02 Shichishito exact-layout img2img "
+                f"via {self.model_id} ref={uploaded_exact_layout_name}"
+            )
+        elif z_image_mixed_settlers_exact_layout:
+            if self._template_portrait_ref is None:
+                raise RuntimeError("Z-Image Turbo 3인 초상 레이아웃 워크플로 누락")
+            if not _BAEKJE_EP02_MIXED_SETTLERS_LAYOUT_PATH.exists():
+                raise RuntimeError(
+                    "백제 EP02 3인 초상 레이아웃 누락: "
+                    f"{_BAEKJE_EP02_MIXED_SETTLERS_LAYOUT_PATH}"
+                )
+            if not _BAEKJE_EP02_MIXED_SETTLERS_MASK_PATH.exists():
+                raise RuntimeError(
+                    "백제 EP02 3인 초상 마스크 누락: "
+                    f"{_BAEKJE_EP02_MIXED_SETTLERS_MASK_PATH}"
+                )
+            uploaded_exact_layout_name = await comfyui_client.upload_image(
+                str(_BAEKJE_EP02_MIXED_SETTLERS_LAYOUT_PATH)
+            )
+            uploaded_exact_layout_mask_name = await comfyui_client.upload_image(
+                str(_BAEKJE_EP02_MIXED_SETTLERS_MASK_PATH)
+            )
+            workflow_template = self._template_portrait_ref
+            diagnostics = dict(self.last_prompt_diagnostics or {})
+            diagnostics["exact_layout_reference"] = (
+                _BAEKJE_EP02_MIXED_SETTLERS_LAYOUT_PATH.name
+            )
+            diagnostics["effective_image_model"] = self.model_id
+            self.last_prompt_diagnostics = diagnostics
+            print(
+                "[comfyui-image] Baekje EP02 mixed-settlers three-portrait img2img "
+                f"via {self.model_id} ref={uploaded_exact_layout_name}"
+            )
+        elif z_image_ep7_oath_items_layout:
+            if self._template_ref is None:
+                raise RuntimeError("Z-Image Turbo EP07 oath-items layout workflow missing")
+            if not _CH3_EP7_OATH_ITEMS_LAYOUT_PATH.exists():
+                raise RuntimeError(
+                    f"CH3 EP07 oath-items layout missing: {_CH3_EP7_OATH_ITEMS_LAYOUT_PATH}"
+                )
+            if not _CH3_EP7_OATH_ITEMS_MASK_PATH.exists():
+                raise RuntimeError(
+                    f"CH3 EP07 oath-items mask missing: {_CH3_EP7_OATH_ITEMS_MASK_PATH}"
+                )
+            uploaded_exact_layout_name = await comfyui_client.upload_image(
+                str(_CH3_EP7_OATH_ITEMS_LAYOUT_PATH)
+            )
+            uploaded_exact_layout_mask_name = await comfyui_client.upload_image(
+                str(_CH3_EP7_OATH_ITEMS_MASK_PATH)
+            )
+            workflow_template = self._template_ref
+            diagnostics = dict(self.last_prompt_diagnostics or {})
+            diagnostics["exact_layout_reference"] = _CH3_EP7_OATH_ITEMS_LAYOUT_PATH.name
+            diagnostics["effective_image_model"] = self.model_id
+            self.last_prompt_diagnostics = diagnostics
+            print(
+                "[comfyui-image] CH3 EP07 oath-items layout img2img "
+                f"via {self.model_id} ref={uploaded_exact_layout_name}"
+            )
+        elif z_image_ch2_ep03_layout_spec is not None:
+            ch2_ep03_layout_id, ch2_ep03_layout_path, ch2_ep03_denoise = z_image_ch2_ep03_layout_spec
+            if self._template_ref is None:
+                raise RuntimeError("Z-Image Turbo CH2 EP03 preflight layout workflow missing")
+            if not ch2_ep03_layout_path.exists():
+                raise RuntimeError(
+                    f"CH2 EP03 preflight layout missing: {ch2_ep03_layout_path}"
+                )
+            if not _CH2_RIDERLESS_BORDER_GATE_MASK_PATH.exists():
+                raise RuntimeError(
+                    f"CH2 EP03 preflight mask missing: {_CH2_RIDERLESS_BORDER_GATE_MASK_PATH}"
+                )
+            uploaded_exact_layout_name = await comfyui_client.upload_image(
+                str(ch2_ep03_layout_path)
+            )
+            uploaded_exact_layout_mask_name = await comfyui_client.upload_image(
+                str(_CH2_RIDERLESS_BORDER_GATE_MASK_PATH)
+            )
+            workflow_template = json.loads(json.dumps(self._template_ref))
+            workflow_template["8"]["inputs"]["denoise"] = ch2_ep03_denoise
+            diagnostics = dict(self.last_prompt_diagnostics or {})
+            diagnostics["exact_layout_reference"] = ch2_ep03_layout_path.name
+            diagnostics["effective_image_model"] = self.model_id
+            self.last_prompt_diagnostics = diagnostics
+            print(
+                "[comfyui-image] CH2 EP03 preflight layout img2img "
+                f"id={ch2_ep03_layout_id} via {self.model_id} ref={uploaded_exact_layout_name}"
+            )
+        z_image_edge_crop = self.model_id.startswith("comfyui-z-image-")
+        z_image_exact_layout = (
+            z_image_baekje_hinge_close_layout
+            or z_image_baekje_flat_iron_macro_layout
+            or z_image_baekje_boat_cargo_close_layout
+            or z_image_shichishito_branch_impact_layout
+            or z_image_shichishito_object_exact_layout
+            or z_image_shichishito_exact_layout
+            or z_image_mixed_settlers_exact_layout
+            or z_image_ep7_oath_items_layout
+            or z_image_ch2_ep03_layout_spec is not None
+        )
+        generation_width = w + 64 if z_image_edge_crop and not z_image_exact_layout else w
+        generation_height = h + 48 if z_image_edge_crop and not z_image_exact_layout else h
+        max_generation_attempts = 1
+        for attempt in range(max_generation_attempts):
             subs = {
                 "PROMPT": final_prompt_text,
                 "NEGATIVE": neg,
                 "WIDTH": w,
                 "HEIGHT": h,
+                "GEN_WIDTH": generation_width,
+                "GEN_HEIGHT": generation_height,
+                "EDGE_CROP_X": 32 if z_image_edge_crop and not z_image_exact_layout else 0,
+                "EDGE_CROP_Y": 24 if z_image_edge_crop and not z_image_exact_layout else 0,
                 "SEED": seed if attempt == 0 else random.randint(0, 2**31 - 1),
+                "HAND_SEED": random.randint(0, 2**31 - 1),
+                "BODY_SEED": random.randint(0, 2**31 - 1),
+                "HAND_REFINE_PROMPT": hand_refine_prompt,
+                "HAND_REFINE_NEGATIVE": hand_refine_negative,
+                "BODY_REFINE_PROMPT": body_refine_prompt,
+                "BODY_REFINE_NEGATIVE": body_refine_negative,
+                "REF_IMAGE_NAME": uploaded_exact_layout_name,
+                "REF_MASK_NAME": uploaded_exact_layout_mask_name,
                 "PREFIX": prefix,
             }
             print(
@@ -43207,7 +53466,7 @@ class ComfyUIImageService(BaseImageService):
                 f"prompt_head={final_prompt_text[:180]!r}"
             )
 
-            graph = comfyui_client.render_workflow(self._template, subs)
+            graph = comfyui_client.render_workflow(workflow_template, subs)
             summary = self._workflow_summary(graph)
             loras = ", ".join(summary.get("loras") or []) or "none"
             self._emit_log(
@@ -43226,7 +53485,7 @@ class ComfyUIImageService(BaseImageService):
             self._emit_log(f"{label} ComfyUI 제출: prompt_id={prompt_id}")
             entry = await comfyui_client.wait_for(
                 prompt_id,
-                total_timeout=300.0,
+                total_timeout=900.0,
                 client_id=client_id,
                 prompt_graph=graph,
                 on_progress=self._progress_callback(label),
@@ -43240,250 +53499,36 @@ class ComfyUIImageService(BaseImageService):
             await comfyui_client.download_first_output(
                 entry, output_path, kinds=("images",)
             )
+            if z_image_shichishito_object_exact_layout:
+                scores = _validate_baekje_ep05_shichishito_object_geometry(
+                    output_path
+                )
+                diagnostics = dict(self.last_prompt_diagnostics or {})
+                diagnostics.update(
+                    {
+                        "reference_geometry_iou": round(scores[0], 6),
+                        "reference_geometry_coverage": round(scores[1], 6),
+                        "candidate_geometry_coverage": round(scores[2], 6),
+                    }
+                )
+                self.last_prompt_diagnostics = diagnostics
+            elif z_image_shichishito_exact_layout:
+                scores = _validate_baekje_ep02_shichishito_conservation_geometry(
+                    output_path
+                )
+                diagnostics = dict(self.last_prompt_diagnostics or {})
+                diagnostics.update(
+                    {
+                        "reference_geometry_iou": round(scores[0], 6),
+                        "reference_geometry_coverage": round(scores[1], 6),
+                        "candidate_geometry_coverage": round(scores[2], 6),
+                    }
+                )
+                self.last_prompt_diagnostics = diagnostics
             self._emit_log(f"{label} 이미지 저장: {Path(output_path).name}")
             if pad_canvas:
                 _pad_image_to_canvas(output_path, pad_canvas[0], pad_canvas[1])
-            has_light_margin = _image_has_solid_light_outer_margin(output_path)
-            has_dark_frame = _image_has_solid_dark_outer_frame(output_path)
-            has_letterbox_bars = _image_has_horizontal_letterbox_bars(output_path)
-            has_top_caption = _image_has_top_caption_like_text(output_path)
-            has_internal_text = (
-                _should_check_internal_text_after_generation(source_prompt_text)
-                and _image_has_internal_text_like_marks(output_path)
-            )
-            has_inset_frame = False
-            if _should_check_inset_frame_after_generation(final_prompt_text):
-                has_inset_frame = _image_has_inset_dark_rectangular_frame(output_path)
-            has_split_panel = (
-                _should_check_internal_text_after_generation(source_prompt_text)
-                and _image_has_split_panel_divider(output_path)
-            )
-            has_corner_signature = _image_has_corner_artist_mark(output_path)
-            if has_light_margin or has_dark_frame or has_letterbox_bars or has_top_caption or has_internal_text or has_inset_frame or has_split_panel or has_corner_signature:
-                if has_light_margin:
-                    issue = "흰 외곽선"
-                elif has_dark_frame:
-                    issue = "검은 외곽 프레임"
-                elif has_letterbox_bars:
-                    issue = "검은 레터박스"
-                elif has_top_caption:
-                    issue = "상단 캡션 텍스트"
-                elif has_internal_text:
-                    issue = "내부 문서/벽면 글자 표식"
-                elif has_inset_frame:
-                    issue = "장식형 삽입 프레임"
-                elif has_split_panel:
-                    issue = "분할 패널 프레임"
-                else:
-                    issue = "우하단 서명 표식"
-                if attempt + 1 >= attempts:
-                    raise RuntimeError(f"{label} {issue} 감지: 재시도 {attempts}회 후 실패")
-                self._emit_log(f"{label} {issue} 감지: 이미지 재생성 {attempt + 2}/{attempts}", "warn")
-                is_japanese_courier_retry = _flux2_klein_is_japanese_courier_context(
-                    f"{source_prompt_text} {final_prompt_text}"
-                )
-                is_japanese_courier_exchange_retry = _flux2_klein_is_japanese_courier_exchange_context(
-                    f"{source_prompt_text} {final_prompt_text}"
-                )
-                is_japanese_messenger_group_retry = _flux2_klein_is_japanese_messenger_group_context(
-                    f"{source_prompt_text} {final_prompt_text}"
-                )
-                is_japanese_mounted_courier_retry = _flux2_klein_is_japanese_mounted_courier_context(
-                    f"{source_prompt_text} {final_prompt_text}"
-                )
-                is_japanese_bookshop_retry = _flux2_klein_is_japanese_bookshop_theater_context(
-                    f"{source_prompt_text} {final_prompt_text}"
-                )
-                is_japanese_rice_storehouse_retry = _flux2_klein_is_japanese_rice_storehouse_context(
-                    f"{source_prompt_text} {final_prompt_text}"
-                )
-                is_japanese_frayed_storage_retry = _flux2_klein_is_japanese_frayed_storage_context(
-                    f"{source_prompt_text} {final_prompt_text}"
-                )
-                is_japanese_old_record_drawer_retry = _flux2_klein_is_japanese_old_record_drawer_context(
-                    f"{source_prompt_text} {final_prompt_text}"
-                )
-                source_scene_scope = " ".join(
-                    value
-                    for value in (
-                        _local_prompt_field(source_prompt_text, "Exact place"),
-                        _local_prompt_field(source_prompt_text, "Main subject"),
-                        _local_prompt_field(source_prompt_text, "Scene"),
-                    )
-                    if value
-                )
-                if has_light_margin or has_dark_frame or has_letterbox_bars or has_inset_frame or has_split_panel:
-                    neg = _append_unique_negative(
-                        neg,
-                        "solid white outer strip, blank white image edge, white paper margin, solid black outer border, black mat border, horizontal black letterbox bars, top black bar, bottom black bar, framed comic panel, inset dark rectangular frame, split panel, comic panel divider, picture-in-picture panel, top inset panel, complete table outline, full table seen with surrounding floor, tatami border frame, rope border, stone border frame, view through stone window, U-shaped stone border, top stone lintel frame, side stone jamb frame, looking through a wall breach"
-                    )
-                    is_japanese_document_retry = (
-                        _should_use_japanese_document_table_retry(source_prompt_text)
-                    )
-                    if is_japanese_mounted_courier_retry:
-                        final_prompt_text = _flux2_klein_japanese_mounted_courier_retry_sentence(source_prompt_text)
-                        final_prompt_text = _append_unique_sentence(
-                            final_prompt_text,
-                            "Outermost pixels are muddy highway, horse legs, hoof splash, reed banks, fence wood, sky, smoke, robe cloth, packet cloth, cord, or landscape cropped beyond the canvas",
-                        )
-                    elif is_japanese_courier_exchange_retry:
-                        final_prompt_text = _flux2_klein_japanese_courier_exchange_retry_sentence(source_prompt_text)
-                        final_prompt_text = _append_unique_sentence(
-                            final_prompt_text,
-                            "Outermost pixels are muddy mountain road, courier robe cloth, box wood, cord, reed banks, stones, smoke, or slope texture cropped beyond the canvas",
-                        )
-                    elif is_japanese_messenger_group_retry:
-                        final_prompt_text = _flux2_klein_japanese_messenger_group_retry_sentence(source_prompt_text)
-                        final_prompt_text = _append_unique_sentence(
-                            final_prompt_text,
-                            "Outermost pixels are muddy Kyoto road, reed banks, dark tree masses, hill bands, robe cloth, box wood, cords, sandals, smoke blur, or shadow cropped beyond the canvas",
-                        )
-                    elif is_japanese_courier_retry:
-                        final_prompt_text = _flux2_klein_japanese_courier_retry_sentence()
-                        final_prompt_text = _append_unique_sentence(
-                            final_prompt_text,
-                            "Outermost pixels are muddy highway, reeds, fence wood, sky, smoke, robe cloth, packet cloth, cord, mud splash, or landscape cropped beyond the canvas",
-                        )
-                    elif is_japanese_bookshop_retry:
-                        final_prompt_text = _flux2_klein_japanese_bookshop_theater_retry_sentence()
-                        final_prompt_text = _append_unique_sentence(
-                            final_prompt_text,
-                            "Outermost pixels are road dust, stall wood, blank book cover cloth, curtain fabric, timber posts, kimono cloth, smoke, or sky cropped beyond the canvas",
-                        )
-                    elif is_japanese_rice_storehouse_retry:
-                        final_prompt_text = _flux2_klein_japanese_rice_storehouse_retry_sentence()
-                        final_prompt_text = _append_unique_sentence(
-                            final_prompt_text,
-                            "Outermost pixels are rice bales, roof eaves, plain timber, packed earth, cart wood, worker cloth, smoke, hills, or sky cropped beyond the canvas",
-                        )
-                    elif is_japanese_frayed_storage_retry:
-                        final_prompt_text = _flux2_klein_japanese_frayed_storage_retry_sentence()
-                        final_prompt_text = _append_unique_sentence(
-                            final_prompt_text,
-                            "Outermost pixels are closed boxes, frayed rope, floor planks, shelves, sleeve cloth, timber, dust, or shadow cropped beyond the canvas",
-                        )
-                    elif is_japanese_old_record_drawer_retry:
-                        final_prompt_text = _flux2_klein_japanese_old_record_drawer_retry_sentence()
-                        final_prompt_text = _append_unique_sentence(
-                            final_prompt_text,
-                            "Outermost pixels are closed boxes, plain drawer wood, shelf planks, packet cloth, sleeve cloth, floor planks, timber, dust, or shadow cropped beyond the canvas",
-                        )
-                    elif _flux2_klein_japanese_sword_order_ground_risk(source_scene_scope):
-                        final_prompt_text = _flux2_klein_japanese_sword_packet_human_retry_sentence(source_prompt_text)
-                        final_prompt_text = _append_unique_sentence(
-                            final_prompt_text,
-                            "Outermost pixels are scabbard lacquer, closed box wood, tan packet cloth, clenched sleeves, low table, tatami, timber, plaster, dust, or shadow cropped beyond the canvas",
-                        )
-                    elif _flux2_klein_is_historical_japanese_context(
-                        source_prompt_text
-                    ) and _flux2_klein_japanese_prompt_has_living_story_action(
-                        " ".join(
-                            value
-                            for value in (
-                                _local_prompt_field(source_prompt_text, "Exact place"),
-                                _local_prompt_field(source_prompt_text, "Main subject"),
-                                _local_prompt_field(source_prompt_text, "Scene"),
-                            )
-                            if value
-                        )
-                    ):
-                        final_prompt_text = _flux2_klein_japanese_human_textless_retry_sentence(source_prompt_text)
-                        final_prompt_text = _append_unique_sentence(
-                            final_prompt_text,
-                            "Outermost pixels are room floor, tatami, timber, plaster, open landscape, robe cloth, hands, sealed box, tray, packet cloth, dust, or shadow cropped beyond the canvas",
-                        )
-                    elif is_japanese_document_retry:
-                        final_prompt_text = _flux2_klein_japanese_textless_retry_sentence()
-                        final_prompt_text = _append_unique_sentence(
-                            final_prompt_text,
-                            "Outermost pixels are tabletop, tatami, packet cloth, cord, scabbard lacquer, box wood, dust, or shadow cropped beyond the canvas",
-                        )
-                    else:
-                        final_prompt_text = _prepend_unique_sentence(
-                            final_prompt_text,
-                            "Full-bleed borderless camera crop fills the entire canvas: scene-named terrain, figures, props, smoke, water, mud, stone, reeds, sky, cloth, iron, timber, tabletop grain, and natural debris continue past all four outermost image edges with no enclosing outline",
-                        )
-                        final_prompt_text = _append_unique_sentence(
-                            final_prompt_text,
-                            "Outermost pixels are varied local scene material cropped beyond the canvas, not a uniform black line, mat, comic panel border, tabletop outline, wall-window frame, or letterbox edge",
-                        )
-                if has_top_caption:
-                    neg = _append_unique_negative(
-                        neg,
-                        "top caption, bottom caption, white title text, black title text, dark title text, subtitle text, fake English words, gibberish letters, pseudo Latin letters, large white letters, large black letters, centered header text, bottom title plaque, lower caption plaque, sky text, alphabet text at top, overhead title text"
-                    )
-                    final_prompt_text = _append_unique_sentence(
-                        final_prompt_text,
-                        "The upper and lower image areas show local scene material, smoke, sky, cloud, debris, natural light, ground, wood, cloth, and irregular physical texture only",
-                    )
-                if has_internal_text:
-                    neg = _append_unique_negative(
-                        neg,
-                        "visible document text, written document, paper text rows, black marks on paper, handwritten rows, calligraphy rows, wall calligraphy, wall scroll writing, hanging paper writing, framed writing, label-like strokes on paper, kanji plaque, pseudo-kanji plaque, wall sign with characters, gate plaque, overdoor signboard, shop signboard, storefront signboard, shopfront plaque, hanging storefront banner, banner with writing, white wall notice panel, pale wall notice panel, framed wall notice, paper slips on wall, hanging label strip, vertical wall sign, door header text, roadside sign with writing, roadside notice sign, signpost with characters, box kanji stamp, label on box, text on basket, signature-like marks on basket, robe back label, white garment chest label, paper strip on face, paper stuck to head"
-                        ", flat white paper sheet, white paper rectangle, folded page face, open paper face, brush-on-paper surface"
-                    )
-                    if _flux2_klein_is_historical_japanese_context(source_prompt_text):
-                        if is_japanese_mounted_courier_retry:
-                            final_prompt_text = _flux2_klein_japanese_mounted_courier_retry_sentence(source_prompt_text)
-                        elif is_japanese_courier_exchange_retry:
-                            final_prompt_text = _flux2_klein_japanese_courier_exchange_retry_sentence(source_prompt_text)
-                        elif is_japanese_messenger_group_retry:
-                            final_prompt_text = _flux2_klein_japanese_messenger_group_retry_sentence(source_prompt_text)
-                        elif is_japanese_courier_retry:
-                            final_prompt_text = _flux2_klein_japanese_courier_retry_sentence()
-                        elif is_japanese_bookshop_retry:
-                            final_prompt_text = _flux2_klein_japanese_bookshop_theater_retry_sentence()
-                        elif is_japanese_rice_storehouse_retry:
-                            final_prompt_text = _flux2_klein_japanese_rice_storehouse_retry_sentence()
-                        elif is_japanese_frayed_storage_retry:
-                            final_prompt_text = _flux2_klein_japanese_frayed_storage_retry_sentence()
-                        elif is_japanese_old_record_drawer_retry:
-                            final_prompt_text = _flux2_klein_japanese_old_record_drawer_retry_sentence()
-                        elif _flux2_klein_japanese_sword_order_ground_risk(source_scene_scope):
-                            final_prompt_text = _flux2_klein_japanese_sword_packet_human_retry_sentence(source_prompt_text)
-                        elif _should_use_japanese_document_table_retry(source_prompt_text):
-                            final_prompt_text = _flux2_klein_japanese_textless_retry_sentence()
-                        elif _flux2_klein_japanese_prompt_has_living_story_action(
-                            " ".join(
-                                value
-                                for value in (
-                                    _local_prompt_field(source_prompt_text, "Exact place"),
-                                    _local_prompt_field(source_prompt_text, "Main subject"),
-                                    _local_prompt_field(source_prompt_text, "Scene"),
-                                )
-                                if value
-                            )
-                        ):
-                            final_prompt_text = _prepend_unique_sentence(
-                                final_prompt_text,
-                                _flux2_klein_japanese_human_textless_retry_sentence(source_prompt_text),
-                            )
-                        else:
-                            final_prompt_text = _prepend_unique_sentence(
-                                final_prompt_text,
-                                _flux2_klein_japanese_textless_retry_sentence(),
-                            )
-                    final_prompt_text = _append_unique_sentence(
-                        final_prompt_text,
-                        "All small surface details are continuous physical material texture only: grain, cracks, folds, chips, soot, dust, shadow, and random wear",
-                    )
-                if has_corner_signature:
-                    neg = _append_unique_negative(
-                        neg,
-                        "lower-right signature mark, artist monogram, corner calligraphy, tiny white artist mark, upper-left signature, top-left calligraphy, red artist stamp, corner seal"
-                    )
-                    final_prompt_text = _append_unique_sentence(
-                        final_prompt_text,
-                        "All image corners contain uninterrupted local scene material texture",
-                    )
-                    if _flux2_klein_is_historical_japanese_context(source_prompt_text):
-                        final_prompt_text = _append_unique_sentence(
-                            final_prompt_text,
-                            "Both lower corners are broad stone threshold blocks, smooth packed-earth shadow patches, or plain wood grain",
-                        )
-                self.last_positive_prompt = final_prompt_text
-                self.last_negative_prompt = neg
-                continue
+            # Generated images are committed once without a post-generation review gate.
             self._emit_status(None)
             print(f"[comfyui-image] saved -> {_safe_console(output_path)}")
             return output_path

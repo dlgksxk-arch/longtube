@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#a8845e"/>
+  <!-- Paired cattle yoke and two collar loops, without speculative animal anatomy. -->
+  <path d="M95 270 Q270 170 470 270 L435 330 Q275 258 125 330 Z" fill="#805738" stroke="#3e3027" stroke-width="16"/>
+  <g fill="none" stroke="#5c412f" stroke-width="20">
+    <ellipse cx="205" cy="405" rx="72" ry="105"/><ellipse cx="375" cy="405" rx="72" ry="105"/>
+  </g>
+  <path d="M450 355 L690 275 M450 455 L690 515" fill="none" stroke="#786044" stroke-width="18"/>
+  <!-- One heavy four-solid-wheel wagon. -->
+  <rect x="680" y="185" width="470" height="350" rx="20" fill="#8e6039" stroke="#3e3027" stroke-width="17"/>
+  <path d="M725 265 H1105 M725 355 H1105 M725 445 H1105 M835 215 V505 M980 215 V505" fill="none" stroke="#67462f" stroke-width="11"/>
+  <g fill="#9b6a3e" stroke="#3e3027" stroke-width="14">
+    <circle cx="715" cy="145" r="72"/><circle cx="1115" cy="145" r="72"/>
+    <circle cx="715" cy="575" r="72"/><circle cx="1115" cy="575" r="72"/>
+  </g>
+  <g fill="#c0a06a" stroke="#3e3027" stroke-width="8">
+    <circle cx="715" cy="145" r="20"/><circle cx="1115" cy="145" r="20"/>
+    <circle cx="715" cy="575" r="20"/><circle cx="1115" cy="575" r="20"/>
+  </g>
+</svg>

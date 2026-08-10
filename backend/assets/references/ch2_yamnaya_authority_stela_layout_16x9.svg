@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#f0e6cf"/>
+  <path d="M0 520 Q300 470 640 500 T1280 510 V720 H0Z" fill="#e4d0aa"/>
+  <path d="M455 660 L430 155 L500 70 L780 62 L850 145 L825 660 Z"
+        fill="#85827a" stroke="#3d352f" stroke-width="18"/>
+  <path d="M505 110 Q640 70 775 110" fill="none" stroke="#aaa59a" stroke-width="18"/>
+
+  <!-- One shallow head oval. -->
+  <ellipse cx="640" cy="225" rx="92" ry="112" fill="none" stroke="#4b433c" stroke-width="16"/>
+  <!-- One plain horizontal belt. -->
+  <path d="M500 390 H780" fill="none" stroke="#4b433c" stroke-width="22"/>
+  <!-- One small axe outline. -->
+  <path d="M565 450 V590 M565 465 L500 435 V510 L565 480"
+        fill="none" stroke="#4b433c" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- One small dagger outline. -->
+  <path d="M720 430 V470 M675 470 H765 M720 470 Q780 520 720 600 Q660 520 720 470 Z"
+        fill="none" stroke="#4b433c" stroke-width="14" stroke-linejoin="round"/>
+</svg>

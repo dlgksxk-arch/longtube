@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <defs>
+    <linearGradient id="earth25" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#d2b887"/>
+      <stop offset="0.56" stop-color="#b89564"/>
+      <stop offset="1" stop-color="#9c774e"/>
+    </linearGradient>
+    <linearGradient id="shroud25" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#a88963"/>
+      <stop offset="1" stop-color="#73573e"/>
+    </linearGradient>
+  </defs>
+  <rect width="1280" height="720" fill="url(#earth25)"/>
+  <g fill="none" stroke="#806444" stroke-width="7" opacity="0.42" stroke-linecap="round">
+    <path d="M0 112 Q285 82 590 121 T1280 108"/>
+    <path d="M0 594 Q290 555 635 602 T1280 574"/>
+  </g>
+
+  <g id="closed-shroud">
+    <ellipse cx="625" cy="433" rx="288" ry="55" fill="#543e2d" opacity="0.34"/>
+    <path d="M392 269 Q625 215 855 279 Q900 346 851 426 Q625 489 397 421 Q350 350 392 269 Z" fill="url(#shroud25)" stroke="#3d3026" stroke-width="15"/>
+    <path d="M438 294 Q625 256 813 302 M419 351 Q625 318 839 359 M438 407 Q625 446 811 407" fill="none" stroke="#c3a77e" stroke-width="9" opacity="0.66"/>
+    <path d="M520 252 Q625 338 733 255 M510 445 Q625 359 744 450" fill="none" stroke="#5c4533" stroke-width="11" opacity="0.76"/>
+  </g>
+
+  <g id="shoot-left" fill="none" stroke="#31502a" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M238 352 Q238 266 242 190 M239 300 Q202 255 190 215 M241 278 Q276 232 292 194" stroke="#61a84e" stroke-width="15"/>
+    <path d="M242 210 Q223 180 218 150 M243 230 Q267 198 271 164" stroke="#8bc76c" stroke-width="11"/>
+  </g>
+  <g id="shoot-upper-right" fill="none" stroke="#31502a" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M1022 338 Q1018 252 1026 178 M1022 294 Q982 248 970 210 M1024 272 Q1062 226 1078 188" stroke="#61a84e" stroke-width="15"/>
+    <path d="M1026 200 Q1005 172 1000 144 M1027 218 Q1051 188 1056 154" stroke="#8bc76c" stroke-width="11"/>
+  </g>
+  <g id="shoot-lower-right" fill="none" stroke="#31502a" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M1002 674 Q997 592 1005 520 M1001 625 Q963 582 951 545 M1004 603 Q1041 559 1058 523" stroke="#61a84e" stroke-width="15"/>
+    <path d="M1005 542 Q985 513 980 486 M1006 560 Q1031 530 1036 496" stroke="#8bc76c" stroke-width="11"/>
+  </g>
+</svg>

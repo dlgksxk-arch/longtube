@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <defs><linearGradient id="woodSilk" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#c2915d"/><stop offset="1" stop-color="#815338"/></linearGradient></defs>
+  <rect width="1280" height="720" fill="url(#woodSilk)"/>
+  <path d="M0 116 Q320 76 640 121 T1280 102 M0 607 Q320 562 644 611 T1280 583" fill="none" stroke="#65432f" stroke-width="8" opacity=".34"/>
+  <circle cx="108" cy="113" r="65" fill="#e5bd42" stroke="#4b3922" stroke-width="13"/>
+  <path d="M119 190 Q275 285 431 310 Q661 348 829 285 Q1012 216 1170 306" fill="none" stroke="#f1ead4" stroke-width="9" stroke-linecap="round"/>
+  <g id="silkworm-tray-cont"><rect x="83" y="307" width="354" height="247" rx="37" fill="#a87348" stroke="#3f2e25" stroke-width="14"/><g fill="#6f994d" stroke="#35542f" stroke-width="8"><path d="M115 425 q50-72 108-5 q-51 67-108 5Z"/><path d="M205 418 q50-72 108-5 q-51 67-108 5Z"/><path d="M295 426 q50-72 108-5 q-51 67-108 5Z"/></g><g fill="#eee4c9" stroke="#5c5140" stroke-width="6"><ellipse cx="178" cy="417" rx="36" ry="17"/><ellipse cx="268" cy="411" rx="36" ry="17"/><ellipse cx="358" cy="418" rx="36" ry="17"/></g></g>
+  <g id="one-cocoon"><ellipse cx="523" cy="286" rx="65" ry="83" fill="#eee6d2" stroke="#5b5141" stroke-width="12"/><path d="M485 270 Q523 233 562 270 M481 304 Q523 339 566 302" fill="none" stroke="#b7a98d" stroke-width="7"/></g>
+  <g id="one-simple-loom"><rect x="617" y="192" width="260" height="366" rx="10" fill="#9b653f" stroke="#3e2d24" stroke-width="14"/><rect x="663" y="240" width="168" height="236" fill="#d8c9a9" stroke="#4d392b" stroke-width="10"/><g stroke="#f3ead3" stroke-width="5"><path d="M686 241v235 M710 241v235 M734 241v235 M758 241v235 M782 241v235 M806 241v235"/></g><rect x="645" y="475" width="204" height="30" fill="#75482f"/></g>
+  <g id="silk-offering"><rect x="934" y="390" width="257" height="119" rx="22" fill="#a87348" stroke="#3f2e25" stroke-width="13"/><path d="M969 368 Q1062 327 1155 368 L1138 456 Q1062 489 986 456Z" fill="#eee7d5" stroke="#665747" stroke-width="11"/><path d="M1000 394 Q1062 374 1125 395" fill="none" stroke="#c7b99d" stroke-width="8"/></g>
+  <g id="plain-gift-box"><rect x="949" y="535" width="223" height="107" rx="15" fill="#7e5138" stroke="#3a2b24" stroke-width="12"/><path d="M949 571 H1172 M1060 535 V642" stroke="#c39a61" stroke-width="9"/></g>
+</svg>

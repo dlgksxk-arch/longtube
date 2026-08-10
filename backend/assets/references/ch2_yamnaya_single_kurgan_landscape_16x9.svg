@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#b9c0b2"/>
+  <path d="M0 350 Q260 320 510 348 T1280 342 V720 H0Z" fill="#bd9764"/>
+  <path d="M0 420 Q310 385 590 414 T1280 408" fill="none" stroke="#7b6046" stroke-width="9"/>
+
+  <!-- One low, broad, gently rounded earthen kurgan on open steppe. -->
+  <path d="M130 535 Q300 410 470 350 Q640 292 810 350 Q980 410 1150 535 Z"
+        fill="#8d6847" stroke="#4b3428" stroke-width="15"/>
+  <path d="M185 510 Q335 408 485 365 Q640 320 795 365 Q945 408 1095 510"
+        fill="none" stroke="#a88158" stroke-width="18"/>
+  <path d="M260 490 Q425 395 640 360 Q855 395 1020 490"
+        fill="none" stroke="#75533d" stroke-width="10"/>
+  <path d="M190 520 l42 -24 M280 456 l38 -24 M385 400 l42 -20 M505 350 l38 -15
+           M742 350 l38 15 M855 400 l42 20 M965 456 l38 24 M1050 520 l42 24"
+        fill="none" stroke="#4b3428" stroke-width="8" stroke-linecap="round"/>
+
+  <path d="M0 535 H1280 V720 H0Z" fill="#b48959"/>
+  <path d="M0 535 H1280" fill="none" stroke="#4b3428" stroke-width="11"/>
+  <path d="M65 620 l35 -35 M155 665 l28 -38 M1110 635 l34 -36 M1200 675 l25 -35"
+        fill="none" stroke="#70533e" stroke-width="8" stroke-linecap="round"/>
+</svg>

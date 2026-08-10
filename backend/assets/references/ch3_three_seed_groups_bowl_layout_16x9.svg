@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <defs>
+    <linearGradient id="wood39" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#b77e4d"/>
+      <stop offset="0.52" stop-color="#d2a06a"/>
+      <stop offset="1" stop-color="#a86c42"/>
+    </linearGradient>
+    <radialGradient id="bowl39" cx="50%" cy="42%" r="65%">
+      <stop offset="0" stop-color="#d8a55e"/>
+      <stop offset="0.7" stop-color="#b7783e"/>
+      <stop offset="1" stop-color="#84502e"/>
+    </radialGradient>
+  </defs>
+  <rect width="1280" height="720" fill="url(#wood39)"/>
+  <g fill="none" stroke="#845332" stroke-width="7" opacity="0.38">
+    <path d="M0 112 Q300 78 640 118 T1280 102"/>
+    <path d="M0 604 Q310 568 650 612 T1280 586"/>
+  </g>
+
+  <g id="wooden-bowl">
+    <ellipse cx="640" cy="409" rx="391" ry="92" fill="#6c442b" opacity="0.30"/>
+    <ellipse cx="640" cy="352" rx="385" ry="254" fill="#87502c" stroke="#402a20" stroke-width="16"/>
+    <ellipse cx="640" cy="341" rx="335" ry="207" fill="url(#bowl39)" stroke="#e0b36c" stroke-width="15"/>
+  </g>
+
+  <g id="rice-group" fill="#eee8d5" stroke="#5b4c3d" stroke-width="4">
+    <ellipse cx="425" cy="300" rx="16" ry="7" transform="rotate(18 425 300)"/>
+    <ellipse cx="461" cy="280" rx="16" ry="7" transform="rotate(-14 461 280)"/>
+    <ellipse cx="497" cy="307" rx="16" ry="7" transform="rotate(28 497 307)"/>
+    <ellipse cx="438" cy="343" rx="16" ry="7" transform="rotate(-26 438 343)"/>
+    <ellipse cx="480" cy="352" rx="16" ry="7" transform="rotate(10 480 352)"/>
+    <ellipse cx="515" cy="340" rx="16" ry="7" transform="rotate(-12 515 340)"/>
+    <ellipse cx="452" cy="390" rx="16" ry="7" transform="rotate(22 452 390)"/>
+    <ellipse cx="497" cy="392" rx="16" ry="7" transform="rotate(-18 497 392)"/>
+  </g>
+
+  <g id="millet-group" fill="#d9c663" stroke="#6e5b2f" stroke-width="4">
+    <circle cx="596" cy="285" r="11"/><circle cx="630" cy="276" r="11"/><circle cx="665" cy="287" r="11"/>
+    <circle cx="580" cy="323" r="11"/><circle cx="616" cy="316" r="11"/><circle cx="650" cy="326" r="11"/><circle cx="684" cy="317" r="11"/>
+    <circle cx="590" cy="362" r="11"/><circle cx="625" cy="357" r="11"/><circle cx="660" cy="367" r="11"/><circle cx="692" cy="354" r="11"/>
+    <circle cx="610" cy="398" r="11"/><circle cx="647" cy="401" r="11"/><circle cx="680" cy="390" r="11"/>
+  </g>
+
+  <g id="bean-group" fill="#91483b" stroke="#4b2a27" stroke-width="6">
+    <ellipse cx="772" cy="287" rx="22" ry="15" transform="rotate(-20 772 287)"/>
+    <ellipse cx="814" cy="280" rx="22" ry="15" transform="rotate(16 814 280)"/>
+    <ellipse cx="850" cy="310" rx="22" ry="15" transform="rotate(-12 850 310)"/>
+    <ellipse cx="782" cy="332" rx="22" ry="15" transform="rotate(22 782 332)"/>
+    <ellipse cx="825" cy="339" rx="22" ry="15" transform="rotate(-18 825 339)"/>
+    <ellipse cx="862" cy="365" rx="22" ry="15" transform="rotate(14 862 365)"/>
+    <ellipse cx="790" cy="382" rx="22" ry="15" transform="rotate(-10 790 382)"/>
+    <ellipse cx="835" cy="397" rx="22" ry="15" transform="rotate(18 835 397)"/>
+  </g>
+</svg>

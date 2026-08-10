@@ -16,7 +16,7 @@ from app.config import resolve_cut_video_duration, resolve_project_dir, resolve_
 from app.services.llm.visual_policy import drop_conflicting_visual_period, image_prompt_safe_text
 
 
-IMAGE_PROMPT_REQUIRED_STYLE = "serious adult graphic novel illustration, mature documentary manhwa style, bold black ink outlines, heavy black contour linework, gritty dark cinematic mood, high-contrast shadow blocks, stylish single-frame dynamic composition, varied camera rhythm, emotion-forward staging"
+IMAGE_PROMPT_REQUIRED_STYLE = "mature vintage dark historical manhwa illustration, variable-width scratchy dip-pen contours, thin angular interior lines, controlled heavy silhouette accents, dry-brush texture, dense hatching with intersecting hatch strokes, aged fibrous print-stock grain, muted watercolor and gouache washes, sepia dirty-ivory tobacco rust faded-burgundy soot-black palette, bleak ominous tension, dynamic full-bleed composition"
 
 
 STORY_PLAN_SYSTEM_PROMPT_TEMPLATE = """당신은 유튜브 자동화 파이프라인의 사전 스토리 설계 단계입니다.
@@ -415,8 +415,8 @@ SCRIPT_SYSTEM_PROMPT_TEMPLATE = """당신은 시청자를 끌어들이고 끝까
       "visual_period": "영어로 작성. 구체적인 역사 시대 또는 현대 시기. 예: 'Indus Valley Civilization, Mature Harappan period, c. 2600-1900 BCE'",
       "visual_location": "영어로 작성. 구체적인 장소 또는 환경. 예: 'brick street near a drainage channel in Mohenjo-daro'",
       "visual_evidence": "영어로 작성. 이 이미지가 내레이션과 시대에 맞는 이유를 짧게 한 문장으로 작성",
-      "visual_subject": "영어로 작성. 화면 중심 대상. 예: 'frontier envoy holding a sealed message'",
-      "visual_scene": "영어로 작성. 12~28단어의 구체적 장면/행동/구도. 고정 라벨과 스타일 문구 금지",
+      "visual_subject": "영어로 작성. 인물 장면은 exactly N adults처럼 화면 전경 인원수를 먼저 명시. 사물 장면은 object-only를 명시",
+      "visual_scene": "영어로 작성. 18~45단어. 대본의 실제 행동, 프레이밍, 인물별 위치, 필요한 손만 명시. 고정 라벨과 스타일 문구 금지",
       "scene_type": "title",
       "shorts_candidate": false
     }
@@ -573,9 +573,19 @@ V3.1 스토리 구조 계약:
 - visual_subject와 visual_scene에는 `spoken cue:`, `narration:`, `dialogue:`, `voiceover:`, `line:` 같은 원고 라벨을 쓰지 마세요.
 - visual_subject는 컷 내용에 맞게 매 컷 다시 정하세요. 전체 컷에 같은 인물이나 장소를 고정하지 마세요.
 - visual_subject는 해당 컷의 실제 중심 대상이어야 합니다: 인물, 장소, 유물, 공동체, 의식, 전투, 외교 장면 중 내레이션과 가장 직접 연결되는 하나를 고르세요.
+- 인물 장면의 visual_subject는 화면 전경에 보일 인원수를 `exactly one adult`, `exactly two adults`, `exactly three adults`처럼 먼저 명시하세요. 내레이션에 등장하지만 화면 밖에 있는 인물은 세지 마세요.
+- 인물이 전혀 없는 장면의 visual_subject는 `object-only`, `landscape-only`, `animal-only` 중 맞는 범주를 명시하고 사람 신체를 섞지 마세요.
 - Visual focus, camera, mood, detail은 컷 내용과 직접 맞을 때만 쓰세요. 랜덤 소품, 랜덤 카메라, 랜덤 분위기 조합은 실패입니다.
 - visual_scene은 장면, 인물, 배경, 소품, 시대 분위기만 묘사하세요. 내레이션 문장을 설명하거나 복사하지 마세요.
 - visual_scene은 대본 문장 변환이 아닙니다. 컷의 핵심 장면을 별도로 시각화하세요.
+- visual_scene은 `head-and-shoulders`, `chest-up`, `waist-up`, `full-body`, `wide` 중 실제 장면에 맞는 프레이밍을 명시하세요. 크롭 밖 신체를 동시에 보이라고 요구하지 마세요.
+- 한 머리에는 한 몸통만 연결하고, 각 인물은 자기 머리·몸통·팔다리를 다른 인물과 공유하지 않는 별도 위치에 두세요. 두 인물 이상이면 left, center, right 등 겹치지 않는 화면 위치를 명시하세요.
+- 두 인물 이상이면 `one envoy stands at left; one guard stands at right`처럼 인물별 위치를 각각 독립된 절로 쓰세요.
+- 손이 대본의 행동이나 필수 소품 접촉에 필요하지 않으면 `exactly zero visible hands; hands outside frame or behind the body`로 구성하세요.
+- 손이 필요하면 화면 전체의 보이는 손 수와 인물별 손을 함께 명시하세요. 예: `exactly two visible hands total; left adult's right hand grips the packet; right adult's left palm receives it`.
+- 필요한 손 외의 모든 손·손목·팔은 각 인물 자신의 몸 뒤 또는 프레임 밖에 완전히 가리고 `every other hand and wrist remains fully hidden, no part visible`을 명시하세요.
+- 펼친 손은 `one thumb and four fingers, five digits total`, 가리키는 손은 `one extended index finger with four remaining digits naturally curled`, 주먹은 `one thumb over four curled fingers`, 물건을 쥔 손은 `one opposing thumb and four naturally curled fingers with correct object occlusion`으로 구분하세요.
+- 한 손이 서로 떨어진 두 물체를 동시에 잡거나, 물체를 통과하거나, 팔 없이 떠 있거나, 다른 인물의 팔에 연결되는 장면은 만들지 마세요.
 - 매 회차마다 허용 소재와 금지 소재를 내부적으로 먼저 확정하고, 다른 회차 인물, 다른 시대 사건, 이전 파일의 이미지 프롬프트 잔재, 엉뚱한 지명, 엉뚱한 왕 이름, 엉뚱한 성문/피난/방어전 장면을 섞지 마세요.
 {image_sequence_contract}
 {japanese_visual_style}
@@ -584,6 +594,7 @@ V3.1 스토리 구조 계약:
 - DNA 나선, 빛나는 뇌, 추상 지도, 아무 사원 벽, 일반 학자, 일반 궁전, 일반 전장 같은 일반 filler 이미지는 내레이션이 그 대상을 직접 다루지 않는 한 사용하지 마세요.
 - visual_scene은 추상 지도, 이상화된 상징물, 피가 흐르는 지도, 허공을 가르는 칼처럼 은유만 있는 컷으로 끝내지 마세요. 반드시 시대·장소에 맞는 실제 인물 행동, 사물 접촉, 현장 압력 중 하나로 보이게 쓰세요.
 - 일반 판타지 의상, 코스프레, 무대 의상, 유명하지만 시대가 맞지 않는 외형을 사용하지 마세요.
+- 비유를 현대 사물이나 비고증 사물로 시각화하지 마세요. explosives, fuse, bomb, meat grinder, medal, stained glass, glass pillar, crystal pillar, modern mirror, modern person, modern map graphic 같은 소재는 컷 내레이션이 그 물건 자체를 직접 말하지 않는 한 실패입니다.
 - 정확한 시각 정보가 불확실하면 보수적으로 시대에 맞을 법한 평범한 사물을 사용하고, 후대 발명품처럼 보이는 것은 피하세요.
 - 연속된 컷은 같은 다큐멘터리 세계처럼 느껴져야 합니다: 시대, 지역, 건축, 의상, 소품은 일관되게 유지하되 카메라 각도와 구도는 변화시킵니다.
 
@@ -601,6 +612,7 @@ V3.1 스토리 구조 계약:
 - 몸통만 보이는 구도, 머리 잘림, 얼굴 잘림, 뒷모습, 얼굴을 가린 장면, 얼굴 없는 실루엣은 썸네일 실패입니다.
 - 인물이 전혀 없는 주제일 때만 유물, 장소, 증거 사물을 썸네일 주제로 선택하세요.
 - thumbnail_prompt는 더 자극적이고 클릭을 유도해야 합니다: 이야기에서 가장 충격적인 장면, 가장 긴장감 있는 표정, 위험한 물건, 결정적 증거, 배신의 신호, 금기/은폐의 단서, 폭발 직전의 분노, 되돌릴 수 없는 전환점의 사물을 선택하세요.
+- thumbnail_prompt와 thumbnail_hook은 사실 기반 안에서 가능한 한 가장 강한 어그로를 목표로 하세요. 평범한 멋, 점잖은 역사화, 넓은 설명 장면보다 멈춰 보게 만드는 얼굴, 증거, 위기, 붕괴 직전 순간을 우선합니다.
 - 썸네일은 재난, 폭로, 굴욕, 죽음, 붕괴, 배신, 금기, 결정적 증거 중 본문에 실제로 있는 가장 강한 축을 하나만 골라 크게 밀어야 합니다.
 - 썸네일 이미지는 급박하고 극적이며 호기심을 강하게 자극해야 하지만, 반드시 사실 기반이어야 하며 유혈, 가짜 텍스트, 가짜 상징, 이야기 속에 없는 사건을 지어내면 안 됩니다.
 - 하나의 지배적인 클로즈업 대상을 사용하세요. 넓은 설명 장면, 콜라주, 일반 분위기, 먼 풍경은 피하세요.
@@ -611,15 +623,16 @@ V3.1 스토리 구조 계약:
 이미지 계약:
 - 수익창출이 최우선입니다. 모든 visual_subject와 visual_scene은 첫눈에 호기심을 만들고, 클릭/시청 지속에 도움이 되는 강한 대표 피사체와 감정/행동/위험/증거/충돌 중 하나를 화면 중심에 둬야 합니다.
 - 이목을 잡아끌지 못하는 장면은 실패입니다. 단순 설명용 배경, 먼 풍경, 정적인 건물, 평범한 사람, 일반 전경, 약한 구도는 피하고, 사실 기반 안에서 가장 클릭 가능성이 높은 순간으로 시각화하세요.
-- Cut 1, Cut 2, Cut 3의 visual_subject와 visual_scene은 시청자의 호기심을 즉시 붙잡는 강한 훅 이미지여야 합니다.
-- Cut 1, Cut 2, Cut 3은 각 컷의 좁은 문장만 묘사하지 말고, 주제 전반을 아우르는 임팩트 있는 대표 장면, 핵심 미스터리, 결정적 증거, 또는 가장 강한 시각적 질문을 사실 기반으로 시각화하세요.
+- Cut 1, Cut 2, Cut 3, Cut 4, Cut 5의 visual_subject와 visual_scene은 시청자의 호기심을 즉시 붙잡는 강한 훅 이미지여야 합니다.
+- Cut 1~5는 각 컷의 좁은 문장만 묘사하지 말고, 주제 전반을 아우르는 임팩트 있는 대표 장면, 핵심 미스터리, 결정적 증거, 위기, 배신, 붕괴 직전, 또는 가장 강한 시각적 질문을 사실 기반으로 시각화하세요.
+- 전체 이미지는 스타일리시하고 멋있고 분위기 변화가 분명해야 합니다. 화려한 조명, 강한 실루엣, 과감한 카메라, 선명한 색 포인트, 박력 있는 액션, 감정 클로즈업을 섞어 흥미진진하게 구성하되 사실과 시대 고증을 버리면 실패입니다.
 - 모든 컷의 visual_scene은 시청자의 눈길을 잡아끌 수 있는 선명한 주 피사체, 긴장감 있는 구도, 명확한 감정 또는 행동을 포함해야 합니다. 설명용 배경 장면처럼 밋밋하게 만들지 마세요.
 - 모든 visual_scene에는 반드시 눈에 보이는 동사형 행동 또는 감정선이 있어야 합니다. standing, watching, looking, sitting 같은 정지 동사만으로 끝나면 실패입니다.
 - 인물이 등장하면 얼굴·시선·몸의 각도로 분노, 공포, 배신감, 결심, 절망, 보호 본능, 의심 중 하나가 읽혀야 합니다. 인물이 없는 컷은 전경의 증거물, 파손, 은폐, 압박, 추격 흔적, 위협적인 빛처럼 사건의 결과가 보여야 합니다.
 - 풍경화처럼 배경, 자연, 건물, 먼 전경만 보여주는 visual_scene은 자제하세요. 장소 설명이 필요해도 인물, 사물, 사건의 행동, 표정, 충돌, 증거 중 하나가 화면의 중심이어야 합니다.
-- 전체 컷의 최소 70%는 고강도 이미지로 구성하세요: 인물 클로즈업, 호쾌한 액션, 극적인 감정 표현 중 하나 이상을 반드시 포함합니다. 역사/사실 정확성을 해치지 않는 범위에서 얼굴 표정, 손짓, 시선, 몸의 움직임을 크게 보이게 하세요.
+- 전체 컷의 최소 70%는 고강도 이미지로 구성하세요: 인물 클로즈업, 호쾌한 액션, 극적인 감정 표현 중 하나 이상을 반드시 포함합니다. 역사/사실 정확성을 해치지 않는 범위에서 얼굴 표정, 시선, 몸의 움직임을 크게 보이게 하고, 손짓은 대본 행동에 필수일 때만 사용하세요.
 - 주요 인물, 왕, 장수, 지휘관, 사신, 반복 등장 캐릭터가 처음 등장하는 컷은 반드시 medium-close 또는 close-up character entrance 컷으로 쓰세요. 먼 군중, 건물 전경, 지도, 상징물로 주요 인물을 소개하면 실패입니다.
-- 주요 인물 등장 컷은 얼굴, 눈빛, 표정, 어깨 각도, 손동작, 의복 실루엣, 시대에 맞는 무기나 지휘 소품 중 최소 세 가지를 화면 중심에 두고, 감정이 바로 읽혀야 합니다.
+- 주요 인물 등장 컷은 얼굴, 눈빛, 표정, 어깨 각도, 의복 실루엣, 시대에 맞는 무기나 지휘 소품 중 최소 세 가지를 화면 중심에 두고, 감정이 바로 읽혀야 합니다. 손동작은 해당 대본 행동에 필수일 때만 추가하세요.
 - 주요 남성 인물은 간지나고 스타일리시한 첫 등장으로 쓰세요: intense eyes, controlled expression, dramatic rim light, strong silhouette, period-correct armor or command robes 같은 구체적 시각 요소를 사용합니다.
 - 성인 여성 주요인물이 실제로 등장하는 회차에서는 첫 등장 컷에 adult woman을 명시하고, attractive charisma, confident eyes, elegant period-correct clothing, strong silhouette, tasteful mature styling을 사용하세요. 미성년처럼 보이거나 노출 중심으로 보이게 쓰지 마세요.
 - 전체 컷의 최소 10%는 인물 클로즈업 감정 컷으로 구성하세요. 얼굴, 눈빛, 굳은 표정, 놀람, 결심, 불안, 분노, 절망 같은 감정을 화면 중심에 두되, 시대·장소·문화 고증은 유지하세요.
@@ -1851,22 +1864,62 @@ class BaseLLMService(ABC):
         validation_range = str(limits.get("validation_range") or target_range)
         lang = limits.get("lang") or normalize_language_code((config or {}).get("language", "ko"))
         unit = "chars" if lang in ("ko", "ja") else "words"
-        preview = ", ".join(
-            f"cut {issue.get('cut_number')}={issue.get('amount')}{issue.get('unit')}"
-            for issue in (issues or [])[:15]
-        )
-        if len(issues or []) > 15:
-            preview += f", ... (+{len(issues) - 15})"
+        too_short: list[dict] = []
+        too_long: list[dict] = []
+        for issue in issues or []:
+            issue_range = str(issue.get("target_range") or validation_range)
+            try:
+                low_text, high_text = issue_range.split("~", 1)
+                low = int(low_text)
+                high = int(high_text)
+                amount = int(issue.get("amount"))
+            except (TypeError, ValueError):
+                continue
+            if amount < low:
+                too_short.append(issue)
+            elif amount > high:
+                too_long.append(issue)
+
+        direction_lines: list[str] = []
+        if too_short:
+            short_preview = ", ".join(
+                f"cut {issue.get('cut_number')}={issue.get('amount')}{issue.get('unit')}"
+                for issue in too_short[:15]
+            )
+            if len(too_short) > 15:
+                short_preview += f", ... (+{len(too_short) - 15})"
+            direction_lines.extend([
+                f"- 길이 부족 컷: {short_preview}.",
+                "- 길이 부족 컷은 더 줄이지 마세요. 확인된 사실, 원인, 결과, 압박 중 하나의 구체적인 짧은 절을 덧붙여 최소 길이를 채우세요.",
+            ])
+        if too_long:
+            long_preview = ", ".join(
+                f"cut {issue.get('cut_number')}={issue.get('amount')}{issue.get('unit')}"
+                for issue in too_long[:15]
+            )
+            if len(too_long) > 15:
+                long_preview += f", ... (+{len(too_long) - 15})"
+            direction_lines.extend([
+                f"- 길이 초과 컷: {long_preview}.",
+                "- 길이 초과 컷은 반복 수식과 부연을 제거하고 핵심 정보 하나만 남겨 상한 아래로 줄이세요.",
+            ])
+        if not direction_lines:
+            preview = ", ".join(
+                f"cut {issue.get('cut_number')}={issue.get('amount')}{issue.get('unit')}"
+                for issue in (issues or [])[:15]
+            )
+            if len(issues or []) > 15:
+                preview += f", ... (+{len(issues) - 15})"
+            direction_lines.append(f"- 실패 컷: {preview}.")
         return (
             "이전 응답은 내레이션 길이 검증에 실패했습니다.\n"
             f"- 모든 narration은 실제 TTS 기준 {limits.get('target_min_sec')}~{limits.get('target_max_sec')}초 안에 들어와야 합니다.\n"
             f"- 작성 목표 범위: {target_range} {unit}.\n"
             f"- 저장 검증 범위: {validation_range} {unit}. 이 상한을 넘는 컷이 하나라도 있으면 실패입니다.\n"
-            f"- 실패 컷: {preview}.\n"
-            "- 이번 응답은 전체 JSON을 처음부터 다시 작성하세요. 실패한 narration을 길게 유지하지 마세요.\n"
-            "- 각 컷은 핵심 정보 하나만 말하고, 원인/결과/압박 중 하나만 짧게 붙이세요.\n"
-            "- 쉼표가 두 번 이상 필요한 문장은 실패입니다. 한 문장 또는 짧은 두 절로 끝내세요.\n"
-            "- 이미지 필드와 V3.1 구조는 유지하되 narration만 반드시 더 짧게 설계하세요."
+            + "\n".join(direction_lines)
+            + "\n- 이번 응답은 전체 JSON을 처음부터 다시 작성하세요.\n"
+            "- 각 narration을 작성한 뒤 공백을 포함한 실제 길이를 세어 저장 검증 범위 안인지 확인하세요.\n"
+            "- 이미지 필드와 V3.1 구조는 유지하고 narration 길이만 부족/초과 방향에 맞게 교정하세요."
         )
 
     async def generate_tags(
@@ -1964,11 +2017,28 @@ class BaseLLMService(ABC):
     ) -> str:
         lang_name = BaseLLMService._language_name(language)
         current = (narration or "").strip()
-        current_amount = len(current)
-        nonspace = len("".join(current.split()))
-        unit = "total characters"
+        japanese_count_rule = ""
+        if normalize_language_code(language) == "ja":
+            try:
+                from app.services.tts.pronunciation_normalizer import prepare_spoken_narration_for_tts
+
+                measured_text = prepare_spoken_narration_for_tts(current, "ja") or current
+            except Exception:
+                measured_text = current
+            current_amount = len(measured_text)
+            nonspace = len("".join(measured_text.split()))
+            unit = "kana-expanded TTS characters"
+            japanese_count_rule = (
+                "- For Japanese, count every kanji by its full kana reading, not as one "
+                "written character. Internally convert the completed line to hiragana, "
+                f"then keep that reading at or below {target_chars + 2} characters.\n"
+            )
+        else:
+            current_amount = len(current)
+            nonspace = len("".join(current.split()))
+            unit = "total characters"
         tolerance = "+/- 2 characters"
-        current_length = f"{current_amount} total characters, {nonspace} non-space characters"
+        current_length = f"{current_amount} {unit}, {nonspace} non-space characters"
         issue = "too short" if direction == "short" else "too long"
         action = (
             "add one concrete detail while preserving the meaning"
@@ -1991,6 +2061,7 @@ class BaseLLMService(ABC):
             f"Target length: around {target_chars} {unit}, tolerance {tolerance}.\n"
             f"Hard upper limit: never exceed {target_chars + 2} total characters unless a proper noun makes it impossible.\n\n"
             "Hard rules:\n"
+            f"{japanese_count_rule}"
             f"- {action}; do NOT change the factual meaning or emotional beat.\n"
             "- Preserve the original speech level and sentence ending style exactly. "
             "If the original is polite/formal Korean, the rewrite must stay polite/formal Korean.\n"
@@ -2834,11 +2905,18 @@ class BaseLLMService(ABC):
             "fact_ledger.unknown_or_debated와 forbidden_claims는 단정하거나 장면으로 꾸미지 마세요.\n"
             "visual_world는 모든 visual_* 필드의 최상위 시대·장소·문화 기준입니다.\n"
             "visual_period, visual_location, visual_evidence, visual_subject, visual_scene은 영어로만 작성하세요.\n"
-            "visual_subject는 4~12단어, visual_scene은 12~28단어로 짧고 구체적으로 작성하세요.\n"
+            "visual_subject는 4~16단어, visual_scene은 18~45단어로 짧고 구체적으로 작성하세요.\n"
+            "인물 장면의 visual_subject는 화면 전경 인원수를 exactly N adults 형식으로 먼저 명시하고, 인물 없는 장면은 object-only, landscape-only, animal-only 중 하나를 명시하세요.\n"
+            "visual_scene은 head-and-shoulders, chest-up, waist-up, full-body, wide 중 맞는 프레이밍과 각 인물의 left/center/right 위치를 명시하세요. 크롭 밖 신체를 동시에 보이라고 쓰지 마세요.\n"
+            "두 인물 이상이면 one envoy stands at left; one guard stands at right처럼 인물별 위치를 각각 독립된 절로 쓰세요.\n"
+            "손이 대본 행동이나 필수 소품 접촉에 필요하지 않으면 exactly zero visible hands와 hands outside frame or behind the body를 명시하세요.\n"
+            "손이 필요하면 보이는 손 총수와 인물별 소유·동작을 함께 명시하세요. 펼친 손은 one thumb and four fingers, 가리키는 손은 one extended index finger, 주먹과 물건을 쥔 손은 네 손가락이 자연스럽게 말린 상태와 엄지 위치를 구분하세요.\n"
+            "필요한 손 외의 모든 손·손목·팔은 각 인물 자신의 몸 뒤 또는 프레임 밖에 완전히 가리고 every other hand and wrist remains fully hidden, no part visible을 명시하세요.\n"
+            "각 인물은 별도 머리와 몸통을 가지며 팔다리를 공유하지 않습니다. 한 손이 떨어진 두 물체를 동시에 잡거나 다른 인물의 팔에 붙는 구도는 금지합니다.\n"
             "visual_scene에는 반드시 보이는 행동 또는 감정선이 있어야 합니다. standing, watching, looking, sitting 같은 정지 동사만으로 끝내지 마세요.\n"
             "인물이 나오면 face, eyes, posture, body angle 중 하나로 anger, fear, resolve, grief, suspicion, betrayal, protection 같은 감정이 보이게 쓰세요.\n"
             "현재 scene_block.character_introductions에 현재 cut_number가 있으면 visual_subject는 해당 인물명으로 쓰고, visual_scene은 medium-close 또는 close-up character entrance로 쓰세요.\n"
-            "주요 인물 첫 등장 컷은 얼굴, 눈빛, 표정, 어깨 각도, 손동작, 시대 복식 실루엣 중 최소 세 가지가 보이게 쓰세요. 먼 군중, 건물 전경, 지도, 상징물로 대체하면 실패입니다.\n"
+            "주요 인물 첫 등장 컷은 얼굴, 눈빛, 표정, 어깨 각도, 시대 복식 실루엣 중 최소 세 가지가 보이게 쓰세요. 손동작은 대본 행동에 필수일 때만 추가하세요. 먼 군중, 건물 전경, 지도, 상징물로 대체하면 실패입니다.\n"
             "주요 남성 인물 첫 등장은 stylish medium-close entrance, intense eyes, controlled expression, dramatic rim light, strong silhouette, period-correct armor or command robes를 포함하세요.\n"
             "성인 여성 주요인물 첫 등장은 adult woman, attractive charisma, confident eyes, elegant period-correct clothing, strong silhouette, tasteful mature styling을 포함하세요. 노출 중심, 미성년처럼 보이는 표현은 금지입니다.\n"
             "인물이 없는 컷은 foreground evidence, damage, concealment, pursuit trace, dangerous light, physical consequence 중 하나가 보이게 쓰세요.\n"

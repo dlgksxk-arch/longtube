@@ -19,13 +19,12 @@ v1 라우터와의 차이:
 """
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Optional, Literal
 
 from fastapi import HTTPException, UploadFile
 
-from app.services.video.subprocess_helper import find_ffmpeg, run_subprocess
+from app.services.video.ffmpeg_service import FFmpegService
 
 
 # ---------- 상수 ----------
@@ -37,8 +36,8 @@ VALID_KINDS: tuple[str, ...] = ("opening", "intermission", "ending")
 DEFAULT_INTERMISSION_EVERY = 45  # cuts
 """Default intermission interval, measured in body cuts. 45 cuts = 180s at 4s/cut."""
 
-INTERMISSION_CLIP_SECONDS = 3.0
-"""Intermission clips are trimmed/standardized to this duration when inserted."""
+INTERMISSION_INSERTION_ENABLED = False
+"""전 채널 본편 중간 인터미션 자동 삽입 전역 스위치."""
 
 ALLOWED_VIDEO_EXTS: frozenset[str] = frozenset({
     ".mp4", ".mov", ".mkv", ".webm", ".m4v", ".avi",
@@ -54,28 +53,7 @@ MAX_UPLOAD_BYTES = 500 * 1024 * 1024  # 500 MB
 
 async def ffprobe_duration(video_path: str) -> float:
     """영상 길이(초) 반환. 실패하면 0.0."""
-    try:
-        ffbin = find_ffmpeg()
-        ffprobe = ffbin.replace("ffmpeg.exe", "ffprobe.exe").replace("ffmpeg", "ffprobe")
-        if not os.path.exists(ffprobe):
-            return 0.0
-        rc, stdout, _ = await run_subprocess(
-            [
-                ffprobe, "-v", "error",
-                "-show_entries", "format=duration",
-                "-of", "default=noprint_wrappers=1:nokey=1",
-                video_path,
-            ],
-            timeout=30.0,
-            capture_stdout=True,
-            capture_stderr=False,
-        )
-        if rc != 0:
-            return 0.0
-        txt = (stdout or b"").decode(errors="replace").strip()
-        return float(txt) if txt else 0.0
-    except Exception:
-        return 0.0
+    return await FFmpegService.probe_duration(video_path)
 
 
 # ---------- 업로드 ----------

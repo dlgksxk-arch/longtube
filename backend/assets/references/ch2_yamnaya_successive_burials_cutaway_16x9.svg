@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#c0c5b8"/>
+  <rect y="515" width="1280" height="205" fill="#a67d52"/>
+
+  <!-- One continuous mound cross-section with two later graves above one founding grave. -->
+  <path d="M65 520 Q230 315 455 215 Q640 130 825 215 Q1050 315 1215 520 Z"
+        fill="#9b734d" stroke="#4b3428" stroke-width="15"/>
+  <path d="M105 500 Q260 330 470 245 Q640 175 810 245 Q1020 330 1175 500"
+        fill="none" stroke="#b38a5d" stroke-width="20"/>
+  <path d="M160 490 Q335 355 500 295 Q640 245 780 295 Q945 355 1120 490"
+        fill="none" stroke="#79583f" stroke-width="11"/>
+  <path d="M0 515 H1280" fill="none" stroke="#4b3428" stroke-width="12"/>
+
+  <!-- Later grave one, entirely inside upper-left mound fill. -->
+  <rect x="230" y="322" width="250" height="145" rx="8" fill="#644837" stroke="#362a24" stroke-width="13"/>
+
+  <!-- Later grave two, entirely inside upper-right mound fill. -->
+  <rect x="810" y="292" width="245" height="150" rx="8" fill="#644837" stroke="#362a24" stroke-width="13"/>
+
+  <!-- Deep founding grave below the buried ground at bottom center. -->
+  <rect x="465" y="500" width="350" height="190" rx="8" fill="#564033" stroke="#362a24" stroke-width="14"/>
+</svg>

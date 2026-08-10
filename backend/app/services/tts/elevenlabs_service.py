@@ -2,11 +2,12 @@
 v1.1.52: 재시도 로직 추가.
 """
 import asyncio
+import base64
 import os
-import subprocess
 from typing import Optional
 import httpx
-from app.services.tts.base import BaseTTSService, _resolve_bins
+from app.services.tts.base import BaseTTSService, probe_audio_duration
+from app.services.tts.alignment import write_alignment_sidecar
 from app.services.cancel_ctx import raise_if_cancelled  # v1.2.25 cancel 방어
 from app import config
 
@@ -20,6 +21,8 @@ BASE_URL = "https://api.elevenlabs.io/v1"
 
 
 class ElevenLabsService(BaseTTSService):
+    engine_model_id = "eleven_v3"
+
     def __init__(self):
         self.model_id = "elevenlabs"
         self.display_name = "ElevenLabs"
@@ -30,14 +33,74 @@ class ElevenLabsService(BaseTTSService):
         # workbench jobs must not keep using a stale in-memory key.
         return {"xi-api-key": config.get_runtime_api_key("ELEVENLABS_API_KEY")}
 
-    async def generate(self, text: str, voice_id: str, output_path: str, speed: float = 1.0, voice_settings: Optional[dict] = None) -> dict:
-        vs = dict(voice_settings or {"stability": 0.5, "similarity_boost": 0.75})
-        # ElevenLabs speed range: 0.7 ~ 1.2 (공식 문서 기준). 그 밖은 clamp.
+    @staticmethod
+    def effective_voice_settings(speed: float, voice_settings: Optional[dict] = None) -> dict:
+        settings = dict(voice_settings or {"stability": 0.5, "similarity_boost": 0.75})
         try:
-            sp = float(speed)
+            value = float(speed)
         except (TypeError, ValueError):
-            sp = 1.0
-        vs["speed"] = max(0.7, min(1.2, sp))
+            value = 1.0
+        settings["speed"] = max(0.7, min(1.2, value))
+        return settings
+
+    @classmethod
+    def _build_request_payload(
+        cls,
+        text: str,
+        voice_settings: dict,
+        request_context: Optional[dict] = None,
+    ) -> dict:
+        payload = {
+            "text": text,
+            "model_id": cls.engine_model_id,
+            "voice_settings": voice_settings,
+        }
+        context = request_context or {}
+        language_code = str(context.get("language_code") or "").strip().lower()
+        if language_code:
+            payload["language_code"] = language_code
+        # ElevenLabs rejects this option for eleven_v3 with HTTP 400
+        # (unsupported_model). Keep it only for models that accept it.
+        if (
+            cls.engine_model_id != "eleven_v3"
+            and context.get("apply_language_text_normalization") is not None
+        ):
+            payload["apply_language_text_normalization"] = bool(
+                context.get("apply_language_text_normalization")
+            )
+        if cls.engine_model_id != "eleven_v3":
+            for key in ("previous_text", "next_text"):
+                value = str(context.get(key) or "").strip()
+                if value:
+                    payload[key] = value
+        locators = context.get("pronunciation_dictionary_locators")
+        if isinstance(locators, list):
+            normalized = []
+            for item in locators[:3]:
+                if not isinstance(item, dict):
+                    continue
+                dictionary_id = str(item.get("pronunciation_dictionary_id") or "").strip()
+                version_id = str(item.get("version_id") or "").strip()
+                if dictionary_id and version_id:
+                    normalized.append({
+                        "pronunciation_dictionary_id": dictionary_id,
+                        "version_id": version_id,
+                    })
+            if normalized:
+                payload["pronunciation_dictionary_locators"] = normalized
+        return payload
+
+    async def generate(
+        self,
+        text: str,
+        voice_id: str,
+        output_path: str,
+        speed: float = 1.0,
+        voice_settings: Optional[dict] = None,
+        request_context: Optional[dict] = None,
+    ) -> dict:
+        # ElevenLabs speed range: 0.7 ~ 1.2. Keep marker and request settings identical.
+        vs = self.effective_voice_settings(speed, voice_settings)
         MAX_RETRIES = 3
         for attempt in range(1, MAX_RETRIES + 1):
             # v1.2.25: 재시도 루프 안에서 cancel 체크.
@@ -45,13 +108,9 @@ class ElevenLabsService(BaseTTSService):
             try:
                 async with httpx.AsyncClient(timeout=120) as client:
                     resp = await client.post(
-                        f"{BASE_URL}/text-to-speech/{voice_id}",
+                        f"{BASE_URL}/text-to-speech/{voice_id}/with-timestamps",
                         headers={**self.headers, "Content-Type": "application/json"},
-                        json={
-                            "text": text,
-                            "model_id": "eleven_v3",
-                            "voice_settings": vs,
-                        },
+                        json=self._build_request_payload(text, vs, request_context),
                     )
                     if resp.status_code in (429, 500, 502, 503, 504) and attempt < MAX_RETRIES:
                         wait = attempt * 3
@@ -60,8 +119,27 @@ class ElevenLabsService(BaseTTSService):
                         continue
                     resp.raise_for_status()
 
+                    response_data = resp.json()
+                    audio_base64 = response_data.get("audio_base64")
+                    if not isinstance(audio_base64, str) or not audio_base64:
+                        raise RuntimeError("ElevenLabs timestamp response is missing audio_base64")
+                    try:
+                        audio_bytes = base64.b64decode(audio_base64, validate=True)
+                    except (ValueError, TypeError) as exc:
+                        raise RuntimeError("ElevenLabs timestamp response contains invalid audio_base64") from exc
+                    if not audio_bytes:
+                        raise RuntimeError("ElevenLabs timestamp response decoded to empty audio")
+
                     with open(output_path, "wb") as f:
-                        f.write(resp.content)
+                        f.write(audio_bytes)
+                    write_alignment_sidecar(
+                        output_path,
+                        text=text,
+                        alignment=response_data.get("alignment"),
+                        normalized_alignment=response_data.get("normalized_alignment"),
+                        provider="elevenlabs",
+                        model_id=self.engine_model_id,
+                    )
                     try:
                         from app.services import spend_ledger
                         note = "voice_preview" if os.path.basename(output_path) == "voice_preview.mp3" else os.path.basename(output_path)
@@ -131,28 +209,4 @@ class ElevenLabsService(BaseTTSService):
 
     @staticmethod
     def _get_duration(path: str) -> float:
-        """Get audio duration. Try ffprobe first, fallback to file-size estimate.
-
-        v1.1.54: _resolve_bins() 로 ffprobe 절대경로를 구한다 — Windows 에서
-        bare 'ffprobe' 호출이 PATH 에 없으면 실패하여 파일 크기 fallback 이
-        부정확한 duration 을 돌려주는 버그 수정.
-        """
-        try:
-            _, ffprobe_bin = _resolve_bins()
-            result = subprocess.run(
-                [ffprobe_bin, "-v", "quiet", "-show_entries", "format=duration", "-of", "csv=p=0", path],
-                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
-            )
-            if result.stdout.strip():
-                return float(result.stdout.strip())
-        except (FileNotFoundError, subprocess.TimeoutExpired, ValueError):
-            pass
-        except Exception as e:
-            print(f"[TTS] ffprobe duration 측정 실패: {e}")
-        # Fallback: estimate from file size (mp3 ~16KB/s at 128kbps)
-        try:
-            import os
-            size = os.path.getsize(path)
-            return round(size / 16000, 1)
-        except Exception:
-            return 0.0
+        return probe_audio_duration(path)

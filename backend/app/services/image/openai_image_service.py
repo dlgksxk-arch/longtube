@@ -51,6 +51,7 @@ class OpenAIImageService(BaseImageService):
         reference_images: Optional[list[str]] = None,
     ) -> str:
         # v1.1.63: UI 에서 바꾼 키가 즉시 반영되도록 매 호출마다 config 에서 읽음.
+        config.require_openai_api_enabled()
         if not config.OPENAI_API_KEY:
             raise ValueError("OPENAI_API_KEY not set")
 

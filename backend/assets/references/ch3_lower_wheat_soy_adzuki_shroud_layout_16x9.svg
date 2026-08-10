@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <defs>
+    <linearGradient id="earth30" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#d5bd8e"/>
+      <stop offset="0.56" stop-color="#b38c5e"/>
+      <stop offset="1" stop-color="#896746"/>
+    </linearGradient>
+    <linearGradient id="shroud30" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#b89b75"/>
+      <stop offset="1" stop-color="#6e5139"/>
+    </linearGradient>
+    <linearGradient id="bowl30" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#d2a36d"/>
+      <stop offset="1" stop-color="#875938"/>
+    </linearGradient>
+  </defs>
+  <rect width="1280" height="720" fill="url(#earth30)"/>
+  <g fill="none" stroke="#75593d" stroke-width="7" opacity="0.34" stroke-linecap="round">
+    <path d="M0 112 Q302 78 620 121 T1280 105"/>
+    <path d="M0 607 Q319 571 651 616 T1280 591"/>
+  </g>
+
+  <g id="closed-shroud30">
+    <ellipse cx="512" cy="483" rx="383" ry="54" fill="#493627" opacity="0.3"/>
+    <path d="M190 285 Q460 219 842 287 Q906 361 853 451 Q494 516 195 446 Q141 363 190 285 Z" fill="url(#shroud30)" stroke="#3b2d23" stroke-width="15"/>
+    <path d="M240 313 Q517 263 806 314 M215 376 Q516 334 842 381 M242 435 Q511 476 804 430" fill="none" stroke="#cbb085" stroke-width="9" opacity="0.62"/>
+    <path d="M331 268 Q500 359 682 266 M324 466 Q504 381 691 470" fill="none" stroke="#5c4532" stroke-width="11" opacity="0.74"/>
+    <path d="M844 316 Q884 366 849 425" fill="none" stroke="#d4bb90" stroke-width="12" opacity="0.74"/>
+  </g>
+
+  <g id="wheat-group30" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M920 347 Q922 228 925 121 M949 347 Q960 229 974 132 M977 350 Q1008 247 1034 155" stroke="#917333" stroke-width="12"/>
+    <g fill="#e3bf58" stroke="#795b2a" stroke-width="4">
+      <ellipse cx="925" cy="116" rx="14" ry="29"/><ellipse cx="974" cy="128" rx="14" ry="29"/><ellipse cx="1035" cy="151" rx="14" ry="29" transform="rotate(15 1035 151)"/>
+    </g>
+    <path d="M904 205 L940 160 M906 236 L940 201 M949 206 L985 165 M951 238 L987 204 M1000 226 L1044 190 M1008 255 L1050 225" stroke="#d5ac48" stroke-width="8"/>
+    <path d="M902 334 Q969 365 1039 327" stroke="#6f4730" stroke-width="13"/>
+  </g>
+
+  <g id="soybean-bowl30">
+    <ellipse cx="974" cy="455" rx="112" ry="56" fill="#6a432d" opacity="0.28"/>
+    <path d="M863 413 Q974 374 1085 413 L1062 483 Q974 529 886 483 Z" fill="url(#bowl30)" stroke="#4b3326" stroke-width="13"/>
+    <g fill="#d6b65c" stroke="#71552d" stroke-width="4">
+      <ellipse cx="912" cy="421" rx="18" ry="14"/><ellipse cx="951" cy="407" rx="18" ry="14"/><ellipse cx="991" cy="411" rx="18" ry="14"/><ellipse cx="1031" cy="423" rx="18" ry="14"/>
+      <ellipse cx="932" cy="446" rx="18" ry="14"/><ellipse cx="974" cy="440" rx="18" ry="14"/><ellipse cx="1016" cy="450" rx="18" ry="14"/>
+    </g>
+  </g>
+
+  <g id="adzuki-bowl30">
+    <ellipse cx="1113" cy="591" rx="105" ry="52" fill="#6a432d" opacity="0.28"/>
+    <path d="M1009 550 Q1113 514 1217 550 L1196 614 Q1113 657 1030 614 Z" fill="url(#bowl30)" stroke="#4b3326" stroke-width="13"/>
+    <g fill="#9f3f35" stroke="#5d2b27" stroke-width="4">
+      <ellipse cx="1053" cy="555" rx="14" ry="10"/><ellipse cx="1085" cy="543" rx="14" ry="10"/><ellipse cx="1118" cy="548" rx="14" ry="10"/><ellipse cx="1152" cy="542" rx="14" ry="10"/><ellipse cx="1180" cy="558" rx="14" ry="10"/>
+      <ellipse cx="1070" cy="575" rx="14" ry="10"/><ellipse cx="1103" cy="570" rx="14" ry="10"/><ellipse cx="1137" cy="576" rx="14" ry="10"/><ellipse cx="1168" cy="579" rx="14" ry="10"/>
+    </g>
+  </g>
+</svg>

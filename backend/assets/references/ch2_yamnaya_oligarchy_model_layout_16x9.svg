@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#98958d"/>
+  <!-- One isolated ancient molar. -->
+  <path d="M120 105 Q230 55 325 135 L360 270 L300 340 L235 280 L175 340 L105 270 Z"
+        fill="#d7cfb8" stroke="#4b433c" stroke-width="14"/>
+  <!-- One large dark elite-male disk. -->
+  <circle cx="575" cy="360" r="132" fill="#8f5438" stroke="#40312a" stroke-width="16"/>
+  <!-- Exactly three cords from the large disk to exactly three smaller pale grave disks. -->
+  <path d="M685 300 L900 165 M705 360 H970 M685 420 L900 555" fill="none" stroke="#5b4937" stroke-width="17"/>
+  <g fill="#d2c2a0" stroke="#4b433c" stroke-width="14">
+    <circle cx="1015" cy="145" r="72"/><circle cx="1090" cy="360" r="72"/><circle cx="1015" cy="575" r="72"/>
+  </g>
+</svg>

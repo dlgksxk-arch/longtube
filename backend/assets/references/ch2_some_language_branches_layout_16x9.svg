@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#a5a39b"/>
+  <g fill="#a96240" stroke="#41403b" stroke-width="10"><circle cx="130" cy="250" r="48"/><circle cx="130" cy="470" r="48"/></g>
+  <path d="M178 250 L390 360 M178 470 L390 360" stroke="#80634e" stroke-width="17"/>
+  <circle cx="430" cy="360" r="65" fill="#80634e" stroke="#41403b" stroke-width="12"/>
+  <path d="M495 360 L690 105 M495 360 L790 230 M495 360 L850 360" fill="none" stroke="#718f98" stroke-width="16"/>
+  <path d="M495 360 L790 500 M495 360 L690 625" fill="none" stroke="#59615e" stroke-width="13" stroke-dasharray="22 20"/>
+  <g fill="#c9cfcc" stroke="#41403b" stroke-width="10"><rect x="640" y="60" width="120" height="95" rx="38"/><rect x="740" y="185" width="120" height="95" rx="38"/><rect x="800" y="315" width="120" height="95" rx="38"/><rect x="740" y="455" width="120" height="95" rx="38"/><rect x="640" y="575" width="120" height="95" rx="38"/></g>
+  <path d="M900 70 V650" stroke="#59615e" stroke-width="11" stroke-dasharray="24 22"/><g fill="none" stroke="#80634e" stroke-width="13"><circle cx="1050" cy="240" r="75"/><circle cx="1125" cy="415" r="75"/></g>
+</svg>

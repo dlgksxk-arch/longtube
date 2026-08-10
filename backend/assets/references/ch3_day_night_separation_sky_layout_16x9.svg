@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <defs>
+    <linearGradient id="sky9" x1="0" x2="1">
+      <stop offset="0" stop-color="#e9f1e8"/>
+      <stop offset=".38" stop-color="#b9d7dd"/>
+      <stop offset=".50" stop-color="#718f98"/>
+      <stop offset=".62" stop-color="#2d4f72"/>
+      <stop offset="1" stop-color="#101d3a"/>
+    </linearGradient>
+  </defs>
+  <rect width="1280" height="720" fill="url(#sky9)"/>
+  <circle cx="190" cy="255" r="68" fill="#efbd45" stroke="#80634e" stroke-width="12"/>
+  <circle cx="1090" cy="255" r="68" fill="#d8d8cf" stroke="#59615e" stroke-width="12"/>
+</svg>

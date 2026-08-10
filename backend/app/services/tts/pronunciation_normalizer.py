@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 import re
 
 from app.services.tts.number_normalizer import normalize_year_numbers_for_tts
 from app.services.tts.japanese_reading_dictionary import (
     log_unresolved_japanese_readings,
+    merged_japanese_readings,
     normalize_japanese_readings,
 )
 
@@ -196,6 +198,7 @@ _JA_PRONUNCIATION_REPLACEMENTS: tuple[tuple[str, str], ...] = (
     ("倭", "わ"),
 )
 _SPACE_RE = re.compile(r"\s+")
+PRONUNCIATION_NORMALIZER_VERSION = 2
 
 
 def normalize_korean_pronunciation_for_tts(text: str) -> str:
@@ -224,3 +227,13 @@ def prepare_spoken_narration_for_tts(text: str, language: str = "ko") -> str:
     elif lang.startswith("ja"):
         spoken = normalize_japanese_pronunciation_for_tts(spoken)
     return spoken
+
+
+def pronunciation_normalizer_signature(language: str = "ko") -> str:
+    lang = str(language or "").strip().lower().replace("_", "-")
+    if not lang.startswith("ja"):
+        return f"{lang or 'unknown'}-v{PRONUNCIATION_NORMALIZER_VERSION}"
+    rows = merged_japanese_readings(_JA_PRONUNCIATION_REPLACEMENTS)
+    material = "\n".join(f"{source}\t{reading}" for source, reading in rows)
+    digest = hashlib.sha256(material.encode("utf-8")).hexdigest()[:16]
+    return f"ja-v{PRONUNCIATION_NORMALIZER_VERSION}-{digest}"

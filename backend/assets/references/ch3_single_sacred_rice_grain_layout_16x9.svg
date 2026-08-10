@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <defs><radialGradient id="glowGrain"><stop offset="0" stop-color="#fff7c7" stop-opacity=".9"/><stop offset=".55" stop-color="#e6bf4d" stop-opacity=".25"/><stop offset="1" stop-color="#e6bf4d" stop-opacity="0"/></radialGradient><linearGradient id="woodGrain" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#c89560"/><stop offset="1" stop-color="#8d5b3b"/></linearGradient></defs>
+  <rect width="1280" height="720" fill="url(#woodGrain)"/>
+  <path d="M0 123 Q320 76 638 120 T1280 102 M0 605 Q320 561 644 609 T1280 582" fill="none" stroke="#6c4731" stroke-width="8" opacity=".35"/>
+  <circle cx="640" cy="360" r="265" fill="url(#glowGrain)"/>
+  <ellipse cx="640" cy="405" rx="281" ry="177" fill="#a66e45" stroke="#432f25" stroke-width="18"/>
+  <ellipse cx="640" cy="385" rx="232" ry="132" fill="#c9935b" stroke="#e0b879" stroke-width="12"/>
+  <path d="M512 405 C545 331 676 295 766 343 C800 361 803 409 766 431 C673 488 549 473 512 405Z" fill="#f4f0e3" stroke="#5e5545" stroke-width="13"/>
+  <path d="M550 391 Q640 342 735 372" fill="none" stroke="#fffdf4" stroke-width="13" opacity=".9"/>
+</svg>

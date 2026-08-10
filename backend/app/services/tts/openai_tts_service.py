@@ -8,12 +8,11 @@ APIConnectionError 가 발생하기 때문이다. httpx.AsyncClient 를 async wi
 """
 import asyncio
 import os
-import subprocess
 from typing import Optional
 
 import httpx
 
-from app.services.tts.base import BaseTTSService, _resolve_bins
+from app.services.tts.base import BaseTTSService, probe_audio_duration
 from app.services.cancel_ctx import raise_if_cancelled  # v1.2.25 cancel 방어
 from app import config
 
@@ -22,15 +21,25 @@ TTS_API_URL = "https://api.openai.com/v1/audio/speech"
 
 class OpenAITTSService(BaseTTSService):
     VOICES = ["alloy", "echo", "fable", "onyx", "nova", "shimmer"]
+    engine_model_id = "tts-1-hd"
 
     def __init__(self):
         self.model_id = "openai-tts"
         self.display_name = "OpenAI TTS"
 
-    async def generate(self, text: str, voice_id: str, output_path: str, speed: float = 1.0, voice_settings: Optional[dict] = None) -> dict:
+    async def generate(
+        self,
+        text: str,
+        voice_id: str,
+        output_path: str,
+        speed: float = 1.0,
+        voice_settings: Optional[dict] = None,
+        request_context: Optional[dict] = None,
+    ) -> dict:
         voice = voice_id if voice_id in self.VOICES else "alloy"
 
         # v1.1.63: UI 에서 바꾼 키가 즉시 반영되도록 매 호출마다 config 에서 읽음.
+        config.require_openai_api_enabled()
         api_key = config.OPENAI_API_KEY
         if not api_key:
             raise ValueError("OPENAI_API_KEY not set")
@@ -101,27 +110,4 @@ class OpenAITTSService(BaseTTSService):
 
     @staticmethod
     def _get_duration(path: str) -> float:
-        """Get audio duration. Try ffprobe first, fallback to file-size estimate.
-
-        v1.1.54: _resolve_bins() 로 ffprobe 절대경로를 구한다 — Windows 에서
-        bare 'ffprobe' 호출이 PATH 에 없으면 실패하여 파일 크기 fallback 이
-        부정확한 duration 을 돌려주는 버그를 수정.
-        """
-        try:
-            _, ffprobe_bin = _resolve_bins()
-            result = subprocess.run(
-                [ffprobe_bin, "-v", "quiet", "-show_entries", "format=duration", "-of", "csv=p=0", path],
-                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
-            )
-            if result.stdout.strip():
-                return float(result.stdout.strip())
-        except (FileNotFoundError, subprocess.TimeoutExpired, ValueError):
-            pass
-        except Exception as e:
-            print(f"[TTS] ffprobe duration 측정 실패: {e}")
-        try:
-            import os
-            size = os.path.getsize(path)
-            return round(size / 16000, 1)
-        except Exception:
-            return 0.0
+        return probe_audio_duration(path)

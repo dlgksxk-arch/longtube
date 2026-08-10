@@ -12,13 +12,34 @@ from app.models.cut import Cut
 from app.config import BASE_DIR as _BASE_DIR_FOR_LOG, resolve_project_dir
 from app.services.image.factory import IMAGE_REGISTRY, get_image_service, resolve_image_model
 from app.services.image.base import get_size
-from app.services.image.prompt_builder import append_prompt_specific_negative_prompt
+from app.services.image.prompt_builder import (
+    apply_project_style_to_canonical_prompt,
+    append_prompt_specific_negative_prompt,
+    is_canonical_script_image_prompt,
+)
+from app.services.image.prompt_compiler import (
+    configured_prompt_profile,
+    prepare_scene_contract_source,
+    supports_scene_contract_v2_model,
+    uses_scene_contract_v2,
+)
 from app.services.image.asset_guard import (
+    expected_comfyui_positive_prompt,
     find_existing_cut_image,
+    image_has_prompt_sidecar_commit,
     image_matches_prompt,
     write_prompt_sidecar,
 )
-from app.services.llm.visual_policy import normalize_cut_image_prompt
+from app.services.image.comfyui_service import expected_effective_image_model_id
+from app.services.image.channel_style_policy import (
+    apply_fixed_channel_image_style,
+    fixed_channel_image_style,
+)
+from app.services.llm.visual_policy import (
+    apply_script_visual_policy,
+    normalize_cut_image_prompt,
+    uses_source_locked_visual_policy,
+)
 
 router = APIRouter()
 
@@ -26,6 +47,41 @@ router = APIRouter()
 # v1.1.61: 파일 로그. backend/logs/image_async.log 에 찍어서
 # 디버깅 시 서버 콘솔 뒤적이지 않고 바로 볼 수 있게.
 _IMG_LOG_PATH = Path(_BASE_DIR_FOR_LOG) / "backend" / "logs" / "image_async.log"
+
+IMAGE_ANATOMY_TOP_PROMPT = (
+    "TOP-OF-PROMPT BODY COMPOSITION LOCK: before style, mood, lighting, and composition, "
+    "keep every visible human body physically coherent, with one head, one torso, two arms, "
+    "and two legs when legs are visible. Keep the requested face, torso, named prop, and "
+    "environment as the focal hierarchy. Anatomy details and cropped extremities do not become "
+    "foreground focal subjects unless the source explicitly requests that close-up. Each visible "
+    "quadruped has one head, one torso, and four legs."
+)
+
+IMAGE_SINGLE_FRAME_LOCK = (
+    "Depict one uninterrupted cinematic still: one scene, one moment, one camera view."
+)
+
+IMAGE_ANATOMY_9B_TOP_PROMPT = (
+    "TOP-OF-PROMPT BODY SHAPE LOCK: before style, mood, lighting, and composition, "
+    "keep every visible human body physically coherent: one head, one torso, "
+    "two arms, and two legs when legs are visible. Keep the requested face, torso, "
+    "named prop, and environment ahead of anatomy details in the focal hierarchy. "
+    "Avoid anatomy-detail close-ups and oversized foreground extremities unless explicitly requested. "
+    "Each visible quadruped has one head, one torso, and four legs."
+)
+
+IMAGE_ANATOMY_TOP_NEGATIVE = (
+    "collage, comic strip, storyboard, contact sheet, split screen, multi-panel layout, "
+    "inset image, border, grid, montage, multiple scenes, "
+    "six fingers, seven fingers, extra fingers, too many fingers, duplicated "
+    "fingers, duplicate fingertips, extra thumb, duplicated thumb, missing thumb, "
+    "fused fingers, forked fingers, webbed fingers, melted fingers, finger fan, "
+    "malformed hands, mutated hands, warped hands, broken fingers, disconnected "
+    "hand, floating hand, hand fused to sleeve, hand fused to weapon, extra hands, "
+    "extra arms, extra legs, missing legs, animal with extra legs, animal with "
+    "missing legs"
+)
+
 
 def _ilog(msg: str) -> None:
     try:
@@ -35,6 +91,45 @@ def _ilog(msg: str) -> None:
             fh.write(f"[{ts}] {msg}\n")
     except Exception:
         pass
+
+
+def _image_status_log(project_id: str, msg: str, level: str = "info") -> None:
+    _ilog(msg)
+    try:
+        from app.services.oneclick_service import append_task_log
+
+        append_task_log(project_id, msg, level)
+    except Exception:
+        pass
+
+
+def _safe_console(value) -> str:
+    return str(value).encode("ascii", "backslashreplace").decode("ascii")
+
+
+def _prepend_prompt_lock(prompt: str, lock: str) -> str:
+    base = re.sub(r"\s+", " ", (prompt or "").strip())
+    extra = re.sub(r"\s+", " ", (lock or "").strip())
+    if not extra:
+        return base
+    if base.lower().startswith(extra.lower()):
+        return base
+    if extra.lower() in base.lower():
+        base = re.sub(re.escape(extra), "", base, flags=re.IGNORECASE).strip(" .;")
+    return f"{extra} {base}".strip()
+
+
+def _prepend_negative_lock(negative_prompt: str) -> str:
+    base = (negative_prompt or "").strip()
+    seen: set[str] = set()
+    out: list[str] = []
+    for part in (IMAGE_ANATOMY_TOP_NEGATIVE, base):
+        for token in [x.strip() for x in (part or "").split(",") if x.strip()]:
+            key = token.lower()
+            if key not in seen:
+                seen.add(key)
+                out.append(token)
+    return ", ".join(out)
 
 
 def _attach_oneclick_progress_hooks(project_id: str, image_service) -> None:
@@ -48,6 +143,49 @@ def _attach_oneclick_progress_hooks(project_id: str, image_service) -> None:
 
     image_service.progress_log = _progress_log
     image_service.progress_status = lambda text: update_task_sub_status(project_id, text)
+
+
+def _cut_has_committed_image(
+    project_dir: Path,
+    cut_number: int,
+    *,
+    verify_image: bool = False,
+) -> bool:
+    image = find_existing_cut_image(project_dir, cut_number)
+    return bool(
+        image
+        and image_has_prompt_sidecar_commit(
+            image,
+            cut_number=cut_number,
+            verify_image=verify_image,
+        )
+    )
+
+
+def _apply_image_prompt_profile(image_service, config: dict | None) -> str:
+    profile = configured_prompt_profile(config)
+    model_id = str(getattr(image_service, "model_id", "") or "").strip().lower()
+    if model_id == "comfyui-krea2":
+        image_service.prompt_profile = ""
+        image_service.preserve_prompt_verbatim = True
+        return ""
+    if not supports_scene_contract_v2_model(model_id):
+        profile = ""
+    try:
+        image_service.prompt_profile = profile
+    except Exception:
+        pass
+    return profile
+
+
+def _resume_prompt_mismatch_requires_regeneration(reason: str, configured: bool) -> bool:
+    if configured:
+        return True
+    return str(reason or "") in {
+        "sidecar_model_mismatch",
+        "sidecar_effective_model_mismatch",
+        "missing_prompt_sidecar",
+    }
 
 
 # v1.1.59: ComfyUI VRAM 수동 해제 엔드포인트.
@@ -223,23 +361,59 @@ def _build_image_prompt(
     character_description: str = "",
     enable_historical_guard: bool = False,
     image_model: str = "",
+    prompt_profile: str = "",
+    narration_context: str = "",
+    style_config: dict | None = None,
+    project_id: str = "",
 ) -> str:
     """Build final prompt for image generation.
 
     v1.1.58: prompt_builder.build_image_prompt 으로 위임.
     라우터와 파이프라인이 동일한 로직을 사용하도록 통일.
     """
-    if resolve_image_model(image_model) == "comfyui-flux2-klein-9b":
-        return (image_prompt or "").strip()
+    resolved_model = resolve_image_model(image_model)
+
+    def _finalize(value: str) -> str:
+        return apply_fixed_channel_image_style(value, style_config, project_id)
+
+    if resolved_model == "comfyui-krea2":
+        return _finalize(str(image_prompt or "").strip())
+    if is_canonical_script_image_prompt(image_prompt):
+        return _finalize(_prepend_prompt_lock(
+            apply_project_style_to_canonical_prompt(image_prompt, global_style),
+            IMAGE_SINGLE_FRAME_LOCK,
+        ))
+    if (
+        uses_scene_contract_v2(prompt_profile)
+        and supports_scene_contract_v2_model(resolved_model)
+        and IMAGE_REGISTRY.get(resolved_model, {}).get("provider") == "comfyui"
+    ):
+        prepared = prepare_scene_contract_source(
+            image_prompt,
+            global_style,
+            character_description=character_description if has_character_slot else "",
+            narration_context=narration_context,
+        )
+        return _finalize(prepared)
+    if resolved_model == "comfyui-flux2-klein-9b":
+        prompt = (image_prompt or "").strip()
+        style = re.sub(r"\s+", " ", (global_style or "").strip())
+        if style:
+            style = re.sub(r"\bscroll-stopping\b", "attention-grabbing", style, flags=re.IGNORECASE)
+            prompt = f"{prompt}; Rendering style note: {style}" if prompt else f"Rendering style note: {style}"
+        return _finalize(_prepend_prompt_lock(
+            _prepend_prompt_lock(prompt, IMAGE_ANATOMY_9B_TOP_PROMPT),
+            IMAGE_SINGLE_FRAME_LOCK,
+        ))
     from app.services.image.prompt_builder import build_image_prompt
-    return build_image_prompt(
+    return _finalize(_prepend_prompt_lock(_prepend_prompt_lock(build_image_prompt(
         image_prompt,
         global_style,
         has_reference=has_reference,
         has_character_slot=has_character_slot,
         character_description=character_description,
         enable_historical_guard=enable_historical_guard,
-    )
+    ), IMAGE_ANATOMY_TOP_PROMPT), IMAGE_SINGLE_FRAME_LOCK))
 
 
 def _apply_historical_negative_prompt(image_service, config: dict, *context_values, force: bool = False) -> bool:
@@ -396,6 +570,7 @@ async def generate_all_images(project_id: str, db: Session = Depends(get_db)):
     aspect_ratio = project.config.get("aspect_ratio", "16:9")
 
     image_service = get_image_service(image_model)
+    _apply_image_prompt_profile(image_service, project.config)
     _attach_oneclick_progress_hooks(project_id, image_service)
     try:
         image_service.negative_prompt = (project.config.get("image_negative_prompt") or "").strip()
@@ -403,7 +578,9 @@ async def generate_all_images(project_id: str, db: Session = Depends(get_db)):
         pass
     width, height = get_size(aspect_ratio)
 
-    global_style = project.config.get("image_global_prompt", "")
+    global_style = fixed_channel_image_style(
+        project.config, project_id, project.config.get("image_global_prompt", "")
+    )
     character_description = (project.config.get("character_description") or "").strip()
     from app.services.image.prompt_builder import should_enable_historical_guard_for_context
     enable_historical_guard = should_enable_historical_guard_for_context(
@@ -413,7 +590,7 @@ async def generate_all_images(project_id: str, db: Session = Depends(get_db)):
     if is_comfyui_model:
         enable_historical_guard = True
     _apply_historical_negative_prompt(image_service, project.config, project_id, project.title, project.topic)
-    base_negative_prompt = (getattr(image_service, "negative_prompt", "") or "").strip()
+    base_negative_prompt = _prepend_negative_lock((getattr(image_service, "negative_prompt", "") or "").strip())
     ref_images = _collect_reference_images(project_id, project.config)
     char_images = _collect_character_images(project_id, project.config)
 
@@ -451,6 +628,10 @@ async def generate_all_images(project_id: str, db: Session = Depends(get_db)):
                 character_description=character_description,
                 enable_historical_guard=enable_historical_guard,
                 image_model=image_model,
+                prompt_profile=configured_prompt_profile(project.config),
+                narration_context=cut.narration or "",
+                style_config=project.config,
+                project_id=project_id,
             )
 
             # Reference images always attached (for style).
@@ -459,6 +640,9 @@ async def generate_all_images(project_id: str, db: Session = Depends(get_db)):
             if char_images and is_character_cut:
                 all_refs.extend(char_images)
 
+            cut.status = "generating"
+            cut.image_path = None
+            db.commit()
             image_service.negative_prompt = append_prompt_specific_negative_prompt(
                 base_negative_prompt,
                 prompt,
@@ -479,6 +663,7 @@ async def generate_all_images(project_id: str, db: Session = Depends(get_db)):
                 narration=cut.narration or "",
                 comfyui_positive_prompt=getattr(image_service, "last_positive_prompt", ""),
                 comfyui_negative_prompt=getattr(image_service, "last_negative_prompt", ""),
+                effective_image_model=getattr(image_service, "last_effective_model_id", ""),
             )
             image_service.negative_prompt = base_negative_prompt
 
@@ -503,10 +688,15 @@ async def generate_all_images(project_id: str, db: Session = Depends(get_db)):
                 "status": "failed",
                 "error": str(e)
             })
+            break
 
-    # Mark step completed
+    # Commit the step only when every generated cut is committed.
     step_states = dict(project.step_states or {})
-    step_states["4"] = "completed"
+    step_states["4"] = (
+        "failed"
+        if any(r["status"] == "failed" for r in results)
+        else "completed"
+    )
     project.step_states = step_states
     db.commit()
 
@@ -524,7 +714,7 @@ async def generate_all_images(project_id: str, db: Session = Depends(get_db)):
 async def generate_all_images_async(project_id: str, db: Session = Depends(get_db)):
     """Start image generation in background"""
     import asyncio
-    from app.services.task_manager import start_task, update_task, complete_task, fail_task, register_async_task, is_running
+    from app.services.task_manager import start_task, update_task, complete_task, fail_task, pause_task, register_async_task, is_running
 
     _ilog(f">>> generate-async ENDPOINT HIT project={project_id}")
     project = db.query(Project).filter(Project.id == project_id).first()
@@ -557,13 +747,16 @@ async def generate_all_images_async(project_id: str, db: Session = Depends(get_d
             proj = local_db.query(Project).filter(Project.id == project_id).first()
             image_model = resolve_image_model(proj.config.get("image_model"))
             aspect_ratio = proj.config.get("aspect_ratio", "16:9")
-            global_style = proj.config.get("image_global_prompt", "")
+            global_style = fixed_channel_image_style(
+                proj.config, project_id, proj.config.get("image_global_prompt", "")
+            )
 
             is_comfyui_model = IMAGE_REGISTRY.get(image_model, {}).get("provider") == "comfyui"
             if is_comfyui_model:
                 CONCURRENT_IMAGES = 1
 
             image_service = get_image_service(image_model)
+            _apply_image_prompt_profile(image_service, proj.config)
             _attach_oneclick_progress_hooks(project_id, image_service)
             try:
                 image_service.negative_prompt = (proj.config.get("image_negative_prompt") or "").strip()
@@ -580,7 +773,7 @@ async def generate_all_images_async(project_id: str, db: Session = Depends(get_d
             if is_comfyui_model:
                 enable_historical_guard = True
             _apply_historical_negative_prompt(image_service, proj.config, project_id, proj.title, proj.topic)
-            base_negative_prompt = (getattr(image_service, "negative_prompt", "") or "").strip()
+            base_negative_prompt = _prepend_negative_lock((getattr(image_service, "negative_prompt", "") or "").strip())
 
             cuts = local_db.query(Cut).filter(Cut.project_id == project_id).order_by(Cut.cut_number).all()
 
@@ -627,6 +820,10 @@ async def generate_all_images_async(project_id: str, db: Session = Depends(get_d
                         character_description=character_description,
                         enable_historical_guard=enable_historical_guard,
                         image_model=image_model,
+                        prompt_profile=configured_prompt_profile(proj.config),
+                        narration_context=cut.narration or "",
+                        style_config=proj.config,
+                        project_id=project_id,
                     )
                     all_refs = list(ref_images)
                     if char_images and is_character_cut:
@@ -635,6 +832,9 @@ async def generate_all_images_async(project_id: str, db: Session = Depends(get_d
                     import time as _t
                     _s = _t.time()
                     try:
+                        cut.status = "generating"
+                        cut.image_path = None
+                        local_db.commit()
                         image_service.negative_prompt = append_prompt_specific_negative_prompt(
                             base_negative_prompt,
                             prompt,
@@ -652,6 +852,7 @@ async def generate_all_images_async(project_id: str, db: Session = Depends(get_d
                             narration=cut.narration or "",
                             comfyui_positive_prompt=getattr(image_service, "last_positive_prompt", ""),
                             comfyui_negative_prompt=getattr(image_service, "last_negative_prompt", ""),
+                            effective_image_model=getattr(image_service, "last_effective_model_id", ""),
                         )
                         image_service.negative_prompt = base_negative_prompt
                         _ilog(f"_gen_one cut={cut.cut_number} SUCCESS in {_t.time()-_s:.1f}s → {result_path}")
@@ -662,7 +863,8 @@ async def generate_all_images_async(project_id: str, db: Session = Depends(get_d
                         try:
                             from app.services import spend_ledger
                             spend_ledger.record_image(
-                                image_model, n_images=1,
+                                getattr(image_service, "last_effective_model_id", "") or image_model,
+                                n_images=1,
                                 project_id=project_id, note=f"studio cut_{cut.cut_number}",
                             )
                         except Exception as _le:
@@ -673,12 +875,15 @@ async def generate_all_images_async(project_id: str, db: Session = Depends(get_d
                         print(f"[image] Cut {cut.cut_number} failed: {e}")
                         _ilog(f"_gen_one cut={cut.cut_number} FAILED after {_t.time()-_s:.1f}s: {type(e).__name__}: {e}\n{_tb.format_exc()[-800:]}")
                         cut.status = "failed"
+                        fail_task(project_id, "image", f"컷 {cut.cut_number} 생성 실패: {e}")
                     local_db.commit()
                     done_count += 1
                     update_task(project_id, "image", done_count)
 
-            tasks = [asyncio.create_task(_gen_one(c)) for c in cut_specs]
-            await asyncio.gather(*tasks, return_exceptions=True)
+            await asyncio.gather(
+                *(asyncio.create_task(_gen_one(c)) for c in cut_specs),
+                return_exceptions=True,
+            )
             _ilog(f"=== all tasks gathered. done_count={done_count} ===")
 
             # 프롬프트 없는 컷도 카운트에 포함
@@ -689,12 +894,7 @@ async def generate_all_images_async(project_id: str, db: Session = Depends(get_d
             _img_dir = resolve_project_dir(project_id, proj.config, create=False) / "images"
             missing_nums = []
             for cut in cut_specs:
-                plain = _img_dir / f"cut_{cut.cut_number}.png"
-                padded = _img_dir / f"cut_{cut.cut_number:03d}.png"
-                ok = any(
-                    p.exists() and p.is_file() and p.stat().st_size > 50
-                    for p in (plain, padded)
-                )
+                ok = _cut_has_committed_image(_img_dir.parent, cut.cut_number)
                 if not ok:
                     missing_nums.append(cut.cut_number)
             generated_count = len(cut_specs) - len(missing_nums)
@@ -752,7 +952,7 @@ async def generate_all_images_async(project_id: str, db: Session = Depends(get_d
 async def resume_images_async(project_id: str, db: Session = Depends(get_db)):
     """Resume image generation — only generate cuts that don't have images yet"""
     import asyncio
-    from app.services.task_manager import start_task, update_task, complete_task, fail_task, register_async_task, is_running
+    from app.services.task_manager import start_task, update_task, complete_task, fail_task, pause_task, register_async_task, is_running
 
     def _truthy(value) -> bool:
         return value is True or str(value or "").strip().lower() in {"1", "true", "yes", "on"}
@@ -770,7 +970,9 @@ async def resume_images_async(project_id: str, db: Session = Depends(get_db)):
     cuts = db.query(Cut).filter(Cut.project_id == project_id).order_by(Cut.cut_number).all()
     project_dir = resolve_project_dir(project_id, project.config, create=False)
     image_model = resolve_image_model(project.config.get("image_model"))
-    global_style = project.config.get("image_global_prompt", "")
+    global_style = fixed_channel_image_style(
+        project.config, project_id, project.config.get("image_global_prompt", "")
+    )
     regenerate_stale_on_resume = _truthy(project.config.get("regenerate_stale_images_on_resume")) or _truthy(
         project.config.get("force_stale_image_regenerate")
     )
@@ -788,7 +990,11 @@ async def resume_images_async(project_id: str, db: Session = Depends(get_db)):
         if not c.image_prompt:
             continue
         existing = find_existing_cut_image(project_dir, c.cut_number)
-        if not c.image_path or not existing:
+        if not existing or not _cut_has_committed_image(
+            project_dir,
+            c.cut_number,
+            verify_image=True,
+        ):
             pending_cuts.append(c)
             continue
         is_character_cut = cut_has_character(c.cut_number) and (bool(char_images) or bool(character_description))
@@ -804,21 +1010,48 @@ async def resume_images_async(project_id: str, db: Session = Depends(get_db)):
             character_description=character_description,
             enable_historical_guard=enable_historical_guard,
             image_model=image_model,
+            prompt_profile=configured_prompt_profile(project.config),
+            narration_context=c.narration or "",
+            style_config=project.config,
+            project_id=project_id,
         )
         matches, _reason = image_matches_prompt(
             existing,
             source_prompt=c.image_prompt or "",
             final_prompt=prompt,
             image_model=image_model,
+            comfyui_positive_prompt=expected_comfyui_positive_prompt(
+                prompt,
+                image_model=image_model,
+                prompt_profile=configured_prompt_profile(project.config),
+            ),
+            effective_image_model=expected_effective_image_model_id(image_model, prompt),
         )
-        if not matches:
-            if regenerate_stale_on_resume:
+        if matches:
+            c.image_path = _to_relative(project_id, str(existing), project.config)
+            c.image_model = image_model
+            c.status = "completed"
+        else:
+            if _resume_prompt_mismatch_requires_regeneration(
+                _reason,
+                regenerate_stale_on_resume,
+            ):
+                _ilog(f"resume stale image cut={c.cut_number} reason={_reason}")
+                c.image_path = None
+                c.status = "pending"
                 pending_cuts.append(c)
             else:
                 _ilog(f"resume keep existing image cut={c.cut_number} despite prompt mismatch reason={_reason}")
                 c.image_path = _to_relative(project_id, str(existing), project.config)
                 c.status = "completed"
+    try:
+        manual_review_batch_size = int(project.config.get("manual_image_review_batch_size") or 0)
+    except (TypeError, ValueError):
+        manual_review_batch_size = 0
+    if manual_review_batch_size > 0:
+        pending_cuts = pending_cuts[:manual_review_batch_size]
     if not pending_cuts:
+        db.commit()
         _ilog(f"resume-async nothing_to_resume project={project_id} cuts={len(cuts)}")
         return {"status": "nothing_to_resume", "step": "image", "total": 0}
     _ilog(f"resume-async pending={len(pending_cuts)} of {len(cuts)} project={project_id}")
@@ -843,12 +1076,15 @@ async def resume_images_async(project_id: str, db: Session = Depends(get_db)):
             proj = local_db.query(Project).filter(Project.id == project_id).first()
             image_model = resolve_image_model(proj.config.get("image_model"))
             aspect_ratio = proj.config.get("aspect_ratio", "16:9")
-            global_style = proj.config.get("image_global_prompt", "")
+            global_style = fixed_channel_image_style(
+                proj.config, project_id, proj.config.get("image_global_prompt", "")
+            )
 
             if IMAGE_REGISTRY.get(image_model, {}).get("provider") == "comfyui":
                 CONCURRENT_IMAGES = 1
 
             image_service = get_image_service(image_model)
+            _apply_image_prompt_profile(image_service, proj.config)
             _attach_oneclick_progress_hooks(project_id, image_service)
             _ilog(f"resume _run service={type(image_service).__name__} model={image_model} aspect={aspect_ratio}")
             try:
@@ -870,18 +1106,39 @@ async def resume_images_async(project_id: str, db: Session = Depends(get_db)):
             if is_comfyui_model:
                 enable_historical_guard = True
             _apply_historical_negative_prompt(image_service, proj.config, project_id, proj.title, proj.topic)
-            base_negative_prompt = (getattr(image_service, "negative_prompt", "") or "").strip()
+            base_negative_prompt = _prepend_negative_lock((getattr(image_service, "negative_prompt", "") or "").strip())
 
             image_dir = resolve_project_dir(project_id, proj.config, create=True) / "images"
             image_dir.mkdir(parents=True, exist_ok=True)
 
             db_cuts = local_db.query(Cut).filter(Cut.project_id == project_id).order_by(Cut.cut_number).all()
+            policy_cuts: dict[int, dict] = {}
+            try:
+                import json
+
+                script_path = resolve_project_dir(project_id, proj.config, create=False) / "script.json"
+                with open(script_path, "r", encoding="utf-8") as script_file:
+                    policy_script = apply_script_visual_policy(json.load(script_file))
+                policy_cuts = {
+                    int(item.get("cut_number")): item
+                    for item in policy_script.get("cuts", [])
+                    if isinstance(item, dict) and item.get("cut_number") is not None
+                }
+            except Exception as exc:
+                _ilog(f"resume runtime visual policy unavailable: {type(exc).__name__}: {exc}")
             pending = []
             for c in db_cuts:
+                policy_cut = policy_cuts.get(int(c.cut_number))
+                if policy_cut and str(policy_cut.get("image_prompt") or "").strip():
+                    c.image_prompt = str(policy_cut["image_prompt"]).strip()
                 if not c.image_prompt:
                     continue
                 existing = find_existing_cut_image(resolve_project_dir(project_id, proj.config, create=False), c.cut_number)
-                if not c.image_path or not existing:
+                if not existing or not _cut_has_committed_image(
+                    image_dir.parent,
+                    c.cut_number,
+                    verify_image=True,
+                ):
                     pending.append(c)
                     continue
                 is_character_cut = cut_has_character(c.cut_number) and (bool(char_images) or bool(character_description))
@@ -897,15 +1154,32 @@ async def resume_images_async(project_id: str, db: Session = Depends(get_db)):
                     character_description=character_description,
                     enable_historical_guard=enable_historical_guard,
                     image_model=image_model,
+                    prompt_profile=configured_prompt_profile(proj.config),
+                    narration_context=c.narration or "",
+                    style_config=proj.config,
+                    project_id=project_id,
                 )
                 matches, reason = image_matches_prompt(
                     existing,
                     source_prompt=c.image_prompt or "",
                     final_prompt=prompt,
                     image_model=image_model,
+                    comfyui_positive_prompt=expected_comfyui_positive_prompt(
+                        prompt,
+                        image_model=image_model,
+                        prompt_profile=configured_prompt_profile(proj.config),
+                    ),
+                    effective_image_model=expected_effective_image_model_id(image_model, prompt),
                 )
-                if not matches:
-                    if regenerate_stale_on_resume:
+                if matches:
+                    c.image_path = _to_relative(project_id, str(existing), proj.config)
+                    c.image_model = image_model
+                    c.status = "completed"
+                else:
+                    if _resume_prompt_mismatch_requires_regeneration(
+                        reason,
+                        regenerate_stale_on_resume,
+                    ):
                         _ilog(f"resume stale image cut={c.cut_number} reason={reason}")
                         c.image_path = None
                         c.status = "pending"
@@ -914,7 +1188,10 @@ async def resume_images_async(project_id: str, db: Session = Depends(get_db)):
                         _ilog(f"resume keep existing image cut={c.cut_number} despite prompt mismatch reason={reason}")
                         c.image_path = _to_relative(project_id, str(existing), proj.config)
                         c.status = "completed"
+            if manual_review_batch_size > 0:
+                pending = pending[:manual_review_batch_size]
             _ilog(f"resume _run pending={len(pending)} refs={len(ref_images)} chars={len(char_images)}")
+            batch_cut_numbers = {int(c.cut_number) for c in pending}
 
             semaphore = asyncio.Semaphore(CONCURRENT_IMAGES)
             done_count = 0
@@ -947,6 +1224,10 @@ async def resume_images_async(project_id: str, db: Session = Depends(get_db)):
                         character_description=character_description,
                         enable_historical_guard=enable_historical_guard,
                         image_model=image_model,
+                        prompt_profile=configured_prompt_profile(proj.config),
+                        narration_context=cut.narration or "",
+                        style_config=proj.config,
+                        project_id=project_id,
                     )
                     all_refs = list(ref_images)
                     if char_images and is_character_cut:
@@ -955,6 +1236,9 @@ async def resume_images_async(project_id: str, db: Session = Depends(get_db)):
                     import time as _t
                     _s = _t.time()
                     try:
+                        cut.status = "generating"
+                        cut.image_path = None
+                        local_db.commit()
                         image_service.negative_prompt = append_prompt_specific_negative_prompt(
                             base_negative_prompt,
                             prompt,
@@ -972,6 +1256,7 @@ async def resume_images_async(project_id: str, db: Session = Depends(get_db)):
                             narration=cut.narration or "",
                             comfyui_positive_prompt=getattr(image_service, "last_positive_prompt", ""),
                             comfyui_negative_prompt=getattr(image_service, "last_negative_prompt", ""),
+                            effective_image_model=getattr(image_service, "last_effective_model_id", ""),
                         )
                         image_service.negative_prompt = base_negative_prompt
                         _ilog(f"resume _gen_one cut={cut.cut_number} SUCCESS in {_t.time()-_s:.1f}s → {result_path}")
@@ -981,15 +1266,19 @@ async def resume_images_async(project_id: str, db: Session = Depends(get_db)):
                     except Exception as e:
                         image_service.negative_prompt = base_negative_prompt
                         import traceback
-                        print(f"[image-resume] Cut {cut.cut_number} failed: {e}\n{traceback.format_exc()}")
-                        _ilog(f"resume _gen_one cut={cut.cut_number} FAILED after {_t.time()-_s:.1f}s: {type(e).__name__}: {e}\n{traceback.format_exc()[-600:]}")
+                        failure_trace = traceback.format_exc()
+                        _ilog(f"resume _gen_one cut={cut.cut_number} FAILED after {_t.time()-_s:.1f}s: {type(e).__name__}: {e}\n{failure_trace[-600:]}")
+                        print(_safe_console(f"[image-resume] Cut {cut.cut_number} failed: {e}\n{failure_trace}"))
                         cut.status = "failed"
+                        fail_task(project_id, "image", f"컷 {cut.cut_number} 생성 실패: {e}")
                     local_db.commit()
                     done_count += 1
                     update_task(project_id, "image", done_count)
 
-            tasks = [asyncio.create_task(_gen_one(c)) for c in pending]
-            await asyncio.gather(*tasks, return_exceptions=True)
+            await asyncio.gather(
+                *(asyncio.create_task(_gen_one(c)) for c in pending),
+                return_exceptions=True,
+            )
 
             image_root = resolve_project_dir(project_id, proj.config, create=False)
             missing_nums = []
@@ -997,9 +1286,28 @@ async def resume_images_async(project_id: str, db: Session = Depends(get_db)):
                 if not cut.image_prompt:
                     continue
                 existing = find_existing_cut_image(image_root, cut.cut_number)
-                if not existing:
+                if (
+                    not existing
+                    or not image_has_prompt_sidecar_commit(existing, cut_number=cut.cut_number)
+                    or cut.status != "completed"
+                    or not cut.image_path
+                ):
                     missing_nums.append(cut.cut_number)
             if missing_nums:
+                failed_batch_cuts = sorted(set(missing_nums) & batch_cut_numbers)
+                if manual_review_batch_size > 0 and batch_cut_numbers and not failed_batch_cuts:
+                    start_cut = min(batch_cut_numbers)
+                    end_cut = max(batch_cut_numbers)
+                    msg = f"이미지 {start_cut}~{end_cut}컷 생성 완료 — 수동 검수 대기"
+                    _ilog(f"resume manual review pause project={project_id}: {msg}")
+                    proj = local_db.query(Project).filter(Project.id == project_id).first()
+                    if proj:
+                        ss = dict(proj.step_states or {})
+                        ss["4"] = "paused"
+                        proj.step_states = ss
+                        local_db.commit()
+                    pause_task(project_id, "image", msg)
+                    return
                 msg = (
                     f"이미지 생성 누락: {len(db_cuts) - len(missing_nums)}/{len(db_cuts)}컷 완료, "
                     f"누락 컷: {', '.join(str(n) for n in missing_nums[:20])}"
@@ -1030,7 +1338,7 @@ async def resume_images_async(project_id: str, db: Session = Depends(get_db)):
                     print(f"[image-resume] VRAM 해제 스킵: {_e}")
         except BaseException as e:
             import traceback
-            print(f"[image-resume] Task failed: {e}\n{traceback.format_exc()}")
+            print(_safe_console(f"[image-resume] Task failed: {e}\n{traceback.format_exc()}"))
             fail_task(project_id, "image", str(e))
             try:
                 proj = local_db.query(Project).filter(Project.id == project_id).first()
@@ -1068,6 +1376,33 @@ async def generate_one_image(
     if not cut:
         raise HTTPException(404, f"Cut {cut_number} not found")
 
+    # A single-cut regeneration must use the same current runtime visual policy as
+    # the full image step. Otherwise manual QA retries silently reuse the stale
+    # prompt stored on the Cut row from an earlier policy revision.
+    source_locked_visual_policy = False
+    try:
+        import json
+
+        script_path = resolve_project_dir(project_id, project.config, create=False) / "script.json"
+        with open(script_path, "r", encoding="utf-8") as script_file:
+            policy_script = apply_script_visual_policy(json.load(script_file))
+        source_locked_visual_policy = uses_source_locked_visual_policy(policy_script)
+        policy_cut = next(
+            (
+                item
+                for item in policy_script.get("cuts", [])
+                if isinstance(item, dict) and int(item.get("cut_number") or 0) == int(cut_number)
+            ),
+            None,
+        )
+        if policy_cut and str(policy_cut.get("image_prompt") or "").strip():
+            cut.image_prompt = str(policy_cut["image_prompt"]).strip()
+    except Exception as exc:
+        _ilog(
+            f"single-cut runtime visual policy unavailable project={project_id} "
+            f"cut={cut_number}: {type(exc).__name__}: {exc}"
+        )
+
     if not cut.image_prompt:
         raise HTTPException(400, "Cut has no image prompt")
 
@@ -1075,13 +1410,19 @@ async def generate_one_image(
     aspect_ratio = project.config.get("aspect_ratio", "16:9")
 
     image_service = get_image_service(image_model)
+    _apply_image_prompt_profile(image_service, project.config)
+    if source_locked_visual_policy:
+        image_service.prompt_profile = ""
+        image_service.preserve_prompt_verbatim = True
     _attach_oneclick_progress_hooks(project_id, image_service)
     try:
         image_service.negative_prompt = (project.config.get("image_negative_prompt") or "").strip()
     except Exception:
         pass
     width, height = get_size(aspect_ratio)
-    global_style = project.config.get("image_global_prompt", "")
+    global_style = fixed_channel_image_style(
+        project.config, project_id, project.config.get("image_global_prompt", "")
+    )
     character_description = (project.config.get("character_description") or "").strip()
     from app.services.image.prompt_builder import should_enable_historical_guard_for_context
     enable_historical_guard = should_enable_historical_guard_for_context(
@@ -1091,7 +1432,7 @@ async def generate_one_image(
     if is_comfyui_model:
         enable_historical_guard = True
     _apply_historical_negative_prompt(image_service, project.config, project_id, project.title, project.topic)
-    base_negative_prompt = (getattr(image_service, "negative_prompt", "") or "").strip()
+    base_negative_prompt = _prepend_negative_lock((getattr(image_service, "negative_prompt", "") or "").strip())
     ref_images = _collect_reference_images(project_id, project.config)
     char_images = _collect_character_images(project_id, project.config)
 
@@ -1106,19 +1447,28 @@ async def generate_one_image(
             }
 
         is_character_cut = cut_has_character(cut_number) and (bool(char_images) or bool(character_description))
-        prompt = _build_image_prompt(
-            normalize_cut_image_prompt(
-                cut.image_prompt,
-                cut.narration,
-                " ".join(str(x or "") for x in (project.title, project.topic)),
-            ),
-            global_style,
-            has_reference=bool(ref_images),
-            has_character_slot=is_character_cut,
-            character_description=character_description,
-            enable_historical_guard=enable_historical_guard,
-            image_model=image_model,
+        prompt = (
+            str(cut.image_prompt).strip()
+            if source_locked_visual_policy
+            else _build_image_prompt(
+                normalize_cut_image_prompt(
+                    cut.image_prompt,
+                    cut.narration,
+                    " ".join(str(x or "") for x in (project.title, project.topic)),
+                ),
+                global_style,
+                has_reference=bool(ref_images),
+                has_character_slot=is_character_cut,
+                character_description=character_description,
+                enable_historical_guard=enable_historical_guard,
+                image_model=image_model,
+                prompt_profile=configured_prompt_profile(project.config),
+                narration_context=cut.narration or "",
+                style_config=project.config,
+                project_id=project_id,
+            )
         )
+        prompt = apply_fixed_channel_image_style(prompt, project.config, project_id)
 
         all_refs = list(ref_images)
         if char_images and is_character_cut:
@@ -1144,6 +1494,7 @@ async def generate_one_image(
             narration=cut.narration or "",
             comfyui_positive_prompt=getattr(image_service, "last_positive_prompt", ""),
             comfyui_negative_prompt=getattr(image_service, "last_negative_prompt", ""),
+            effective_image_model=getattr(image_service, "last_effective_model_id", ""),
         )
         image_service.negative_prompt = base_negative_prompt
 
@@ -1154,7 +1505,8 @@ async def generate_one_image(
         try:
             from app.services import spend_ledger
             spend_ledger.record_image(
-                image_model, n_images=1,
+                getattr(image_service, "last_effective_model_id", "") or image_model,
+                n_images=1,
                 project_id=project_id, note=f"studio single cut_{cut_number}",
             )
         except Exception as _le:

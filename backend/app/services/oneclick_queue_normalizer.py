@@ -1,6 +1,7 @@
 """OneClick queue input normalization."""
 from __future__ import annotations
 
+import math
 import uuid
 from typing import Any, Callable, Optional
 
@@ -12,6 +13,14 @@ def _base_channel_map(channels: list[int], value: Any = None) -> dict[str, Any]:
     return {str(ch): value for ch in channels}
 
 
+def _positive_int(value: Any) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return number if number > 0 else 0
+
+
 def normalize_queue_state(
     raw: Any,
     *,
@@ -21,6 +30,16 @@ def normalize_queue_state(
     load_project: Optional[ProjectLoader] = None,
 ) -> dict[str, Any]:
     """Coerce persisted/UI queue payload into the canonical queue schema."""
+    default_cut_count = _positive_int(main_cut_count) or 1
+    default_duration = _positive_int(main_target_duration) or default_cut_count * 4
+    seconds_per_cut = default_duration / default_cut_count
+
+    def _duration_for_cuts(cut_count: int) -> int:
+        return max(1, int(round(cut_count * seconds_per_cut)))
+
+    def _cuts_for_duration(duration: int) -> int:
+        return max(1, math.ceil(duration / seconds_per_cut))
+
     out: dict[str, Any] = {
         "channel_times": _base_channel_map(channels, None),
         "last_run_dates": _base_channel_map(channels, None),
@@ -117,12 +136,24 @@ def normalize_queue_state(
         if status not in ("pending", "running", "completed", "failed", "cancelled", "paused"):
             status = "pending"
 
+        # A prepared script can legitimately have fewer than the default 150
+        # cuts. When a positive target_cuts is supplied, it is the source of
+        # truth and duration is derived from the OneClick timing contract.
+        # Duration-only legacy items retain their requested duration.
+        target_cuts = _positive_int(it.get("target_cuts"))
+        target_duration = _positive_int(it.get("target_duration"))
+        if target_cuts:
+            target_duration = _duration_for_cuts(target_cuts)
+        else:
+            target_duration = target_duration or default_duration
+            target_cuts = _cuts_for_duration(target_duration)
+
         clean_item = {
             "id": str(it.get("id") or uuid.uuid4().hex[:8]),
             "topic": topic,
             "template_project_id": (it.get("template_project_id") or None),
-            "target_duration": main_target_duration,
-            "target_cuts": main_cut_count,
+            "target_duration": target_duration,
+            "target_cuts": target_cuts,
             "channel": ch,
             "openings": _clean_list_of_str(it.get("openings")),
             "endings": _clean_list_of_str(it.get("endings")),

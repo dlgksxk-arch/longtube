@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <defs>
+    <linearGradient id="soil68" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#a76e45"/>
+      <stop offset="0.48" stop-color="#c08a59"/>
+      <stop offset="1" stop-color="#93603d"/>
+    </linearGradient>
+    <linearGradient id="cloth68" x1="0" y1="0" x2="0.8" y2="1">
+      <stop offset="0" stop-color="#d7bd91"/>
+      <stop offset="1" stop-color="#9b7b52"/>
+    </linearGradient>
+    <linearGradient id="mat68" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#b78a58"/>
+      <stop offset="1" stop-color="#765137"/>
+    </linearGradient>
+    <radialGradient id="yam68" cx="34%" cy="28%" r="78%">
+      <stop offset="0" stop-color="#ead4a1"/>
+      <stop offset="0.72" stop-color="#bd8f55"/>
+      <stop offset="1" stop-color="#7b5536"/>
+    </radialGradient>
+    <filter id="shadow68" x="-25%" y="-25%" width="150%" height="150%">
+      <feGaussianBlur stdDeviation="10"/>
+    </filter>
+  </defs>
+
+  <rect width="1280" height="720" fill="url(#soil68)"/>
+  <g fill="none" stroke="#744a31" stroke-width="6" opacity="0.22">
+    <path d="M0 118 Q255 72 520 126 T1015 112 T1280 103"/>
+    <path d="M0 602 Q286 642 555 590 T1010 607 T1280 584"/>
+    <path d="M32 352 Q260 319 480 363 M811 344 Q1015 309 1254 354"/>
+  </g>
+  <g fill="#e0b77b" opacity="0.24">
+    <circle cx="88" cy="224" r="6"/><circle cx="174" cy="552" r="5"/><circle cx="342" cy="134" r="7"/>
+    <circle cx="543" cy="574" r="6"/><circle cx="716" cy="148" r="5"/><circle cx="892" cy="584" r="7"/>
+    <circle cx="1086" cy="139" r="6"/><circle cx="1205" cy="495" r="5"/>
+  </g>
+
+  <!-- One continuous red plant-fiber link; no divider or panel seam. -->
+  <path d="M450 507 C555 561 708 561 824 500" fill="none" stroke="#5a3027" stroke-width="27" opacity="0.22" filter="url(#shadow68)"/>
+  <path d="M449 489 C559 543 705 544 826 482" fill="none" stroke="#9b3e31" stroke-width="16" stroke-linecap="round"/>
+  <path d="M450 486 C560 535 706 536 825 478" fill="none" stroke="#c66a4e" stroke-width="5" stroke-linecap="round" opacity="0.9"/>
+
+  <!-- Left: Japanese grain-origin evidence cluster. -->
+  <ellipse cx="329" cy="515" rx="220" ry="42" fill="#573b2b" opacity="0.25" filter="url(#shadow68)"/>
+  <path d="M150 430 L371 389 L493 482 L248 541 L132 493 Z" fill="url(#cloth68)" stroke="#4f4030" stroke-width="13" stroke-linejoin="round"/>
+  <path d="M161 449 L471 473 M190 423 L447 501 M225 408 L395 517 M146 477 L349 416 M183 517 L410 406" fill="none" stroke="#7c6648" stroke-width="6" opacity="0.62"/>
+  <g id="rice68" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M304 445 Q287 319 300 183 M302 357 Q243 308 217 250 M301 329 Q357 273 389 211" stroke="#9a7d2e" stroke-width="18"/>
+    <path d="M299 220 Q257 188 243 143 M303 241 Q350 201 366 157" stroke="#caa642" stroke-width="12"/>
+    <g fill="#d8b34f" stroke="#705628" stroke-width="5">
+      <ellipse cx="234" cy="136" rx="8" ry="13" transform="rotate(-31 234 136)"/>
+      <ellipse cx="247" cy="156" rx="8" ry="13" transform="rotate(-28 247 156)"/>
+      <ellipse cx="260" cy="178" rx="8" ry="13" transform="rotate(-24 260 178)"/>
+      <ellipse cx="374" cy="149" rx="8" ry="13" transform="rotate(27 374 149)"/>
+      <ellipse cx="363" cy="169" rx="8" ry="13" transform="rotate(24 363 169)"/>
+      <ellipse cx="351" cy="191" rx="8" ry="13" transform="rotate(21 351 191)"/>
+    </g>
+  </g>
+  <g id="bean68" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M399 438 Q404 367 392 304" fill="none" stroke="#55703b" stroke-width="15"/>
+    <path d="M395 347 Q352 324 335 286 Q377 279 401 318 Z" fill="#718c4b" stroke="#364b2c" stroke-width="8"/>
+    <path d="M399 331 Q439 303 458 269 Q474 310 412 356 Z" fill="#78964f" stroke="#364b2c" stroke-width="8"/>
+  </g>
+
+  <!-- Right: Seram Hainuwele tuber-and-coconut evidence cluster. -->
+  <ellipse cx="972" cy="520" rx="222" ry="43" fill="#573b2b" opacity="0.25" filter="url(#shadow68)"/>
+  <path d="M816 411 L1091 397 L1161 494 L918 548 L790 474 Z" fill="url(#mat68)" stroke="#4a3729" stroke-width="13" stroke-linejoin="round"/>
+  <path d="M815 430 L1138 478 M838 414 L1127 511 M797 459 L1067 403 M825 502 L1110 408" fill="none" stroke="#d0a66e" stroke-width="7" opacity="0.55"/>
+  <g id="yam-vine68" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M969 405 Q953 319 975 221 Q1012 164 1059 128" stroke="#49683b" stroke-width="17"/>
+    <path d="M970 316 Q910 285 884 235 M978 263 Q1032 241 1069 195" stroke="#557647" stroke-width="12"/>
+    <path d="M893 247 Q842 237 829 197 Q882 188 913 229 Z" fill="#71905b" stroke="#344a31" stroke-width="8"/>
+    <path d="M1051 213 Q1093 169 1133 182 Q1127 230 1069 237 Z" fill="#789961" stroke="#344a31" stroke-width="8"/>
+  </g>
+  <g id="three-yams68" fill="url(#yam68)" stroke="#684a32" stroke-width="10">
+    <path d="M864 428 C831 407 806 428 810 468 C814 506 852 521 881 497 C903 478 896 445 864 428 Z"/>
+    <path d="M958 422 C925 396 892 417 897 462 C902 505 948 525 979 495 C1004 470 994 441 958 422 Z"/>
+    <path d="M1067 430 C1038 409 1008 431 1013 471 C1018 510 1059 526 1088 500 C1113 478 1102 447 1067 430 Z"/>
+  </g>
+  <g id="coconut-flower68" fill="none" stroke-linecap="round">
+    <path d="M1082 388 Q1114 310 1168 249" stroke="#6c6338" stroke-width="13"/>
+    <path d="M1120 318 L1092 281 M1136 298 L1131 254 M1151 278 L1178 238" stroke="#857442" stroke-width="7"/>
+    <g fill="#e6c77a" stroke="#715e32" stroke-width="4">
+      <circle cx="1087" cy="276" r="11"/><circle cx="1129" cy="248" r="11"/><circle cx="1183" cy="232" r="11"/>
+      <circle cx="1100" cy="292" r="9"/><circle cx="1143" cy="264" r="9"/><circle cx="1164" cy="248" r="9"/>
+    </g>
+  </g>
+</svg>

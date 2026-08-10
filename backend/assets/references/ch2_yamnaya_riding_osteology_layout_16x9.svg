@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#96938b"/>
+  <!-- Human pelvis and proximal femur: osteological evidence, not a living rider. -->
+  <path d="M105 155 Q210 70 355 150 Q330 285 270 355 L205 455 L120 400 Q185 305 105 155 Z" fill="#d8cfb7" stroke="#4a433c" stroke-width="15"/>
+  <path d="M545 155 Q440 70 295 150 Q320 285 380 355 L445 455 L530 400 Q465 305 545 155 Z" fill="#d8cfb7" stroke="#4a433c" stroke-width="15"/>
+  <path d="M280 190 H370 L405 345 L325 430 L245 345 Z" fill="#c8bda4" stroke="#4a433c" stroke-width="14"/>
+  <circle cx="210" cy="398" r="43" fill="#7f5a43" stroke="#4a433c" stroke-width="12"/>
+  <circle cx="440" cy="398" r="43" fill="#7f5a43" stroke="#4a433c" stroke-width="12"/>
+  <path d="M720 165 Q790 115 850 175 L830 265 L875 595 L770 610 L742 280 Q680 235 720 165 Z" fill="#d8cfb7" stroke="#4a433c" stroke-width="15"/>
+  <circle cx="785" cy="205" r="38" fill="#7f5a43"/>
+  <!-- One isolated ancient horse molar anchors the riding hypothesis to horse remains. -->
+  <path d="M1000 150 Q1100 95 1190 165 L1210 345 L1150 430 L1100 365 L1045 430 L980 345 Z" fill="#d9d0b8" stroke="#4a433c" stroke-width="15"/>
+</svg>

@@ -7,6 +7,14 @@ import re
 from pathlib import Path
 from typing import Any
 
+from app.services.image.prompt_compiler import (
+    compile_image_prompt,
+    prompt_contract_revision,
+    supports_scene_contract_v2_model,
+    uses_scene_contract_v2,
+)
+from app.services.image.prompt_builder import is_canonical_script_image_prompt
+
 
 _STOPWORDS = {
     "a", "an", "and", "are", "as", "at", "be", "beside", "by", "for", "from",
@@ -40,7 +48,7 @@ _NEGATIVE_PROMPT_STARTS = (
     "photorealistic, hyperrealistic",
 )
 
-_PROMPT_POLICY_VERSION = "storybook_guard_v5"
+_PROMPT_POLICY_VERSION = "storybook_guard_v10_scene_contract_3"
 
 
 def canonical_cut_image_path(project_dir: Path, cut_number: int) -> Path:
@@ -90,6 +98,73 @@ def prompt_hash(text: str) -> str:
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
+def expected_comfyui_positive_prompt(
+    final_prompt: str,
+    *,
+    image_model: str,
+    prompt_profile: str,
+) -> str:
+    if is_canonical_script_image_prompt(final_prompt):
+        return str(final_prompt).strip()
+    if not final_prompt or not uses_scene_contract_v2(prompt_profile):
+        return ""
+    if not supports_scene_contract_v2_model(image_model):
+        return ""
+    positive = compile_image_prompt(final_prompt, model_id=image_model).positive
+    # ComfyUI applies the LongTube rendering lock after compiling the scene
+    # contract.  Resume validation must reproduce that exact final positive
+    # prompt; comparing against the pre-style compiler output marks every valid
+    # Z-Image sidecar stale and needlessly overwrites manually approved cuts.
+    from app.services.image.comfyui_service import (
+        _LONGTUBE_DARK_MANHWA_STYLE_MODELS,
+        _apply_longtube_dark_manhwa_style,
+        _flux2_baekje_ep06_visual_direction,
+        _promote_comfyui_lock_to_front,
+    )
+
+    if image_model in _LONGTUBE_DARK_MANHWA_STYLE_MODELS:
+        positive = _apply_longtube_dark_manhwa_style(
+            positive,
+            model_id=image_model,
+        )
+    if image_model == "comfyui-flux2-klein-9b":
+        baekje_ep06_visual_direction = _flux2_baekje_ep06_visual_direction(
+            final_prompt
+        )
+        if baekje_ep06_visual_direction:
+            positive = _promote_comfyui_lock_to_front(
+                positive,
+                baekje_ep06_visual_direction,
+            )
+    return positive
+
+
+def _retry_corrected_positive_matches_current_compiler(
+    meta: dict[str, Any],
+    *,
+    final_prompt: str,
+    image_model: str,
+) -> bool:
+    """Accept a saved detector-retry prompt only when the current compiler reproduces it exactly."""
+    actual = str(meta.get("comfyui_positive_prompt") or "")
+    match = re.search(
+        r"\bRetry\s+correction:\s*(.*?)(?:\s+Style:|$)",
+        actual,
+        re.IGNORECASE | re.DOTALL,
+    )
+    if not match or not final_prompt or not image_model:
+        return False
+    quality_hint = match.group(1).strip().rstrip(" .")
+    if not quality_hint:
+        return False
+    rebuilt = compile_image_prompt(
+        final_prompt,
+        model_id=image_model,
+        quality_hint=quality_hint,
+    ).positive
+    return bool(rebuilt) and meta.get("comfyui_positive_prompt_hash") == prompt_hash(rebuilt)
+
+
 def write_prompt_sidecar(
     image_path: str | Path,
     *,
@@ -100,6 +175,7 @@ def write_prompt_sidecar(
     narration: str = "",
     comfyui_positive_prompt: str = "",
     comfyui_negative_prompt: str = "",
+    effective_image_model: str = "",
 ) -> None:
     path = sidecar_path(image_path)
     payload = {
@@ -112,12 +188,57 @@ def write_prompt_sidecar(
         "final_prompt": final_prompt or "",
         "narration": narration or "",
     }
+    contract_revision = prompt_contract_revision(final_prompt or source_prompt)
+    if contract_revision:
+        payload["prompt_contract_revision"] = contract_revision
     if comfyui_positive_prompt:
         payload["comfyui_positive_prompt_hash"] = prompt_hash(comfyui_positive_prompt)
         payload["comfyui_positive_prompt"] = comfyui_positive_prompt
     if comfyui_negative_prompt:
         payload["comfyui_negative_prompt"] = comfyui_negative_prompt
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    if effective_image_model and effective_image_model != image_model:
+        payload["effective_image_model"] = effective_image_model
+    # The sidecar is the commit marker for a generated cut.  Write it
+    # atomically so a restart cannot leave a half-written file that is counted
+    # as completed.
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(path)
+
+
+def image_has_prompt_sidecar_commit(
+    image_path: str | Path,
+    *,
+    cut_number: int | None = None,
+    verify_image: bool = False,
+) -> bool:
+    """Return True only when both the image and its valid commit marker exist."""
+    image = Path(image_path)
+    if not image.exists() or not image.is_file() or image.stat().st_size <= 50:
+        return False
+    if verify_image:
+        try:
+            from PIL import Image
+
+            with Image.open(image) as opened:
+                opened.verify()
+        except Exception:
+            return False
+    meta = _read_prompt_sidecar(image)
+    if not isinstance(meta, dict):
+        return False
+    if cut_number is not None:
+        try:
+            if int(meta.get("cut_number")) != int(cut_number):
+                return False
+        except (TypeError, ValueError):
+            return False
+    return bool(
+        str(meta.get("image_model") or "").strip()
+        and str(meta.get("source_prompt_hash") or "").strip()
+        and str(meta.get("final_prompt_hash") or "").strip()
+    )
 
 
 def _read_prompt_sidecar(image_path: str | Path) -> dict[str, Any] | None:
@@ -171,6 +292,8 @@ def image_matches_prompt(
     source_prompt: str,
     final_prompt: str = "",
     image_model: str = "",
+    comfyui_positive_prompt: str = "",
+    effective_image_model: str = "",
 ) -> tuple[bool, str]:
     p = Path(image_path)
     if not p.exists() or not p.is_file() or p.stat().st_size <= 50:
@@ -180,6 +303,34 @@ def image_matches_prompt(
     if meta:
         if image_model and meta.get("image_model") and meta.get("image_model") != image_model:
             return False, "sidecar_model_mismatch"
+        if effective_image_model:
+            actual_effective_model = str(
+                meta.get("effective_image_model") or meta.get("image_model") or ""
+            ).strip()
+            if actual_effective_model and actual_effective_model != effective_image_model:
+                return False, "sidecar_effective_model_mismatch"
+        expected_contract_revision = prompt_contract_revision(final_prompt or source_prompt)
+        if expected_contract_revision and meta.get("prompt_contract_revision") != expected_contract_revision:
+            return False, "sidecar_prompt_contract_mismatch"
+        if comfyui_positive_prompt and meta.get("comfyui_positive_prompt_hash") != prompt_hash(
+            comfyui_positive_prompt
+        ):
+            final_hash_matches = bool(
+                final_prompt and meta.get("final_prompt_hash") == prompt_hash(final_prompt)
+            )
+            source_hash_matches = bool(
+                not source_prompt or meta.get("source_prompt_hash") == prompt_hash(source_prompt)
+            )
+            if not (
+                final_hash_matches
+                and source_hash_matches
+                and _retry_corrected_positive_matches_current_compiler(
+                    meta,
+                    final_prompt=final_prompt,
+                    image_model=image_model,
+                )
+            ):
+                return False, "sidecar_comfyui_positive_prompt_mismatch"
         if final_prompt:
             if meta.get("final_prompt_hash") == prompt_hash(final_prompt):
                 return True, "sidecar_final_prompt_match"

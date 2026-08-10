@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <defs><linearGradient id="skyHall" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#92c8d8"/><stop offset="1" stop-color="#ead7a3"/></linearGradient></defs>
+  <rect width="1280" height="720" fill="url(#skyHall)"/>
+  <circle cx="208" cy="112" r="65" fill="#e4bc40" stroke="#4b3922" stroke-width="13"/>
+  <path d="M0 395 Q290 342 572 395 L596 720 L0 720Z" fill="#8c6b3e" stroke="#49382b" stroke-width="13"/>
+  <g id="golden-rice-hall" fill="none" stroke-linecap="round"><path d="M97 646 Q93 512 102 414 M175 651 Q174 500 181 398 M255 653 Q260 515 269 423 M337 651 Q347 501 358 404 M425 655 Q441 520 454 428" stroke="#65703a" stroke-width="13"/><g fill="#e0bd54" stroke="#735726" stroke-width="4"><ellipse cx="102" cy="407" rx="16" ry="35"/><ellipse cx="181" cy="391" rx="16" ry="35"/><ellipse cx="269" cy="416" rx="16" ry="35"/><ellipse cx="358" cy="397" rx="16" ry="35"/><ellipse cx="454" cy="421" rx="16" ry="35"/></g></g>
+  <g id="plain-weaving-hall"><path d="M617 236 L922 92 L1217 236" fill="#8c633f" stroke="#3d2d25" stroke-width="16" stroke-linejoin="round"/><path d="M650 230 H1188 V631 H650Z" fill="#b78755" stroke="#3d2d25" stroke-width="16"/><path d="M682 280 H1156 V595 H682Z" fill="#d0ad79" stroke="#5a3e2c" stroke-width="11"/><path d="M805 230 V631 M1033 230 V631" stroke="#70482f" stroke-width="18"/>
+    <g fill="#a46e45" stroke="#3d2d25" stroke-width="9"><rect x="715" y="344" width="167" height="198"/><rect x="958" y="344" width="167" height="198"/></g>
+    <g fill="#e4d8ba" stroke="#5b4c3c" stroke-width="6"><rect x="746" y="376" width="105" height="121"/><rect x="989" y="376" width="105" height="121"/></g>
+    <g stroke="#f7efd9" stroke-width="4"><path d="M763 377v120 M785 377v120 M807 377v120 M829 377v120 M1006 377v120 M1028 377v120 M1050 377v120 M1072 377v120"/></g>
+  </g>
+</svg>

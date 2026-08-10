@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <defs>
+    <linearGradient id="wood15" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#b98252"/>
+      <stop offset="0.52" stop-color="#d4a16a"/>
+      <stop offset="1" stop-color="#a96f43"/>
+    </linearGradient>
+    <linearGradient id="cloth15" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#eee4c9"/>
+      <stop offset="1" stop-color="#cbbd9e"/>
+    </linearGradient>
+    <radialGradient id="gold15" cx="38%" cy="30%" r="70%">
+      <stop offset="0" stop-color="#f8df76"/>
+      <stop offset="0.58" stop-color="#d6a82d"/>
+      <stop offset="1" stop-color="#9d6e18"/>
+    </radialGradient>
+  </defs>
+  <rect width="1280" height="720" fill="url(#wood15)"/>
+  <g fill="none" stroke="#835433" stroke-width="6" opacity="0.38">
+    <path d="M0 90 C220 60 400 125 640 82 S1050 58 1280 102"/>
+    <path d="M0 210 C245 180 430 232 690 198 S1050 177 1280 218"/>
+    <path d="M0 350 C260 318 455 378 720 338 S1070 320 1280 358"/>
+    <path d="M0 505 C225 468 465 540 700 495 S1050 476 1280 520"/>
+    <path d="M0 650 C270 612 470 682 735 636 S1070 622 1280 658"/>
+  </g>
+
+  <g id="command-bundle" stroke="#453628" stroke-linejoin="round">
+    <path d="M492 78 L790 66 L820 235 L474 242 Z" fill="#7c5635" opacity="0.28" stroke="none"/>
+    <path d="M490 58 L778 70 L805 218 L470 226 Z" fill="url(#cloth15)" stroke-width="12"/>
+    <path d="M490 58 L630 137 L778 70 M470 226 L630 137 L805 218" fill="none" stroke="#a99a7e" stroke-width="8"/>
+    <path d="M628 60 C626 102 630 170 636 224 M477 142 C560 147 710 142 798 134" fill="none" stroke="#6d4529" stroke-width="17"/>
+    <ellipse cx="632" cy="140" rx="25" ry="22" fill="#8a5933" stroke-width="9"/>
+  </g>
+
+  <g id="messenger-disk">
+    <ellipse cx="640" cy="390" rx="83" ry="28" fill="#6c461e" opacity="0.34"/>
+    <circle cx="640" cy="365" r="72" fill="url(#gold15)" stroke="#453316" stroke-width="13"/>
+    <circle cx="640" cy="365" r="48" fill="none" stroke="#f1d66b" stroke-width="7" opacity="0.85"/>
+  </g>
+
+  <g id="destination-tile">
+    <ellipse cx="640" cy="620" rx="112" ry="30" fill="#563720" opacity="0.34"/>
+    <path d="M552 501 Q640 468 728 507 L748 590 Q647 640 540 589 Z" fill="#8e5a35" stroke="#402d22" stroke-width="13" stroke-linejoin="round"/>
+    <path d="M584 526 Q638 504 700 530 M572 563 Q640 586 716 558" fill="none" stroke="#bd8655" stroke-width="8" stroke-linecap="round"/>
+  </g>
+</svg>

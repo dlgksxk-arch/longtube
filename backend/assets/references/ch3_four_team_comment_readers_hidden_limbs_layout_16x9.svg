@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <defs>
+    <linearGradient id="wall143" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#d6c3a3"/>
+      <stop offset="0.52" stop-color="#eadbbd"/>
+      <stop offset="1" stop-color="#b99c7a"/>
+    </linearGradient>
+    <radialGradient id="skin143a" cx="38%" cy="30%" r="76%">
+      <stop offset="0" stop-color="#f1c9a2"/>
+      <stop offset="1" stop-color="#c68563"/>
+    </radialGradient>
+    <radialGradient id="skin143b" cx="38%" cy="30%" r="76%">
+      <stop offset="0" stop-color="#e8bb93"/>
+      <stop offset="1" stop-color="#b77659"/>
+    </radialGradient>
+    <filter id="shadow143" x="-25%" y="-25%" width="150%" height="150%">
+      <feGaussianBlur stdDeviation="12"/>
+    </filter>
+  </defs>
+
+  <rect width="1280" height="720" fill="url(#wall143)"/>
+  <g fill="none" stroke="#a98b68" stroke-width="7" opacity="0.26">
+    <path d="M0 94 Q293 61 626 101 T1280 83"/>
+    <path d="M0 618 Q303 583 640 625 T1280 601"/>
+  </g>
+
+  <!-- Exactly four present-day adult team faces, all lower crops ending at jawlines. -->
+  <g id="four-team-faces143">
+    <!-- Female 1 -->
+    <ellipse cx="193" cy="328" rx="113" ry="132" fill="#765a48" opacity="0.20" filter="url(#shadow143)"/>
+    <path d="M96 330 Q86 179 193 156 Q301 181 291 333 L255 433 Q223 466 193 471 Q158 466 130 433 Z" fill="#2d2824" stroke="#493a32" stroke-width="11"/>
+    <ellipse cx="193" cy="315" rx="79" ry="105" fill="url(#skin143a)" stroke="#4e3b34" stroke-width="9"/>
+    <path d="M114 282 Q115 193 194 187 Q274 201 271 284 Q241 234 194 229 Q147 233 114 282 Z" fill="#2d2824"/>
+    <path d="M145 327 Q162 339 178 329 M208 329 Q225 340 242 327" fill="none" stroke="#4b342e" stroke-width="7" stroke-linecap="round"/>
+    <path d="M165 372 Q193 393 221 372" fill="none" stroke="#8a4d49" stroke-width="8" stroke-linecap="round"/>
+    <path d="M163 370 Q193 380 223 370" fill="none" stroke="#f3e5d8" stroke-width="5" stroke-linecap="round"/>
+
+    <!-- Male 2 -->
+    <ellipse cx="490" cy="328" rx="113" ry="132" fill="#765a48" opacity="0.20" filter="url(#shadow143)"/>
+    <path d="M395 328 Q386 180 490 158 Q597 183 588 333 L552 433 Q521 466 490 471 Q456 466 428 433 Z" fill="#302b27" stroke="#493a32" stroke-width="11"/>
+    <ellipse cx="490" cy="315" rx="79" ry="105" fill="url(#skin143b)" stroke="#4e3b34" stroke-width="9"/>
+    <path d="M411 276 Q420 189 488 184 Q565 192 570 277 Q538 228 489 226 Q442 230 411 276 Z" fill="#302b27"/>
+    <path d="M442 327 Q459 339 475 329 M505 329 Q522 340 539 327" fill="none" stroke="#4b342e" stroke-width="7" stroke-linecap="round"/>
+    <path d="M462 372 Q490 393 518 372" fill="none" stroke="#824944" stroke-width="8" stroke-linecap="round"/>
+    <path d="M460 370 Q490 380 520 370" fill="none" stroke="#f1e1d4" stroke-width="5" stroke-linecap="round"/>
+
+    <!-- Female 3 -->
+    <ellipse cx="787" cy="328" rx="113" ry="132" fill="#765a48" opacity="0.20" filter="url(#shadow143)"/>
+    <path d="M690 330 Q680 179 787 156 Q895 181 885 333 L849 433 Q817 466 787 471 Q752 466 724 433 Z" fill="#292522" stroke="#493a32" stroke-width="11"/>
+    <ellipse cx="787" cy="315" rx="79" ry="105" fill="url(#skin143a)" stroke="#4e3b34" stroke-width="9"/>
+    <ellipse cx="787" cy="163" rx="45" ry="28" fill="#292522" stroke="#493a32" stroke-width="8"/>
+    <path d="M708 282 Q709 193 788 187 Q868 201 865 284 Q835 234 788 229 Q741 233 708 282 Z" fill="#292522"/>
+    <path d="M739 327 Q756 339 772 329 M802 329 Q819 340 836 327" fill="none" stroke="#4b342e" stroke-width="7" stroke-linecap="round"/>
+    <path d="M759 372 Q787 393 815 372" fill="none" stroke="#8a4d49" stroke-width="8" stroke-linecap="round"/>
+    <path d="M757 370 Q787 380 817 370" fill="none" stroke="#f3e5d8" stroke-width="5" stroke-linecap="round"/>
+
+    <!-- Male 4 -->
+    <ellipse cx="1084" cy="328" rx="113" ry="132" fill="#765a48" opacity="0.20" filter="url(#shadow143)"/>
+    <path d="M989 328 Q980 180 1084 158 Q1191 183 1182 333 L1146 433 Q1115 466 1084 471 Q1050 466 1022 433 Z" fill="#342d28" stroke="#493a32" stroke-width="11"/>
+    <ellipse cx="1084" cy="315" rx="79" ry="105" fill="url(#skin143b)" stroke="#4e3b34" stroke-width="9"/>
+    <path d="M1005 276 Q1014 189 1082 184 Q1159 192 1164 277 Q1132 228 1083 226 Q1036 230 1005 276 Z" fill="#342d28"/>
+    <path d="M1036 327 Q1053 339 1069 329 M1099 329 Q1116 340 1133 327" fill="none" stroke="#4b342e" stroke-width="7" stroke-linecap="round"/>
+    <path d="M1056 372 Q1084 393 1112 372" fill="none" stroke="#824944" stroke-width="8" stroke-linecap="round"/>
+    <path d="M1054 370 Q1084 380 1114 370" fill="none" stroke="#f1e1d4" stroke-width="5" stroke-linecap="round"/>
+  </g>
+
+  <!-- Exactly one central present-day tablet with abstract, unreadable comment rows. -->
+  <ellipse cx="640" cy="663" rx="360" ry="34" fill="#6a4d3c" opacity="0.24" filter="url(#shadow143)"/>
+  <g id="one-comment-tablet143">
+    <rect x="326" y="471" width="628" height="237" rx="34" fill="#363c43" stroke="#20252a" stroke-width="14"/>
+    <rect x="354" y="496" width="572" height="178" rx="19" fill="#e9e5da" stroke="#a6a39b" stroke-width="7"/>
+    <g>
+      <circle cx="397" cy="533" r="17" fill="#7099a5"/>
+      <rect x="430" y="519" width="248" height="13" rx="6" fill="#aaa79f"/>
+      <rect x="430" y="543" width="378" height="11" rx="5" fill="#c4c0b7"/>
+      <circle cx="397" cy="586" r="17" fill="#b58271"/>
+      <rect x="430" y="572" width="207" height="13" rx="6" fill="#aaa79f"/>
+      <rect x="430" y="596" width="333" height="11" rx="5" fill="#c4c0b7"/>
+      <circle cx="397" cy="639" r="17" fill="#8b9f6e"/>
+      <rect x="430" y="625" width="275" height="13" rx="6" fill="#aaa79f"/>
+      <rect x="430" y="649" width="408" height="11" rx="5" fill="#c4c0b7"/>
+    </g>
+  </g>
+</svg>

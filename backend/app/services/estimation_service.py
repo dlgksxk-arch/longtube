@@ -15,7 +15,12 @@ from typing import Any
 
 from app.config import resolve_cut_video_duration
 from app.services.llm.factory import LLM_REGISTRY
-from app.services.image.factory import DEFAULT_THUMBNAIL_MODEL, IMAGE_REGISTRY, resolve_image_model
+from app.services.image.factory import (
+    DEFAULT_THUMBNAIL_MODEL,
+    IMAGE_REGISTRY,
+    resolve_image_model,
+    resolve_thumbnail_model,
+)
 from app.services.tts.factory import TTS_REGISTRY
 from app.services.video.factory import DEFAULT_VIDEO_MODEL, VIDEO_REGISTRY, resolve_video_model
 
@@ -282,7 +287,9 @@ def estimate_project(config: dict | None) -> dict:
     script_model = cfg.get("script_model") or "claude-sonnet-4-6"
     story_model = cfg.get("story_model") or script_model
     image_model = resolve_image_model(cfg.get("image_model"))
-    thumbnail_model = resolve_image_model(cfg.get("thumbnail_model") or DEFAULT_THUMBNAIL_MODEL)
+    thumbnail_model = resolve_thumbnail_model(
+        cfg.get("thumbnail_model") or DEFAULT_THUMBNAIL_MODEL
+    )
     tts_model = cfg.get("tts_model") or "openai-tts"
     video_model = resolve_video_model(cfg.get("video_model") or DEFAULT_VIDEO_MODEL)
     # v1.1.36: 영상 제작 대상 선택 — 미선택 컷은 ffmpeg-kenburns 폴백 (비용 0).

@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <defs>
+    <linearGradient id="earth28" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#d6bf90"/>
+      <stop offset="0.56" stop-color="#b38c5e"/>
+      <stop offset="1" stop-color="#896746"/>
+    </linearGradient>
+    <linearGradient id="shroud28" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#b99d78"/>
+      <stop offset="1" stop-color="#70523a"/>
+    </linearGradient>
+    <linearGradient id="worm28" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f6efd9"/>
+      <stop offset="1" stop-color="#c8b690"/>
+    </linearGradient>
+  </defs>
+  <rect width="1280" height="720" fill="url(#earth28)"/>
+  <g fill="none" stroke="#765a3d" stroke-width="7" opacity="0.34" stroke-linecap="round">
+    <path d="M0 112 Q304 78 620 121 T1280 105"/>
+    <path d="M0 606 Q320 570 652 615 T1280 590"/>
+  </g>
+
+  <g id="closed-shroud28">
+    <ellipse cx="699" cy="475" rx="380" ry="55" fill="#4c3828" opacity="0.3"/>
+    <path d="M382 270 Q646 211 997 277 Q1060 351 1009 446 Q678 509 386 440 Q333 352 382 270 Z" fill="url(#shroud28)" stroke="#3c2e24" stroke-width="15"/>
+    <path d="M432 299 Q699 252 960 304 M407 363 Q701 323 997 371 M434 428 Q698 465 958 422" fill="none" stroke="#ccb188" stroke-width="9" opacity="0.62"/>
+    <path d="M505 253 Q691 345 878 250 M498 459 Q694 370 886 462" fill="none" stroke="#5d4633" stroke-width="11" opacity="0.74"/>
+    <path d="M383 302 Q345 354 388 416" fill="none" stroke="#d5bc92" stroke-width="12" opacity="0.74"/>
+  </g>
+
+  <g id="two-brow-fiber-arcs28" fill="none" stroke="#51402f" stroke-width="14" stroke-linecap="round">
+    <path d="M397 332 Q432 302 468 326"/>
+    <path d="M483 325 Q520 298 558 329"/>
+  </g>
+
+  <g id="three-silkworms28" fill="url(#worm28)" stroke="#5c5140" stroke-width="7" stroke-linejoin="round">
+    <path d="M390 268 C406 243 436 238 461 249 C487 260 507 278 513 301 C494 321 468 322 445 311 C421 300 399 283 390 268 Z"/>
+    <path d="M477 245 C493 220 523 215 548 226 C574 237 594 255 600 278 C581 298 555 299 532 288 C508 277 486 260 477 245 Z"/>
+    <path d="M552 289 C568 264 598 259 623 270 C649 281 669 299 675 322 C656 342 630 343 607 332 C583 321 561 304 552 289 Z"/>
+  </g>
+  <g fill="none" stroke="#95866b" stroke-width="5" opacity="0.85">
+    <path d="M417 247 L417 288 M443 242 L444 307 M469 251 L471 315 M495 268 L496 310"/>
+    <path d="M504 224 L504 265 M530 219 L531 284 M556 228 L558 292 M582 245 L583 287"/>
+    <path d="M579 268 L579 309 M605 263 L606 328 M631 272 L633 336 M657 289 L658 331"/>
+  </g>
+  <g fill="none" stroke="#eee3c7" stroke-width="4" opacity="0.82" stroke-linecap="round">
+    <path d="M513 290 Q544 305 575 286"/><path d="M596 268 Q619 255 640 273"/>
+  </g>
+</svg>

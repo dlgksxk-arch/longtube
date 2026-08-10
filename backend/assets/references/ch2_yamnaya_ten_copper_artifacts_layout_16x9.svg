@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#a97645"/>
+  <!-- Exactly three leaf-shaped blade blanks, no handles. -->
+  <g fill="#bd7047" stroke="#4b3428" stroke-width="11">
+    <path d="M90 90 Q210 190 130 350 Q50 190 90 90 Z"/>
+    <path d="M250 90 Q370 190 290 350 Q210 190 250 90 Z"/>
+    <path d="M410 90 Q530 190 450 350 Q370 190 410 90 Z"/>
+  </g>
+  <!-- Exactly two flat axe heads, no hafts. -->
+  <g fill="#b86842" stroke="#4b3428" stroke-width="11">
+    <path d="M585 105 H745 L700 285 H630 Z"/>
+    <path d="M790 105 H950 L905 285 H835 Z"/>
+  </g>
+  <!-- Exactly two narrow spearhead blanks, no shafts. -->
+  <g fill="#c0784b" stroke="#4b3428" stroke-width="11">
+    <path d="M1025 80 L1090 270 L1025 230 L960 270 Z"/>
+    <path d="M1185 80 L1250 270 L1185 230 L1120 270 Z"/>
+  </g>
+  <!-- Exactly three plain spiral ornaments. -->
+  <g fill="none" stroke="#4b3428" stroke-width="34" stroke-linecap="round">
+    <path d="M235 485 C100 390 60 620 235 630 C390 640 405 445 275 435 C175 428 145 550 240 570"/>
+    <path d="M640 485 C505 390 465 620 640 630 C795 640 810 445 680 435 C580 428 550 550 645 570"/>
+    <path d="M1045 485 C910 390 870 620 1045 630 C1200 640 1215 445 1085 435 C985 428 955 550 1050 570"/>
+  </g>
+  <g fill="none" stroke="#c07b4d" stroke-width="20" stroke-linecap="round">
+    <path d="M235 485 C100 390 60 620 235 630 C390 640 405 445 275 435 C175 428 145 550 240 570"/>
+    <path d="M640 485 C505 390 465 620 640 630 C795 640 810 445 680 435 C580 428 550 550 645 570"/>
+    <path d="M1045 485 C910 390 870 620 1045 630 C1200 640 1215 445 1085 435 C985 428 955 550 1050 570"/>
+  </g>
+</svg>

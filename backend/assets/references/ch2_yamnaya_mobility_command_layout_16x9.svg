@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#d8bd84"/>
+  <!-- One four-solid-wheel wagon bed carrying one rolled hide shelter. -->
+  <rect x="90" y="260" width="700" height="230" rx="22" fill="#9a6b3e" stroke="#4b3428" stroke-width="13"/>
+  <path d="M125 300H755M125 375H755M125 450H755M250 275V475M440 275V475M630 275V475" fill="none" stroke="#6c4931" stroke-width="10"/>
+  <circle cx="190" cy="535" r="92" fill="#95653b" stroke="#4b3428" stroke-width="12"/>
+  <circle cx="360" cy="535" r="92" fill="#95653b" stroke="#4b3428" stroke-width="12"/>
+  <circle cx="535" cy="535" r="92" fill="#95653b" stroke="#4b3428" stroke-width="12"/>
+  <circle cx="705" cy="535" r="92" fill="#95653b" stroke="#4b3428" stroke-width="12"/>
+  <circle cx="190" cy="535" r="24" fill="#c5a56f" stroke="#4b3428" stroke-width="8"/>
+  <circle cx="360" cy="535" r="24" fill="#c5a56f" stroke="#4b3428" stroke-width="8"/>
+  <circle cx="535" cy="535" r="24" fill="#c5a56f" stroke="#4b3428" stroke-width="8"/>
+  <circle cx="705" cy="535" r="24" fill="#c5a56f" stroke="#4b3428" stroke-width="8"/>
+  <path d="M185 235 Q205 150 285 140 H600 Q680 150 700 235 Q680 315 600 325 H285 Q205 315 185 235 Z" fill="#c5a46d" stroke="#4b3428" stroke-width="12"/>
+  <path d="M300 150V315M585 150V315" fill="none" stroke="#6f4b32" stroke-width="14"/>
+
+  <!-- Mobility as weapon: one copper blade blank. -->
+  <path d="M905 95 Q1030 210 965 390 Q900 210 905 95 Z" fill="#aa613d" stroke="#4b3428" stroke-width="13"/>
+  <path d="M965 120V360" fill="none" stroke="#754331" stroke-width="8"/>
+
+  <!-- Test of command: one plain carved wooden staff head, no royal regalia. -->
+  <path d="M980 480H1160V640H980Z" fill="#93653a" stroke="#4b3428" stroke-width="12"/>
+  <circle cx="1070" cy="480" r="86" fill="#93653a" stroke="#4b3428" stroke-width="12"/>
+  <circle cx="1070" cy="480" r="28" fill="#c5a56f" stroke="#4b3428" stroke-width="9"/>
+</svg>

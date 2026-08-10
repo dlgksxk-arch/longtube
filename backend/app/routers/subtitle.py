@@ -24,13 +24,17 @@ from app.config import (
     resolve_cut_audio_start_offset,
     resolve_cut_video_duration,
     resolve_cut_video_duration_for_audio,
+    resolve_main_subtitle_delivery,
     resolve_project_dir,
+    should_burn_cut_level_subtitles,
 )
 from app.services.subtitle_service import (
     DEFAULT_SUBTITLE_STYLE,
-    burn_cut_subtitle_file,
+    burn_cut_variety_highlight_file,
+    explicit_variety_highlight_caption,
     generate_ass,
     generate_srt,
+    generate_variety_highlight_ass,
 )
 from app.services.shorts_service import (
     SHORTS_MIN_SEGMENT_COUNT,
@@ -39,11 +43,18 @@ from app.services.shorts_service import (
     render_shorts_from_final,
     select_shorts_segments,
 )
+from app.services.remotion_shorts_renderer import SHARED_SHORTS_PIPELINE_ID
+from app.services.remotion_longform_renderer import render_remotion_longform
 from app.services.video.ffmpeg_service import FFmpegService
+from app.services.video.longform_header import (
+    resolve_longform_channel_name,
+    resolve_longform_title,
+)
+from app.services.tts.voice_cast import tts_tags_for_cut
 from app.services.video.subprocess_helper import find_ffmpeg, run_subprocess
 from app.services.interlude_service import (
     DEFAULT_INTERMISSION_EVERY,
-    INTERMISSION_CLIP_SECONDS,
+    INTERMISSION_INSERTION_ENABLED,
     existing_kind_path,
 )
 
@@ -113,6 +124,9 @@ def _insert_intermissions_after_cuts(
     intermission_path: str | None,
     every_cuts: int,
 ) -> tuple[list[str], int]:
+    if not INTERMISSION_INSERTION_ENABLED:
+        return list(cut_paths), 0
+
     sequence: list[str] = []
     intermission_count = 0
     every = max(1, int(every_cuts or DEFAULT_INTERMISSION_EVERY))
@@ -139,7 +153,6 @@ async def _prepare_intermission_clip(input_path: str, output_path: str, resoluti
         input_path,
         output_path,
         resolution,
-        duration=INTERMISSION_CLIP_SECONDS,
     )
 
 
@@ -152,8 +165,9 @@ async def _prepare_interlude_timeline_clip(
 ) -> str:
     pad_wh = resolution.replace("x", ":")
     vf = (
+        f"fps=fps=30:start_time=0:round=near,"
         f"scale={resolution}:force_original_aspect_ratio=decrease,"
-        f"pad={pad_wh}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30,format=yuv420p"
+        f"pad={pad_wh}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p"
     )
     af = "volume=0.0000,aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=mono"
     if duration is not None:
@@ -166,6 +180,7 @@ async def _prepare_interlude_timeline_clip(
         "-map", "0:a?",
         "-af", af,
         "-c:v", "libx264", "-preset", "ultrafast", "-crf", "20",
+        "-fps_mode", "cfr",
         "-video_track_timescale", "15360",
         "-c:a", "aac", "-b:a", "160k", "-ar", "44100",
         "-pix_fmt", "yuv420p",
@@ -186,7 +201,41 @@ def _load_script(project_id: str) -> dict:
         return json.load(f)
 
 
-def _build_and_write_ass(project_id: str, project: Project, db: Session) -> tuple[str, int]:
+def _configured_interlude_duration(project: Project, kind: str) -> float:
+    inter = (project.config or {}).get("interlude") or {}
+    entry = inter.get(kind) or {}
+    raw = entry.get("duration") if isinstance(entry, dict) else None
+    try:
+        duration = float(raw or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    return duration if duration > 0.0 else 0.0
+
+
+async def _interlude_duration_seconds(
+    project_id: str,
+    project: Project,
+    kind: str,
+    path: str | None = None,
+) -> float:
+    resolved = path or _resolve_interlude_path(project_id, project, kind)
+    if not resolved:
+        return 0.0
+    duration = await FFmpegService.probe_duration(resolved)
+    if duration > 0.0:
+        return duration
+    return _configured_interlude_duration(project, kind)
+
+
+async def _build_and_write_ass(
+    project_id: str,
+    project: Project,
+    db: Session,
+    *,
+    opening_duration: float | None = None,
+    intermission_duration: float | None = None,
+    cut_video_durations: dict[int, float] | None = None,
+) -> tuple[str, int]:
     """Build cut data, render ASS/SRT, and persist subtitle files to disk.
 
     Shared by the explicit generate endpoint and the auto-generation path
@@ -211,9 +260,14 @@ def _build_and_write_ass(project_id: str, project: Project, db: Session) -> tupl
             cut.audio_duration or spoken_duration,
             default=cut_duration,
         )
+        if cut_video_durations and int(cut.cut_number) in cut_video_durations:
+            cut_window = max(0.01, float(cut_video_durations[int(cut.cut_number)]))
         cuts_data.append({
             "cut_number": cut.cut_number,
             "narration": cut.narration or cut_script.get("narration", ""),
+            "speaker": cut_script.get("speaker", ""),
+            "tts_tags": list(tts_tags_for_cut(cut_script)),
+            "highlight_caption": explicit_variety_highlight_caption(cut_script),
             "actual_duration": spoken_duration,
             "duration_estimate": cut_script.get("duration_estimate", cut_duration),
             "cut_video_duration": cut_window,
@@ -221,8 +275,35 @@ def _build_and_write_ass(project_id: str, project: Project, db: Session) -> tupl
 
     style_config = project.config.get("subtitle_style", dict(DEFAULT_SUBTITLE_STYLE))
     aspect_ratio = project.config.get("aspect_ratio", "16:9")
+    opening_path = _resolve_interlude_path(project_id, project, "opening")
+    intermission_path = _resolve_interlude_path(project_id, project, "intermission")
+    if opening_duration is None:
+        opening_duration = await _interlude_duration_seconds(
+            project_id, project, "opening", opening_path
+        )
+    if intermission_duration is None:
+        intermission_duration = await _interlude_duration_seconds(
+            project_id, project, "intermission", intermission_path
+        )
+    opening_duration = max(0.0, float(opening_duration or 0.0)) if opening_path else 0.0
+    intermission_duration = (
+        max(0.0, float(intermission_duration or 0.0)) if intermission_path else 0.0
+    )
+    first_intermission_after_cuts = (
+        FIRST_INTERMISSION_AFTER_CUTS if intermission_duration > 0.0 else 0
+    )
+    intermission_every_cuts = (
+        _intermission_every_cuts(project) if intermission_duration > 0.0 else 0
+    )
 
-    ass_content = generate_ass(cuts_data, style_config, aspect_ratio)
+    ass_content = generate_ass(
+        cuts_data,
+        style_config,
+        aspect_ratio,
+        first_intermission_after_cuts=first_intermission_after_cuts,
+        intermission_every_cuts=intermission_every_cuts,
+        intermission_duration=intermission_duration,
+    )
 
     subtitle_dir = resolve_project_dir(project_id, project.config or {}, create=True) / "subtitles"
     subtitle_dir.mkdir(parents=True, exist_ok=True)
@@ -233,20 +314,38 @@ def _build_and_write_ass(project_id: str, project: Project, db: Session) -> tupl
 
     srt_path = subtitle_dir / "subtitles.srt"
     with open(srt_path, "w", encoding="utf-8") as f:
-        f.write(generate_srt(cuts_data))
+        f.write(generate_srt(
+            cuts_data,
+            start_offset=opening_duration,
+            first_intermission_after_cuts=first_intermission_after_cuts,
+            intermission_every_cuts=intermission_every_cuts,
+            intermission_duration=intermission_duration,
+        ))
+    if bool((project.config or {}).get("variety_highlights_enabled", False)):
+        highlight_path = subtitle_dir / "variety_highlights.ass"
+        with open(highlight_path, "w", encoding="utf-8") as f:
+            f.write(generate_variety_highlight_ass(
+                cuts_data,
+                aspect_ratio=aspect_ratio,
+                first_intermission_after_cuts=first_intermission_after_cuts,
+                intermission_every_cuts=intermission_every_cuts,
+                intermission_duration=intermission_duration,
+                panel_mode=str((project.config or {}).get("variety_highlight_panel_mode") or "emotion_auto"),
+                fixed_panel=str((project.config or {}).get("variety_highlight_style") or "neutral"),
+            ))
 
     return str(subtitle_path), len(cuts_data)
 
 
 @router.post("/{project_id}/generate")
-def generate_subtitles(project_id: str, db: Session = Depends(get_db)):
+async def generate_subtitles(project_id: str, db: Session = Depends(get_db)):
     """Generate ASS subtitle file"""
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(404, "Project not found")
 
     try:
-        subtitle_path, count = _build_and_write_ass(project_id, project, db)
+        subtitle_path, count = await _build_and_write_ass(project_id, project, db)
 
         # v1.1.32 이후: 프런트에서 호출되지는 않지만 호환성 위해 남겨둠.
         # 별도 step_states 업데이트는 하지 않는다 (렌더링 스텝 6에서 일괄 처리).
@@ -642,6 +741,9 @@ def _channel_interlude_dirs(project_id: str, cfg: dict) -> list[Path]:
 
 def _resolve_interlude_path(project_id: str, project: Project, kind: str) -> str | None:
     """Resolve project/template/channel-level interlude assets."""
+    if kind == "intermission" and not INTERMISSION_INSERTION_ENABLED:
+        return None
+
     cfg = project.config or {}
     project_dirs = _linked_project_dirs(project_id, cfg)
     inter = (project.config or {}).get("interlude") or {}
@@ -767,13 +869,7 @@ def _read_bgm_config(cfg: dict | None) -> dict:
 
 
 def _subtitle_delivery_mode(cfg: dict | None) -> str:
-    data = cfg or {}
-    mode = str(data.get("subtitle_delivery") or data.get("subtitle_mode") or "").strip().lower()
-    if mode in {"youtube", "youtube_caption", "youtube_captions", "srt", "external"}:
-        return "youtube_caption"
-    if mode in {"none", "off", "disabled"}:
-        return "none"
-    return "burn"
+    return resolve_main_subtitle_delivery(cfg)
 
 
 async def _ensure_bgm_for_render(project_id: str, project: Project, db: Session) -> str | None:
@@ -889,14 +985,30 @@ async def _mix_bgm_into_video(
         bgm_filters.append(f"afade=t=in:st=0:d={fade_in:.3f}")
     if fade_out > 0 and duration > 0:
         bgm_filters.append(f"afade=t=out:st={max(0.0, duration - fade_out):.3f}:d={fade_out:.3f}")
+    if duration > 0:
+        bgm_filters.extend([
+            "apad",
+            f"atrim=0:{duration:.3f}",
+            "asetpts=PTS-STARTPTS",
+        ])
     bgm_filter = ",".join(bgm_filters)
 
     if has_audio:
         duck = str(ducking_strength or "normal").strip().lower()
+        main_filters = [
+            f"volume={narration_gain:.4f}",
+            "aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo",
+        ]
+        if duration > 0:
+            main_filters.extend([
+                "apad",
+                f"atrim=0:{duration:.3f}",
+                "asetpts=PTS-STARTPTS",
+            ])
+        main_filter = ",".join(main_filters)
         filter_complex = (
             f"[1:a]{bgm_filter}[bgm];"
-            f"[0:a]volume={narration_gain:.4f},"
-            f"aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[main];"
+            f"[0:a]{main_filter}[main];"
         )
         if duck in {"low", "normal", "strong"}:
             duck_params = {
@@ -920,6 +1032,7 @@ async def _mix_bgm_into_video(
         filter_complex = (
             f"[1:a]{bgm_filter}[aout]"
         )
+    duration_args = ["-t", f"{duration:.3f}"] if duration > 0 else ["-shortest"]
     cmd = [
         ffmpeg_bin, "-y",
         "-i", input_path,
@@ -931,7 +1044,7 @@ async def _mix_bgm_into_video(
         "-map", "[aout]",
         "-c:v", "copy",
         "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
-        "-shortest",
+        *duration_args,
         output_path,
     ]
     rc, _, stderr = await run_subprocess(
@@ -1010,18 +1123,16 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
     tmp_dir.mkdir(parents=True, exist_ok=True)
 
     subtitle_file = subtitle_dir / "subtitles.ass"
+    highlight_file = subtitle_dir / "variety_highlights.ass"
     output_path = output_dir / "final_with_subtitles.mp4"
 
     aspect_ratio = (project.config or {}).get("aspect_ratio", "16:9")
     target_resolution = (project.config or {}).get("render_resolution", "1080p")
     resolution = _resolution_for_aspect(aspect_ratio, target_resolution)
 
-    # v1.1.55: 컷 단계에서 이미 자막을 번인했으면 본편 단계의 ASS 생성/번인은
-    # 건너뛴다. 머지 후 자막 입히면 ensure_min_duration 등으로 컷 길이가
-    # 변형돼 싱크가 깨지는 사고 차단. 기본 True — 옛 프로젝트는 config 에서
-    # Global policy: subtitles are burned into each cut video during video
-    # generation. Final render must not burn a second subtitle layer.
-    cut_level_subs = True
+    # 공통 본편 정책: 컷 및 최종 영상에는 자막을 번인하지 않는다.
+    # 최종 음성 타이밍으로 SRT/ASS만 만들고 YouTube 자막 트랙으로 업로드한다.
+    cut_level_subs = should_burn_cut_level_subtitles(project.config or {})
     subtitle_delivery = _subtitle_delivery_mode(project.config or {})
     burn_main_subtitles = subtitle_delivery == "burn"
 
@@ -1030,7 +1141,7 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
         try:
             print(f"[subtitle/render] generating subtitle ASS → {subtitle_file}")
             t_sub = _t.time()
-            _build_and_write_ass(project_id, project, db)
+            await _build_and_write_ass(project_id, project, db)
             print(f"[subtitle/render] ASS generated in {_t.time()-t_sub:.1f}s")
         except HTTPException:
             raise
@@ -1058,7 +1169,7 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
         try:
             print(f"[subtitle/render] regenerating subtitle ASS after audio heal → {subtitle_file}")
             t_sub = _t.time()
-            _build_and_write_ass(project_id, project, db)
+            await _build_and_write_ass(project_id, project, db)
             print(f"[subtitle/render] ASS regenerated in {_t.time()-t_sub:.1f}s")
         except HTTPException:
             raise
@@ -1075,13 +1186,18 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
         .order_by(Cut.cut_number)
         .all()
     )
+    script_data = _load_script(project_id)
     script_cut_map = {
         int(item.get("cut_number")): item
-        for item in (_load_script(project_id).get("cuts", []) or [])
+        for item in (script_data.get("cuts", []) or [])
         if item.get("cut_number") is not None
     }
-    subtitle_style_cfg = (project.config or {}).get("subtitle_style") or {}
+    has_explicit_variety_highlights = any(
+        explicit_variety_highlight_caption(item)
+        for item in script_cut_map.values()
+    )
     clip_paths: list[str] = []
+    clip_cut_numbers: list[int] = []
     video_dir_path = project_dir / "videos"
     for c in cuts:
         # v1.1.55: DB video_path 우선, 없으면 디스크 파일 폴백
@@ -1099,26 +1215,19 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
                 print(f"[subtitle/render] Cut {c.cut_number}: 영상 파일 없음 — 건너뜀")
                 continue
         if cut_level_subs:
-            narration = (
-                (c.narration or "").strip()
-                or (script_cut_map.get(int(c.cut_number), {}) or {}).get("narration", "").strip()
-            )
-            if narration:
-                try:
-                    speech_duration = float(c.audio_duration or 0.0)
-                    if speech_duration <= 0:
-                        speech_duration = float(cut_duration)
-                    await burn_cut_subtitle_file(
-                        ap,
-                        narration,
-                        aspect_ratio=aspect_ratio,
-                        style_config=subtitle_style_cfg,
-                        duration=speech_duration,
-                        start_offset=resolve_cut_audio_start_offset(project.config or {}),
-                    )
-                except Exception as e:
-                    print(f"[subtitle/render] Cut {c.cut_number}: cut subtitle burn failed: {e}")
+            try:
+                await burn_cut_variety_highlight_file(
+                    ap,
+                    script_cut_map.get(int(c.cut_number), {}) or {},
+                    aspect_ratio=aspect_ratio,
+                    duration=float(cut_duration),
+                    panel_mode=str((project.config or {}).get("variety_highlight_panel_mode") or "emotion_auto"),
+                    fixed_panel=str((project.config or {}).get("variety_highlight_style") or "neutral"),
+                )
+            except Exception as e:
+                print(f"[subtitle/render] Cut {c.cut_number}: variety subtitle burn failed: {e}")
         clip_paths.append(ap)
+        clip_cut_numbers.append(int(c.cut_number))
 
     db.commit()  # DB 보정 반영
 
@@ -1171,12 +1280,12 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
     shorts_body_path = str(tmp_dir / "shorts_body_no_interludes.mp4")
     try:
         t_shorts_body = _t.time()
-        if preserve_cut_audio:
-            await FFmpegService.merge_videos(normalized_cuts, shorts_body_path)
-        else:
-            await FFmpegService.merge_videos_reencode(
-                normalized_cuts, shorts_body_path, resolution=resolution
-            )
+        await render_remotion_longform(
+            normalized_cuts,
+            shorts_body_path,
+            resolution=resolution,
+            shorten_silence=False,
+        )
         print(
             f"[subtitle/render] shorts source merged without opening/intermission/ending "
             f"in {_t.time()-t_shorts_body:.1f}s"
@@ -1189,13 +1298,19 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
     intermission_raw = _resolve_interlude_path(project_id, project, "intermission")
     body_sequence = normalized_cuts
     intermission_count = 0
+    prepared_intermission_duration = 0.0
     if intermission_raw:
         every = _intermission_every_cuts(project)
         intermission_clip = await _prepare_intermission_clip(
             intermission_raw,
-            str(tmp_dir / "intermission_3s.mp4"),
+            str(tmp_dir / "intermission_full.mp4"),
             resolution,
         )
+        prepared_intermission_duration = await FFmpegService.probe_duration(intermission_clip)
+        if prepared_intermission_duration <= 0.0:
+            prepared_intermission_duration = await _interlude_duration_seconds(
+                project_id, project, "intermission", intermission_raw
+            )
         body_sequence, intermission_count = _insert_intermissions_after_cuts(
             normalized_cuts,
             intermission_clip,
@@ -1204,23 +1319,65 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
         print(
             f"[subtitle/render] intermission inserted count={intermission_count} "
             f"first_after={FIRST_INTERMISSION_AFTER_CUTS} cuts every={every} cuts "
-            f"duration={INTERMISSION_CLIP_SECONDS:.1f}s"
+            f"duration={prepared_intermission_duration:.3f}s"
         )
+        if not cut_level_subs or subtitle_delivery == "youtube_caption":
+            await _build_and_write_ass(
+                project_id,
+                project,
+                db,
+                intermission_duration=prepared_intermission_duration,
+            )
 
     body_path = str(tmp_dir / "body.mp4")
+    body_timeline: list[dict] = []
     try:
         t_body = _t.time()
-        if preserve_cut_audio:
-            await FFmpegService.merge_videos(body_sequence, body_path)
-        else:
-            await FFmpegService.merge_videos_reencode(
-                body_sequence, body_path, resolution=resolution
-            )
+        await render_remotion_longform(
+            body_sequence,
+            body_path,
+            resolution=resolution,
+            shorten_silence=True,
+            timeline_out=body_timeline,
+        )
         print(f"[subtitle/render] body merged in {_t.time()-t_body:.1f}s")
     except Exception as e:
         import traceback
         print(f"[subtitle/render] BODY MERGE FAILED: {e}\n{traceback.format_exc()}")
         raise HTTPException(500, f"Body merge failed: {type(e).__name__}: {e}")
+
+    compressed_cut_durations: dict[int, float] = {}
+    normalized_timeline_by_path = {
+        str(Path(str(item.get("path") or "")).resolve()): float(
+            item.get("output_duration_seconds") or 0.0
+        )
+        for item in body_timeline
+    }
+    for cut_number, clip_path in zip(clip_cut_numbers, normalized_cuts):
+        compressed_duration = normalized_timeline_by_path.get(str(Path(clip_path).resolve()), 0.0)
+        if compressed_duration > 0.0:
+            compressed_cut_durations[cut_number] = compressed_duration
+    if intermission_raw:
+        compressed_intermission = normalized_timeline_by_path.get(
+            str(Path(intermission_clip).resolve()), 0.0
+        )
+        if compressed_intermission > 0.0:
+            prepared_intermission_duration = compressed_intermission
+    if not cut_level_subs or subtitle_delivery == "youtube_caption":
+        await _build_and_write_ass(
+            project_id,
+            project,
+            db,
+            intermission_duration=prepared_intermission_duration,
+            cut_video_durations=compressed_cut_durations,
+        )
+    shortened_seconds = sum(
+        float(item.get("silence_shortened_seconds") or 0.0) for item in body_timeline
+    )
+    print(
+        f"[subtitle/render] Remotion silence compressed to 50% "
+        f"saved={shortened_seconds:.3f}s"
+    )
 
     # 과거 호환: videos/merged.mp4 는 본편 컷 병합본으로 유지한다.
     # output/merged.mp4 는 아래에서 오프닝/인터미션/엔딩까지 들어간 무BGM 기준본으로 저장한다.
@@ -1234,11 +1391,23 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
     # ── Step 5: 본편 자막 처리 ──
     # 컷 단계에서 이미 자막/음성이 들어간 프로젝트는 본편을 더 건드리지 않는다.
     body_sub_path = body_path
+    if (
+        not cut_level_subs
+        and
+        bool((project.config or {}).get("variety_highlights_enabled", False))
+        and has_explicit_variety_highlights
+        and highlight_file.exists()
+    ):
+        highlighted_path = str(tmp_dir / "body_highlights.mp4")
+        await FFmpegService.burn_subtitles(body_sub_path, str(highlight_file), highlighted_path)
+        body_sub_path = highlighted_path
+        print("[subtitle/render] variety highlights burned")
     if not cut_level_subs and burn_main_subtitles:
+        subtitle_source_path = body_sub_path
         body_sub_path = str(tmp_dir / "body_sub.mp4")
         try:
             t_burn = _t.time()
-            await FFmpegService.burn_subtitles(body_path, str(subtitle_file), body_sub_path)
+            await FFmpegService.burn_subtitles(subtitle_source_path, str(subtitle_file), body_sub_path)
             print(f"[subtitle/render] burn_subtitles done in {_t.time()-t_burn:.1f}s")
         except Exception as e:
             import traceback
@@ -1282,9 +1451,15 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
     # 순서대로 붙인 무BGM 기준본만 만든다. BGM 은 다음 단계에서만 입힌다.
     merged_output_path = output_dir / "merged.mp4"
     final_sequence: list[str] = []
+    prepared_opening_duration = 0.0
     if opening_raw:
         opening_timeline = str(tmp_dir / "opening_timeline.mp4")
         await _prepare_interlude_timeline_clip(opening_raw, opening_timeline, resolution)
+        prepared_opening_duration = await FFmpegService.probe_duration(opening_timeline)
+        if prepared_opening_duration <= 0.0:
+            prepared_opening_duration = await _interlude_duration_seconds(
+                project_id, project, "opening", opening_raw
+            )
         final_sequence.append(opening_timeline)
     final_sequence.append(body_sub_path)
     if ending_raw:
@@ -1292,17 +1467,34 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
         await _prepare_interlude_timeline_clip(ending_raw, ending_timeline, resolution)
         final_sequence.append(ending_timeline)
 
+    if opening_raw and (not cut_level_subs or subtitle_delivery == "youtube_caption"):
+        await _build_and_write_ass(
+            project_id,
+            project,
+            db,
+            opening_duration=prepared_opening_duration,
+            intermission_duration=prepared_intermission_duration,
+            cut_video_durations=compressed_cut_durations,
+        )
+
+    channel_id = infer_project_channel(project_id, project.config or {})
+    longform_title = resolve_longform_title(project.title, script_data)
+    longform_channel_name = resolve_longform_channel_name(project.config or {}, channel_id)
+    print(
+        f"[subtitle/render] Remotion longform header prepared "
+        f"title={longform_title!r} channel={longform_channel_name!r}"
+    )
+
     try:
         t_final = _t.time()
-        if len(final_sequence) == 1:
-            from shutil import copyfile
-            copyfile(final_sequence[0], str(merged_output_path))
-        elif preserve_cut_audio:
-            await FFmpegService.merge_videos(final_sequence, str(merged_output_path))
-        else:
-            await FFmpegService.merge_videos_reencode(
-                final_sequence, str(merged_output_path), resolution=resolution
-            )
+        await render_remotion_longform(
+            final_sequence,
+            str(merged_output_path),
+            resolution=resolution,
+            title=longform_title,
+            channel_name=longform_channel_name,
+            shorten_silence=False,
+        )
         print(f"[subtitle/render] merged baseline saved in {_t.time()-t_final:.1f}s → {merged_output_path}")
     except Exception as e:
         import traceback
@@ -1437,13 +1629,13 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
                 shorts_channel_id = 0
             cached_channel_avatars = {
                 1: "https://yt3.ggpht.com/lZRG--gQU8wZ5Gzeethzm6NBlG6FD9Jx4QxR4djz4kOgIj-LS9Dm1fO0ruuMEhrZE1AjEFeXQ3Q=s88-c-k-c0x00ffffff-no-rj",
-                2: "https://yt3.ggpht.com/NY92X-Yu-tgLBOvUtCPJBhqmuM47ZILmU33lPBSKiPEeC06imNtxH6Kdd1EVldLmBtPG590miA=s88-c-k-c0x00ffffff-no-rj",
+                2: "https://yt3.ggpht.com/kHPhHQSyGha1yRRa745pBE6YwPnNGwFTlIl7Z9zWZ4eFNiX5UPvUzStCD1AtsJR3ZAsg9UxU=s88-c-k-c0x00ffffff-no-rj",
                 3: "https://yt3.ggpht.com/lRHg7iB8VCuQYJPyiu6P4mKHK6jslowo8ZURRESjmTbiVYqvXCOn0draMc_XV_dGMS6tbjj8DJs=s88-c-k-c0x00ffffff-no-rj",
                 4: "https://yt3.ggpht.com/8mFhhpKQW1HpFEPyq0qziMmY26fDaaNTsUayMxnKWf65WuPzR_NQKB_pIb1ULR4lOqwbh_0=s88-c-k-c0x00ffffff-no-rj",
             }
             cached_channel_names = {
                 1: "10\ubd84\uc5ed\uacf5",
-                2: "Jerry's Archaeo",
+                2: "Scartography",
                 3: "\u95c7\u89e3\u304d\u65e5\u672c\u53f2",
                 4: "Empire Errors",
             }
@@ -1495,6 +1687,15 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
                 bgm_volume=float((_read_bgm_config(project.config or {})).get("volume") or DEFAULT_RENDER_BGM_VOLUME),
                 bgm_ducking_strength=str((_read_bgm_config(project.config or {})).get("ducking_strength") or "normal"),
             )
+            invalid_pipeline_results = [
+                item for item in shorts_results
+                if item.get("pipeline_id") != SHARED_SHORTS_PIPELINE_ID
+                or item.get("renderer") != "remotion"
+            ]
+            if invalid_pipeline_results:
+                raise RuntimeError(
+                    "Shorts render did not use the required shared all-channel pipeline"
+                )
             if (
                 len(shorts_results) != len(shorts_segments)
                 or len(shorts_results) < SHORTS_MIN_SEGMENT_COUNT

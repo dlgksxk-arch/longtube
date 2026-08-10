@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#b48a5a"/>
+  <!-- Left: one heavy plain wooden wagon bed. -->
+  <rect x="55" y="165" width="360" height="380" rx="18" fill="#93643c" stroke="#3f3028" stroke-width="15"/>
+  <path d="M90 235 H380 M90 325 H380 M90 415 H380 M160 190 V520 M305 190 V520"
+        fill="none" stroke="#66452f" stroke-width="11"/>
+  <!-- Upper-center: exactly four solid wheel disks in one row. -->
+  <g fill="#8f6745" stroke="#3f3028" stroke-width="12">
+    <circle cx="515" cy="175" r="62"/><circle cx="650" cy="175" r="62"/>
+    <circle cx="785" cy="175" r="62"/><circle cx="920" cy="175" r="62"/>
+  </g>
+  <!-- Lower-center: one cattle yoke. -->
+  <path d="M500 485 Q650 350 800 485 L755 555 Q650 455 545 555 Z"
+        fill="#8f6745" stroke="#3f3028" stroke-width="14"/>
+  <!-- Right: exactly four separate rope coils in a two-by-two grid. -->
+  <g fill="none" stroke="#5b4430" stroke-width="18">
+    <circle cx="1035" cy="340" r="58"/><circle cx="1170" cy="340" r="58"/>
+    <circle cx="1035" cy="500" r="58"/><circle cx="1170" cy="500" r="58"/>
+  </g>
+  <g fill="none" stroke="#c09c63" stroke-width="10">
+    <circle cx="1035" cy="340" r="58"/><circle cx="1170" cy="340" r="58"/>
+    <circle cx="1035" cy="500" r="58"/><circle cx="1170" cy="500" r="58"/>
+  </g>
+</svg>

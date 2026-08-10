@@ -8,9 +8,11 @@ import copy
 import inspect
 import json
 import os
+import re
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from pathlib import Path
@@ -28,24 +30,39 @@ from app.services import youtube_service  # noqa: E402
 from app import config as app_config  # noqa: E402
 from app.services.title_utils import shorts_upload_title  # noqa: E402
 from app.services.image import prompt_builder  # noqa: E402
+
+
+# This module exercises state-mutating OneClick helpers. Never let those tests
+# write the production task/queue registry under DATA_DIR.
+_ONECLICK_STATE_TMP = tempfile.TemporaryDirectory(prefix="longtube-oneclick-tests-")
+_ONECLICK_STATE_ROOT = Path(_ONECLICK_STATE_TMP.name)
+svc._TASKS_FILE = _ONECLICK_STATE_ROOT / "oneclick_tasks.json"
+svc._QUEUE_FILE = _ONECLICK_STATE_ROOT / "oneclick_queue.json"
 from app.services.thumbnail_service import (  # noqa: E402
     _basic_thumbnail_file_check,
+    _configured_thumbnail_base_image_path,
     _thumbnail_error_allows_first_cut_fallback,
+    _thumbnail_has_strict_story_lock,
     _thumbnail_closeup_soft_quality_failure,
     _thumbnail_person_presence_misread,
     _thumbnail_overlay_quality_system_prompt,
     _thumbnail_fallback_face_safe_boxes,
+    _thumbnail_generation_prompt_for_model,
+    _thumbnail_style_prompt_from_config,
     _thumbnail_overlay_local_geometry_pass,
     _thumbnail_prompt_expects_face_closeup,
     _thumbnail_prompt_expects_person,
     _thumbnail_quality_system_prompt,
     _thumbnail_retry_prompt,
+    _thumbnail_reflow_short_two_line_hook,
+    _resolve_standard_thumbnail_overlay,
     _thumbnail_text_layout_score,
     _wrap_text,
     build_clickbait_thumbnail_overlay,
     build_standard_thumbnail_prompt,
     extract_thumbnail_text_parts,
     ThumbnailError,
+    THUMBNAIL_CHARACTER_IDENTITY_REFERENCE_LOCK,
 )
 from app.services.image.comfyui_service import (  # noqa: E402
     apply_longtube_local_v1_master_prompt,
@@ -71,12 +88,23 @@ from app.services.image.comfyui_service import (  # noqa: E402
     _image_has_solid_light_outer_margin,
     _image_has_top_caption_like_text,
     _should_check_internal_text_after_generation,
+    _should_use_reduced_internal_text_detector,
     _should_use_japanese_document_table_retry,
     _strip_local_v1_positive_only_prompt,
+    _uses_literal_thumbnail_prompt,
+    _z_image_uses_compact_thumbnail_prompt,
     PREMODERN_INTERIOR_PROP_COMFYUI_EXTRA_NEGATIVE,
     PREMODERN_INTERIOR_PROP_COMFYUI_FRONT_PROMPT,
 )
 from app.services.llm.base import BaseLLMService, get_system_prompt  # noqa: E402
+from app.services.llm.claude_service import ClaudeService  # noqa: E402
+from app.services.llm.gpt_service import GPTService  # noqa: E402
+from app.services.llm.timing import (  # noqa: E402
+    clear_script_timing_checkpoint,
+    load_script_timing_checkpoint,
+    repair_script_narration_timing,
+    save_script_timing_checkpoint,
+)
 from app.services.llm.visual_policy import apply_script_visual_policy, normalize_cut_image_prompt  # noqa: E402
 from app.services.llm.script_quality import (  # noqa: E402
     _inspect_story_plan_topic_alignment,
@@ -107,6 +135,155 @@ class StoryPlanProbeLLM(BaseLLMService):
 
 
 class OneClickQueueStabilityTests(unittest.TestCase):
+    def test_manual_batch_starts_requested_items_at_interval_with_parallel_followups(self):
+        old_queue = copy.deepcopy(svc._QUEUE)
+        old_state = copy.deepcopy(svc._QUEUE_BATCH_STATE)
+        old_interval = svc._QUEUE_BATCH_INTERVAL_SECONDS
+        old_batch_task = svc._QUEUE_BATCH_TASK
+        originals = {
+            "_ensure_state_loaded": svc._ensure_state_loaded,
+            "_normalize_queue_runtime_state": svc._normalize_queue_runtime_state,
+            "_has_inflight_task": svc._has_inflight_task,
+            "_clear_emergency_stop_guard": svc._clear_emergency_stop_guard,
+            "_fire_queue_for_channel": svc._fire_queue_for_channel,
+        }
+        calls = []
+
+        async def fake_fire(channel, triggered_by="schedule", *, allow_parallel=False):
+            calls.append((channel, triggered_by, allow_parallel))
+            for item in svc._QUEUE["items"]:
+                if item.get("status") == "pending":
+                    item["status"] = "running"
+                    return {"task_id": f"task-{len(calls)}", "channel": channel, "status": "queued"}
+            return None
+
+        async def exercise():
+            result = await svc.run_queue_batch_now(3)
+            await asyncio.sleep(0.08)
+            return result, svc.get_queue_batch_state()
+
+        try:
+            svc._QUEUE.clear()
+            svc._QUEUE.update({
+                "channel_times": {"1": None, "2": None, "3": None, "4": None},
+                "last_run_dates": {},
+                "channel_presets": {},
+                "items": [
+                    {"id": "batch-1", "topic": "first", "channel": 1, "status": "pending"},
+                    {"id": "batch-2", "topic": "second", "channel": 2, "status": "pending"},
+                    {"id": "batch-3", "topic": "third", "channel": 3, "status": "pending"},
+                ],
+            })
+            svc._QUEUE_BATCH_INTERVAL_SECONDS = 0.01
+            svc._QUEUE_BATCH_TASK = None
+            svc._ensure_state_loaded = lambda: None
+            svc._normalize_queue_runtime_state = lambda save=True: False
+            svc._has_inflight_task = lambda: False
+            svc._clear_emergency_stop_guard = lambda: None
+            svc._fire_queue_for_channel = fake_fire
+
+            result, state = asyncio.run(exercise())
+        finally:
+            if svc._QUEUE_BATCH_TASK is not None and not svc._QUEUE_BATCH_TASK.done():
+                svc._QUEUE_BATCH_TASK.cancel()
+            for name, value in originals.items():
+                setattr(svc, name, value)
+            svc._QUEUE.clear()
+            svc._QUEUE.update(old_queue)
+            svc._QUEUE_BATCH_STATE = old_state
+            svc._QUEUE_BATCH_INTERVAL_SECONDS = old_interval
+            svc._QUEUE_BATCH_TASK = old_batch_task
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["first_task"]["task_id"], "task-1")
+        self.assertEqual(
+            calls,
+            [
+                (1, "manual-batch", False),
+                (2, "manual-batch", True),
+                (3, "manual-batch", True),
+            ],
+        )
+        self.assertFalse(state["active"])
+        self.assertEqual(state["started_count"], 3)
+
+    def test_oneclick_youtube_channel_identity_accepts_expected_channel(self):
+        svc._assert_oneclick_youtube_channel_identity(
+            {"youtube_channel_id": "expected-channel"},
+            3,
+            {"channel_id": "expected-channel", "title": "闇解き日本史"},
+        )
+
+    def test_oneclick_youtube_channel_identity_rejects_wrong_channel(self):
+        with self.assertRaisesRegex(RuntimeError, "YouTube 채널 불일치"):
+            svc._assert_oneclick_youtube_channel_identity(
+                {"youtube_channel_id": "expected-channel"},
+                3,
+                {"channel_id": "wrong-channel", "title": "Jerry"},
+            )
+
+    def test_oneclick_upload_selects_channel_token_before_project_tokens(self):
+        source = inspect.getsource(svc._step_youtube_upload)
+        channel_pos = source.index("YouTubeUploader(channel_id=ch_int)")
+        project_pos = source.index("YouTubeUploader(project_id=project_id)")
+        template_pos = source.index("YouTubeUploader(project_id=str(template_project_id))")
+
+        self.assertLess(channel_pos, project_pos)
+        self.assertLess(channel_pos, template_pos)
+
+    def test_copy_template_assets_skips_prepared_script_backups(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            template_dir = root / "template"
+            destination_dir = root / "destination"
+            prepared_dir = template_dir / "prepared_scripts"
+            backup_dir = prepared_dir / "_backup"
+            backup_dir.mkdir(parents=True)
+            (prepared_dir / "episode.json").write_text('{"episode": 3}', encoding="utf-8")
+            (backup_dir / "old.json").write_text('{"episode": 2}', encoding="utf-8")
+
+            svc._copy_template_assets(template_dir, destination_dir, {})
+
+            self.assertTrue((destination_dir / "prepared_scripts" / "episode.json").is_file())
+            self.assertFalse((destination_dir / "prepared_scripts" / "_backup").exists())
+
+    def test_copy_template_assets_keeps_linked_studio_interlude_over_system_mirror(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            template_dir = root / "template"
+            destination_dir = root / "destination"
+            primary = template_dir / "interlude" / "opening.mp4"
+            stale = root / "system" / "projects" / "template" / "interlude" / "opening.mp4"
+            primary.parent.mkdir(parents=True)
+            stale.parent.mkdir(parents=True)
+            primary.write_bytes(b"new-channel-opening")
+            stale.write_bytes(b"old-system-opening")
+
+            with mock.patch.object(svc, "SYSTEM_DIR", root / "system"):
+                svc._copy_template_assets(template_dir, destination_dir, {})
+
+            self.assertEqual(
+                (destination_dir / "interlude" / "opening.mp4").read_bytes(),
+                b"new-channel-opening",
+            )
+
+    def test_run_overrides_win_over_live_template_config(self):
+        merged = svc._merge_template_config(
+            {
+                "image_global_prompt": "old clone style",
+                "oneclick_run_overrides": {
+                    "image_global_prompt": "episode hard-boiled style",
+                    "youtube_series_episode_prefix": "백제",
+                },
+            },
+            {"image_global_prompt": "current template style"},
+            "template-1",
+        )
+
+        self.assertEqual(merged["image_global_prompt"], "episode hard-boiled style")
+        self.assertEqual(merged["youtube_series_episode_prefix"], "백제")
+        self.assertEqual(merged["template_project_id"], "template-1")
+
     def test_oneclick_main_length_is_150_four_second_cuts(self):
         cfg = {}
         svc._force_oneclick_main_length(cfg)
@@ -118,13 +295,15 @@ class OneClickQueueStabilityTests(unittest.TestCase):
         self.assertEqual(cfg["cut_duration_mode"], "tts_audio")
         self.assertTrue(cfg["tts_driven_cut_duration"])
         self.assertFalse(cfg["tts_audio_timing_fit"])
-        self.assertEqual(cfg["cut_audio_lead_in_sec"], 0.3)
-        self.assertEqual(cfg["cut_audio_tail_sec"], 0.3)
+        self.assertEqual(cfg["cut_audio_lead_in_sec"], 0.5)
+        self.assertEqual(cfg["cut_audio_tail_sec"], 0.5)
         self.assertEqual(cfg["target_cuts"], 150)
         self.assertEqual(cfg["target_duration"], 600)
         self.assertEqual(cfg["script_tts_min_sec"], 4.0)
         self.assertEqual(cfg["script_tts_target_sec"], 5.0)
         self.assertEqual(cfg["script_tts_max_sec"], 6.0)
+        self.assertEqual(cfg["script_timing_max_llm_repairs"], 150)
+        self.assertEqual(cfg["script_timing_repair_concurrency"], 4)
 
     def test_oneclick_main_length_uses_requested_duration(self):
         cfg = {}
@@ -133,6 +312,15 @@ class OneClickQueueStabilityTests(unittest.TestCase):
         self.assertEqual(cfg["cut_video_duration"], 4.0)
         self.assertEqual(cfg["target_duration"], 20)
         self.assertEqual(cfg["target_cuts"], 5)
+
+    def test_oneclick_main_length_preserves_explicit_cut_override(self):
+        cfg = {"oneclick_target_cuts_override": 139}
+
+        svc._force_oneclick_main_length(cfg)
+
+        self.assertEqual(cfg["target_duration"], 556)
+        self.assertEqual(cfg["target_cuts"], 139)
+        self.assertEqual(cfg["script_timing_max_llm_repairs"], 139)
 
     def test_oneclick_task_logs_prune_only_entries_older_than_36_hours(self):
         now = datetime.utcnow()
@@ -217,6 +405,114 @@ class OneClickQueueStabilityTests(unittest.TestCase):
             self.assertTrue(broken_audio.exists())
             self.assertEqual(task["step_states"]["2"], "completed")
             self.assertEqual(task["step_states"]["3"], "pending")
+
+    def test_scan_marks_video_older_than_source_image_pending(self):
+        with tempfile.TemporaryDirectory() as td:
+            project_dir = Path(td)
+            (project_dir / "script.json").write_text(
+                json.dumps({"cuts": [{"cut_number": 1, "narration": "test"}]}),
+                encoding="utf-8",
+            )
+            for dirname in ("audio", "images", "videos"):
+                (project_dir / dirname).mkdir()
+            (project_dir / "audio" / "cut_1.mp3").write_bytes(b"a" * 200)
+            image = project_dir / "images" / "cut_1.png"
+            video = project_dir / "videos" / "cut_1.mp4"
+            image.write_bytes(b"i" * 200)
+            video.write_bytes(b"v" * 200)
+            os.utime(video, (1000, 1000))
+            os.utime(image, (2000, 2000))
+
+            states, counts, total, _removed = svc._scan_project_outputs(
+                "stale-video-test",
+                config={"result_dir": str(project_dir)},
+            )
+
+            self.assertEqual(total, 1)
+            self.assertEqual(counts["4"], 1)
+            self.assertEqual(counts["5"], 0)
+            self.assertEqual(states["5"], "pending")
+
+    def test_reconcile_ignores_legacy_image_qa_flags(self):
+        original_scan = svc._scan_project_outputs
+        task = {
+            "task_id": "image-qa-gate",
+            "project_id": "image-qa-gate",
+            "config": {
+                "image_qa_required_before_video": True,
+                "image_qa_approved_before_video": False,
+            },
+            "status": "paused",
+            "step_states": {str(step): "completed" for step in range(2, 8)},
+            "completed_cuts_by_step": {str(step): 1 for step in range(2, 6)},
+            "total_cuts": 1,
+            "logs": [],
+        }
+        try:
+            svc._scan_project_outputs = lambda *_args, **_kwargs: (
+                {str(step): "completed" for step in range(2, 8)},
+                {str(step): 1 for step in range(2, 6)},
+                1,
+                [],
+            )
+
+            svc._reconcile_task_outputs(task, clear_terminal_cursor=True)
+        finally:
+            svc._scan_project_outputs = original_scan
+
+        self.assertEqual(task["step_states"]["4"], "completed")
+        self.assertEqual(task["step_states"]["5"], "completed")
+        self.assertEqual(task["step_states"]["6"], "completed")
+        self.assertEqual(task["step_states"]["7"], "completed")
+        self.assertEqual(task["completed_cuts_by_step"]["5"], 1)
+        self.assertIsNone(task.get("current_step_name"))
+        self.assertIsNone(task.get("current_step_label"))
+        self.assertIsNone(task.get("sub_status"))
+
+    def test_studio_router_runs_video_when_legacy_image_qa_flags_exist(self):
+        task = {
+            "project_id": "image-qa-resume",
+            "config": {
+                "image_qa_required_before_video": True,
+                "image_qa_approved_before_video": False,
+            },
+            "image_qa_required_before_video": True,
+            "image_qa_approved_before_video": False,
+            "status": "queued",
+            "logs": [],
+            "step_states": {
+                "2": "completed",
+                "3": "completed",
+                "4": "completed",
+                "5": "pending",
+                "6": "pending",
+                "7": "pending",
+            },
+        }
+        calls = []
+        original_run_step = svc._run_studio_router_step
+        original_sync = svc._sync_v3_run_project_from_source
+        original_thumbnail = svc._ensure_thumbnail_generated
+
+        async def fake_run_step(_task, step_num, label):
+            calls.append((step_num, label))
+            _task["step_states"][str(step_num)] = "completed"
+
+        try:
+            svc._sync_v3_run_project_from_source = lambda *_args, **_kwargs: {}
+            svc._ensure_thumbnail_generated = lambda *_args, **_kwargs: True
+            svc._run_studio_router_step = fake_run_step
+            result = asyncio.run(
+                svc._run_studio_router_pipeline(task, "image-qa-resume", 5)
+            )
+        finally:
+            svc._run_studio_router_step = original_run_step
+            svc._sync_v3_run_project_from_source = original_sync
+            svc._ensure_thumbnail_generated = original_thumbnail
+
+        self.assertEqual(result, "ok")
+        self.assertEqual(calls, [(5, "영상 생성")])
+        self.assertEqual(task["status"], "queued")
 
     def test_default_script_generation_uses_150_four_second_cuts(self):
         self.assertEqual(app_config.CUT_VIDEO_DURATION, 4.0)
@@ -400,6 +696,208 @@ class OneClickQueueStabilityTests(unittest.TestCase):
 
         self.assertEqual(direct["items"][0]["channel"], 4)
 
+    def test_queue_normalize_sorts_pending_items_by_channel_and_episode(self):
+        normalized = svc._queue_normalize(
+            {
+                "channel_times": {"1": None, "2": None, "3": None, "4": None},
+                "items": [
+                    {"id": "ch2-ep11", "topic": "CH2 EP11", "channel": 2, "episode_number": 11},
+                    {"id": "ch1-ep13", "topic": "CH1 EP13", "channel": 1, "episode_number": 13},
+                    {"id": "ch1-ep12", "topic": "CH1 EP12", "channel": 1, "episode_number": 12},
+                ],
+            }
+        )
+
+        self.assertEqual(
+            [item["id"] for item in normalized["items"]],
+            ["ch1-ep12", "ch2-ep11", "ch1-ep13"],
+        )
+
+    def test_queue_normalize_keeps_linked_task_when_episode_rows_duplicate(self):
+        normalized = svc._queue_normalize(
+            {
+                "items": [
+                    {
+                        "id": "plain",
+                        "topic": "Same episode",
+                        "channel": 1,
+                        "episode_number": 11,
+                        "episode_code": "EP11",
+                    },
+                    {
+                        "id": "linked",
+                        "topic": "Same episode",
+                        "channel": 1,
+                        "episode_number": 11,
+                        "episode_code": "EP11",
+                        "task_id": "task-existing",
+                        "project_id": "project-existing",
+                    },
+                ],
+            }
+        )
+
+        self.assertEqual(len(normalized["items"]), 1)
+        self.assertEqual(normalized["items"][0]["id"], "linked")
+        self.assertEqual(normalized["items"][0]["task_id"], "task-existing")
+
+    def test_failed_requeue_preserves_project_and_reuses_same_task(self):
+        old_tasks = copy.deepcopy(svc._TASKS)
+        old_queue = copy.deepcopy(svc._QUEUE)
+        originals = {
+            "_load_project": svc._load_project,
+            "_project_storage_exists": svc._project_storage_exists,
+            "_inspect_project_progress": svc._inspect_project_progress,
+            "_reconcile_task_outputs": svc._reconcile_task_outputs,
+            "_save_tasks_to_disk": svc._save_tasks_to_disk,
+            "_save_queue_to_disk": svc._save_queue_to_disk,
+            "_cleanup_project_files": svc._cleanup_project_files,
+            "_archive_project_files": svc._archive_project_files,
+            "_delete_project_db_record": svc._delete_project_db_record,
+        }
+        destructive_calls = []
+        try:
+            svc._TASKS.clear()
+            svc._TASKS["failed-task"] = {
+                "task_id": "failed-task",
+                "project_id": "project-existing",
+                "status": "failed",
+                "channel": 1,
+                "topic": "EP11",
+                "episode_number": 11,
+                "total_cuts": 150,
+                "config": {},
+                "step_states": {"2": "completed", "3": "pending", "4": "pending", "5": "pending", "6": "pending", "7": "pending"},
+            }
+            svc._QUEUE.clear()
+            svc._QUEUE.update(copy.deepcopy(svc._QUEUE_DEFAULT))
+            svc._load_project = lambda _pid: SimpleNamespace(config={"episode_number": 11})
+            svc._project_storage_exists = lambda _pid, _cfg=None: True
+            svc._inspect_project_progress = lambda *_args, **_kwargs: {"audio_count": 5}
+            svc._reconcile_task_outputs = lambda *_args, **_kwargs: False
+            svc._save_tasks_to_disk = lambda: None
+            svc._save_queue_to_disk = lambda: None
+            svc._cleanup_project_files = lambda *_args, **_kwargs: destructive_calls.append("cleanup") or 0
+            svc._archive_project_files = lambda *_args, **_kwargs: destructive_calls.append("archive") or (0, None)
+            svc._delete_project_db_record = lambda *_args, **_kwargs: destructive_calls.append("db-delete")
+
+            result = svc.requeue_task("failed-task")
+        finally:
+            for name, value in originals.items():
+                setattr(svc, name, value)
+            recovered_task = copy.deepcopy(svc._TASKS.get("failed-task"))
+            recovered_queue = copy.deepcopy(svc._QUEUE.get("items") or [])
+            svc._TASKS.clear()
+            svc._TASKS.update(old_tasks)
+            svc._QUEUE.clear()
+            svc._QUEUE.update(old_queue)
+
+        self.assertEqual(destructive_calls, [])
+        self.assertEqual(result["task_id"], "failed-task")
+        self.assertEqual(result["deleted_bytes"], 0)
+        self.assertEqual(recovered_task["project_id"], "project-existing")
+        self.assertEqual(recovered_task["status"], "paused")
+        self.assertEqual(recovered_task["resume_from_step"], 3)
+        self.assertEqual(recovered_queue[0]["task_id"], "failed-task")
+        self.assertEqual(recovered_queue[0]["project_id"], "project-existing")
+
+    def test_auto_dispatch_starts_first_normal_queue_item_when_enabled(self):
+        old_queue = copy.deepcopy(svc._QUEUE)
+        originals = {
+            "_emergency_stop_active": svc._emergency_stop_active,
+            "_auto_production_paused": svc._auto_production_paused,
+            "_auto_next_delay_active": svc._auto_next_delay_active,
+            "_has_inflight_task": svc._has_inflight_task,
+            "_normalize_queue_runtime_state": svc._normalize_queue_runtime_state,
+            "_fire_queue_for_channel": svc._fire_queue_for_channel,
+        }
+        fired = []
+
+        async def fake_fire(channel, triggered_by="schedule"):
+            fired.append((channel, triggered_by))
+            return {"task_id": "next-task"}
+
+        async def run_dispatch():
+            result = svc._dispatch_next_persisted_queue_item()
+            await asyncio.sleep(0)
+            return result
+
+        try:
+            svc._QUEUE.clear()
+            svc._QUEUE.update({
+                "channel_times": {"1": None, "2": None, "3": None, "4": None},
+                "last_run_dates": {},
+                "channel_presets": {},
+                "items": [
+                    {
+                        "id": "normal-next",
+                        "topic": "Normal queued episode",
+                        "channel": 2,
+                        "episode_number": 11,
+                        "queued_source": "import",
+                        "status": "pending",
+                    }
+                ],
+            })
+            svc._emergency_stop_active = lambda: False
+            svc._auto_production_paused = lambda: False
+            svc._auto_next_delay_active = lambda: False
+            svc._has_inflight_task = lambda: False
+            svc._normalize_queue_runtime_state = lambda save=True: False
+            svc._fire_queue_for_channel = fake_fire
+
+            result = asyncio.run(run_dispatch())
+        finally:
+            for name, value in originals.items():
+                setattr(svc, name, value)
+            svc._QUEUE.clear()
+            svc._QUEUE.update(old_queue)
+
+        self.assertEqual(result, 2)
+        self.assertEqual(fired, [(2, "auto-next")])
+
+    def test_startup_does_not_resume_queued_task_when_auto_production_is_off(self):
+        old_lock = svc._QUEUE_SCHEDULER_LOCK_HANDLE
+        originals = {
+            "_ensure_state_loaded": svc._ensure_state_loaded,
+            "_emergency_stop_active": svc._emergency_stop_active,
+            "_auto_production_paused": svc._auto_production_paused,
+            "_auto_next_delay_active": svc._auto_next_delay_active,
+            "_has_running_task": svc._has_running_task,
+            "_pick_next_queued_task_id": svc._pick_next_queued_task_id,
+            "_schedule_oneclick_run": svc._schedule_oneclick_run,
+        }
+        scheduled = []
+        try:
+            svc._QUEUE_SCHEDULER_LOCK_HANDLE = object()
+            svc._ensure_state_loaded = lambda: None
+            svc._emergency_stop_active = lambda: False
+            svc._auto_production_paused = lambda: True
+            svc._auto_next_delay_active = lambda: False
+            svc._has_running_task = lambda: False
+            svc._pick_next_queued_task_id = lambda: "queued-task"
+            svc._schedule_oneclick_run = lambda task_id: scheduled.append(task_id)
+
+            result = svc.resume_recovered_inflight_tasks_on_startup()
+        finally:
+            for name, value in originals.items():
+                setattr(svc, name, value)
+            svc._QUEUE_SCHEDULER_LOCK_HANDLE = old_lock
+
+        self.assertIsNone(result)
+        self.assertEqual(scheduled, [])
+
+    def test_atomic_json_state_recovers_last_known_good_backup(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "queue.json"
+            svc._atomic_write_json(path, {"items": [{"id": "first"}]})
+            svc._atomic_write_json(path, {"items": [{"id": "second"}]})
+            path.write_text("{broken", encoding="utf-8")
+
+            recovered = svc._load_json_dict_with_backup(path)
+
+        self.assertEqual(recovered, {"items": [{"id": "first"}]})
+
     def test_orphan_v3_result_lookup_skips_empty_retry_folders(self):
         original_root = svc.RESULT_ARCHIVE_DIR
         try:
@@ -574,6 +1072,46 @@ class OneClickQueueStabilityTests(unittest.TestCase):
         self.assertEqual(redirected["task_id"], "empty-retry")
         self.assertEqual(redirected["project_id"], "V3_CH1_EP2_26051815093946c7fd")
         self.assertFalse(recovered_present_after_redirect)
+
+    def test_explicitly_reset_v3_task_keeps_current_project(self):
+        task = {
+            "task_id": "explicit-reset",
+            "project_id": "V3_CH1_EP2_current",
+            "status": "paused",
+            "resume_from_step": 2,
+            "explicit_reset_from_step": 2,
+            "topic": "구태 설화와 해양 제국의 씨앗",
+            "template_project_id": "studio-ch1",
+            "config": {},
+            "logs": [],
+        }
+
+        redirected = svc._redirect_empty_v3_task_to_existing_episode(
+            "explicit-reset", task
+        )
+
+        self.assertIs(redirected, task)
+        self.assertEqual(redirected["project_id"], "V3_CH1_EP2_current")
+
+    def test_explicitly_recovered_v3_task_keeps_current_project(self):
+        task = {
+            "task_id": "explicit-recovery",
+            "project_id": "V3_CH1_EP2_current",
+            "status": "failed",
+            "resume_from_step": 2,
+            "explicit_project_recovery": True,
+            "topic": "구태 설화와 해양 제국의 씨앗",
+            "template_project_id": "studio-ch1",
+            "config": {},
+            "logs": [],
+        }
+
+        redirected = svc._redirect_empty_v3_task_to_existing_episode(
+            "explicit-recovery", task
+        )
+
+        self.assertIs(redirected, task)
+        self.assertEqual(redirected["project_id"], "V3_CH1_EP2_current")
 
     def test_queue_task_sync_prunes_terminal_rows_and_marks_active_as_running(self):
         old_tasks = copy.deepcopy(svc._TASKS)
@@ -930,7 +1468,7 @@ class OneClickSafetyStabilityTests(unittest.TestCase):
 
 
 class InterludeStabilityTests(unittest.TestCase):
-    def test_default_interval_is_45_cuts_and_first_three_cut_insert_is_kept(self):
+    def test_subtitle_render_does_not_insert_intermission(self):
         self.assertEqual(DEFAULT_INTERMISSION_EVERY, 45)
 
         cuts = [f"cut{i}.mp4" for i in range(1, 6)]
@@ -940,13 +1478,10 @@ class InterludeStabilityTests(unittest.TestCase):
             DEFAULT_INTERMISSION_EVERY,
         )
 
-        self.assertEqual(count, 1)
-        self.assertEqual(
-            sequence,
-            ["cut1.mp4", "cut2.mp4", "cut3.mp4", "intermission.mp4", "cut4.mp4", "cut5.mp4"],
-        )
+        self.assertEqual(count, 0)
+        self.assertEqual(sequence, cuts)
 
-    def test_manual_compose_sequence_matches_render_sequence(self):
+    def test_manual_compose_does_not_insert_intermission(self):
         cut_entries = [(f"cut{i}.mp4", 5.0) for i in range(1, 6)]
         sequence, count = interlude_router._build_body_sequence_with_intermission(
             cut_entries,
@@ -954,11 +1489,8 @@ class InterludeStabilityTests(unittest.TestCase):
             DEFAULT_INTERMISSION_EVERY,
         )
 
-        self.assertEqual(count, 1)
-        self.assertEqual(
-            sequence,
-            ["cut1.mp4", "cut2.mp4", "cut3.mp4", "intermission.mp4", "cut4.mp4", "cut5.mp4"],
-        )
+        self.assertEqual(count, 0)
+        self.assertEqual(sequence, [f"cut{i}.mp4" for i in range(1, 6)])
 
     def test_script_prompt_uses_single_global_base_file(self):
         prompt_source = (Path(__file__).resolve().parent.parent / "app" / "services" / "llm" / "base.py").read_text(
@@ -1045,6 +1577,24 @@ class InterludeStabilityTests(unittest.TestCase):
         self.assertEqual(selected["episode_number"], 2)
         self.assertTrue(source_path.endswith("EP_002_good.json"))
 
+    def test_prepared_script_queue_marker_disables_llm_fallback(self):
+        self.assertTrue(
+            pipeline_tasks._prepared_script_required({
+                "episode_core_content": "[Prepared Script] EP001.json\n[Cuts] 150",
+            })
+        )
+        self.assertTrue(
+            pipeline_tasks._prepared_script_required({"prepared_script_required": True})
+        )
+        self.assertFalse(
+            pipeline_tasks._prepared_script_required({"episode_core_content": "ordinary source notes"})
+        )
+        with self.assertRaisesRegex(RuntimeError, "GPT/LLM 대본 생성 폴백은 금지"):
+            script_router._assert_prepared_script_loaded(
+                {"episode_core_content": "[Prepared Script] EP001.json"},
+                None,
+            )
+
     def test_prepared_script_validation_accepts_source_without_blocks(self):
         script = {
             "script_version": "3.1",
@@ -1081,6 +1631,35 @@ class InterludeStabilityTests(unittest.TestCase):
         }
 
         pipeline_tasks._validate_prepared_script(script, "prepared_source.json")
+
+    def test_prepared_script_validation_rejects_target_cut_count_mismatch(self):
+        cuts = []
+        for idx in range(1, 3):
+            cuts.append({
+                "cut_number": idx,
+                "narration": f"The prepared episode continues at cut {idx}.",
+                "image_prompt": (
+                    "Year/period: test period; Exact place: test place; "
+                    f"Scene evidence: clay cup {idx}; Style: simple; "
+                    f"Scene: visible person face {idx}; Main subject: visible person face {idx}"
+                ),
+                "visual_year": "test period",
+                "visual_period": "test period",
+                "visual_location": "test place",
+                "visual_evidence": f"clay cup {idx}",
+            })
+        script = {
+            "episode_number": 1,
+            "topic": "Prepared source topic",
+            "cuts": cuts,
+        }
+
+        with self.assertRaisesRegex(ValueError, "목표 3컷, 실제 2컷"):
+            pipeline_tasks._validate_prepared_script(
+                script,
+                "prepared_source.json",
+                expected_cut_count=3,
+            )
 
     def test_prepared_script_validation_rejects_early_next_episode_preview(self):
         cuts = []
@@ -1163,7 +1742,7 @@ class InterludeStabilityTests(unittest.TestCase):
 
     def test_script_router_checks_prepared_script_before_llm_path(self):
         self.assertIn(
-            "_load_prepared_script_for_router",
+            "_load_registered_or_local_script",
             inspect.getsource(script_router.generate_script_async),
         )
 
@@ -1375,6 +1954,58 @@ class InterludeStabilityTests(unittest.TestCase):
         self.assertIn("caught in the fatal water moment", prompt)
         self.assertNotIn("standing in command pose", prompt)
 
+    def test_thumbnail_river_washing_does_not_trigger_drowning_lock(self):
+        prompt = build_standard_thumbnail_prompt({
+            "thumbnail_prompt": (
+                "Extreme close up of Izanagi washing his face in a crystal clear river, "
+                "three beams of golden, silver, and dark blue light erupting from his eyes and nose"
+            ),
+        })
+
+        self.assertIn("caught in the story-critical action named in the prompt", prompt)
+        self.assertNotIn("THUMBNAIL DROWNING DANGER LOCK", prompt)
+        self.assertNotIn("caught in the fatal water moment", prompt)
+
+    def test_openai_thumbnail_prompt_removes_negative_horse_priming(self):
+        prompt = build_standard_thumbnail_prompt({
+            "thumbnail_prompt": "Close-up of Izanagi washing his face in a clear river",
+        })
+
+        adapted = _thumbnail_generation_prompt_for_model(prompt, "openai-image-1")
+
+        self.assertNotIn("horse", adapted.casefold())
+        self.assertNotIn("mounted rider", adapted.casefold())
+        self.assertIn("Frame only the named head-and-shoulders subject", adapted)
+        self.assertIn("reserved zone contains only dark, defocused background", adapted)
+        self.assertEqual(
+            _thumbnail_generation_prompt_for_model(prompt, "comfyui-flux2-klein-4b"),
+            prompt,
+        )
+        retry = _thumbnail_retry_prompt(
+            prompt,
+            "The previous image showed a mounted rider and visible horse body.",
+        )
+        adapted_retry = _thumbnail_generation_prompt_for_model(retry, "openai-image-1")
+        self.assertNotIn("horse", adapted_retry.casefold())
+        self.assertNotIn("mounted rider", adapted_retry.casefold())
+
+    def test_thumbnail_uses_only_primary_global_style_sentence(self):
+        styled = _thumbnail_style_prompt_from_config(
+            "Extreme close up of Izanagi washing his face in a river",
+            {
+                "image_global_prompt": (
+                    "Stylish adult historical graphic novel illustration, thick black outlines, "
+                    "cinematic cel shading. Keep Japanese material culture grounded. "
+                    "First five cuts prioritize danger."
+                ),
+            },
+        )
+
+        self.assertIn("THUMBNAIL RENDERING STYLE:", styled)
+        self.assertIn("thick black outlines", styled)
+        self.assertNotIn("First five cuts", styled)
+        self.assertNotIn("Keep Japanese material culture", styled)
+
     def test_korean_thumbnail_hook_compacts_army_psychological_warfare(self):
         overlay = build_clickbait_thumbnail_overlay({
             "thumbnail_hook": "30만 대군을 굶겨 죽인 심리전! 거대 제국을 붕괴시킨 천재 명장",
@@ -1456,6 +2087,86 @@ class InterludeStabilityTests(unittest.TestCase):
             self.assertFalse(_image_has_top_caption_like_text(path))
             self.assertFalse(_image_has_top_caption_like_text(wide_path))
 
+    def test_comfyui_top_caption_ignores_broken_roofline_on_white_sky(self):
+        from PIL import Image, ImageDraw
+
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "roofline.png"
+            image = Image.new("RGB", (1280, 720), (240, 238, 226))
+            draw = ImageDraw.Draw(image)
+            for offset in (0, 16, 32):
+                for x in range(250, 550, 34):
+                    draw.line((x, 95 - offset // 2, x + 24, 72 - offset), fill=(36, 36, 32), width=3)
+                for x in range(730, 1030, 34):
+                    draw.line((x, 72 - offset, x + 24, 95 - offset // 2), fill=(36, 36, 32), width=3)
+            for x in range(270, 550, 42):
+                draw.line((x, 96, x + 8, 128), fill=(42, 42, 38), width=3)
+            for x in range(750, 1030, 42):
+                draw.line((x, 128, x + 8, 96), fill=(42, 42, 38), width=3)
+            image.save(path)
+
+            self.assertFalse(_image_has_top_caption_like_text(path))
+
+    def test_comfyui_top_caption_detects_bright_glyph_row_on_dark_header(self):
+        from PIL import Image, ImageDraw
+
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "bright_header.png"
+            image = Image.new("RGB", (1280, 720), (30, 28, 26))
+            draw = ImageDraw.Draw(image)
+            for left in (350, 425, 500, 575, 650, 725):
+                draw.rectangle((left, 34, left + 38, 82), fill=(228, 226, 214))
+                draw.rectangle((left + 10, 44, left + 28, 72), fill=(30, 28, 26))
+            image.save(path)
+
+            self.assertTrue(_image_has_top_caption_like_text(path))
+
+    def test_comfyui_top_caption_ignores_bright_thatch_on_dark_roof(self):
+        from PIL import Image, ImageDraw
+
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "dark_roof.png"
+            image = Image.new("RGB", (1280, 720), (36, 32, 28))
+            draw = ImageDraw.Draw(image)
+            for x in range(180, 470, 17):
+                y = 15 + (x % 83)
+                draw.line((x, y, x + 58, y + 34), fill=(212, 204, 184), width=3)
+            for x in range(810, 1110, 19):
+                y = 8 + (x % 71)
+                draw.line((x, y + 42, x + 64, y), fill=(222, 214, 192), width=3)
+            image.save(path)
+
+            self.assertFalse(_image_has_top_caption_like_text(path))
+
+    def test_comfyui_reduces_text_detector_for_inked_historical_architecture(self):
+        prompt = (
+            "Style: serious adult graphic novel illustration, mature documentary manhwa style, "
+            "bold black ink outlines, heavy black contour linework; "
+            "Exact place: Pyongyang Fortress; "
+            "Main subject: armed Goguryeo guards; "
+            "Scene: guards rally inside a rammed-earth fortress gate and wooden hall"
+        )
+        document_prompt = (
+            prompt
+            + "; Scene: officials read a written order on a paper document inside the fortress hall"
+        )
+
+        self.assertTrue(_should_use_reduced_internal_text_detector(prompt))
+        self.assertFalse(_should_use_reduced_internal_text_detector(document_prompt))
+
+    def test_comfyui_goguryeo_architecture_blocks_generated_signboards(self):
+        prompt = (
+            "Era/period: late seventh-century Goguryeo succession; "
+            "Exact place: Goguryeo court and fortress district; "
+            "Scene: a traitor stands at the front of the enemy army"
+        )
+
+        negative = _flux2_klein_md_negative_contract(prompt, prompt)
+
+        self.assertIn("gate lintel signboard", negative)
+        self.assertIn("blank signboard above door", negative)
+        self.assertIn("rectangular signboard frame", negative)
+
     def test_comfyui_corner_artist_mark_detects_lower_corner_signatures(self):
         from PIL import Image, ImageDraw
 
@@ -1478,6 +2189,33 @@ class InterludeStabilityTests(unittest.TestCase):
 
             self.assertTrue(_image_has_corner_artist_mark(left_path))
             self.assertTrue(_image_has_corner_artist_mark(right_path))
+
+    def test_comfyui_corner_artist_mark_ignores_neutral_sand_strokes(self):
+        from PIL import Image, ImageDraw
+
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "sand.png"
+            image = Image.new("RGB", (1280, 720), (196, 166, 118))
+            draw = ImageDraw.Draw(image)
+            draw.line((1203, 704, 1224, 711), fill=(150, 150, 145), width=4)
+            draw.line((1237, 690, 1253, 706), fill=(145, 145, 140), width=4)
+            draw.line((1242, 704, 1251, 711), fill=(155, 155, 150), width=3)
+            image.save(path)
+
+            self.assertFalse(_image_has_corner_artist_mark(path))
+
+    def test_comfyui_corner_artist_mark_ignores_dark_rocks_in_dark_corner(self):
+        from PIL import Image, ImageDraw
+
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "dark_rocks.png"
+            image = Image.new("RGB", (1280, 720), (85, 84, 83))
+            draw = ImageDraw.Draw(image)
+            draw.rectangle((1203, 695, 1218, 699), fill=(28, 26, 23))
+            draw.rectangle((1221, 687, 1240, 691), fill=(32, 29, 25))
+            image.save(path)
+
+            self.assertFalse(_image_has_corner_artist_mark(path))
 
     def test_comfyui_light_margin_detects_soft_white_illustration_frame(self):
         from PIL import Image, ImageDraw
@@ -1626,6 +2364,18 @@ class InterludeStabilityTests(unittest.TestCase):
 
         self.assertEqual(overlay, "FATAL\nRAGE")
 
+    def test_korean_thumbnail_overlay_preserves_short_causal_death_hook(self):
+        overlay = build_clickbait_thumbnail_overlay(
+            {
+                "thumbnail_hook": "형이 죽자, 백제는 완성됐다",
+                "language": "ko",
+            },
+            "백제사-EP01: 왕위에서 밀려난 온조, 형의 몰락 위에 세운 백제",
+            {"language": "ko"},
+        )
+
+        self.assertEqual(overlay, "형이 죽자\n백제는 완성됐다")
+
     def test_english_thumbnail_overlay_uses_crushing_throne_hook(self):
         overlay = build_clickbait_thumbnail_overlay(
             {"title": "The Throne That Crushed King Béla I EP.19", "language": "en"},
@@ -1677,6 +2427,116 @@ class InterludeStabilityTests(unittest.TestCase):
         self.assertIn("fatal mechanism as a huge foreground threat", prompt)
         self.assertNotIn("stern middle-aged", prompt)
 
+    def test_ch3_ep09_thumbnail_uses_amaterasu_oath_fact_lock(self):
+        prompt = build_standard_thumbnail_prompt({
+            "title": "일본사 시크릿 태양신 누나와 폭풍신 동생의 피 튀기는 서약 EP.09",
+            "topic": "태양신 누나와 폭풍신 동생의 피 튀기는 서약",
+            "thumbnail_prompt": (
+                "Extreme close up, Amaterasu violently biting into a sharp iron sword, "
+                "a fierce storm god watching"
+            ),
+        })
+
+        self.assertIn("AMATERASU OATH THUMBNAIL LOCK", prompt)
+        self.assertIn("ancient ritual bronze sword", prompt)
+        self.assertIn("magatama beads", prompt)
+        self.assertIn("only visible person", prompt)
+        self.assertIn("without showing the brother", prompt)
+        self.assertIn("the blade never enters", prompt)
+        self.assertNotIn("sharp iron sword", prompt)
+
+    def test_ch3_ep08_thumbnail_avoids_name_text_priming(self):
+        prompt = build_standard_thumbnail_prompt({
+            "title": "일본사 시크릿 바다를 버린 울보 신 스사노오 EP.08",
+            "topic": "바다를 버린 울보 신 스사노오",
+            "thumbnail_prompt": (
+                "Extreme close up of storm god Susanoo crying on a dark beach"
+            ),
+        })
+
+        self.assertIn("ABANDONED SEA STORM DEITY THUMBNAIL LOCK", prompt)
+        self.assertIn("adult Japanese male storm deity", prompt)
+        self.assertIn("outdoor ocean shore with open sky and surf", prompt)
+        self.assertIn("never an indoor timber room", prompt)
+        self.assertNotIn("Susanoo", prompt)
+
+    def test_ch3_ep11_thumbnail_uses_amanoiwato_rescue_lock(self):
+        prompt = build_standard_thumbnail_prompt({
+            "title": "일본사 시크릿 암흑으로 변한 세상, 아마노이와토 EP.11",
+            "topic": "암흑으로 변한 세상, 아마노이와토",
+            "thumbnail_hook": "여신의 파격적인 춤이 세상을 구했다?!",
+        })
+
+        self.assertIn("AMANO-IWATO RESCUE THUMBNAIL LOCK", prompt)
+        self.assertIn("dark natural cave mouth", prompt)
+        self.assertIn("Ame-no-Uzume", prompt)
+        self.assertIn("secure layered", prompt)
+        self.assertNotIn("timber gate", prompt)
+        self.assertNotIn("torii", prompt)
+        self.assertTrue(thumb_svc._thumbnail_uses_compact_generation_prompt(prompt))
+        self.assertFalse(
+            thumb_svc._thumbnail_uses_compact_generation_prompt(
+                "AMATERASU OATH THUMBNAIL LOCK"
+            )
+        )
+        self.assertTrue(
+            _z_image_uses_compact_thumbnail_prompt(
+                prompt,
+                "comfyui-z-image-turbo",
+            )
+        )
+        self.assertFalse(
+            _z_image_uses_compact_thumbnail_prompt(
+                prompt,
+                "comfyui-flux2-klein-4b",
+            )
+        )
+
+    def test_standard_thumbnail_prompt_bypasses_cut_scene_rewrites(self):
+        prompt = build_standard_thumbnail_prompt({
+            "title": "백제사-EP11: 무령왕의 즉위와 백가의 난 진압",
+            "thumbnail_prompt": (
+                "Newly crowned King Muryeong ordering the siege of Garim fortress "
+                "where Baek Ga rebels."
+            ),
+        })
+
+        self.assertTrue(_uses_literal_thumbnail_prompt(prompt))
+        self.assertFalse(
+            _uses_literal_thumbnail_prompt(
+                "Scene subject: King Muryeong ordering the siege of Garim fortress."
+            )
+        )
+
+    def test_thumbnail_subject_mismatch_is_never_soft_passed(self):
+        self.assertFalse(
+            _thumbnail_closeup_soft_quality_failure(
+                "The composition does not match the requested subject or layout, "
+                "showing a trapped man rather than a clear goddess oath scene."
+            )
+        )
+
+    def test_ch3_story_locked_thumbnails_disable_soft_pass(self):
+        self.assertTrue(
+            _thumbnail_has_strict_story_lock(
+                "AMATERASU OATH THUMBNAIL LOCK: adult woman at sacred river"
+            )
+        )
+        self.assertTrue(
+            _thumbnail_has_strict_story_lock(
+                "ABANDONED SEA STORM DEITY THUMBNAIL LOCK: crying deity at ocean"
+            )
+        )
+        self.assertTrue(
+            _thumbnail_has_strict_story_lock(
+                "AMANO-IWATO RESCUE THUMBNAIL LOCK: dancing deity at cave"
+            )
+        )
+
+    def test_thumbnail_character_reference_locks_subject_identity(self):
+        self.assertIn("first attached character reference", THUMBNAIL_CHARACTER_IDENTITY_REFERENCE_LOCK)
+        self.assertIn("Do not replace the referenced woman with a man", THUMBNAIL_CHARACTER_IDENTITY_REFERENCE_LOCK)
+
     def test_thumbnail_overlay_wrap_preserves_explicit_newlines(self):
         from PIL import Image, ImageDraw, ImageFont
 
@@ -1688,6 +2548,89 @@ class InterludeStabilityTests(unittest.TestCase):
             _wrap_text("THRONE\nCRUSHED HIM", font, 1200, draw),
             ["THRONE", "CRUSHED HIM"],
         )
+
+    def test_thumbnail_overlay_wrap_avoids_single_japanese_orphan(self):
+        from PIL import Image, ImageDraw, ImageFont
+
+        image = Image.new("RGB", (1280, 720))
+        draw = ImageDraw.Draw(image)
+        font = ImageFont.truetype("C:/Windows/Fonts/YuGothB.ttc", 98)
+
+        lines = _wrap_text("死の穢れから 三貴子誕生", font, 540, draw)
+
+        self.assertTrue(all(len(line) != 1 for line in lines))
+        self.assertIn("から", lines)
+
+    def test_japanese_thumbnail_preserves_explicit_short_line_break(self):
+        overlay = build_clickbait_thumbnail_overlay(
+            {"title": "血まみれの馬で太陽神が消えた EP.10"},
+            title="血まみれの馬で太陽神が消えた EP.10",
+            config={
+                "language": "ja",
+                "thumbnail_overlay_text": "血まみれの馬\n太陽神が消えた",
+            },
+        )
+
+        self.assertEqual(overlay, "血まみれの馬\n太陽神が消えた")
+
+    def test_japanese_dead_goddess_thumbnail_uses_specific_crisis_hook(self):
+        overlay = build_clickbait_thumbnail_overlay(
+            {
+                "title": "ころされた女神から、稲と蚕が生まれた EP.07",
+                "thumbnail_hook": "死のからだ\n米が出た",
+            },
+            title="殺された女神の死体から米と蚕が生まれた EP.07",
+            config={"language": "ja"},
+        )
+
+        self.assertEqual(overlay, "女神の死体から\n米と蚕が生まれた")
+
+    def test_japanese_thumbnail_ignores_foreign_hook_and_uses_upload_title(self):
+        overlay = build_clickbait_thumbnail_overlay(
+            {
+                "title": "일본사 시크릿 세 귀공자의 탄생 EP.05",
+                "thumbnail_hook": "지옥의 때를 벗자 태어난 3명의 절대신!",
+            },
+            title="일본사 시크릿 세 귀공자의 탄생 EP.05",
+            config={
+                "language": "ja",
+                "youtube_title": "黄泉の穢れを祓った禊から三貴子が誕生 EP.05",
+            },
+        )
+
+        self.assertEqual(overlay, "黄泉の禊\n三貴子誕生")
+
+    def test_japanese_thumbnail_translates_foreign_hook_before_overlay(self):
+        async def fake_translate(**_kwargs):
+            return "刀と勾玉を噛み砕いた！神々の血塗られた裁判", "同文"
+
+        import app.services.youtube_localization_service as localization_svc
+
+        previous = localization_svc.ensure_primary_youtube_metadata_language
+        localization_svc.ensure_primary_youtube_metadata_language = fake_translate
+        try:
+            overlay = asyncio.run(_resolve_standard_thumbnail_overlay(
+                {
+                    "title": "일본사 시크릿 태양신 누나와 폭풍신 동생 EP.09",
+                    "thumbnail_hook": "칼과 구슬을 씹어 삼켰다! 신들의 피 튀기는 재판",
+                },
+                "일본사 시크릿 태양신 누나와 폭풍신 동생 EP.09",
+                {"language": "ja"},
+            ))
+        finally:
+            localization_svc.ensure_primary_youtube_metadata_language = previous
+
+        self.assertEqual(overlay, "刀と勾玉を\n噛み砕いた")
+        self.assertNotRegex(overlay, r"[\uac00-\ud7a3]")
+
+    def test_thumbnail_missing_required_scene_is_not_soft_passed(self):
+        reason = (
+            "The image features a close-up face, but the prompt requires a specific outdoor "
+            "location scene, which is not depicted.; The lower-left text-safe zone is violated.; "
+            "The scene does not show the required outdoor elements or context."
+        )
+
+        self.assertFalse(_thumbnail_closeup_soft_quality_failure(reason))
 
     def test_thumbnail_qa_rejects_calm_portrait_without_fatal_mechanism(self):
         prompt = _thumbnail_quality_system_prompt()
@@ -1765,6 +2708,49 @@ class InterludeStabilityTests(unittest.TestCase):
             self.assertFalse(_thumbnail_overlay_local_geometry_pass(str(unsafe_path), prompt))
             self.assertFalse(_thumbnail_overlay_local_geometry_pass(str(safe_path), "empty battlefield"))
 
+    def test_thumbnail_overlay_geometry_ignores_bright_beams_from_background(self):
+        from PIL import Image, ImageDraw
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            background_path = root / "thumbnail_bg.png"
+            final_path = root / "thumbnail.png"
+            prompt = "Close-up of Izanagi's face with three bright divine beams"
+
+            background = Image.new("RGB", (1280, 720), (24, 24, 24))
+            background_draw = ImageDraw.Draw(background)
+            background_draw.rectangle((610, 170, 900, 330), fill=(255, 245, 220))
+            background_draw.rectangle((650, 340, 920, 470), fill=(255, 210, 32))
+            background.save(background_path)
+
+            final = background.copy()
+            final_draw = ImageDraw.Draw(final)
+            final_draw.rectangle((60, 60, 280, 170), fill=(255, 255, 255))
+            final_draw.rectangle((60, 180, 250, 260), fill=(255, 226, 32))
+            final.save(final_path)
+
+            self.assertTrue(_thumbnail_overlay_local_geometry_pass(str(final_path), prompt))
+
+    def test_thumbnail_overlay_geometry_allows_large_left_copy_outside_right_face_zone(self):
+        from PIL import Image, ImageDraw
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            background_path = root / "thumbnail_bg.png"
+            final_path = root / "thumbnail.png"
+            prompt = "Close-up of Manu's face on the right with a clean left text-safe zone"
+
+            background = Image.new("RGB", (1280, 720), (24, 24, 24))
+            background.save(background_path)
+
+            final = background.copy()
+            final_draw = ImageDraw.Draw(final)
+            final_draw.rectangle((60, 55, 525, 100), fill=(255, 255, 255))
+            final_draw.rectangle((60, 108, 490, 154), fill=(255, 226, 32))
+            final.save(final_path)
+
+            self.assertTrue(_thumbnail_overlay_local_geometry_pass(str(final_path), prompt))
+
     def test_thumbnail_overlay_uses_absolute_font_sizes_and_no_ep_badge(self):
         title, episode_label = extract_thumbnail_text_parts("EP.14 Target title", "EP.14")
         source = (Path(__file__).resolve().parent.parent / "app" / "services" / "thumbnail_service.py").read_text(
@@ -1773,10 +2759,105 @@ class InterludeStabilityTests(unittest.TestCase):
 
         self.assertEqual(title, "Target title")
         self.assertIsNone(episode_label)
-        self.assertIn("candidates = (98, 87, 76, 67", source)
+        self.assertIn("candidates = (124, 116, 108, 98, 87", source)
+        self.assertIn("max_text_ratio = 0.40 if fallback_face_safe_zone", source)
         self.assertNotIn("THUMBNAIL_TEXT_OVERLAY_SCALE", source)
         self.assertNotIn("class=\"top\"", source)
         self.assertNotIn("좌상단 EP 배지", source)
+
+    def test_thumbnail_overlay_prefers_registered_source_thumbnail_copy(self):
+        overlay = build_clickbait_thumbnail_overlay(
+            {
+                "language": "en",
+                "title": "Manu, Yemo, and the Proto-Indo-European Creation Myth",
+                "source_thumbnail_copy": "One Brother's Death Created the World",
+            },
+            "Manu, Yemo, and the Proto-Indo-European Creation Myth EP.01",
+            {"language": "en"},
+        )
+
+        self.assertEqual(overlay, "BROTHER'S DEATH\nCREATED WORLD")
+
+    def test_thumbnail_overlay_config_can_override_bland_script_copy(self):
+        overlay = build_clickbait_thumbnail_overlay(
+            {
+                "language": "ko",
+                "title": "고이왕의 중앙집권 체제 정비",
+                "thumbnail_hook": "옷 색깔이 권력이 된 날",
+            },
+            "고이왕의 중앙집권 체제 정비 EP.03",
+            {
+                "language": "ko",
+                "thumbnail_overlay_text": "옷 색 하나로 귀족을 줄 세웠다",
+            },
+        )
+
+        self.assertIn("귀족", overlay)
+        self.assertNotIn("권력이 된 날", overlay)
+
+    def test_thumbnail_base_cut_number_resolves_existing_project_image(self):
+        from PIL import Image
+
+        with tempfile.TemporaryDirectory() as td:
+            project_dir = Path(td)
+            images_dir = project_dir / "images"
+            images_dir.mkdir()
+            expected = images_dir / "cut_41.png"
+            Image.new("RGB", (1280, 720), (24, 24, 24)).save(expected)
+
+            resolved = _configured_thumbnail_base_image_path(
+                project_dir,
+                {"thumbnail_base_cut_number": 41},
+            )
+
+            self.assertEqual(resolved, expected)
+
+    def test_thumbnail_base_cut_number_rejects_missing_cut(self):
+        with tempfile.TemporaryDirectory() as td:
+            project_dir = Path(td)
+            (project_dir / "images").mkdir()
+            with self.assertRaisesRegex(ThumbnailError, "cut 41"):
+                _configured_thumbnail_base_image_path(
+                    project_dir,
+                    {"thumbnail_base_cut_number": 41},
+                )
+
+    def test_thumbnail_subject_direction_overrides_original_hero_before_style(self):
+        styled = _thumbnail_style_prompt_from_config(
+            "King Goi before ranked officials",
+            {
+                "thumbnail_subject_direction": "Glamorous visibly adult Baekje noblewoman in the foreground.",
+                "thumbnail_style_prompt": "Bold historical ink illustration with hard cinematic light.",
+            },
+        )
+
+        self.assertTrue(styled.startswith("THUMBNAIL HERO SUBJECT OVERRIDE:"))
+        self.assertIn("adult Baekje noblewoman", styled)
+        self.assertIn("ORIGINAL STORY EVENT: King Goi before ranked officials", styled)
+        self.assertIn("THUMBNAIL RENDERING STYLE:", styled)
+
+    def test_short_two_line_thumbnail_hook_reflows_for_larger_face_safe_text(self):
+        self.assertEqual(
+            _thumbnail_reflow_short_two_line_hook(
+                "형이 죽자\n백제는 완성됐다",
+                True,
+            ),
+            "형이 죽자\n백제는\n완성됐다",
+        )
+        self.assertEqual(
+            _thumbnail_reflow_short_two_line_hook(
+                "옷 색깔이 권력이\n된 날",
+                True,
+            ),
+            "옷 색깔이\n권력이\n된 날",
+        )
+        self.assertEqual(
+            _thumbnail_reflow_short_two_line_hook(
+                "이 문구는 두 줄이지만 한 줄의 길이가 너무 긴 썸네일 문구입니다\n작게 유지",
+                True,
+            ),
+            "이 문구는 두 줄이지만 한 줄의 길이가 너무 긴 썸네일 문구입니다\n작게 유지",
+        )
 
     def test_thumbnail_fallback_and_request_reject_body_only_faces(self):
         fallback = BaseLLMService._fallback_thumbnail_prompt(
@@ -1919,6 +3000,211 @@ class InterludeStabilityTests(unittest.TestCase):
         self.assertIn("cut 1=58chars", prompt)
         self.assertIn("전체 JSON을 처음부터 다시 작성", prompt)
 
+    def test_timing_retry_instruction_lengthens_short_narration(self):
+        prompt = BaseLLMService._script_timing_retry_instruction(
+            {
+                "language": "ko",
+                "tts_model": "elevenlabs",
+                "tts_speed": 1.0,
+                "tts_chars_per_sec": 8.0,
+            },
+            [{"cut_number": 7, "amount": 27, "unit": "chars", "target_range": "31~48"}],
+        )
+
+        self.assertIn("길이 부족 컷: cut 7=27chars", prompt)
+        self.assertIn("더 줄이지 마세요", prompt)
+        self.assertIn("짧은 절을 덧붙여", prompt)
+        self.assertNotIn("narration만 반드시 더 짧게", prompt)
+
+    def test_timing_retry_instruction_shortens_long_narration(self):
+        prompt = BaseLLMService._script_timing_retry_instruction(
+            {
+                "language": "ko",
+                "tts_model": "elevenlabs",
+                "tts_speed": 1.0,
+                "tts_chars_per_sec": 8.0,
+            },
+            [{"cut_number": 9, "amount": 55, "unit": "chars", "target_range": "31~48"}],
+        )
+
+        self.assertIn("길이 초과 컷: cut 9=55chars", prompt)
+        self.assertIn("상한 아래로 줄이세요", prompt)
+        self.assertNotIn("더 줄이지 마세요", prompt)
+
+    def test_script_generators_use_targeted_timing_repair(self):
+        gpt_source = inspect.getsource(GPTService.generate_script)
+        claude_source = inspect.getsource(ClaudeService.generate_script)
+
+        for source in (gpt_source, claude_source):
+            self.assertIn("repair_script_narration_timing", source)
+            self.assertNotIn("_script_timing_retry_instruction", source)
+
+        rewrite_source = inspect.getsource(GPTService.rewrite_narration_for_timing)
+        self.assertIn("4096 if self._is_latest_gpt() else 300", rewrite_source)
+
+    def test_japanese_timing_rewrite_prompt_counts_kana_expanded_reading(self):
+        prompt = BaseLLMService._build_narration_timing_prompt(
+            topic="ウケモチ神話",
+            narration="けれど、これは稲と蚕を語った古い実録ではなく神話です",
+            language="ja",
+            cut_number=130,
+            total_cuts=150,
+            measured_duration=6.54,
+            target_min=4.0,
+            target_max=6.0,
+            direction="long",
+            target_chars=26,
+        )
+
+        self.assertIn("34 kana-expanded TTS characters", prompt)
+        self.assertIn("count every kanji by its full kana reading", prompt)
+        self.assertIn("keep that reading at or below 28 characters", prompt)
+
+    def test_script_timing_checkpoint_is_fingerprint_guarded(self):
+        script = {
+            "cuts": [
+                {"cut_number": 1, "narration": "가" * 40},
+                {"cut_number": 2, "narration": "나" * 40},
+            ]
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            config = {
+                "__project_id": "checkpoint-test",
+                "result_dir": tmp,
+                "target_cuts": 2,
+                "language": "ko",
+                "story_plan": {"source_fingerprint": "story-v1"},
+            }
+            save_script_timing_checkpoint(script, "고구려 멸망", config, "gpt-5.5")
+
+            loaded = load_script_timing_checkpoint(
+                "고구려 멸망", config, "gpt-5.5"
+            )
+            mismatched = load_script_timing_checkpoint(
+                "다른 주제", config, "gpt-5.5"
+            )
+
+            self.assertEqual(loaded, script)
+            self.assertIsNone(mismatched)
+            clear_script_timing_checkpoint(config)
+            self.assertFalse(
+                (Path(tmp) / "llm_raw" / "script_timing_checkpoint.json").exists()
+            )
+
+    def test_timing_repair_rewrites_only_failed_cuts_with_bounded_concurrency(self):
+        class TimingRewriteProbe:
+            def __init__(self):
+                self.calls = []
+                self.active = 0
+                self.max_active = 0
+
+            async def rewrite_narration_for_timing(self, **kwargs):
+                self.calls.append(kwargs["cut_number"])
+                self.active += 1
+                self.max_active = max(self.max_active, self.active)
+                try:
+                    await asyncio.sleep(0.01)
+                    return "가" * 40
+                finally:
+                    self.active -= 1
+
+        script = {
+            "cuts": [
+                {
+                    "cut_number": cut_number,
+                    "narration": "짧은 대사",
+                    "image_prompt": f"Scene: historical event {cut_number}",
+                    "scene_type": "historical",
+                }
+                for cut_number in range(1, 21)
+            ]
+        }
+        config = {
+            "language": "ko",
+            "tts_model": "elevenlabs",
+            "tts_speed": 1.0,
+            "tts_chars_per_sec": 8.0,
+            "script_tts_min_sec": 4.0,
+            "script_tts_target_sec": 5.0,
+            "script_tts_max_sec": 6.0,
+            "script_timing_max_llm_repairs": 20,
+            "script_timing_repair_concurrency": 3,
+        }
+        probe = TimingRewriteProbe()
+
+        repaired = asyncio.run(
+            repair_script_narration_timing(
+                script,
+                config,
+                topic="고구려 멸망",
+                llm_service=probe,
+                max_rounds=2,
+                log=None,
+            )
+        )
+
+        self.assertEqual(probe.calls, list(range(1, 21)))
+        self.assertEqual(probe.max_active, 3)
+        self.assertFalse(BaseLLMService.validate_script_timing(repaired, config))
+        self.assertTrue(all(cut["narration"] == "가" * 40 for cut in repaired["cuts"]))
+
+    def test_japanese_timing_repair_measures_expanded_tts_reading(self):
+        class JapaneseTimingRewriteProbe:
+            def __init__(self):
+                self.calls = []
+
+            async def rewrite_narration_for_timing(self, **kwargs):
+                self.calls.append(kwargs)
+                return "死んだ女神から米と蚕が生まれ、人を支えます"
+
+        original = "ここで覆われた女神を前に、神話の見え方が反転します"
+        script = {
+            "cuts": [
+                {
+                    "cut_number": 1,
+                    "narration": original,
+                    "image_prompt": "Scene: Uke Mochi myth",
+                    "scene_type": "historical",
+                }
+            ]
+        }
+        config = {
+            "language": "ja",
+            "tts_model": "openai-tts",
+            "tts_speed": 1.0,
+            "chars_per_sec": 5.2,
+            "script_tts_min_sec": 4.0,
+            "script_tts_target_sec": 5.0,
+            "script_tts_max_sec": 6.0,
+            "script_timing_max_llm_repairs": 1,
+        }
+        probe = JapaneseTimingRewriteProbe()
+
+        self.assertLessEqual(len(original), 31)
+        self.assertEqual(
+            BaseLLMService.validate_script_timing(script, config)[0]["amount"],
+            32,
+        )
+
+        repaired = asyncio.run(
+            repair_script_narration_timing(
+                script,
+                config,
+                topic="ウケモチ神話",
+                llm_service=probe,
+                max_rounds=1,
+                log=None,
+            )
+        )
+
+        self.assertEqual([call["cut_number"] for call in probe.calls], [1])
+        self.assertEqual(probe.calls[0]["direction"], "long")
+        self.assertFalse(BaseLLMService.validate_script_timing(repaired, config))
+        self.assertEqual(
+            repaired["cuts"][0]["narration"],
+            "死んだ女神から米と蚕が生まれ、人を支えます",
+        )
+
     def test_script_timing_violation_blocks_save(self):
         script = {
             "cuts": [
@@ -1961,10 +3247,10 @@ class InterludeStabilityTests(unittest.TestCase):
         cfg = {}
 
         self.assertTrue(app_config.use_tts_driven_cut_duration(cfg))
-        self.assertEqual(app_config.resolve_cut_audio_start_offset(cfg), 0.3)
+        self.assertEqual(app_config.resolve_cut_audio_start_offset(cfg), 0.5)
         self.assertAlmostEqual(
             app_config.resolve_cut_video_duration_for_audio(cfg, 6.2, default=4.0),
-            6.8,
+            7.2,
         )
         self.assertAlmostEqual(
             app_config.resolve_cut_video_duration_for_audio(cfg, 2.9, default=4.0),
@@ -1972,7 +3258,7 @@ class InterludeStabilityTests(unittest.TestCase):
         )
         self.assertAlmostEqual(
             app_config.resolve_cut_video_duration_for_audio(cfg, 72.0, default=4.0),
-            72.6,
+            73.0,
         )
         self.assertEqual(
             app_config.resolve_cut_video_duration_for_audio({"cut_duration_mode": "fixed"}, 6.2, default=4.0),
@@ -1992,8 +3278,35 @@ class InterludeStabilityTests(unittest.TestCase):
 
 
 class ShortsStabilityTests(unittest.TestCase):
-    def test_shorts_keeps_marked_cut_clip_speed(self):
-        self.assertEqual(shorts_service.SHORTS_PLAYBACK_SPEED, 1.0)
+    def test_shorts_uses_1x_sources_then_remotion_silence_cut_and_1_2x_output(self):
+        self.assertEqual(shorts_service.SHORTS_SOURCE_PLAYBACK_SPEED, 1.0)
+        self.assertEqual(shorts_service.SHORTS_PLAYBACK_SPEED, 1.2)
+        source = (Path(__file__).resolve().parent.parent / "app" / "services" / "shorts_service.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn("atempo={SHORTS_PLAYBACK_SPEED:.6f}", source)
+        self.assertIn("_detect_silence_keep_segments", source)
+        self.assertIn("render_duration = kept_duration / SHORTS_PLAYBACK_SPEED", source)
+        remotion_source = (
+            Path(__file__).resolve().parents[2] / "remotion-shorts" / "src" / "ShortsComposition.tsx"
+        ).read_text(encoding="utf-8")
+        self.assertIn("playbackRate={playbackRate}", remotion_source)
+        self.assertIn("keepSegments", remotion_source)
+
+    def test_shorts_silence_ranges_are_removed_with_edge_padding(self):
+        segments = shorts_service._silence_keep_segments(
+            10.0,
+            [(1.0, 2.0), (5.0, 5.8)],
+        )
+
+        self.assertEqual(
+            segments,
+            [
+                {"start": 0.0, "end": 1.08},
+                {"start": 1.92, "end": 5.08},
+                {"start": 5.72, "end": 10.0},
+            ],
+        )
 
     def test_shorts_channel_name_position_matches_ten_minute_history_layout(self):
         self.assertEqual(shorts_service.SHORTS_CHANNEL_Y, 1450)
@@ -2038,16 +3351,67 @@ class ShortsStabilityTests(unittest.TestCase):
         self.assertTrue(line2)
         self.assertNotIn("Watch what happens", line2)
 
-    def test_shorts_title_allows_three_render_lines(self):
+    def test_shorts_hero_uses_episode_title_only(self):
         title = shorts_service._short_title(
-            {"title": "테스트"},
+            {"title": "EP.12 왕국을 뒤흔든 결정적 선택의 진실"},
             {"title": "이 결정적 선택은 왜 왕국의 운명을 완전히 바꿨나"},
             shorts_service._shorts_labels("ko"),
         )
 
         lines = title.splitlines()
-        self.assertEqual(len(lines), 3)
+        self.assertEqual(len(lines), 2)
         self.assertTrue(all(lines))
+        self.assertNotIn("운명을 완전히 바꿨나", title)
+        self.assertEqual(" ".join(lines), "왕국을 뒤흔든 결정적 선택의 진실")
+
+    def test_shorts_hero_accent_marks_number_and_action_only(self):
+        rendered = shorts_service._title_accent_ranges_for_lines(["7일 만에 버린 한성"])
+
+        self.assertEqual(
+            rendered,
+            [[[0, 2], [6, 8]]],
+        )
+
+    def test_shorts_hero_accent_falls_back_to_last_two_title_terms(self):
+        rendered = shorts_service._title_accent_ranges_for_lines(["호주 에뮤 전쟁"])
+
+        self.assertEqual(
+            rendered,
+            [[[3, 5], [6, 8]]],
+        )
+
+    def test_shorts_white_layout_keeps_two_color_hero(self):
+        source = (
+            Path(__file__).resolve().parents[2] / "remotion-shorts" / "src" / "ShortsComposition.tsx"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('const BACKGROUND = "#f7f7f4"', source)
+        self.assertIn('const ACCENT = "#ffd24a"', source)
+        self.assertEqual(shorts_service.SHORTS_TITLE_ACCENT_COLOR, "0xffd24a")
+
+    def test_all_channels_use_one_shared_remotion_shorts_pipeline(self):
+        source = (
+            Path(__file__).resolve().parent.parent / "app" / "services" / "remotion_shorts_renderer.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('SHARED_SHORTS_PIPELINE_ID = "shared-all-channels-3word-captions-v2"', source)
+        self.assertIn('"pipeline": SHARED_SHORTS_PIPELINE_ID', source)
+        self.assertNotIn("channel_id", source)
+
+    def test_baekje_ep03_marked_segments_get_distinct_titles(self):
+        segments = [
+            "사반왕은 나이가 어려 왕위에서 밀려났고 고이왕은 어린 왕을 밀어낸 뒤 질서를 세웠습니다.",
+            "고이왕은 병마권을 왕에게 집중해 족장의 독자적인 무력을 국가의 군대로 바꿨습니다.",
+            "관등과 옷 색으로 귀족을 세웠고 범장지법으로 뇌물 수수를 막았습니다.",
+            "근초고왕 전성기의 보이지 않는 뼈대와 핵심 토대를 고이왕이 만들었습니다.",
+        ]
+
+        titles = {
+            shorts_service._korean_action_headline("고이왕의 중앙집권 체제 정비", text, text)
+            for text in segments
+        }
+
+        self.assertEqual(len(titles), 4)
 
     def test_annotate_script_shorts_keeps_four_fifteen_cut_groups(self):
         script = {
@@ -2178,6 +3542,162 @@ class YouTubeScopeStabilityTests(unittest.TestCase):
 
 
 class UploadAndAudioMixStabilityTests(unittest.TestCase):
+    def test_youtube_caption_spec_is_disabled_when_main_subtitles_are_burned(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            subtitle_dir = root / "subtitles"
+            subtitle_dir.mkdir()
+            caption_path = subtitle_dir / "subtitles.srt"
+            caption_path.write_text(
+                "1\n00:00:00,000 --> 00:00:04,000\n"
+                "English caption text rendered from the registered script track. "
+                "This fixture is intentionally long enough to pass the media guard.\n",
+                encoding="utf-8",
+            )
+
+            spec = svc._youtube_caption_spec(
+                root,
+                {
+                    "subtitle_delivery": "youtube_caption",
+                    "youtube_captions_enabled": True,
+                    "language": "en",
+                },
+                {"language": "en"},
+            )
+
+            self.assertIsNone(spec)
+
+    def test_youtube_caption_spec_keeps_burn_delivery_disabled(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            subtitle_dir = root / "subtitles"
+            subtitle_dir.mkdir()
+            (subtitle_dir / "subtitles.srt").write_text(
+                "1\n00:00:00,000 --> 00:00:04,000\n"
+                + ("Registered English script caption. " * 5)
+                + "\n",
+                encoding="utf-8",
+            )
+            spec = svc._youtube_caption_spec(
+                root,
+                {
+                    "subtitle_delivery": "burn",
+                    "youtube_captions_enabled": False,
+                    "language": "en",
+                },
+                {"language": "en"},
+            )
+
+            self.assertIsNone(spec)
+
+    def test_youtube_caption_spec_does_not_require_srt_for_burn_delivery(self):
+        with tempfile.TemporaryDirectory() as td:
+            spec = svc._youtube_caption_spec(
+                Path(td),
+                {"subtitle_delivery": "burn", "language": "ko"},
+                {"language": "ko"},
+            )
+            self.assertIsNone(spec)
+
+    def test_youtube_caption_upload_does_not_treat_asr_as_registered_script_track(self):
+        class FakeUploader:
+            def __init__(self):
+                self.upload_calls = []
+
+            def list_captions(self, video_id):
+                return [{"caption_id": "auto", "language": "en", "track_kind": "asr"}]
+
+            def upload_caption(self, video_id, caption_path, language, name, is_draft):
+                self.upload_calls.append((video_id, caption_path, language, name, is_draft))
+                return {"caption_id": "manual", "language": language, "name": name}
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            subtitle_dir = root / "subtitles"
+            subtitle_dir.mkdir()
+            caption_path = subtitle_dir / "subtitles.srt"
+            caption_path.write_text(
+                "1\n00:00:00,000 --> 00:00:04,000\n"
+                + ("Registered English script caption. " * 5)
+                + "\n",
+                encoding="utf-8",
+            )
+            uploader = FakeUploader()
+
+            result = asyncio.run(
+                svc._ensure_youtube_caption_track(
+                    uploader,
+                    "video-id",
+                    root,
+                    {"subtitle_delivery": "youtube_caption", "language": "en"},
+                    {"language": "en"},
+                )
+            )
+
+            self.assertEqual(result["caption_id"], "manual")
+            self.assertFalse(result["already_present"])
+            self.assertEqual(len(uploader.upload_calls), 1)
+
+    def test_youtube_caption_upload_requires_caption_id(self):
+        class FakeUploader:
+            def list_captions(self, video_id):
+                return []
+
+            def upload_caption(self, video_id, caption_path, language, name, is_draft):
+                return {"caption_id": None, "language": language, "name": name}
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            subtitle_dir = root / "subtitles"
+            subtitle_dir.mkdir()
+            (subtitle_dir / "subtitles.srt").write_text(
+                "1\n00:00:00,000 --> 00:00:04,000\n"
+                + ("Registered English script caption. " * 5)
+                + "\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "caption_id"):
+                asyncio.run(
+                    svc._ensure_youtube_caption_track(
+                        FakeUploader(),
+                        "video-id",
+                        root,
+                        {"subtitle_delivery": "youtube_caption", "language": "en"},
+                        {"language": "en"},
+                    )
+                )
+
+    def test_youtube_caption_upload_requires_expected_language(self):
+        class FakeUploader:
+            def list_captions(self, video_id):
+                return []
+
+            def upload_caption(self, video_id, caption_path, language, name, is_draft):
+                return {"caption_id": "caption-id", "language": "ko", "name": name}
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            subtitle_dir = root / "subtitles"
+            subtitle_dir.mkdir()
+            (subtitle_dir / "subtitles.srt").write_text(
+                "1\n00:00:00,000 --> 00:00:04,000\n"
+                + ("Registered English script caption. " * 5)
+                + "\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "expected_language=en"):
+                asyncio.run(
+                    svc._ensure_youtube_caption_track(
+                        FakeUploader(),
+                        "video-id",
+                        root,
+                        {"subtitle_delivery": "youtube_caption", "language": "en"},
+                        {"language": "en"},
+                    )
+                )
+
     def test_shorts_upload_title_has_no_numeric_hashtag(self):
         title = shorts_upload_title("숨겨진 진실 #1 #Shorts", index=1, total=4)
 
@@ -2577,16 +4097,30 @@ class TTSPronunciationStabilityTests(unittest.TestCase):
 
 
 class SubtitleStyleStabilityTests(unittest.TestCase):
-    def test_default_subtitle_size_is_ten_points_larger(self):
-        self.assertEqual(subtitle_service.DEFAULT_SUBTITLE_STYLE["size"], 68)
-        self.assertEqual(subtitle_service.CUT_SUBTITLE_MARKER_VERSION, 5)
+    def test_general_subtitle_style_is_not_forced_into_variety_caption_style(self):
+        normalized = subtitle_service.normalize_subtitle_style({})
+        self.assertEqual(normalized["preset"], "current")
+        self.assertEqual(normalized["size"], 68)
+        self.assertEqual(subtitle_service.CUT_SUBTITLE_MARKER_VERSION, 9)
 
-    def test_saved_subtitle_size_is_bumped_by_ten_on_render(self):
+    def test_single_cut_subtitle_spans_entire_cut_window(self):
+        ass = subtitle_service.generate_single_cut_ass(
+            "最初の島が生まれました。",
+            6.2,
+            {},
+            "16:9",
+            start_offset=0.5,
+            display_duration=7.2,
+        )
+
+        self.assertIn("Dialogue: 0,0:00:00.00,0:00:07.20", ass)
+
+    def test_saved_legacy_subtitle_size_normalizes_without_affecting_variety_style(self):
         normalized = subtitle_service.normalize_subtitle_style({"preset": "current", "size": 58})
 
         self.assertEqual(normalized["size"], 68)
 
-    def test_non_legacy_saved_subtitle_size_is_not_bumped_again(self):
+    def test_non_legacy_saved_subtitle_size_remains_unchanged(self):
         normalized = subtitle_service.normalize_subtitle_style({"preset": "current", "size": 68})
 
         self.assertEqual(normalized["size"], 68)
@@ -2823,6 +4357,7 @@ class HistoricalImagePromptStabilityTests(unittest.TestCase):
             plank.save(plank_path)
 
             self.assertTrue(_image_has_split_panel_divider(bad_path))
+            self.assertFalse(_image_has_split_panel_divider(bad_path, include_inset=False))
             self.assertFalse(_image_has_split_panel_divider(good_path))
             self.assertFalse(_image_has_split_panel_divider(plank_path))
 
@@ -4117,6 +5652,33 @@ class HistoricalImagePromptStabilityTests(unittest.TestCase):
         self.assertNotIn("river crossing", normalized)
         self.assertNotIn("612 AD", normalized)
 
+    def test_visual_policy_does_not_route_665_succession_prompt_to_612_sui_river(self):
+        prompt = (
+            "Global visual world: Time range: c. 665 AD; Place scope: ancient Northeast Asia, "
+            "Goguryeo-related court and frontier settings; Culture scope: Goguryeo and neighboring "
+            "ancient Northeast Asian political and military world; Material culture: Iron weapons, "
+            "bows, leather armor, lamellar armor, hemp garments, wooden halls, fortress walls, "
+            "river crossings, horses, bronze ritual objects; Year/period: c. 665 AD; "
+            "Goguryeo succession crisis, c. 665 AD; Exact place: Pyongyang Fortress; "
+            "Scene evidence: The narration describes suffocating tension between the brothers; "
+            "show exactly three iron sword blades crossing as symbolic pressure in a blade-only frame, "
+            "with people absent.; Main subject: exactly three iron sword blades crossing at one spark point; "
+            "Scene: Blade-only symbolic close-up against black shadow: exactly three separate iron sword blades "
+            "enter from left, right, and bottom, crossing at one bright central spark point"
+        )
+
+        normalized = normalize_cut_image_prompt(
+            prompt,
+            "형제들 사이에 숨 막히는 서늘한 긴장감이 맴돌기 시작하죠.",
+            "고구려 665년 계승 위기, 남생 남건 남산",
+        )
+
+        self.assertIn("three iron sword blades", normalized)
+        self.assertIn("Pyongyang Fortress", normalized)
+        self.assertNotIn("Open 612 Goguryeo-Sui river battlefield", normalized)
+        self.assertNotIn("exhausted Sui soldiers", normalized)
+        self.assertNotIn("muddy river crossing", normalized)
+
     def test_flux2_klein_goguryeo_eye_scene_does_not_use_midgley_prompt(self):
         prompt = (
             "Global visual world: Time range: 402-410 AD; Place scope: ancient Northeast Asia, "
@@ -4444,6 +6006,413 @@ class HistoricalImagePromptStabilityTests(unittest.TestCase):
         self.assertEqual(cut["visual_subject"], "Goguryeo officers")
         self.assertIn("Goguryeo officers", cut["visual_scene"])
 
+    def test_runtime_visual_policy_concretizes_late_goguryeo_map_and_updates_place(self):
+        prompt = (
+            "Year/period: 666-668 AD; Exact place: Gungnae Fortress, Tang China; "
+            "Culture scope: Goguryeo; Material culture: iron weapons; "
+            "Scene evidence: Yeon Namsaeng and the Goguryeo succession crisis; "
+            "Main subject: detailed tactical map; "
+            "Scene: Tang generals studying a detailed map of Goguryeo fortresses"
+        )
+        normalized = normalize_cut_image_prompt(
+            prompt,
+            "고구려의 모든 지형과 성곽의 약점이 적의 지도 위에 고스란히 표시되었죠.",
+        )
+
+        self.assertIn("Main subject: one textless Goguryeo terrain relief model", normalized)
+        self.assertIn("red route cords", normalized)
+        self.assertIn("six raised fortress markers", normalized)
+        self.assertIn("Exact place: Liaodong Tang command hall, 667 AD", normalized)
+        self.assertNotIn("detailed map", normalized.lower())
+
+    def test_runtime_visual_policy_turns_rotten_apple_into_object_only_period_evidence(self):
+        prompt = (
+            "Year/period: 666-668 AD; Exact place: Gungnae Fortress; "
+            "Scene evidence: Yeon Namsaeng, palace guards, officials, Goguryeo succession crisis; "
+            "Main subject: shiny iron apple; "
+            "Scene: A shiny iron apple cut in half, revealing a rotten core"
+        )
+        normalized = normalize_cut_image_prompt(
+            prompt,
+            "겉으로는 강철 같던 국가가 내부의 부패로 썩어 들어가고 있었죠.",
+        )
+
+        self.assertIn("Main subject: a cracked Goguryeo granary jar", normalized)
+        self.assertIn("Object-only close evidence view", normalized)
+        self.assertIn("spoiled millet", normalized)
+        self.assertNotIn("iron apple", normalized.lower())
+
+    def test_runtime_visual_policy_keeps_rider_point_and_rein_actions_inside_prompt_budget(self):
+        prompt = (
+            "Year/period: 666-668 AD; Exact place: Gungnae Fortress; "
+            "Scene evidence: Yeon Namsaeng and the Goguryeo succession crisis; "
+            "Main subject: Namsaeng riding at the front; "
+            "Scene: Namsaeng riding at the front of the Tang army"
+        )
+        normalized = normalize_cut_image_prompt(
+            prompt,
+            "이번에는 고구려 지리를 누구보다 잘 아는 남생이 선봉 길잡이였죠.",
+        )
+
+        self.assertIn("his horse turns into one muddy road fork", normalized)
+        self.assertIn("Both lowered fists grip the paired leather reins", normalized)
+        self.assertIn("mortised split-log rails fill the frame", normalized)
+        self.assertIn("Exact place: storm-dark Liaodong muddy military road enclosed by thick split-log rails, 667 AD", normalized)
+
+    def test_runtime_visual_policy_does_not_turn_tang_emperor_into_emperor_yang(self):
+        script = {
+            "title": "안에서 열린 성문, 700년 제국의 몰락",
+            "topic": "668년 평양성 최후의 포위전",
+            "cuts": [
+                {
+                    "cut_number": 9,
+                    "narration": "당나라 황제는 평양성을 부수기 위해 모든 힘을 쏟아붓죠.",
+                    "image_prompt": (
+                        "Year/period: 668 AD; Exact place: Pyongyang Fortress; "
+                        "Culture scope: Goguryeo and Tang; "
+                        "Main subject: Tang Emperor pointing aggressively at the isolated fortress; "
+                        "Scene: The Tang Emperor points aggressively at Pyongyang Fortress"
+                    ),
+                }
+            ],
+        }
+
+        normalized = apply_script_visual_policy(script)["cuts"][0]["image_prompt"]
+
+        self.assertIn("Tang Emperor", normalized)
+        self.assertNotIn("Emperor Yang of Sui", normalized)
+        self.assertNotIn("645 AD", normalized)
+
+    def test_runtime_visual_policy_keeps_collapsing_defense_line_as_fortresses(self):
+        normalized = normalize_cut_image_prompt(
+            (
+                "Global visual world: Goguryeo succession crisis, 668 AD; "
+                "Year/period: 668 AD; Exact place: Goguryeo northern frontier; "
+                "Scene evidence: Yeon Namsaeng and the Goguryeo succession crisis; "
+                "Main subject: row of northern border fortresses falling like dominoes; "
+                "Scene: A row of northern border fortresses falling like dominoes"
+            ),
+            "철벽같던 북방의 방어선은 이미 도미노처럼 붕괴했습니다.",
+            "668년 고구려 계승 전쟁",
+        )
+
+        self.assertIn("row of northern border fortresses falling like dominoes", normalized)
+        self.assertNotIn("defense-route handover layout", normalized)
+        self.assertNotIn("sabotaged Goguryeo timber gate brace", normalized)
+
+    def test_runtime_visual_policy_keeps_unnamed_goguryeo_archers(self):
+        normalized = normalize_cut_image_prompt(
+            (
+                "Year/period: 668 AD; Exact place: Pyongyang Fortress; "
+                "Main subject: Goguryeo archers; "
+                "Scene: Goguryeo archers drawing their bows tightly in the dark"
+            ),
+            "고구려 군민들은 최후의 순간까지 처절하게 활시위를 당겼죠.",
+            "668년 고구려 계승 전쟁",
+        )
+
+        self.assertIn("Goguryeo archers", normalized)
+        self.assertNotIn("Heonseong", normalized)
+
+    def test_runtime_visual_policy_keeps_ep30_narration_actions_aligned(self):
+        base_prompt = (
+            "Year/period: 668 AD; Exact place: Pyongyang Fortress; "
+            "Main subject: historical subject; Scene: historical scene"
+        )
+        cases = (
+            (
+                "한밤중, 평양성의 북쪽 문으로 향하는 소름 끼치는 그림자들.",
+                "exactly two adults",
+                "Silhouettes creeping",
+            ),
+            (
+                "포로로 끌려간 보장왕과 남건 형제는 장안의 흙바닥에 꿇어앉죠.",
+                "exactly two adults",
+                "defeated royals kneeling",
+            ),
+            (
+                "끝까지 항전했던 둘째 남건은 중국 변방의 험지로 유배됩니다.",
+                "exactly one adult",
+                "lonely exile",
+            ),
+            (
+                "679년, 매국노 남생이 46세의 나이로 호위호식하다 죽습니다.",
+                "exactly one adult deceased Yeon Namsaeng",
+                "aging traitor lying dead",
+            ),
+            (
+                "환상에서 깨어나 고대인들의 무자비한 투쟁을 영원히 기억하십시오.",
+                "exactly one adult Goguryeo survivor",
+                "unblinking, serious eye",
+            ),
+            (
+                "살기 위해 조국을 버리고 적장 이세적과 은밀히 내통한 거죠.",
+                "exactly two adults",
+                "shadowy figure handing over",
+            ),
+            (
+                "하지만 목숨은 질겼고, 결국 피투성이가 된 채 사로잡힙니다.",
+                "exactly three adults",
+                "heavily bleeding man being dragged",
+            ),
+            (
+                "보장왕 역시 무기를 버리고 적장 이세적 앞에 엎드려 항복하죠.",
+                "exactly two adults",
+                "enemy general",
+            ),
+            (
+                "성문이 열리자 밖에서 대기하던 당나라 정예병이 쏟아집니다.",
+                "Tang assault infantry",
+                "traitor guard",
+            ),
+            (
+                "적의 손에 치욕스럽게 묶이느니 명예로운 죽음을 스스로 택하죠.",
+                "Namgeon choosing death",
+                "concealing a short straight iron dagger",
+            ),
+            (
+                "승전보를 울리며 당나라로 돌아간 이세적은 거대한 축배를 듭니다.",
+                "Tang general Li Ji",
+                "exactly three adult men",
+            ),
+            (
+                "천하를 다스리던 당 황제 앞에서 끔찍한 굴욕을 감내해야 했죠.",
+                "King Bojang",
+                "presents Yeon Namsaeng",
+            ),
+            (
+                "성문을 열어젖힌 반역자 신성은 당나라에서 부귀영화를 누렸죠.",
+                "Sinseong living in Tang luxury",
+                "pulls one timber gate bar",
+            ),
+            (
+                "선봉에 서서 조국의 심장을 찌른 남생 역시 최고의 대우를 받죠.",
+                "high-ranking Tang command dress",
+                "one horse",
+            ),
+            (
+                "우리는 광개토대왕과 을지문덕의 화려한 영광만을 기억하려 애쓰죠.",
+                "late-Goguryeo veteran",
+                "612 Goguryeo-Sui",
+            ),
+        )
+
+        for narration, expected, forbidden in cases:
+            with self.subTest(narration=narration):
+                normalized = normalize_cut_image_prompt(
+                    base_prompt,
+                    narration,
+                    "668 AD Goguryeo succession crisis",
+                )
+                self.assertIn(expected, normalized)
+                self.assertNotIn(forbidden, normalized)
+
+    def test_explicit_sui_612_scene_is_not_rewritten_as_tang_645(self):
+        normalized = normalize_cut_image_prompt(
+            (
+                "Culture scope: Goguryeo, Sui and neighboring Tang; "
+                "Year/period: 612 AD; Exact place: Salsu riverbank; "
+                "Main subject: Eulji Mundeok; "
+                "Scene: Eulji Mundeok commands Goguryeo troops against Sui soldiers at Salsu"
+            ),
+            "을지문덕은 612년 살수에서 수나라 군대를 막았습니다.",
+            "고구려 전쟁사",
+        )
+
+        self.assertIn("612", normalized)
+        self.assertIn("Eulji Mundeok", normalized)
+        self.assertNotIn("645 AD", normalized)
+        self.assertNotIn("Tang-Goguryeo siege pressure", normalized)
+
+    def test_runtime_visual_policy_concretizes_tang_household_wealth_without_text_or_japanese_clothing(self):
+        prompt = (
+            "Year/period: 666-668 AD; Exact place: Tang China; "
+            "Scene evidence: Yeon Namsaeng and the Goguryeo succession crisis; "
+            "Main subject: traitors drinking wine in luxury; "
+            "Scene: Traitors drinking wine in a luxurious bright Tang dynasty palace"
+        )
+        normalized = normalize_cut_image_prompt(
+            prompt,
+            "조국을 판 배신자들은 적국에서 대대손손 비열한 부귀를 누렸습니다.",
+        )
+
+        self.assertIn("Main subject: exactly two hardened Tang adult men", normalized)
+        self.assertIn("black Tang futou", normalized)
+        self.assertIn("dark round-neck paofu", normalized)
+        self.assertIn("Exactly one shallow footless bronze cup", normalized)
+        self.assertIn("sit shoulder-to-shoulder behind it", normalized)
+        self.assertIn("each folds his own two empty hands", normalized)
+        self.assertIn("exactly one shallow footless bronze cup", normalized)
+        self.assertIn("limp folded dyed silk bundles", normalized)
+        self.assertIn("dark timber wallboards", normalized)
+        self.assertIn("translucent silk-backed timber lattice", normalized)
+
+    def test_runtime_visual_policy_repairs_failed_ep29_scene_contracts(self):
+        source = (
+            "Year/period: 666-668 AD; Exact place: Goguryeo and Tang China; "
+            "Scene evidence: Yeon Namsaeng and the Goguryeo succession crisis; "
+            "Main subject: symbolic history scene; Scene: abstract metaphor"
+        )
+        cases = (
+            (
+                "665년, 연개소문이 죽자 형제들의 핏빛 내전이 터졌죠.",
+                "exactly three adult Goguryeo brothers",
+                "intersecting swords",
+            ),
+            (
+                "요동 방어선의 핵심 군사 기밀이 당나라로 고스란히 넘어갔죠.",
+                "one textless Goguryeo defense-route handover layout",
+                "six separated stone fortress markers",
+            ),
+            (
+                "수백만 대군으로도 못 뚫은 철벽이 제풀에 무너졌으니까요.",
+                "Object-only interior close view of exactly one horizontal timber locking beam",
+                "defenders recoil",
+            ),
+            (
+                "심지어 남생 가문은 스스로 성씨마저 바꾸는 치욕을 보입니다.",
+                "one severed grey woven Goguryeo clan sash",
+                "exactly one adult male Namsaeng",
+            ),
+            (
+                "당 황실 조상의 이름과 겹친다며 '천씨'로 창씨개명한 겁니다.",
+                "exactly two plain square bronze seal blocks",
+                "both adults and both objects",
+            ),
+            (
+                "제국의 숨통을 끊은 것은 다름 아닌 내부의 배신이었죠.",
+                "one short dagger half-covered by one folded command sash",
+                "inner-gate key block",
+            ),
+            (
+                "이 끔찍한 반역은 고구려 국방의 심장부를 완전히 찔렀습니다.",
+                "one textless clay fortress relief pierced by one straight iron dagger",
+                "six plain hardwood fortress tally blocks",
+            ),
+            (
+                "연개소문의 동생 연정토 역시 자신의 무리를 이끌고 도망치죠.",
+                "exactly four adult riders: Yeon Jeongto and three followers",
+                "compact mounted escape group",
+            ),
+            (
+                "우리는 이 끔찍한 패망의 역사에서 서늘한 교훈을 얻어야만 합니다.",
+                "several separate flat woven hemp sandals",
+                "exactly three flat woven hemp sandals",
+            ),
+            (
+                "영웅 찬가에 속아 전쟁의 참혹한 핏빛 민낯을 결코 망각해서는 안 됩니다.",
+                "exactly one adult Goguryeo survivor beside abandoned casualty gear",
+                "shrouded timber stretcher",
+            ),
+            (
+                "국가의 기둥이 썩어 무너지자, 백성들의 삶은 그 밑에 깔려 산산조각 났죠.",
+                "exactly two grieving Goguryeo villagers lifting one beam",
+                "One injured adult survivor",
+            ),
+        )
+        for narration, expected, forbidden in cases:
+            with self.subTest(narration=narration):
+                normalized = normalize_cut_image_prompt(source, narration)
+                self.assertIn(expected, normalized)
+                self.assertNotIn(forbidden, normalized)
+
+        rider_scene = normalize_cut_image_prompt(
+            source,
+            "연개소문의 동생 연정토 역시 자신의 무리를 이끌고 도망치죠.",
+        )
+        self.assertIn("one muddy wilderness track", rider_scene)
+        self.assertIn("dense pine slopes", rider_scene)
+        self.assertNotIn("split-log field rails", rider_scene)
+
+    def test_runtime_visual_policy_separates_army_casualty_and_long_service_scenes(self):
+        source = (
+            "Year/period: 666-668 AD; Exact place: Goguryeo and Tang China; "
+            "Scene evidence: Yeon Namsaeng and the Goguryeo succession crisis; "
+            "Main subject: symbolic history scene; Scene: abstract metaphor"
+        )
+        cases = (
+            (
+                "남생의 투항 소식에 당나라는 즉각 100만 대군을 다시 일으킵니다.",
+                "Tang invasion forces assembling for a renewed campaign",
+                "petition packet",
+            ),
+            (
+                "영웅담에 가려진 백성들의 처참한 희생을 결코 잊어선 안 됩니다.",
+                "one torn ceremonial victory sash over civilian sacrifice evidence",
+                "stretcher bearers",
+            ),
+            (
+                "남생의 12년 당나라 충성은 조국을 유린하는 서늘한 칼날이 되었습니다.",
+                "Namsaeng directs two Tang soldiers",
+                "one adult rider Yeon Namsaeng",
+            ),
+            (
+                "고구려 유민들의 피눈물이 요동을 붉게 적십니다.",
+                "red-clay runoff",
+                "one adult body",
+            ),
+        )
+        for narration, expected, forbidden in cases:
+            with self.subTest(narration=narration):
+                normalized = normalize_cut_image_prompt(source, narration)
+                self.assertIn(expected, normalized)
+                self.assertNotIn(forbidden, normalized)
+
+    def test_runtime_visual_policy_repairs_failed_count_and_empty_battlefield_scenes(self):
+        source = (
+            "Year/period: 666-668 AD; Exact place: Goguryeo; "
+            "Scene evidence: Yeon Namsaeng and the Goguryeo succession crisis; "
+            "Main subject: abstract danger; Scene: symbolic historical scene"
+        )
+        cases = (
+            (
+                "벼랑 끝에 몰린 남생은 아주 끔찍한 생존을 모색합니다.",
+                "approaching torchlight spills around the empty muddy path bend",
+                "enemy torch silhouettes",
+            ),
+            (
+                "약자는 도살당하고 강자만 살아남는 끔찍한 야생의 법칙 그 자체입니다.",
+                "Main subject: exactly two adults: Tang soldier; Goguryeo defender",
+                "exactly four adults",
+            ),
+            (
+                "시체 위에서 춤추는 권력의 잔혹한 야만성을 낱낱이 파헤쳐 드리죠.",
+                "Main subject: one low backless Tang command stool standing over fallen Goguryeo gear",
+                "Tang command seal crushing",
+            ),
+            (
+                "한 번 배신한 자는 스스로를 합리화하기 위해 끝없이 괴물이 되어갑니다.",
+                "Main subject: exactly three adults: Namsaeng; two prisoners",
+                "one adult Yeon Namsaeng ignoring",
+            ),
+        )
+        for narration, expected, forbidden in cases:
+            with self.subTest(narration=narration):
+                normalized = normalize_cut_image_prompt(source, narration)
+                self.assertIn(expected, normalized)
+                self.assertNotIn(forbidden, normalized)
+
+    def test_runtime_visual_policy_varies_four_burial_narrations(self):
+        source = (
+            "Year/period: 666-668 AD; Exact place: Tang China; "
+            "Scene evidence: Yeon Namsaeng and the Goguryeo succession crisis; "
+            "Main subject: tombstone; Scene: text carved on a tombstone"
+        )
+        narrations = (
+            "무덤 속에 남겨진 그들의 묘지명에는 조국에 대한 일말의 죄책감도 없었죠.",
+            "오직 당나라에 대한 충성심과 자신들이 누린 권력만을 길게 늘어놓았습니다.",
+            "제국은 영원하지 않지만, 배신자들의 이름은 돌에 새겨져 영원히 남았습니다.",
+            "북망산에 묻힌 천남생 일가의 무덤은 고구려 멸망의 가장 부끄러운 상처입니다.",
+        )
+        subjects = []
+        for narration in narrations:
+            normalized = normalize_cut_image_prompt(source, narration)
+            match = re.search(r"Main subject:\s*([^;]+)", normalized)
+            self.assertIsNotNone(match)
+            subjects.append(match.group(1))
+            self.assertNotIn("text carved", normalized.lower())
+        self.assertEqual(len(set(subjects)), 4)
+
     def test_visual_policy_converts_goguryeo_mechanical_metaphor_to_period_scene(self):
         script = {
             "visual_world": {
@@ -4668,6 +6637,82 @@ class HistoricalImagePromptStabilityTests(unittest.TestCase):
         self.assertIn("Unmarked blood-stained river stone", scenes[2])
         self.assertEqual(subjects[0], "Eulji Mundeok")
         self.assertIn("Sui army", subjects[1])
+
+    def test_visual_policy_corrects_goguryeo_665_succession_cuts_that_drift_to_612(self):
+        script = {
+            "title": '"물과 고기처럼 화합하라" 권력의 분열 EP.28',
+            "visual_world": {
+                "time_range": "665around year",
+                "place_scope": "ancient Northeast Asia, Goguryeo-related court and frontier settings",
+                "culture_scope": "Goguryeo and neighboring ancient Northeast Asian political and military world",
+                "material_culture": "Iron weapons, lamellar armor, hemp garments, wooden halls, fortress walls",
+            },
+            "cuts": [
+                {
+                    "cut_number": 9,
+                    "narration": "장남 남생, 차남 남건, 그리고 삼남 남산이었습니다.",
+                    "image_prompt": "Scene: Three brothers wearing high-ranking official robes, looking tense",
+                    "visual_year": "612 AD",
+                    "visual_period": "Sui-Goguryeo war, 612 AD",
+                    "visual_location": "Pyongyang Fortress",
+                    "visual_evidence": "큐시트 연도=665년경; 배경=평양성; 핵심인물=연개소문; 주요인물=남생(장남), 남건(차남), 남산(삼남)",
+                    "visual_subject": "brothers wearing high-ranking official robes",
+                    "visual_scene": "Three brothers wearing high-ranking official robes, looking tense",
+                },
+                {
+                    "cut_number": 39,
+                    "narration": "남건과 남산의 반란군은 무자비하게 궁궐을 완벽히 장악했죠.",
+                    "image_prompt": "Scene: stylish medium-close entrance of Emperor Yang of Sui",
+                    "visual_year": "612 AD",
+                    "visual_period": "Sui-Goguryeo war, 612 AD",
+                    "visual_location": "Pyongyang Fortress",
+                    "visual_evidence": "큐시트 연도=665년경; 배경=평양성; 핵심인물=연개소문; 주요인물=남생(장남), 남건(차남), 남산(삼남)",
+                    "visual_subject": "Emperor Yang of Sui",
+                    "visual_scene": "stylish medium-close entrance of Emperor Yang of Sui, exhausted eyes",
+                },
+                {
+                    "cut_number": 59,
+                    "narration": "외적을 막아야 할 칼끝이 동족의 목을 찌르는 서늘한 지옥도였죠.",
+                    "image_prompt": "Scene: Exhausted Sui soldiers struggle across a cold open river crossing",
+                    "visual_year": "612 AD",
+                    "visual_period": "Sui-Goguryeo war, 612 AD",
+                    "visual_location": "612 Goguryeo-Sui open river battlefield, muddy river crossing",
+                    "visual_evidence": "큐시트 연도=665년경; 배경=평양성; 핵심인물=연개소문; 주요인물=남생(장남), 남건(차남), 남산(삼남)",
+                    "visual_subject": "Sui soldiers",
+                    "visual_scene": "Exhausted Sui soldiers struggle across a cold open river crossing",
+                },
+                {
+                    "cut_number": 104,
+                    "narration": "권력을 사유화하려는 끝없는 탐욕이 만들어낸 거대한 핏빛 나비효과.",
+                    "image_prompt": "Scene: stylish medium-close entrance of Yuhwa",
+                    "visual_year": "612 AD",
+                    "visual_period": "Sui-Goguryeo war, 612 AD",
+                    "visual_location": "Pyongyang Fortress",
+                    "visual_evidence": "큐시트 연도=665년경; 배경=평양성; 핵심인물=연개소문; 주요인물=남생(장남), 남건(차남), 남산(삼남)",
+                    "visual_subject": "Yuhwa",
+                    "visual_scene": "stylish medium-close entrance of Yuhwa, adult woman with attractive charisma",
+                }
+            ],
+        }
+
+        applied = apply_script_visual_policy(copy.deepcopy(script))
+        cut = applied["cuts"][0]
+        prompt = cut["image_prompt"]
+
+        self.assertEqual(cut["visual_year"], "c. 665 AD")
+        self.assertEqual(cut["visual_period"], "Goguryeo succession crisis, c. 665 AD")
+        self.assertIn("Year/period: c. 665 AD; Goguryeo succession crisis, c. 665 AD", prompt)
+        self.assertIn("Pyongyang Fortress", prompt)
+        self.assertNotIn("612 AD", prompt)
+        self.assertNotIn("Sui-Goguryeo", prompt)
+        all_prompts = "\n".join(str(item.get("image_prompt") or "") for item in applied["cuts"])
+        all_scenes = "\n".join(str(item.get("visual_scene") or "") for item in applied["cuts"])
+        self.assertNotIn("Emperor Yang", all_prompts)
+        self.assertNotIn("Sui soldiers", all_prompts)
+        self.assertNotIn("Yuhwa", all_prompts)
+        self.assertIn("rebel guards seize the Pyongyang palace courtyard", all_scenes)
+        self.assertIn("turn iron blades against fellow Goguryeo soldiers", all_scenes)
+        self.assertIn("blood-red butterfly-shaped shadow", all_scenes)
 
     def test_visual_policy_converts_goguryeo_eye_metaphor_to_period_scene(self):
         script = {

@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <defs>
+    <linearGradient id="earth27" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#d4bc8b"/>
+      <stop offset="0.55" stop-color="#b48d5e"/>
+      <stop offset="1" stop-color="#8b6846"/>
+    </linearGradient>
+    <linearGradient id="shroud27" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#b69a73"/>
+      <stop offset="1" stop-color="#71543c"/>
+    </linearGradient>
+    <linearGradient id="millet27" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#e3c15a"/>
+      <stop offset="1" stop-color="#a3732f"/>
+    </linearGradient>
+  </defs>
+  <rect width="1280" height="720" fill="url(#earth27)"/>
+  <g fill="none" stroke="#76593c" stroke-width="7" opacity="0.34" stroke-linecap="round">
+    <path d="M0 111 Q302 77 618 120 T1280 104"/>
+    <path d="M0 604 Q318 568 651 614 T1280 588"/>
+  </g>
+
+  <g id="closed-shroud27">
+    <ellipse cx="700" cy="473" rx="379" ry="55" fill="#4d3928" opacity="0.3"/>
+    <path d="M385 270 Q647 210 997 276 Q1059 350 1008 444 Q679 506 389 439 Q337 351 385 270 Z" fill="url(#shroud27)" stroke="#3d2f24" stroke-width="15"/>
+    <path d="M434 298 Q699 251 960 303 M408 362 Q701 322 997 370 M436 427 Q698 463 958 421" fill="none" stroke="#ccb187" stroke-width="9" opacity="0.62"/>
+    <path d="M506 252 Q691 344 878 249 M500 458 Q694 369 886 461" fill="none" stroke="#5d4633" stroke-width="11" opacity="0.74"/>
+    <path d="M386 301 Q348 353 390 415" fill="none" stroke="#d5bc92" stroke-width="12" opacity="0.74"/>
+    <path d="M407 311 Q442 292 481 302" fill="none" stroke="#6b5039" stroke-width="13" stroke-linecap="round"/>
+  </g>
+
+  <g id="three-millet-stalks27" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M424 307 Q391 238 378 135 M445 300 Q444 214 452 107 M466 304 Q493 226 520 140" stroke="#58703b" stroke-width="13"/>
+    <path d="M399 245 Q359 225 338 196 M445 224 Q410 197 394 169 M475 231 Q514 206 536 178" stroke="#75904a" stroke-width="9"/>
+    <g fill="url(#millet27)" stroke="#735126" stroke-width="5">
+      <path d="M378 142 C341 117 342 63 378 40 C413 66 413 118 378 142 Z"/>
+      <path d="M452 115 C413 88 417 32 456 14 C489 45 487 96 452 115 Z"/>
+      <path d="M520 146 C485 119 490 67 525 47 C557 75 554 124 520 146 Z"/>
+    </g>
+    <g fill="#f0d073" opacity="0.9">
+      <circle cx="365" cy="84" r="7"/><circle cx="390" cy="72" r="7"/><circle cx="378" cy="105" r="7"/>
+      <circle cx="443" cy="57" r="7"/><circle cx="465" cy="49" r="7"/><circle cx="455" cy="82" r="7"/>
+      <circle cx="513" cy="91" r="7"/><circle cx="536" cy="82" r="7"/><circle cx="523" cy="115" r="7"/>
+    </g>
+  </g>
+</svg>

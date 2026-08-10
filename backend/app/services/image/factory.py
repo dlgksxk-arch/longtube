@@ -6,7 +6,7 @@ from app.services.image.nano_banana_service import NanoBananaService
 from app.services.image.openai_image_service import OpenAIImageService
 
 DEFAULT_IMAGE_MODEL = "comfyui-dreamshaper-xl-longtube"
-DEFAULT_THUMBNAIL_MODEL = "nano-banana-2"
+DEFAULT_THUMBNAIL_MODEL = "comfyui-z-image-turbo"
 
 IMAGE_REGISTRY: dict[str, dict] = {
     "comfyui-dreamshaper-xl": {
@@ -34,6 +34,12 @@ IMAGE_REGISTRY: dict[str, dict] = {
         "cost_per_unit": "Free (local GPU)",
         "cost_value": 0.0,
     },
+    "comfyui-z-image-base": {
+        "name": "Z-Image Base",
+        "provider": "comfyui",
+        "cost_per_unit": "Free (local GPU)",
+        "cost_value": 0.0,
+    },
     "comfyui-flux2-klein-4b": {
         "name": "Flux.2 Klein 4B",
         "provider": "comfyui",
@@ -42,6 +48,12 @@ IMAGE_REGISTRY: dict[str, dict] = {
     },
     "comfyui-flux2-klein-9b": {
         "name": "Flux.2 Klein 9B FP8",
+        "provider": "comfyui",
+        "cost_per_unit": "Free (local GPU)",
+        "cost_value": 0.0,
+    },
+    "comfyui-krea2": {
+        "name": "로컬krea2",
         "provider": "comfyui",
         "cost_per_unit": "Free (local GPU)",
         "cost_value": 0.0,
@@ -82,6 +94,14 @@ IMAGE_REGISTRY: dict[str, dict] = {
 def resolve_image_model(model_id: str | None) -> str:
     candidate = str(model_id or "").strip()
     return candidate if candidate in IMAGE_REGISTRY else DEFAULT_IMAGE_MODEL
+
+
+def resolve_thumbnail_model(model_id: str | None) -> str:
+    """Enforce the local-only thumbnail generation policy."""
+    candidate = resolve_image_model(model_id or DEFAULT_THUMBNAIL_MODEL)
+    if IMAGE_REGISTRY.get(candidate, {}).get("provider") == "comfyui":
+        return candidate
+    return DEFAULT_THUMBNAIL_MODEL
 
 
 def get_image_service(model_id: str) -> BaseImageService:

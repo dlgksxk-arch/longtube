@@ -16,6 +16,51 @@ from pathlib import Path
 from app.config import resolve_project_dir
 
 
+def is_canonical_script_image_prompt(prompt: str) -> bool:
+    """Return True for prepared-script cut prompts that already contain metadata and scene."""
+    text = str(prompt or "").strip()
+    labelled_prompt = bool(
+        re.search(r"(?:^|;\s*)Year/period:\s*.+", text, re.IGNORECASE)
+        and re.search(r";\s*Exact place:\s*.+", text, re.IGNORECASE)
+        and re.search(r";\s*Style:\s*.+", text, re.IGNORECASE)
+        and re.search(r";\s*Scene:\s*.+", text, re.IGNORECASE)
+    )
+    compact_ch4_prompt = bool(
+        re.search(
+            r"^.+?\.\s*Cinematic\s+live[- ]action\s+historical\s+drama,\s*"
+            r"photorealistic\s+feature[- ]film\s+frame,",
+            text,
+            re.IGNORECASE,
+        )
+        and re.search(r"\.\s*Scene:\s*.+", text, re.IGNORECASE)
+    )
+    return labelled_prompt or compact_ch4_prompt
+
+
+def apply_project_style_to_canonical_prompt(prompt: str, global_style: str) -> str:
+    """Keep source metadata and Scene verbatim; replace only the style field."""
+    source = str(prompt or "").strip()
+    style = str(global_style or "").strip()
+    if not source or not style:
+        return source
+    styled = re.sub(
+        r";\s*Style:\s*.*?(?=;\s*(?:Emotion direction:|Mood and camera:|(?:Main subject:\s*)?Scene:))",
+        f"; Style: {style}",
+        source,
+        count=1,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    # This marker is injected by the legacy normalizer, not supplied by the
+    # workbook's original image prompt.  The direct canonical path keeps only
+    # metadata, style, emotion/dialogue direction, and the source Scene.
+    return re.sub(
+        r";\s*NARRATION\s+VISUAL\s+ALIGNMENT:\s*.*$",
+        "",
+        styled,
+        flags=re.IGNORECASE | re.DOTALL,
+    ).strip()
+
+
 # ── 레퍼런스 스타일 락 (모든 이미지 생성 경로 공용) ──
 #
 # 이 프리픽스는 레퍼런스 이미지가 하나라도 첨부된 모든 프롬프트에 예외 없이
@@ -858,19 +903,6 @@ ANIMAL_ANATOMY_NEGATIVE_PROMPT = (
     "mutated paws, fused paws, malformed tail, extra tail"
 )
 
-VISUAL_QA_NEGATIVE_PROMPT = (
-    "workbench QA failure, review failure anatomy, ambiguous anatomy, unreadable hand count, "
-    "six fingers, seven fingers, four fingers on visible human hand, finger cluster, "
-    "finger stump, melted thumb, extra thumb, hand fused to weapon, hand fused to sleeve, "
-    "weapon fused to palm, disconnected arm, duplicate forearm, impossible elbow, "
-    "floating foot, detached foot, leg growing from cloth, duplicate knee, extra animal legs, "
-    "missing animal legs, animal-human hybrid, animal with human hands, animal holding tools, "
-    "centaur, horse-human hybrid, human torso on horse body, human upper body fused to horse body, "
-    "wrong-period weapon, anachronistic weapon, fantasy weapon, fantasy armor, sci-fi armor, "
-    "modern tactical gear, modern rifle, modern pistol, modern helmet, modern vehicle, "
-    "modern harness, impossible historical prop"
-)
-
 COMMON_STYLE_NEGATIVE_PROMPT = (
     "childlike cartoon, children's book style, toddler drawing, kindergarten drawing, "
     "cute mascot, chibi, kawaii, toy-like character, plastic doll, plush toy, "
@@ -880,6 +912,29 @@ COMMON_STYLE_NEGATIVE_PROMPT = (
     "palette, bright cheerful fairy-tale mood, low-contrast cute illustration, "
     "photorealistic, photorealism, photographic, live-action still, raw photo"
 )
+
+_CINEMATIC_LIVE_ACTION_STYLE_RE = re.compile(
+    r"\b(?:cinematic\s+live[- ]action\s+historical\s+drama|"
+    r"photorealistic\s+(?:cinematic\s+)?(?:live[- ]action|feature[- ]film))\b",
+    re.IGNORECASE,
+)
+_LIVE_ACTION_CONFLICTING_NEGATIVE_RE = re.compile(
+    r"\b(?:photorealistic(?:\s+photo)?|photorealism|photographic(?:\s+still)?|"
+    r"live[- ]action(?:\s+still)?|raw(?:\s+camera)?\s+photo)\b",
+    re.IGNORECASE,
+)
+
+
+def _uses_cinematic_live_action_style(prompt: str) -> bool:
+    return bool(_CINEMATIC_LIVE_ACTION_STYLE_RE.search(str(prompt or "")))
+
+
+def _remove_live_action_conflicting_negatives(value: str) -> str:
+    return ", ".join(
+        term.strip()
+        for term in str(value or "").split(",")
+        if term.strip() and not _LIVE_ACTION_CONFLICTING_NEGATIVE_RE.search(term)
+    )
 
 COMMON_COMPOSITION_NEGATIVE_PROMPT = (
     "static lineup, flat lineup, parade lineup, full-body group lineup, "
@@ -1535,8 +1590,11 @@ PREINDUSTRIAL_LAMP_PLACEMENT_DIRECTIVE = (
     "candle, torch, brazier, or flame in a preindustrial setting, the visible "
     "flame source is low and local: one floor, table, doorway-sill, hand-held, "
     "or low-stand oil lamp, candle, torch, lantern, or brazier below shoulder "
-    "height. Upper rafters, ceiling centers, high beams, and blank plaster bays "
-    "remain unbroken dark material, timber grain, soot, dust, and shadow."
+    "height. In interior scenes, upper rafters, ceiling centers, high beams, "
+    "and blank plaster bays remain unbroken dark material, timber grain, soot, "
+    "dust, and shadow. In outdoor, courtyard, road, gate exterior, wall exterior, "
+    "camp, field, riverbank, or open-air scenes, the upper frame remains open "
+    "sky, smoke, cloud, wall silhouette, roof edge, or natural outdoor air only."
 )
 
 MEDIEVAL_JAPANESE_COSTUME_ARMOR_DIRECTIVE = (
@@ -3635,6 +3693,25 @@ def sanitize_global_style_for_prompt(global_style: str, image_prompt: str = "") 
     for pattern in _GLOBAL_STYLE_PUBLIC_PATTERNS:
         style = re.sub(pattern, "", style, flags=re.IGNORECASE)
 
+    style = re.sub(
+        r"\bscroll[-\s]*stopping\b",
+        "attention-grabbing",
+        style,
+        flags=re.IGNORECASE,
+    )
+    style = re.sub(
+        r",?\s*\band\s+abstract\s+maps?\s+unless\s+the\s+narration\s+directly\s+requires\s+a\s+map\.?",
+        ".",
+        style,
+        flags=re.IGNORECASE,
+    )
+    style = re.sub(
+        r"\babstract\s+maps?\s+unless\s+the\s+narration\s+directly\s+requires\s+a\s+map\.?",
+        "",
+        style,
+        flags=re.IGNORECASE,
+    )
+
     # Global style is shared by every cut. Setting words in it must not turn
     # source-story meadow/winter cuts into office/city scenes.
     if not _MODERN_SETTING_RE.search(image_prompt or ""):
@@ -3889,19 +3966,23 @@ EARLY_MODERN_EUROPE_WRONG_CULTURE_NEGATIVE_PROMPT = (
 
 IMAGE_QUALITY_DIRECTIVE = (
     " || IMAGE QUALITY LOCK - top-tier 16:9 1080p-ready story frame, crisp "
-    "readable silhouettes, bold hand-painted linework, extra-thick black "
-    "outer contours, clean matte cel shading, controlled natural light, sharp "
+    "readable figures, variable-width scratchy dip-pen linework, thin angular "
+    "interior contours, controlled dark contour accents at selected outer "
+    "edges, dense hatching with intersecting hatch strokes, muted watercolor and gouache washes, "
+    "controlled directional light, sharp "
     "faces, stable anatomy for the body parts visible in the chosen camera "
     "crop, clean object edges, finished production illustration."
 )
 
 ADULT_GRAPHIC_NOVEL_STYLE_DIRECTIVE = (
     " || ADULT GRAPHIC NOVEL STYLE LOCK - render with a serious adult graphic "
-    "novel and mature documentary manhwa tone: extra-thick black ink contour "
-    "lines, bold outer silhouettes, heavy brush-ink line weight, hard shadow "
-    "masses, low-key dark cinematic atmosphere, high-contrast shadow shapes, "
-    "gritty period material texture, desaturated restrained color grading, "
-    "dramatic rim light, angular stylish single-frame composition, dynamic cropping, "
+    "novel and mature vintage dark historical manhwa tone: variable-width "
+    "scratchy dip-pen contour lines, thin angular interior contours, controlled "
+    "dark contour accents only along selected outer edges, dry-brush texture, "
+    "dense hatching with intersecting hatch strokes, aged fibrous print-stock grain, muted watercolor "
+    "and gouache washes, sepia, dirty ivory, tobacco brown, rust, faded burgundy, "
+    "and soot-black colors, hard directional shadow masses, elongated angular adult "
+    "anatomy, bleak ominous atmosphere, angular single-frame composition, dynamic cropping, "
     "varied camera rhythm, emotion-forward staging, and weighty facial acting. "
     "Across adjacent cuts, do not repeat the same camera distance, same flat "
     "front-facing group arrangement, or same crawling/fallen body layout when "
@@ -3910,9 +3991,11 @@ ADULT_GRAPHIC_NOVEL_STYLE_DIRECTIVE = (
     "shots while preserving the exact story event. Historical material "
     "accuracy outranks style: clothing, role-specific equipment, animals, architecture, "
     "props, and terrain must stay exact to the stated era, place, and culture. "
-    "Avoid bright "
-    "pastel skies, cute rounded forms, clean storybook softness, and cheerful "
-    "children's illustration color balance. "
+    "This is a rendering-style lock only; never import unmentioned costume, equipment, "
+    "symbols, architecture, or props. Avoid uniform "
+    "extra-thick outlines, clean or matte anime cel shading, smooth vector lines, "
+    "glossy digital gradients, bright pastel skies, cute rounded forms, clean storybook "
+    "softness, and cheerful children's illustration color balance. "
     "The style is mature and severe, not childlike, cute, chibi, mascot-like, "
     "toy-like, or children's book illustration."
 )
@@ -3920,28 +4003,15 @@ ADULT_GRAPHIC_NOVEL_STYLE_DIRECTIVE = (
 COMMON_SENSE_ANATOMY_DIRECTIVE = (
     " || COMMON-SENSE ANATOMY LOCK - all visible living bodies obey ordinary "
     "physical anatomy. Each visible human has one head, one face, one neck, "
-    "one torso, two arms, two hands, two legs when legs are visible, and natural "
+    "one torso, two arms, two legs when legs are visible, and natural "
     "left-right body symmetry around one spine. A readable human can never share "
     "a head, torso, shoulder line, waist, or limb set with another body. Two "
     "people must appear as two separated silhouettes with two separated heads, "
     "two separated necks, two separated torsos, and visible negative space, "
-    "clothing boundaries, or overlap edges between them. "
-    "joint directions. Default visible hand budget is zero. Do not add hands, "
-    "fingers, palms, or hand close-ups just to satisfy anatomy; visible hands "
-    "appear only when the Scene action, gesture, object contact, weapon grip, "
-    "reins, armrest grip, or body pose already requires them. When hands are "
-    "not required, hide them inside sleeves, behind bodies, behind objects, "
-    "below the crop, in shadow, or outside the frame. When a hand is required, "
-    "keep it conservative and physically readable: one coherent palm when "
-    "visible, one thumb, four fingers, ordinary knuckle spacing, and a plausible "
-    "wrist connection. Fingers do not multiply, fuse, fork, melt together, bend "
-    "backwards, or grow from the wrong side of the palm. If the Scene does not "
-    "make hands the main subject, keep hands small, partly sleeve-covered, "
-    "clenched, gripping one named object, holding reins, or cropped at the frame "
-    "edge; do not make large foreground hand close-ups, spread fingers, splayed "
-    "fingers, or detailed fingernail close-ups. If hands are the main action "
-    "subject, limit the frame to one or two readable hands doing one simple "
-    "action, with the exact thumb/finger layout visible and no extra background hands. "
+    "clothing boundaries, or overlap edges between them. Limbs follow natural "
+    "joint directions, remain proportional to their own body, and stay secondary "
+    "to the requested face, torso, named prop, and environment unless the Scene "
+    "explicitly makes an anatomy detail the main subject. "
     "Every visible supporting body is fully connected from head or torso through "
     "the visible weight-bearing limbs. Each visible "
     "animal keeps the species' normal body plan: horses, cats, wolves, dogs, "
@@ -3957,18 +4027,22 @@ COMMON_SENSE_ANATOMY_DIRECTIVE = (
 
 OBJECT_EVIDENCE_IMAGE_QUALITY_DIRECTIVE = (
     " || IMAGE QUALITY LOCK - top-tier 16:9 1080p-ready object evidence frame, "
-    "crisp readable object silhouettes, bold hand-painted linework, extra-thick "
-    "black outer contours, clean matte cel shading, controlled natural light, clean object edges, "
+    "crisp readable object silhouettes, variable-width scratchy dip-pen linework, "
+    "thin angular interior contours, controlled heavy silhouette accents, dense "
+    "hatching with intersecting hatch strokes, aged fibrous print-stock grain, muted watercolor and gouache "
+    "washes, controlled directional light, clean object edges, "
     "stable perspective on the requested low surface, and finished production "
     "illustration."
 )
 
 OBJECT_EVIDENCE_GRAPHIC_NOVEL_STYLE_DIRECTIVE = (
     " || ADULT GRAPHIC NOVEL STYLE LOCK - render object-only evidence with a "
-    "serious adult graphic novel and mature documentary manhwa tone: extra-thick "
-    "black ink outlines, bold visible object silhouettes, heavy brush-ink line "
-    "weight, dark low-key cinematic atmosphere, high-contrast shadow shapes, "
-    "gritty period material texture, desaturated restrained color grading, dramatic rim light, "
+    "serious adult graphic novel and mature vintage dark historical manhwa tone: "
+    "variable-width scratchy dip-pen outlines, thin angular interior contours, "
+    "controlled heavy silhouette accents, dry-brush texture, dense hatching and "
+    "intersecting hatch strokes, aged fibrous print-stock grain, muted watercolor and gouache washes, "
+    "sepia, dirty ivory, tobacco brown, rust, faded burgundy, and soot-black colors, "
+    "hard directional shadow masses, bleak ominous atmosphere, "
     "and weighty still-life tension. The style is mature and severe, not "
     "childlike, cute, chibi, mascot-like, toy-like, or children's book "
     "illustration."
@@ -4028,17 +4102,6 @@ DYNAMIC_ACTION_EMOTION_DIRECTIVE = (
     "a clear diagonal impact path. Emotional dialogue cuts show the spoken "
     "meaning as visible expression, gesture, distance between people, object "
     "contact, or environmental pressure, not as a neutral standing portrait."
-)
-
-VISUAL_QA_READINESS_DIRECTIVE = (
-    " || VISUAL QA READINESS LOCK - the image must survive frame-by-frame "
-    "workbench review before video assembly. Keep the main subject readable, "
-    "with no ambiguous anatomy, off-era props, accidental extra body, extra "
-    "animal, or stray object. Visible separated human hands show exactly one "
-    "thumb and four fingers, or stay simplified inside sleeve shadow without "
-    "individual malformed digits. Visible legs and feet connect to the correct "
-    "body. Animals keep a normal species body plan. Props, weapons, harnesses, "
-    "and tools match the stated period, place, culture scope, and scene action."
 )
 
 CHARACTER_ENTRANCE_GRANDEUR_DIRECTIVE = (
@@ -4227,6 +4290,13 @@ GOGURYEO_SILLA_415_NEGATIVE_PROMPT = (
     "Tang palace, Song official hat, Chinese imperial dragon robe, fantasy Asia, "
     "modern Korean palace tourist scene, neon museum label, glass vitrine, "
     "modern exhibition plaque, modern national flag"
+)
+
+BAEKJE_FOUNDATION_WRONG_PERIOD_NEGATIVE_PROMPT = (
+    "Joseon gat, black horsehair gat, tall Joseon official hat, winged Joseon court hat, "
+    "Joseon hanbok silhouette, Joseon jeogori and chima, Joseon palace robe, Goryeo court hat, "
+    "late medieval Korean court dress, ornate tiled royal palace, Joseon tiled courtyard, "
+    "modernized traditional wedding costume, ceremonial bridal hanbok, utility pole, power line"
 )
 
 HOU_BOWL_NEGATIVE_PROMPT = (
@@ -4452,13 +4522,15 @@ _BOOK_RENDER_OBJECT_RE = re.compile(
 _PROMPT_FIELD_RE_CACHE: dict[str, re.Pattern] = {}
 _BACKGROUND_SHOPPING_LIST_FIELD_RE = re.compile(
     r"(?:^|;\s*)Material\s+culture\s*:\s*.*?"
-    r"(?=;\s*(?:Continuity\s+rule|Year/period|Exact\s+place|Scene\s+evidence|"
-    r"Style|Main\s+subject|Scene|Time\s+range|Place\s+scope|Culture\s+scope)\s*:|$)",
+    r"(?=[.;]\s*(?:Continuity\s+rule|Year/period|Exact\s+place|Scene\s+evidence|"
+    r"Style|Main\s+subject|Scene|Time\s+range|Place\s+scope|Culture\s+scope|"
+    r"Thumbnail\s+image\s+prompt)\s*:|$)",
     re.IGNORECASE | re.DOTALL,
 )
 _CONTINUITY_RULE_FIELD_RE = re.compile(
     r"(?:^|;\s*)Continuity\s+rule\s*:\s*.*?"
-    r"(?=;\s*(?:Year/period|Exact\s+place|Scene\s+evidence|Style|Main\s+subject|Scene)\s*:|$)",
+    r"(?=[.;]\s*(?:Year/period|Exact\s+place|Scene\s+evidence|Style|Main\s+subject|Scene|"
+    r"Thumbnail\s+image\s+prompt)\s*:|$)",
     re.IGNORECASE | re.DOTALL,
 )
 _SCENE_EVIDENCE_FIELD_RE = re.compile(
@@ -5434,8 +5506,8 @@ def _normalize_text_prone_surface_terms(prompt: str) -> str:
         (r"\bgate\s+plaques?\b", "plain uninterrupted wooden gate lintels"),
         (r"\bsignboards?\b", "plain uninterrupted structural material surfaces"),
         (r"\bwall\s+plaques?\b", "irregular plaster or wood-grain wall stains"),
-        (r"\bblank\s+scrolls?\b", "rolled blank cream paper bundles"),
-        (r"\bscrolls?\b", "rolled blank cream paper bundles"),
+        (r"\bblank\s+scrolls?\b(?!-stopping)", "rolled blank cream paper bundles"),
+        (r"\bscrolls?\b(?!-stopping)", "rolled blank cream paper bundles"),
         (r"\bpetitions?\b", "cord-tied closed cream bundles held edge-on"),
         (r"\bdocuments?\b", "cord-tied closed cream bundles held edge-on"),
         (r"\bsealed\s+blank\s+decrees?\b", "short sealed cord-tied cream roll cylinder held between both hands"),
@@ -6033,10 +6105,23 @@ def _normalize_preindustrial_light_scene_language(prompt: str) -> str:
     for pattern, replacement in replacements:
         scene = re.sub(pattern, replacement, scene, flags=re.IGNORECASE)
     if "below shoulder height" not in scene.lower():
+        outdoor_light_scene = bool(
+            re.search(
+                r"\b(outside|outdoor|open[-\s]*air|courtyard|road|street|lane|path|"
+                r"gate\s+exterior|wall\s+exterior|camp|field|riverbank|shoreline|"
+                r"battlefield|yard|open\s+ground)\b",
+                scene,
+                re.IGNORECASE,
+            )
+        )
+        upper_frame_clause = (
+            "open sky, smoke, cloud, wall silhouettes, roof edges, and natural outdoor air remain visible above"
+            if outdoor_light_scene
+            else "upper rafters and blank plaster bays remain unbroken dark material"
+        )
         scene = (
             f"{scene}, with the visible flame source at a low table edge, floor edge, "
-            "doorway sill, hand height, or low stand below shoulder height; upper "
-            "rafters and blank plaster bays remain unbroken dark material"
+            f"doorway sill, hand height, or low stand below shoulder height; {upper_frame_clause}"
         )
     return _replace_prompt_field(p, "Scene", _clean_prompt_commas(scene))
 
@@ -6518,6 +6603,19 @@ def _normalize_medieval_japanese_armor_language(prompt: str) -> str:
 
 def _scene_text(prompt: str) -> str:
     scene = _prompt_field(prompt, "Scene")
+    if not scene:
+        match = re.search(
+            r"\bScene\s*:\s*(.*?)(?="
+            r";\s*(?:Year/period|Exact place|Scene evidence|Style|Main subject|Scene|NARRATION\s+VISUAL\s+ALIGNMENT)\s*:"
+            r"|\s+NARRATION\s+VISUAL\s+ALIGNMENT\s*:"
+            r"|\s+Apply\s+this\s+as\s+rendering\s+style\s+only\b"
+            r"|\s+\|\|\s+"
+            r"|$)",
+            prompt or "",
+            re.IGNORECASE | re.DOTALL,
+        )
+        if match:
+            scene = match.group(1)
     return scene or prompt or ""
 
 
@@ -7802,6 +7900,8 @@ def _scene_requests_maritime_landing(prompt: str) -> bool:
 
 
 def _scene_requests_mounted_travel(prompt: str) -> bool:
+    if "THUMBNAIL CLOSE-UP FACE FRAME LOCK" in str(prompt or ""):
+        return False
     scene = _scene_text(prompt)
     return bool(
         re.search(
@@ -8771,9 +8871,12 @@ def _apply_common_image_constraints(prompt: str, enable_historical_guard: bool =
     is_early_modern_europe_source_context = _is_early_modern_europe_context(p)
     is_west_african_ashanti_source_context = _is_west_african_ashanti_british_context(p)
     is_outdoor_location_scene = _scene_names_outdoor_location(p)
-    is_map_object_scene = (
+    is_strict_map_object_scene = (
         _scene_requests_map_object(p)
         or _scene_requests_planning_board_object(p)
+    )
+    is_map_object_scene = (
+        is_strict_map_object_scene
         or _scene_requests_generic_object_evidence(p)
     )
     is_group_planning_surface_scene = _scene_requests_group_planning_surface(p)
@@ -8856,8 +8959,6 @@ def _apply_common_image_constraints(prompt: str, enable_historical_guard: bool =
             p += CUT_INVENTORY_BOUNDARY_DIRECTIVE
         if "DYNAMIC ACTION AND EMOTION LOCK" not in p:
             p += DYNAMIC_ACTION_EMOTION_DIRECTIVE
-        if "VISUAL QA READINESS LOCK" not in p:
-            p += VISUAL_QA_READINESS_DIRECTIVE
         if (
             prompt_mentions_major_character(p)
             and "CHARACTER ENTRANCE GRANDEUR LOCK" not in p
@@ -9123,7 +9224,7 @@ def _apply_common_image_constraints(prompt: str, enable_historical_guard: bool =
         and "CAMP WORK VISIBLE SET LOCK" not in p
     ):
         p += CAMP_WORK_VISIBLE_SET_DIRECTIVE
-    if is_map_object_scene and "EMPTY EVIDENCE FRAME LOCK" not in p:
+    if is_strict_map_object_scene and "EMPTY EVIDENCE FRAME LOCK" not in p:
         p += MAP_OBJECT_EMPTY_EVIDENCE_DIRECTIVE
     elif not _scene_requests_humans(p) and "EMPTY EVIDENCE FRAME LOCK" not in p:
         p += NO_UNREQUESTED_HUMANS_DIRECTIVE
@@ -9340,12 +9441,17 @@ def historical_negative_prompt(prompt: str, enabled: bool = False) -> str:
     p = prompt or ""
     if not enabled and not _has_explicit_period_place_context(p):
         return ""
+    style_negative = (
+        _remove_live_action_conflicting_negatives(COMMON_STYLE_NEGATIVE_PROMPT)
+        if _uses_cinematic_live_action_style(p)
+        else COMMON_STYLE_NEGATIVE_PROMPT
+    )
     parts = [
         NO_TEXT_NEGATIVE_PROMPT,
         NO_MAP_NEGATIVE_PROMPT,
         COMMON_ANATOMY_NEGATIVE_PROMPT,
         ANIMAL_ANATOMY_NEGATIVE_PROMPT,
-        COMMON_STYLE_NEGATIVE_PROMPT,
+        style_negative,
     ]
     if not _is_modern_context(p):
         parts.append(COMMON_PERIOD_NEGATIVE_PROMPT)
@@ -9371,6 +9477,12 @@ def historical_negative_prompt(prompt: str, enabled: bool = False) -> str:
         parts.append(WEST_AFRICAN_ASHANTI_WRONG_CULTURE_NEGATIVE_PROMPT)
     if _is_goguryeo_silla_415_context(p):
         parts.append(GOGURYEO_SILLA_415_NEGATIVE_PROMPT)
+    if re.search(
+        r"\bBaekje\s+foundation\s+traditions\s+preserved\s+in\s+conflicting\s+later\s+records\b",
+        p,
+        re.IGNORECASE,
+    ):
+        parts.append(BAEKJE_FOUNDATION_WRONG_PERIOD_NEGATIVE_PROMPT)
     if _scene_requests_hou_bowl_object(p):
         parts.append(HOU_BOWL_NEGATIVE_PROMPT)
     if _scene_requests_modest_village_or_hamlet(p):
@@ -9441,6 +9553,11 @@ def book_negative_prompt(prompt: str) -> str:
 
 def append_prompt_specific_negative_prompt(base_negative: str, prompt: str) -> str:
     p = prompt or ""
+    style_negative = (
+        _remove_live_action_conflicting_negatives(COMMON_STYLE_NEGATIVE_PROMPT)
+        if _uses_cinematic_live_action_style(p)
+        else COMMON_STYLE_NEGATIVE_PROMPT
+    )
     scene = _scene_text(p)
     weapon_negative = (
         SINGLE_WEAPON_NEGATIVE_PROMPT
@@ -9565,6 +9682,74 @@ def append_prompt_specific_negative_prompt(base_negative: str, prompt: str) -> s
         if _scene_requests_early_modern_three_scholar_group(p)
         else ""
     )
+    exactly_three_people_negative = (
+        "four people, four men, four sons, four brothers, four standing men, "
+        "four standing figures, fourth person, fourth man, fourth son, fourth brother, "
+        "extra person, extra man, extra son, extra brother, extra standing figure, "
+        "four shadows, fourth shadow, extra shadow silhouette, background face, "
+        "background torso, doorway person behind group, attendant beside bed, "
+        "guard beside bed, bedside visitor replacing empty space"
+        if re.search(
+            r"\bexactly\s+three\b.*\b(?:people|persons|men|figures|adults|sons|brothers)\b|"
+            r"\b(?:people|persons|men|figures|adults|sons|brothers)\b.*\bexactly\s+three\b",
+            p,
+            re.IGNORECASE,
+        )
+        else ""
+    )
+    exactly_two_people_negative = (
+        "three people, three adults, three faces, third person, third adult, third face, "
+        "extra person, extra adult, extra face, background person, background face, "
+        "attendant behind pair, witness behind pair, duplicate man, duplicate woman"
+        if re.search(
+            r"\bexactly\s+two\b.*\b(?:people|persons|men|women|figures|adults|faces)\b|"
+            r"\b(?:people|persons|men|women|figures|adults|faces)\b.*\bexactly\s+two\b",
+            p,
+            re.IGNORECASE,
+        )
+        else ""
+    )
+    zero_visible_hands_negative = (
+        "visible hands, visible fingers, visible wrists, visible forearms, visible elbows, "
+        "hand touching face, hand touching vessel, hand touching table, hand touching lap"
+        if re.search(
+            r"\bexactly\s+zero\s+visible\s+(?:arms,\s*)?hands\b",
+            p,
+            re.IGNORECASE,
+        )
+        else ""
+    )
+    zero_people_scene_negative = (
+        "living person, man, woman, adult figure, human face, human head, human torso, "
+        "human arm, human hand, human fingers, human legs, bystander, background person, "
+        "human-shaped silhouette"
+        if (
+            re.search(r"\b(?:Object-only|Landscape-only)\b", p, re.IGNORECASE)
+            or (
+                re.search(
+                    r"\b(?:no\s+(?:visible\s+)?people|no\s+(?:visible\s+)?person|"
+                    r"without\s+people|zero\s+people)\b",
+                    p,
+                    re.IGNORECASE,
+                )
+                and not re.search(
+                    r"\b(?:Main|Primary)\s+subject:\s*",
+                    p,
+                    re.IGNORECASE,
+                )
+            )
+        )
+        else ""
+    )
+    modern_historians_negative = (
+        "historical robe on modern historian, ancient robe on modern historian, hanbok on modern "
+        "historian, cloth headwrap on modern historian, ancient official hat on modern historian, "
+        "topknot on modern male historian, ceremonial hair ornament, historical courtyard behind "
+        "modern historians, tiled palace behind modern historians, visible hand in face-only crop"
+        if re.search(r"\b(?:present-day|2020s)\b", p, re.IGNORECASE)
+        and re.search(r"\bhistorians?\b", p, re.IGNORECASE)
+        else ""
+    )
     astronomical_surface_negative = (
         "letters on astronomical chart, numbers on astronomical chart, zodiac symbols, "
         "zodiac glyphs, coordinate numbers, degree numbers, tick number labels, "
@@ -9584,8 +9769,7 @@ def append_prompt_specific_negative_prompt(base_negative: str, prompt: str) -> s
         base_negative or "",
         COMMON_ANATOMY_NEGATIVE_PROMPT,
         ANIMAL_ANATOMY_NEGATIVE_PROMPT,
-        VISUAL_QA_NEGATIVE_PROMPT,
-        COMMON_STYLE_NEGATIVE_PROMPT,
+        style_negative,
         COMMON_COMPOSITION_NEGATIVE_PROMPT,
         UNREQUESTED_EXTRA_PEOPLE_NEGATIVE_PROMPT
         if _scene_requests_humans(p) and not _scene_requests_multiple_characters(p)
@@ -9607,6 +9791,11 @@ def append_prompt_specific_negative_prompt(base_negative: str, prompt: str) -> s
         bed_rest_negative,
         early_modern_single_person_negative,
         early_modern_three_scholar_negative,
+        modern_historians_negative,
+        exactly_two_people_negative,
+        exactly_three_people_negative,
+        zero_visible_hands_negative,
+        zero_people_scene_negative,
         astronomical_surface_negative,
         female_safety_negative,
         historical_negative_prompt(p, enabled=True),

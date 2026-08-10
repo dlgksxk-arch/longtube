@@ -8,9 +8,79 @@ from typing import Iterable
 
 YOUTUBE_TAG_CHAR_BUDGET = 480
 DEFAULT_MAX_TAGS = 30
+EUROPEAN_HISTORY_PROFILE = "european_history"
 
 
-_WORD_RE = re.compile(r"[가-힣]{2,}|[\u0900-\u097F]{2,}|[A-Za-z][A-Za-z0-9'-]{1,}|\d{2,}")
+def append_video_chapters(description: str, cuts: list[dict] | None, duration_seconds: int | float | None) -> str:
+    """Append factual upload chapters from the prepared cut timeline."""
+    body = str(description or "").strip()
+    if re.search(r"(?m)^0{1,2}:00\s+", body) or not isinstance(cuts, list) or not cuts:
+        return body
+    total = max(1, len(cuts))
+    try:
+        duration = max(1, int(float(duration_seconds or 0)))
+    except (TypeError, ValueError):
+        duration = total * 4
+    starts = list(range(0, total, 30))
+    lines: list[str] = []
+    for index in starts:
+        cut = cuts[index] if isinstance(cuts[index], dict) else {}
+        narration = re.sub(r"\s+", " ", str(cut.get("narration") or "")).strip()
+        label = narration[:54].rstrip(" ,.;:") or f"파트 {len(lines) + 1}"
+        seconds = int(round(duration * index / total))
+        lines.append(f"{seconds // 60:02d}:{seconds % 60:02d} {label}")
+    return f"{body}\n\n[챕터]\n" + "\n".join(lines)
+
+_METADATA_PROFILE_ALIASES = {
+    "europe": EUROPEAN_HISTORY_PROFILE,
+    "europe_history": EUROPEAN_HISTORY_PROFILE,
+    "european-history": EUROPEAN_HISTORY_PROFILE,
+    "european_history": EUROPEAN_HISTORY_PROFILE,
+    "scartography": EUROPEAN_HISTORY_PROFILE,
+}
+_EUROPEAN_HISTORY_BLOCKED_PHRASES = {
+    "scary story",
+    "horror story",
+    "creepy story",
+    "psychological horror",
+    "unexplained mystery",
+    "mystery story",
+    "suspense story",
+    "locked room",
+    "creepy mystery",
+    "nightmare story",
+}
+_EUROPEAN_HISTORY_DESCRIPTION_BLOCKS = {
+    "if you enjoy mystery, suspense, strange incidents",
+    "where the situation stops feeling ordinary",
+    "what people noticed first, what they missed",
+}
+_EUROPEAN_HISTORY_NARRATION_BLOCKS = {
+    "could not escape",
+    "the shocking part is not",
+    "a quiet decision began to pull",
+    "fear still wore familiar clothes",
+    "people did not wake up knowing",
+    "it looked like rumor, pride, hunger",
+}
+
+
+def normalize_metadata_profile(value: str | None) -> str:
+    raw = str(value or "").strip().lower()
+    return _METADATA_PROFILE_ALIASES.get(raw, raw)
+
+
+def metadata_profile_from_config(config: dict | None) -> str:
+    cfg = config or {}
+    return normalize_metadata_profile(
+        cfg.get("youtube_metadata_profile") or cfg.get("metadata_profile")
+    )
+
+
+_WORD_RE = re.compile(
+    r"[가-힣]{2,}|[\u0900-\u097F]{2,}|[ぁ-んァ-ン一-龥]+|"
+    r"[A-Za-z][A-Za-z0-9'-]{1,}|\d{2,}"
+)
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?。！？])\s+|(?<=[다요죠음함까])\.\s*")
 _STOPWORDS = {
     "ko": {
@@ -27,6 +97,13 @@ _STOPWORDS = {
         "young", "first", "looks", "like", "begins", "began", "toward", "behind",
         "every", "thing", "something", "nothing", "again", "still", "then", "than",
         "one", "two", "three", "episode",
+    },
+    "ja": {
+        "この", "その", "あの", "そして", "しかし", "という", "ため", "から",
+        "まで", "まだ", "だけ", "こと", "もの", "よう", "です", "でした",
+        "ます", "ました", "います", "いました", "前回", "今回", "皆さん",
+        "こんにちは", "時間", "お話", "けれど", "けれども", "本編", "本編は",
+        "とはいえ", "ところが", "でも", "つぎに",
     },
 }
 _GENERIC_TAGS = {
@@ -184,7 +261,12 @@ def _tokens(*texts: str) -> list[str]:
     return words
 
 
-def _phrase_candidates(title: str, topic: str, narration: str) -> list[str]:
+def _phrase_candidates(
+    title: str,
+    topic: str,
+    narration: str,
+    language: str | None = None,
+) -> list[str]:
     candidates: list[str] = []
     for source in (title, topic):
         source = str(source or "").strip()
@@ -193,17 +275,18 @@ def _phrase_candidates(title: str, topic: str, narration: str) -> list[str]:
         parts = [p.strip(" -:|,./[]()") for p in re.split(r"[:|,\-·/]", source) if p.strip()]
         candidates.extend(p for p in parts if 2 <= len(p) <= 30)
 
-    lang = detect_metadata_language(" ".join([title, topic, narration]))
+    lang = (language or detect_metadata_language(" ".join([title, topic, narration]))).lower()
     stop = _STOPWORDS.get(lang, set())
+    token_sources = (title, topic) if lang == "ja" else (title, topic, narration[:2500])
     words = [
-        w for w in _tokens(title, topic, narration[:2500])
+        w for w in _tokens(*token_sources)
         if w not in stop and w.lower() not in stop and len(w) >= 3
     ]
     counter = Counter(w for w in words if len(w) >= 2 and w.upper() != "EP")
     candidates.extend(word for word, _ in counter.most_common(30))
 
     # Add adjacent word pairs for more specific discoverability.
-    for a, b in zip(words, words[1:]):
+    for a, b in zip(words, words[1:]) if lang != "ja" else ():
         if a.isdigit() or b.isdigit() or a.upper() == "EP" or b.upper() == "EP":
             continue
         if a in _GENERIC_TAGS or b in _GENERIC_TAGS:
@@ -212,6 +295,58 @@ def _phrase_candidates(title: str, topic: str, narration: str) -> list[str]:
         if 4 <= len(phrase) <= 30:
             candidates.append(phrase)
     return candidates
+
+
+def _european_history_phrase_candidates(title: str, topic: str) -> list[str]:
+    stop = _STOPWORDS["en"] | {
+        "about", "after", "before", "between", "during", "through",
+        "history", "european", "europe", "explained", "documentary",
+    }
+    candidates: list[str] = []
+    seen: set[str] = set()
+
+    def add(value: str) -> None:
+        phrase = re.sub(r"\s+", " ", str(value or "")).strip(" -:|,./[]()")
+        phrase = re.sub(r"\b(?:EP|Episode)\.?\s*\d+\b", "", phrase, flags=re.IGNORECASE)
+        phrase = re.sub(r"\s+", " ", phrase).strip(" -:|,./[]()")
+        if not (3 <= len(phrase) <= 30):
+            return
+        if phrase.casefold() in stop:
+            return
+        if " " not in phrase and phrase.casefold() in {
+            "creation", "myth", "war", "king", "queen", "empire", "kingdom",
+        }:
+            return
+        key = phrase.casefold()
+        if key not in seen:
+            seen.add(key)
+            candidates.append(phrase)
+
+    for source in dict.fromkeys([str(title or "").strip(), str(topic or "").strip()]):
+        if not source:
+            continue
+        for chunk in re.split(r"[:|,/\u2013\u2014]", source):
+            chunk = chunk.strip()
+            if not chunk:
+                continue
+            add(chunk)
+            words = [
+                word for word in _tokens(chunk)
+                if len(word) >= 4 and word.casefold() not in stop
+            ]
+            for word in words:
+                add(word)
+            for size in (2, 3):
+                for start in range(0, max(0, len(words) - size + 1)):
+                    add(" ".join(words[start:start + size]))
+    return candidates
+
+
+def _european_history_tag_allowed(value: str) -> bool:
+    lowered = re.sub(r"\s+", " ", str(value or "")).strip().casefold()
+    return bool(lowered) and not any(
+        blocked in lowered for blocked in _EUROPEAN_HISTORY_BLOCKED_PHRASES
+    )
 
 
 def expand_tags(
@@ -223,8 +358,45 @@ def expand_tags(
     language: str | None = None,
     max_tags: int = DEFAULT_MAX_TAGS,
     shorts: bool = False,
+    profile: str | None = None,
 ) -> list[str]:
     lang = (language or detect_metadata_language(" ".join([title, topic, narration]))).lower()
+    profile_id = normalize_metadata_profile(profile)
+    if profile_id == EUROPEAN_HISTORY_PROFILE:
+        broad = [
+            "European history",
+            "history of Europe",
+            "European history documentary",
+            "history documentary",
+            "historical borders",
+            "history explained",
+        ]
+        contextual: list[str] = []
+        subject_probe = f"{title} {topic}".casefold()
+        if any(term in subject_probe for term in (
+            "ancient", "proto-", "myth", "greek", "roman", "celt", "viking",
+        )):
+            contextual.extend(["ancient Europe", "European mythology"])
+        if any(term in subject_probe for term in (
+            "medieval", "feudal", "crusade", "caroling", "norman",
+        )):
+            contextual.append("medieval Europe")
+        if any(term in subject_probe for term in (
+            "renaissance", "reformation", "early modern", "enlightenment",
+        )):
+            contextual.append("early modern Europe")
+        candidates: list[str] = []
+        candidates.extend(base_tags or [])
+        candidates.extend(_european_history_phrase_candidates(title, topic))
+        candidates.extend(contextual)
+        candidates.extend(broad)
+        if shorts:
+            candidates.extend(["history shorts", "European history shorts"])
+        return clean_tags(
+            [tag for tag in candidates if _european_history_tag_allowed(tag)],
+            max_tags=min(max(1, int(max_tags or 1)), 12),
+        )
+
     broad = {
         "ko": [
             "역사", "한국사", "세계사", "역사이야기", "역사다큐", "지식", "교양",
@@ -232,8 +404,8 @@ def expand_tags(
             "역사해설", "역사지식", "역사속이야기", "다큐멘터리", "교양채널",
         ],
         "ja": [
-            "歴史", "世界史", "日本史", "歴史解説", "教養", "知識", "人物史",
-            "古代史", "戦争史", "文化史", "ドキュメンタリー",
+            "歴史", "日本史", "歴史解説", "教養", "知識", "古代史",
+            "ドキュメンタリー",
         ],
         "en": [
             "history", "documentary", "explained", "education", "facts",
@@ -260,6 +432,13 @@ def expand_tags(
     elif lang == "ko":
         if any(word in lower_blob for word in ("백제", "신라", "고구려", "고조선", "전쟁", "왕")):
             broad.extend(["한국고대사", "삼국시대", "왕조사", "전쟁이야기", "역사인물"])
+    elif lang == "ja":
+        if any(word in lower_blob for word in ("神話", "古事記", "日本書紀")):
+            broad.extend(["日本神話", "古事記", "日本書紀"])
+        if any(word in lower_blob for word in ("戦争", "合戦", "戦い", "軍事")):
+            broad.append("戦争史")
+        if any(word in lower_blob for word in ("文化", "芸術", "風俗", "生活史")):
+            broad.append("文化史")
     shorts_tags = {
         "ko": ["Shorts", "쇼츠", "역사쇼츠"],
         "ja": ["Shorts", "ショート"],
@@ -269,7 +448,7 @@ def expand_tags(
     candidates: list[str] = []
     candidates.extend(base_tags or [])
     candidates.extend(broad)
-    candidates.extend(_phrase_candidates(title, topic, narration))
+    candidates.extend(_phrase_candidates(title, topic, narration, lang))
     if shorts:
         candidates.extend(shorts_tags)
     return clean_tags(candidates, max_tags=max_tags)
@@ -306,10 +485,15 @@ def recommended_hashtags(
     shorts: bool = False,
     max_count: int = 14,
     max_len: int = 24,
+    profile: str | None = None,
 ) -> list[str]:
     lang = (language or detect_metadata_language(" ".join([title, topic, narration]))).lower()
+    profile_id = normalize_metadata_profile(profile)
     candidates: list[str] = []
-    candidates.extend(_phrase_candidates(title, topic, narration))
+    if profile_id == EUROPEAN_HISTORY_PROFILE:
+        candidates.extend(_european_history_phrase_candidates(title, topic))
+    else:
+        candidates.extend(_phrase_candidates(title, topic, narration, lang))
     candidates.extend(expand_tags(
         [],
         title=title,
@@ -318,6 +502,7 @@ def recommended_hashtags(
         language=lang,
         max_tags=max(24, max_count * 2),
         shorts=shorts,
+        profile=profile_id,
     ))
     out: list[str] = []
     seen: set[str] = set()
@@ -342,26 +527,34 @@ def recommended_shorts_title_hashtags(
     narration: str = "",
     language: str | None = None,
     max_count: int = 3,
+    profile: str | None = None,
 ) -> list[str]:
     blocked = {"#shorts", "#쇼츠", "#youtubeshorts", "#ショート"}
     lang = (language or detect_metadata_language(" ".join([title, topic, narration]))).lower()
-    priority = _shorts_title_priority_hashtags(
-        title=title,
-        topic=topic,
-        narration=narration,
-        lang=lang,
-        max_count=max_count,
-    )
-    tags = recommended_hashtags(
-        title=title,
-        topic=topic,
-        narration=narration,
-        language=lang,
-        shorts=True,
-        max_count=max_count + 4,
-        max_len=16,
-    )
+    profile_id = normalize_metadata_profile(profile)
+    priority = []
+    if profile_id != EUROPEAN_HISTORY_PROFILE:
+        priority = _shorts_title_priority_hashtags(
+            title=title,
+            topic="" if lang == "ja" else topic,
+            narration="" if lang == "ja" else narration,
+            lang=lang,
+            max_count=max_count,
+        )
+    tags = []
+    if lang != "ja":
+        tags = recommended_hashtags(
+            title=title,
+            topic=topic,
+            narration=narration,
+            language=lang,
+            shorts=True,
+            max_count=max_count + 4,
+            max_len=16,
+            profile=profile_id,
+        )
     out: list[str] = []
+    seen: set[str] = set()
     for tag in [*priority, *tags]:
         if tag.casefold() in blocked:
             continue
@@ -376,6 +569,10 @@ def recommended_shorts_title_hashtags(
             continue
         if lang == "hi" and re.search(r"[가-힣\u3040-\u30ff]", body):
             continue
+        key = tag.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
         out.append(tag)
         if len(out) >= max_count:
             break
@@ -385,12 +582,22 @@ def recommended_shorts_title_hashtags(
         "en": ["#history", "#historyshorts", "#documentary"],
         "hi": ["#history", "#Hindi", "#documentary"],
     }
-    for tag in fallback_by_lang.get(lang, ["#history"]):
+    fallback = fallback_by_lang.get(lang, ["#history"])
+    japanese_context = " ".join([title, topic, narration])
+    if lang == "ja" and any(
+        word in japanese_context
+        for word in ("神話", "女神", "アマテラス", "ツクヨミ", "ウケモチ", "古事記")
+    ):
+        fallback = ["#日本神話", "#古事記", "#日本史"]
+    if profile_id == EUROPEAN_HISTORY_PROFILE:
+        fallback = ["#EuropeanHistory", "#HistoryShorts", "#Scartography"]
+    for tag in fallback:
         if len(out) >= max_count:
             break
         key = tag.casefold()
-        if key in blocked or any(existing.casefold() == key for existing in out):
+        if key in blocked or key in seen:
             continue
+        seen.add(key)
         out.append(tag)
     return out
 
@@ -403,6 +610,7 @@ def _hashtags(
     *,
     shorts: bool = False,
     max_count: int = 14,
+    profile: str | None = None,
 ) -> str:
     return " ".join(recommended_hashtags(
         title=title,
@@ -411,13 +619,34 @@ def _hashtags(
         language=lang,
         shorts=shorts,
         max_count=max_count,
+        profile=profile,
     ))
 
 
-def _hashtag_block(title: str, topic: str, narration: str, lang: str, *, shorts: bool = False) -> str:
-    tags = _hashtags(title, topic, narration, lang, shorts=shorts, max_count=18 if shorts else 16)
+def _hashtag_block(
+    title: str,
+    topic: str,
+    narration: str,
+    lang: str,
+    *,
+    shorts: bool = False,
+    profile: str | None = None,
+) -> str:
+    profile_id = normalize_metadata_profile(profile)
+    max_count = 5 if profile_id == EUROPEAN_HISTORY_PROFILE else (18 if shorts else 16)
+    tags = _hashtags(
+        title,
+        topic,
+        narration,
+        lang,
+        shorts=shorts,
+        max_count=max_count,
+        profile=profile_id,
+    )
     if not tags:
         return ""
+    if profile_id == EUROPEAN_HISTORY_PROFILE:
+        return tags
     if lang == "hi":
         label = "सुझाए गए हैशटैग:"
     elif lang == "en":
@@ -429,6 +658,126 @@ def _hashtag_block(title: str, topic: str, narration: str, lang: str, *, shorts:
     return f"{label}\n{tags}"
 
 
+def _european_history_facts(
+    narration: str,
+    subject: str,
+    limit: int = 5,
+) -> list[str]:
+    subject_terms = {
+        term.casefold() for term in _tokens(subject)
+        if len(term) >= 4 and term.casefold() not in _STOPWORDS["en"]
+    }
+    facts: list[str] = []
+    for sentence in _sentences(narration, limit=16):
+        lowered = sentence.casefold()
+        if any(blocked in lowered for blocked in _EUROPEAN_HISTORY_NARRATION_BLOCKS):
+            continue
+        if subject_terms and not any(term in lowered for term in subject_terms):
+            if not re.search(r"\b(?:BCE|CE|BC|AD|\d{3,4})\b", sentence, re.IGNORECASE):
+                continue
+        facts.append(sentence)
+        if len(facts) >= limit:
+            break
+    return facts
+
+
+def _format_european_history_description(
+    description: str,
+    *,
+    title: str,
+    topic: str,
+    narration: str,
+    shorts: bool,
+) -> str:
+    text = re.sub(r"\n{3,}", "\n\n", str(description or "").strip())
+    subject = str(topic or title or "European history").strip()
+    if text.casefold() in {str(title or "").strip().casefold(), subject.casefold()}:
+        text = ""
+    facts = _european_history_facts(
+        narration,
+        subject,
+        limit=3 if shorts else 5,
+    )
+    hashtag_block = _hashtag_block(
+        title,
+        subject,
+        narration,
+        "en",
+        shorts=shorts,
+        profile=EUROPEAN_HISTORY_PROFILE,
+    )
+    accessibility = (
+        "English narration. Subtitles available in English, French, Spanish, and German."
+    )
+
+    if shorts:
+        lead = text or subject
+        parts = [
+            lead,
+            (
+                "A focused moment from Scartography's European history series, "
+                "placed in its historical context."
+            ),
+        ]
+        if facts:
+            parts.extend(["Historical context:", "\n".join(f"- {fact}" for fact in facts)])
+        parts.extend([accessibility, hashtag_block])
+        return "\n\n".join(part for part in parts if part).strip()[:5000]
+
+    lead = text or (
+        f"This Scartography episode examines {subject} in its historical context, "
+        "tracing the people, beliefs, evidence, and consequences behind the subject."
+    )
+    parts = [lead]
+    if facts:
+        parts.extend(["In this episode:", "\n".join(f"- {fact}" for fact in facts)])
+    parts.extend([
+        (
+            "Scartography follows the myths, rulers, wars, revolutions, and borders "
+            "that shaped Europe."
+        ),
+        accessibility,
+        hashtag_block,
+    ])
+    return "\n\n".join(part for part in parts if part).strip()[:5000]
+
+
+def validate_metadata_for_profile(
+    *,
+    title: str,
+    description: str,
+    tags: Iterable[str],
+    profile: str | None,
+) -> None:
+    profile_id = normalize_metadata_profile(profile)
+    if profile_id != EUROPEAN_HISTORY_PROFILE:
+        return
+    if not str(title or "").strip():
+        raise ValueError("European-history YouTube title is empty")
+    if not str(description or "").strip():
+        raise ValueError("European-history YouTube description is empty")
+    if re.search(r"[\uac00-\ud7a3]", f"{title}\n{description}"):
+        raise ValueError("European-history default metadata must be English")
+    tag_list = [str(tag or "") for tag in tags]
+    joined_tags = " | ".join(tag_list)
+    probe = f"{description}\n{joined_tags}".casefold()
+    blocked = sorted(
+        phrase for phrase in _EUROPEAN_HISTORY_BLOCKED_PHRASES
+        if phrase in probe
+    )
+    blocked.extend(
+        phrase for phrase in sorted(_EUROPEAN_HISTORY_DESCRIPTION_BLOCKS)
+        if phrase in probe
+    )
+    if blocked:
+        raise ValueError(
+            "European-history metadata contains unrelated generic terms: "
+            + ", ".join(dict.fromkeys(blocked))
+        )
+    if len(tag_list) > 12:
+        raise ValueError("European-history metadata exceeds the 12-tag limit")
+
+
 def format_description(
     description: str,
     *,
@@ -437,9 +786,19 @@ def format_description(
     narration: str = "",
     language: str | None = None,
     shorts: bool = False,
+    profile: str | None = None,
 ) -> str:
     text = str(description or "").strip()
     lang = (language or detect_metadata_language(" ".join([title, topic, text, narration]))).lower()
+    profile_id = normalize_metadata_profile(profile)
+    if profile_id == EUROPEAN_HISTORY_PROFILE:
+        return _format_european_history_description(
+            text,
+            title=title,
+            topic=topic,
+            narration=narration,
+            shorts=shorts,
+        )
     facts = _sentences(narration, 8)
     if shorts:
         marker = "#Shorts" if lang != "ko" else "#Shorts #쇼츠"

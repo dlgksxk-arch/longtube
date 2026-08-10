@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <defs>
+    <linearGradient id="clay80" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#b7865d"/>
+      <stop offset="0.52" stop-color="#d0a273"/>
+      <stop offset="1" stop-color="#9a6848"/>
+    </linearGradient>
+    <radialGradient id="bowl80" cx="38%" cy="30%" r="75%">
+      <stop offset="0" stop-color="#c69157"/>
+      <stop offset="0.68" stop-color="#8d5935"/>
+      <stop offset="1" stop-color="#5c3b29"/>
+    </radialGradient>
+    <filter id="shadow80" x="-25%" y="-25%" width="150%" height="150%">
+      <feGaussianBlur stdDeviation="12"/>
+    </filter>
+  </defs>
+
+  <rect width="1280" height="720" fill="url(#clay80)"/>
+  <g fill="none" stroke="#86583e" stroke-width="7" opacity="0.25">
+    <path d="M0 118 Q272 82 525 127 T1014 113 T1280 102"/>
+    <path d="M0 607 Q280 643 539 596 T1021 614 T1280 587"/>
+  </g>
+  <g fill="#e2b987" opacity="0.30">
+    <circle cx="82" cy="245" r="6"/><circle cx="168" cy="518" r="5"/><circle cx="348" cy="139" r="7"/>
+    <circle cx="514" cy="582" r="6"/><circle cx="790" cy="146" r="5"/><circle cx="948" cy="566" r="7"/>
+    <circle cx="1133" cy="224" r="6"/><circle cx="1225" cy="487" r="5"/>
+  </g>
+
+  <!-- Left: exactly one harvested food-crop stalk, visibly cut without a weapon. -->
+  <ellipse cx="313" cy="501" rx="208" ry="42" fill="#573a2a" opacity="0.24" filter="url(#shadow80)"/>
+  <g id="one-cut-stalk80" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M190 481 Q301 409 395 250 M269 445 Q248 338 260 226 M331 397 Q389 333 432 286" stroke="#9c7f31" stroke-width="18"/>
+    <path d="M397 252 Q354 213 343 170 M399 270 Q447 234 460 191" stroke="#c9a341" stroke-width="12"/>
+    <g fill="#d6af49" stroke="#6f5629" stroke-width="5">
+      <ellipse cx="335" cy="162" rx="8" ry="13" transform="rotate(-31 335 162)"/>
+      <ellipse cx="348" cy="181" rx="8" ry="13" transform="rotate(-28 348 181)"/>
+      <ellipse cx="361" cy="202" rx="8" ry="13" transform="rotate(-24 361 202)"/>
+      <ellipse cx="468" cy="183" rx="8" ry="13" transform="rotate(26 468 183)"/>
+      <ellipse cx="457" cy="203" rx="8" ry="13" transform="rotate(23 457 203)"/>
+      <ellipse cx="445" cy="224" rx="8" ry="13" transform="rotate(20 445 224)"/>
+    </g>
+    <path d="M174 492 L205 469" stroke="#ead69b" stroke-width="24"/>
+    <path d="M177 498 L205 477" stroke="#5a402d" stroke-width="4"/>
+  </g>
+
+  <!-- Center: one taut plant-fiber cord with exactly one knot, visualizing unresolved conflict. -->
+  <path d="M442 482 C524 450 571 451 610 473 C630 484 650 484 670 472 C709 449 760 450 839 483" fill="none" stroke="#563128" stroke-width="28" opacity="0.22" filter="url(#shadow80)"/>
+  <path d="M438 466 C521 435 573 438 612 459 C631 469 649 469 668 458 C708 436 758 435 844 468" fill="none" stroke="#8d392f" stroke-width="16" stroke-linecap="round"/>
+  <path d="M438 463 C523 439 574 443 614 463 C632 472 648 472 666 462 C706 441 758 439 844 465" fill="none" stroke="#bf6650" stroke-width="5" stroke-linecap="round"/>
+  <g id="single-knot80">
+    <path d="M611 454 C588 425 603 398 635 415 C659 377 693 399 675 432 C705 451 687 484 653 465 C628 493 593 477 611 454 Z" fill="#974333" stroke="#4e3028" stroke-width="11"/>
+    <path d="M620 442 Q643 421 670 438 Q654 458 628 460" fill="none" stroke="#c56b52" stroke-width="7"/>
+  </g>
+
+  <!-- Right: exactly one empty unpainted wooden bowl. -->
+  <ellipse cx="997" cy="512" rx="206" ry="46" fill="#573a2a" opacity="0.25" filter="url(#shadow80)"/>
+  <g id="one-empty-bowl80">
+    <ellipse cx="997" cy="397" rx="173" ry="121" fill="url(#bowl80)" stroke="#493328" stroke-width="16"/>
+    <ellipse cx="997" cy="392" rx="123" ry="78" fill="#5f3d2b" stroke="#d0a06b" stroke-width="14"/>
+    <ellipse cx="972" cy="369" rx="72" ry="37" fill="#3e2c24" opacity="0.45"/>
+    <path d="M838 419 Q997 493 1154 420" fill="none" stroke="#7d4d31" stroke-width="10" opacity="0.75"/>
+  </g>
+</svg>

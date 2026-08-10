@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#d8bd84"/>
+  <!-- Upper left: one closed woven household packet for families. -->
+  <rect x="120" y="105" width="330" height="205" rx="30" fill="#a87842" stroke="#4b3428" stroke-width="11"/>
+  <path d="M150 150H420M150 198H420M150 246H420M205 120V294M285 120V294M365 120V294" fill="none" stroke="#6d4a32" stroke-width="8"/>
+  <path d="M285 105V310" fill="none" stroke="#4b3428" stroke-width="18"/>
+
+  <!-- Upper right: one plain curved wooden cattle yoke for herders. -->
+  <path d="M805 125 Q965 285 1125 125" fill="none" stroke="#4b3428" stroke-width="55" stroke-linecap="round"/>
+  <path d="M820 125V230M1110 125V230" fill="none" stroke="#4b3428" stroke-width="38" stroke-linecap="round"/>
+  <path d="M815 125 Q965 260 1115 125" fill="none" stroke="#9a6938" stroke-width="31" stroke-linecap="round"/>
+  <path d="M820 125V230M1110 125V230" fill="none" stroke="#9a6938" stroke-width="20" stroke-linecap="round"/>
+
+  <!-- Lower left: compact specialist craft kit, one crucible beside one hammerstone. -->
+  <path d="M145 500 Q285 650 425 500 L390 430 H180 Z" fill="#8d5536" stroke="#4b3428" stroke-width="11" stroke-linejoin="round"/>
+  <ellipse cx="285" cy="438" rx="108" ry="34" fill="#c27c45" stroke="#4b3428" stroke-width="10"/>
+  <path d="M435 520 L535 455 Q562 437 580 462 L620 525 Q636 551 606 568 L500 625 Z" fill="#777064" stroke="#4b3428" stroke-width="11"/>
+
+  <!-- Lower right: one plain prestigious copper blade blank for an ambitious leader. -->
+  <path d="M930 415 Q1068 500 1005 650 Q942 500 930 415 Z" fill="#a75e39" stroke="#4b3428" stroke-width="12"/>
+  <path d="M1005 438V620" fill="none" stroke="#6e3f2d" stroke-width="8" opacity="0.72"/>
+</svg>

@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <defs>
+    <linearGradient id="hemp" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#eee6d5"/>
+      <stop offset="0.5" stop-color="#d9cdb7"/>
+      <stop offset="1" stop-color="#f1e9d9"/>
+    </linearGradient>
+    <pattern id="weave" width="8" height="8" patternUnits="userSpaceOnUse">
+      <path d="M0 1H8M0 5H8" stroke="#9e917b" stroke-width="0.7" opacity="0.42"/>
+      <path d="M1 0V8M5 0V8" stroke="#fff9eb" stroke-width="0.7" opacity="0.52"/>
+    </pattern>
+    <linearGradient id="iron" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#171a18"/>
+      <stop offset="0.35" stop-color="#4a4337"/>
+      <stop offset="0.62" stop-color="#252824"/>
+      <stop offset="1" stop-color="#0d0f0e"/>
+    </linearGradient>
+    <filter id="ironTexture" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="8" dy="10" stdDeviation="8" flood-color="#30291f" flood-opacity="0.42"/>
+    </filter>
+  </defs>
+
+  <rect width="1280" height="720" fill="url(#hemp)"/>
+  <rect width="1280" height="720" fill="url(#weave)"/>
+
+  <g fill="url(#iron)" stroke="#090b0a" stroke-width="3" stroke-linejoin="round" filter="url(#ironTexture)">
+    <!-- Top-to-bottom branch order: left, right, left, right, left, right. -->
+    <path d="M620 210H573C542 210 518 196 504 177C493 162 489 143 493 124L500 106L507 125C507 143 513 157 523 168C536 181 552 187 573 187H620Z"/>
+    <path d="M660 278H707C738 278 762 264 776 245C787 230 791 211 787 192L780 174L773 193C773 211 767 225 757 236C744 249 728 255 707 255H660Z"/>
+    <path d="M620 346H573C542 346 518 332 504 313C493 298 489 279 493 260L500 242L507 261C507 279 513 293 523 304C536 317 552 323 573 323H620Z"/>
+    <path d="M660 414H707C738 414 762 400 776 381C787 366 791 347 787 328L780 310L773 329C773 347 767 361 757 372C744 385 728 391 707 391H660Z"/>
+    <path d="M620 482H573C542 482 518 468 504 449C493 434 489 415 493 396L500 378L507 397C507 415 513 429 523 440C536 453 552 459 573 459H620Z"/>
+    <path d="M660 550H707C738 550 762 536 776 517C787 502 791 483 787 464L780 446L773 465C773 483 767 497 757 508C744 521 728 527 707 527H660Z"/>
+
+    <!-- One central point above and one narrow blunt tang below. -->
+    <path d="M618 560V137L640 60L662 137V560H650V650Q650 668 640 677Q630 668 630 650V560Z"/>
+  </g>
+</svg>

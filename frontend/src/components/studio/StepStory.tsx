@@ -171,6 +171,7 @@ export default function StepStory({ project, onUpdate }: Props) {
         <GenerationTimer
           projectId={project.id}
           step="story"
+          running={generating}
           label="스토리 설계 중..."
           onComplete={() => {
             setGenerating(false);

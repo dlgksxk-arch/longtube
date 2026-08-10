@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#a5a39b"/>
+  <g fill="#718f98" stroke="#41403b" stroke-width="9"><circle cx="100" cy="155" r="38"/><circle cx="190" cy="120" r="38"/><circle cx="270" cy="180" r="38"/><circle cx="150" cy="260" r="38"/></g>
+  <g fill="#a96240" stroke="#41403b" stroke-width="9"><circle cx="100" cy="460" r="38"/><circle cx="190" cy="420" r="38"/><circle cx="270" cy="485" r="38"/><circle cx="155" cy="570" r="38"/></g>
+  <path d="M310 210 L500 330 M310 470 L500 390" stroke="#59615e" stroke-width="17"/>
+  <circle cx="565" cy="360" r="72" fill="#80634e" stroke="#41403b" stroke-width="13"/>
+  <path d="M637 360 H730" stroke="#59615e" stroke-width="17"/>
+  <defs><linearGradient id="mix143" x1="0" x2="1"><stop offset="0" stop-color="#718f98"/><stop offset="1" stop-color="#a96240"/></linearGradient></defs>
+  <g fill="url(#mix143)" stroke="#41403b" stroke-width="9"><rect x="780" y="100" width="115" height="95" rx="16"/><rect x="930" y="100" width="115" height="95" rx="16"/><rect x="1080" y="100" width="115" height="95" rx="16"/><rect x="780" y="240" width="115" height="95" rx="16"/><rect x="930" y="240" width="115" height="95" rx="16"/><rect x="1080" y="240" width="115" height="95" rx="16"/><rect x="780" y="380" width="115" height="95" rx="16"/><rect x="930" y="380" width="115" height="95" rx="16"/></g>
+  <ellipse cx="1115" cy="525" rx="62" ry="90" fill="#9e6a42" stroke="#41403b" stroke-width="12"/><path d="M1068 505 H1162 M1072 545 H1158" stroke="#d0a06b" stroke-width="9"/>
+</svg>

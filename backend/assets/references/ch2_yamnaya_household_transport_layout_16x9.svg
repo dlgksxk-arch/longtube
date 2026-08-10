@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#ae895f"/>
+  <!-- One two-wheeled cart at left. -->
+  <path d="M90 350 H205" stroke="#4a3528" stroke-width="26"/>
+  <rect x="200" y="205" width="330" height="300" rx="18" fill="#8e6039" stroke="#3e3027" stroke-width="16"/>
+  <g fill="#9b6a3e" stroke="#3e3027" stroke-width="14">
+    <circle cx="205" cy="560" r="82"/><circle cx="525" cy="560" r="82"/>
+  </g>
+  <g fill="#c0a06a" stroke="#3e3027" stroke-width="8">
+    <circle cx="205" cy="560" r="22"/><circle cx="525" cy="560" r="22"/>
+  </g>
+  <rect x="250" y="250" width="115" height="205" rx="52" fill="#c8aa76" stroke="#503b2f" stroke-width="12"/>
+  <path d="M390 275 Q450 240 495 292 L470 420 Q430 452 390 415 Z" fill="#75513b" stroke="#423229" stroke-width="12"/>
+  <!-- One four-wheeled wagon at right. -->
+  <path d="M625 350 H720" stroke="#4a3528" stroke-width="26"/>
+  <rect x="715" y="170" width="450" height="370" rx="18" fill="#8e6039" stroke="#3e3027" stroke-width="16"/>
+  <g fill="#9b6a3e" stroke="#3e3027" stroke-width="14">
+    <circle cx="745" cy="145" r="70"/><circle cx="1135" cy="145" r="70"/>
+    <circle cx="745" cy="565" r="70"/><circle cx="1135" cy="565" r="70"/>
+  </g>
+  <g fill="#c0a06a" stroke="#3e3027" stroke-width="8">
+    <circle cx="745" cy="145" r="19"/><circle cx="1135" cy="145" r="19"/>
+    <circle cx="745" cy="565" r="19"/><circle cx="1135" cy="565" r="19"/>
+  </g>
+  <rect x="785" y="228" width="145" height="248" rx="70" fill="#c6a774" stroke="#503b2f" stroke-width="12"/>
+  <rect x="965" y="220" width="145" height="100" rx="16" fill="#684b37" stroke="#3f3027" stroke-width="12"/>
+  <g fill="#a86f43" stroke="#4a3528" stroke-width="10">
+    <ellipse cx="1000" cy="400" rx="48" ry="62"/><ellipse cx="1080" cy="400" rx="48" ry="62"/>
+  </g>
+</svg>

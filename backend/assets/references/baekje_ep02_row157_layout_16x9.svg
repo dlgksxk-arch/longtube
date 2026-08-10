@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#ead7b7"/>
+  <g fill="#584535" opacity="0.28">
+    <circle cx="374" cy="206" r="112"/>
+    <rect x="182" y="394" width="120" height="95" rx="8"/>
+    <rect x="332" y="394" width="120" height="95" rx="8"/>
+    <rect x="182" y="539" width="120" height="95" rx="8"/>
+    <rect x="332" y="539" width="120" height="95" rx="8"/>
+    <rect x="572" y="424" width="200" height="160" rx="10"/>
+    <path d="M1000 194 C1050 320 1055 430 1000 574 C945 430 950 320 1000 194 Z"/>
+  </g>
+  <circle cx="360" cy="190" r="110" fill="#7b2926" stroke="#63211f" stroke-width="6"/>
+  <g fill="#777c7d" stroke="#505556" stroke-width="5">
+    <rect x="170" y="380" width="120" height="95" rx="8"/>
+    <rect x="320" y="380" width="120" height="95" rx="8"/>
+    <rect x="170" y="525" width="120" height="95" rx="8"/>
+    <rect x="320" y="525" width="120" height="95" rx="8"/>
+  </g>
+  <rect x="560" y="410" width="200" height="160" rx="10" fill="#b58a58" stroke="#89663f" stroke-width="6"/>
+  <path d="M990 180 C1040 306 1045 416 990 560 C935 416 940 306 990 180 Z" fill="#343a3c" stroke="#202527" stroke-width="6"/>
+  <path d="M990 196 L990 540" fill="none" stroke="#22282a" stroke-width="5" opacity="0.55"/>
+</svg>

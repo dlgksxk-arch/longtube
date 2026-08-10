@@ -13,7 +13,14 @@ from app.services.estimation_service import estimate_project
 from app.services.image.factory import DEFAULT_IMAGE_MODEL, DEFAULT_THUMBNAIL_MODEL
 from app.services.subtitle_service import DEFAULT_SUBTITLE_STYLE
 from app.services.video.factory import DEFAULT_VIDEO_MODEL
-from app.config import CHANNELS_ROOT, RESULT_ARCHIVE_DIR, SYSTEM_PROJECTS_ROOT, resolve_cut_video_duration, resolve_project_dir
+from app.config import (
+    CHANNELS_ROOT,
+    RESULT_ARCHIVE_DIR,
+    SYSTEM_PROJECTS_ROOT,
+    apply_main_caption_delivery_policy,
+    resolve_cut_video_duration,
+    resolve_project_dir,
+)
 import os
 
 router = APIRouter()
@@ -38,8 +45,8 @@ DEFAULT_CONFIG = {
     "cut_duration_mode": "tts_audio",
     "tts_driven_cut_duration": True,
     "tts_audio_timing_fit": False,
-    "cut_audio_lead_in_sec": 0.3,
-    "cut_audio_tail_sec": 0.3,
+    "cut_audio_lead_in_sec": 0.5,
+    "cut_audio_tail_sec": 0.5,
     "cut_transition": "slow",
     "style": "news_explainer",
     "story_model": "claude-sonnet-4-6",
@@ -63,12 +70,17 @@ DEFAULT_CONFIG = {
     "cut_level_subtitles": True,
     "tts_model": "openai-tts",
     "tts_voice_id": "alloy",
+    # Studio 역할별 추가 음성 선택값. 현재 화자 정보가 없는 컷은 위 해설자를 사용한다.
+    "tts_voice_male_1_id": "",
+    "tts_voice_male_2_id": "",
+    "tts_voice_female_1_id": "",
+    "tts_voice_female_2_id": "",
     # 음성 속도: 1.0=기본, <1.0=느리게, >1.0=빠르게.
     # OpenAI TTS: 0.25~4.0, ElevenLabs: 0.7~1.2 에서 clamp.
     "tts_speed": 1.0,
     "language": "ko",
     "subtitle_delivery": "burn",
-    "youtube_captions_enabled": True,
+    "youtube_captions_enabled": False,
     "caption_languages": ["ko"],
     "auto_pause_after_step": True,
     # v1.1.55: YouTube 공개 범위 — 프리셋 설정에서 관리
@@ -81,11 +93,14 @@ DEFAULT_CONFIG = {
     "bgm_ducking_strength": "low",
     "bgm_start_offset_sec": 60.0,
     "subtitle_style": dict(DEFAULT_SUBTITLE_STYLE),
+    "variety_highlights_enabled": True,
+    "variety_highlight_panel_mode": "emotion_auto",
+    "variety_highlight_style": "neutral",
 }
 
 
 def normalize_default_config(config: dict) -> dict:
-    cfg = dict(config or {})
+    cfg = apply_main_caption_delivery_policy(config)
     if not cfg.get("story_model"):
         cfg["story_model"] = cfg.get("script_model") or DEFAULT_CONFIG["script_model"]
     try:
@@ -228,13 +243,14 @@ def delete_project(project_id: str, db: Session = Depends(get_db)):
 
 
 def _to_dict(p: Project) -> dict:
+    config = normalize_default_config(dict(p.config or {}))
     return {
-        "id": p.id, "title": p.title, "topic": p.topic, "config": p.config,
+        "id": p.id, "title": p.title, "topic": p.topic, "config": config,
         "status": p.status, "current_step": p.current_step, "step_states": p.step_states,
         "total_cuts": p.total_cuts, "youtube_url": p.youtube_url, "api_cost": p.api_cost,
         "created_at": str(p.created_at), "updated_at": str(p.updated_at),
         # v1.1.33: 선택된 모델 조합 기반 예상 소요시간/비용 (순수 계산, DB 호출 없음)
-        "estimate": estimate_project(p.config or {}),
+        "estimate": estimate_project(config),
     }
 
 

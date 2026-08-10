@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <defs><linearGradient id="skyBounty" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#dce6df"/><stop offset=".56" stop-color="#7f9fb0"/><stop offset="1" stop-color="#a67b50"/></linearGradient></defs>
+  <rect width="1280" height="720" fill="url(#skyBounty)"/>
+  <path d="M0 170 Q115 224 224 165 T446 168 T667 164 T891 170 T1114 164 T1280 172 L1280 0 L0 0Z" fill="#eee9da" stroke="#3f3934" stroke-width="13"/>
+  <path d="M0 530 Q310 500 625 530 T1280 516 L1280 720 L0 720Z" fill="#a8774b" stroke="#4b382a" stroke-width="13"/>
+  <circle cx="1090" cy="116" r="76" fill="#e8bf42" stroke="#4f3b20" stroke-width="15"/>
+  <path d="M230 550 Q520 438 790 300 Q935 224 1012 166" fill="none" stroke="#8d3f32" stroke-width="13" stroke-linecap="round"/>
+  <circle cx="727" cy="335" r="50" fill="#e7bd3e" stroke="#4b371e" stroke-width="13"/>
+  <g id="bounty-basket">
+    <path d="M371 352 Q533 300 695 352 L664 503 Q533 566 402 503Z" fill="#a76e43" stroke="#493126" stroke-width="15"/>
+    <path d="M388 361 Q533 326 678 361" fill="none" stroke="#e0b47b" stroke-width="12"/>
+    <g fill="#f3eee0" stroke="#5d5545" stroke-width="4"><ellipse cx="450" cy="383" rx="11" ry="7"/><ellipse cx="477" cy="374" rx="11" ry="7"/><ellipse cx="503" cy="386" rx="11" ry="7"/></g>
+    <g fill="#d5bd56" stroke="#75612c" stroke-width="4"><circle cx="541" cy="380" r="8"/><circle cx="563" cy="371" r="8"/><circle cx="584" cy="385" r="8"/></g>
+    <g fill="#9f4438" stroke="#612d29" stroke-width="4"><ellipse cx="621" cy="376" rx="12" ry="8"/><ellipse cx="645" cy="389" rx="12" ry="8"/></g>
+    <g fill="#6e984d" stroke="#35532f" stroke-width="5"><path d="M435 427 Q471 397 507 428 Q475 465 435 427Z"/><path d="M515 434 Q551 401 590 432 Q556 470 515 434Z"/><path d="M596 429 Q629 401 664 430 Q634 464 596 429Z"/></g>
+    <g fill="#eee4c8" stroke="#5d5140" stroke-width="5"><ellipse cx="474" cy="426" rx="26" ry="13" transform="rotate(12 474 426)"/><ellipse cx="553" cy="429" rx="26" ry="13" transform="rotate(-8 553 429)"/><ellipse cx="632" cy="426" rx="26" ry="13" transform="rotate(9 632 426)"/></g>
+  </g>
+  <path d="M125 567 Q210 536 306 572 L294 631 Q211 654 135 621Z" fill="#8b684a" stroke="#3d2e25" stroke-width="13"/>
+</svg>

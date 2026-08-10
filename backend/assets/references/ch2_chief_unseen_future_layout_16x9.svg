@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#99968e"/>
+  <path d="M0 525 Q320 475 640 525 T1280 510 V720 H0 Z" fill="#80634e"/>
+  <g fill="#3f3028" stroke="#3f3028" stroke-width="10"><circle cx="235" cy="220" r="48"/><path d="M165 280 Q235 235 305 280 L335 510 Q235 570 135 510 Z"/><rect x="165" y="500" width="54" height="135" rx="17"/><rect x="251" y="500" width="54" height="135" rx="17"/></g>
+  <path d="M165 335 Q235 395 305 335" fill="none" stroke="#80634e" stroke-width="12"/>
+  <rect x="625" y="90" width="590" height="420" rx="30" fill="#b8bbb5" fill-opacity=".85" stroke="#59615e" stroke-width="14" stroke-dasharray="25 22"/>
+  <g opacity=".38" stroke="#41403b" stroke-width="9"><g fill="#718f98"><circle cx="740" cy="230" r="38"/><circle cx="830" cy="185" r="38"/><circle cx="910" cy="250" r="38"/></g><path d="M740 230 L830 185 L910 250" fill="none"/><g fill="#c9cfcc"><rect x="1010" y="160" width="120" height="95" rx="38"/><rect x="1010" y="310" width="120" height="95" rx="38"/></g></g>
+  <path d="M655 120 L1180 480 M1180 120 L655 480" stroke="#7b3f32" stroke-width="18" opacity=".55"/>
+</svg>

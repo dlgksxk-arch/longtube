@@ -34,7 +34,7 @@ from app.services.video.ffmpeg_service import FFmpegService
 from app.services.interlude_service import (
     VALID_KINDS,
     DEFAULT_INTERMISSION_EVERY,
-    INTERMISSION_CLIP_SECONDS,
+    INTERMISSION_INSERTION_ENABLED,
     ffprobe_duration as _ffprobe_duration,
     save_uploaded_video,
     delete_uploaded_video,
@@ -105,6 +105,9 @@ def _build_body_sequence_with_intermission(
     intermission: Optional[str],
     every_cuts: int,
 ) -> tuple[list[str], int]:
+    if not INTERMISSION_INSERTION_ENABLED:
+        return [path for path, _ in cut_entries], 0
+
     body_sequence: list[str] = []
     intermission_count = 0
     every = max(1, int(every_cuts or DEFAULT_INTERMISSION_EVERY))
@@ -129,18 +132,18 @@ def _build_body_sequence_with_intermission(
 async def _prepare_intermission_clip(input_path: str, output_path: str, resolution: str) -> str:
     pad_wh = resolution.replace("x", ":")
     vf = (
+        f"fps=fps=30:start_time=0:round=near,"
         f"scale={resolution}:force_original_aspect_ratio=decrease,"
-        f"pad={pad_wh}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30,format=yuv420p"
+        f"pad={pad_wh}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p"
     )
     await FFmpegService._run_ffmpeg([
         "ffmpeg", "-y",
         "-i", input_path,
-        "-t", f"{INTERMISSION_CLIP_SECONDS:.3f}",
         "-vf", vf,
         "-map", "0:v:0",
         "-map", "0:a?",
-        "-af", "apad",
         "-c:v", "libx264", "-preset", "ultrafast", "-crf", "20",
+        "-fps_mode", "cfr",
         "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
         "-pix_fmt", "yuv420p",
         output_path,
@@ -380,7 +383,7 @@ async def build_interlude_sequence(
         return str(found) if found else None
 
     opening = _inter_abs("opening")
-    intermission = _inter_abs("intermission")
+    intermission = _inter_abs("intermission") if INTERMISSION_INSERTION_ENABLED else None
     ending = _inter_abs("ending")
 
     if not (opening or intermission or ending):
@@ -396,12 +399,16 @@ async def build_interlude_sequence(
 
     output_dir = _output_dir(project_id)
     prepared_intermission = None
+    intermission_duration = 0.0
     if intermission:
         prepared_intermission = await _prepare_intermission_clip(
             intermission,
-            str(output_dir / "intermission_3s.mp4"),
+            str(output_dir / "intermission_full.mp4"),
             resolution,
         )
+        intermission_duration = await FFmpegService.probe_duration(prepared_intermission)
+        if intermission_duration <= 0.0:
+            intermission_duration = await FFmpegService.probe_duration(intermission)
 
     # 컷 클립과 업로드 영상은 코덱/해상도가 다를 수 있다.
     # v2.1.1: 오프닝 뒤 / 엔딩 앞에 0.5초 크로스페이드 적용.
@@ -415,10 +422,11 @@ async def build_interlude_sequence(
     if not body_sequence:
         return {"status": "skipped", "reason": "no body clips"}
 
-    # 2) 본편을 먼저 stream copy 병합
+    # 2) 본편을 먼저 타임스탬프 재생성 병합
     body_path = str(output_dir / "body_merged.mp4")
+    from app.services.remotion_longform_renderer import render_remotion_longform
     ff = FFmpegService()
-    await ff.merge_videos(body_sequence, body_path)
+    await render_remotion_longform(body_sequence, body_path, resolution=resolution)
 
     # 3) 오프닝 + 본편을 크로스페이드로 이어붙이기
     FADE_SEC = 0.5
@@ -465,7 +473,7 @@ async def build_interlude_sequence(
         "intermission_count": intermission_count,
         "ending_used": bool(ending),
         "intermission_every_cuts": every,
-        "intermission_seconds": INTERMISSION_CLIP_SECONDS,
+        "intermission_seconds": intermission_duration,
     }
 
 

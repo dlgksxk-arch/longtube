@@ -11,9 +11,15 @@ from scripts.ch2_europe_workbook_to_prepared_scripts import (  # noqa: E402
     _clean_flux_prompt,
     _clean_integrated_prompt,
     _direct_caption_translation,
+    _ENGLISH_CONTINUITY_TRANSITION_OVERRIDES,
+    _english_continuity_prompt_cycle,
     _integrated_shorts_tag,
     _localized_era,
+    _rebuild_english_continuity_prompt,
+    _rebuild_english_continuity_thumbnail_prompt,
     _set_prompt_period,
+    ENGLISH_CONTINUITY_END_LOCK,
+    ENGLISH_CONTINUITY_MATERIAL_LOCK,
 )
 from scripts.ch2_europe_titles_en import (  # noqa: E402
     EPISODE_TITLES_EN,
@@ -121,6 +127,84 @@ class Ch2EuropeWorkbookConverterTests(unittest.TestCase):
         self.assertIsNone(_integrated_shorts_tag(""))
         with self.assertRaises(ValueError):
             _integrated_shorts_tag("#5-1")
+
+    def test_english_continuity_prompt_cycle_matches_reviewed_workbook_pattern(self):
+        self.assertEqual(
+            _english_continuity_prompt_cycle(1),
+            (
+                "wide establishing shot",
+                "35mm documentary lens",
+                "cold dawn light",
+            ),
+        )
+        self.assertEqual(
+            _english_continuity_prompt_cycle(8),
+            (
+                "wide establishing shot",
+                "35mm documentary lens",
+                "soft overcast daylight",
+            ),
+        )
+
+    def test_english_continuity_prompt_rebuild_restores_only_fixed_tail(self):
+        source_body = (
+            "Yamnaya chief and farmer elder facing each other, "
+            "character continuity: Yamnaya chief with ochre wool cloak and copper dagger"
+        )
+        source = f"{source_body},, {ENGLISH_CONTINUITY_END_LOCK}"
+        rebuilt = _rebuild_english_continuity_prompt(source, 5)
+        self.assertTrue(rebuilt.startswith(source_body + ", "))
+        self.assertIn(ENGLISH_CONTINUITY_MATERIAL_LOCK, rebuilt)
+        self.assertIn("low-angle action shot, 35mm lens, moonlit blue-black night", rebuilt)
+        self.assertNotIn(",,", rebuilt)
+        self.assertTrue(rebuilt.endswith(ENGLISH_CONTINUITY_END_LOCK))
+
+    def test_english_continuity_prompt_rebuild_replaces_partial_fixed_tail(self):
+        source_body = "Roman senators confront a general in the forum"
+        source = (
+            f"{source_body}, period-accurate clothing, architecture, tools, and, "
+            f"{ENGLISH_CONTINUITY_END_LOCK}"
+        )
+        rebuilt = _rebuild_english_continuity_prompt(source, 2)
+        self.assertTrue(rebuilt.startswith(source_body + ", "))
+        self.assertEqual(rebuilt.count(ENGLISH_CONTINUITY_MATERIAL_LOCK), 1)
+        self.assertIn(
+            "eye-level medium shot, 50mm documentary lens, soft overcast daylight",
+            rebuilt,
+        )
+
+    def test_english_continuity_prompt_rebuild_fails_when_end_lock_changed(self):
+        with self.assertRaisesRegex(ValueError, "end lock"):
+            _rebuild_english_continuity_prompt("A historical scene, no watermark", 1)
+
+    def test_english_continuity_thumbnail_prompt_rebuild_restores_locks(self):
+        source_body = (
+            "Lucretia stands before Roman nobles, character continuity: Lucretia in a "
+            "white wool stola, composed expression turning to"
+        )
+        source = (
+            f"{source_body}, period-accurate clothing, architecture, tools, and, "
+            f"{ENGLISH_CONTINUITY_END_LOCK}"
+        )
+        rebuilt = _rebuild_english_continuity_thumbnail_prompt(source)
+        self.assertNotIn("turning to", rebuilt)
+        self.assertNotIn(",,", rebuilt)
+        self.assertEqual(rebuilt.count(ENGLISH_CONTINUITY_MATERIAL_LOCK), 1)
+        self.assertTrue(rebuilt.endswith(ENGLISH_CONTINUITY_END_LOCK))
+
+    def test_ep12_transition_override_targets_immediate_ep13(self):
+        self.assertEqual(
+            set(_ENGLISH_CONTINUITY_TRANSITION_OVERRIDES),
+            {(12, cut_number) for cut_number in range(145, 151)},
+        )
+        self.assertIn(
+            "Rome",
+            _ENGLISH_CONTINUITY_TRANSITION_OVERRIDES[(12, 145)]["narration"],
+        )
+        self.assertIn(
+            "Roman Republic",
+            _ENGLISH_CONTINUITY_TRANSITION_OVERRIDES[(12, 150)]["prompt_body"],
+        )
 
 
 if __name__ == "__main__":

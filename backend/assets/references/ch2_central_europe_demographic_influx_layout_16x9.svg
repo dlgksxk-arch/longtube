@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#999f9d"/>
+  <rect x="55" y="90" width="310" height="540" rx="24" fill="#c9cfcc" stroke="#414846" stroke-width="15"/>
+  <g fill="#a96240" stroke="#45413b" stroke-width="9"><circle cx="135" cy="180" r="42"/><circle cx="275" cy="180" r="42"/><circle cx="135" cy="310" r="42"/><circle cx="275" cy="310" r="42"/><circle cx="135" cy="440" r="42"/><circle cx="275" cy="440" r="42"/><circle cx="135" cy="570" r="42"/><circle cx="275" cy="570" r="42"/></g>
+  <path d="M365 360 H555" stroke="#80634e" stroke-width="42"/>
+  <rect x="600" y="70" width="625" height="580" rx="24" fill="#c9cfcc" stroke="#414846" stroke-width="15"/>
+  <g stroke="#45413b" stroke-width="9"><g fill="#718f98"><rect x="660" y="125" width="105" height="105" rx="16"/><rect x="800" y="125" width="105" height="105" rx="16"/><rect x="660" y="265" width="105" height="105" rx="16"/><rect x="660" y="405" width="105" height="105" rx="16"/></g><g fill="#a96240"><rect x="940" y="125" width="105" height="105" rx="16"/><rect x="1080" y="125" width="105" height="105" rx="16"/><rect x="800" y="265" width="105" height="105" rx="16"/><rect x="940" y="265" width="105" height="105" rx="16"/><rect x="1080" y="265" width="105" height="105" rx="16"/><rect x="800" y="405" width="105" height="105" rx="16"/><rect x="940" y="405" width="105" height="105" rx="16"/><rect x="1080" y="405" width="105" height="105" rx="16"/><rect x="660" y="545" width="105" height="70" rx="16"/><rect x="800" y="545" width="105" height="70" rx="16"/><rect x="940" y="545" width="105" height="70" rx="16"/><rect x="1080" y="545" width="105" height="70" rx="16"/></g></g>
+</svg>

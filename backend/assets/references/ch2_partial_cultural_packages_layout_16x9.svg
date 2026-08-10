@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#a8845e"/>
+  <rect x="45" y="85" width="330" height="550" rx="28" fill="#99968e" stroke="#403832" stroke-width="16"/>
+  <path d="M120 190 Q205 120 290 190 L275 235 Q205 190 135 235 Z" fill="#805738" stroke="#403832" stroke-width="12"/>
+  <circle cx="205" cy="340" r="70" fill="#98683f" stroke="#403832" stroke-width="13"/>
+  <ellipse cx="205" cy="495" rx="62" ry="88" fill="#9e6a42" stroke="#403832" stroke-width="12"/>
+  <path d="M155 475 H255 M160 515 H250" fill="none" stroke="#d0a06b" stroke-width="9"/>
+  <path d="M285 300 L335 290 L350 390 L298 400 Z" fill="#85837a" stroke="#403832" stroke-width="11"/>
+  <g fill="none" stroke="#665446" stroke-width="16"><path d="M375 220 H520 M375 360 H520 M375 500 H520"/></g>
+  <g fill="#99968e" stroke="#403832" stroke-width="14">
+    <rect x="520" y="95" width="700" height="205" rx="24"/>
+    <rect x="520" y="315" width="700" height="205" rx="24"/>
+    <rect x="520" y="535" width="700" height="145" rx="24"/>
+  </g>
+  <g>
+    <path d="M590 175 Q665 120 740 175 L728 215 Q665 180 602 215 Z" fill="#805738" stroke="#403832" stroke-width="11"/>
+    <circle cx="870" cy="198" r="57" fill="#98683f" stroke="#403832" stroke-width="11"/>
+    <circle cx="1035" cy="198" r="48" fill="#a96240" stroke="#403832" stroke-width="11"/>
+    <ellipse cx="650" cy="415" rx="48" ry="68" fill="#9e6a42" stroke="#403832" stroke-width="10"/>
+    <path d="M610 400 H690 M614 435 H686" fill="none" stroke="#d0a06b" stroke-width="8"/>
+    <path d="M810 365 L875 352 L892 468 L825 480 Z" fill="#85837a" stroke="#403832" stroke-width="11"/>
+    <circle cx="1030" cy="415" r="48" fill="#718f98" stroke="#403832" stroke-width="11"/>
+    <circle cx="620" cy="607" r="42" fill="#80634e" stroke="#403832" stroke-width="10"/>
+    <circle cx="750" cy="607" r="42" fill="#a96240" stroke="#403832" stroke-width="10"/>
+    <circle cx="880" cy="607" r="42" fill="#718f98" stroke="#403832" stroke-width="10"/>
+  </g>
+</svg>

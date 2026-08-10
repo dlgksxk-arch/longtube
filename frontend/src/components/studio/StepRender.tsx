@@ -399,6 +399,7 @@ export default function StepRender({ project, cuts, onUpdate }: Props) {
       <GenerationTimer
         projectId={project.id}
         step="render"
+        running={rendering}
         label="최종 렌더링 중..."
         onComplete={handleRenderComplete}
       />

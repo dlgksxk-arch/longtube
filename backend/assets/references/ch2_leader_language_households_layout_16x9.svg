@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#999f9d"/>
+  <g fill="#c9cfcc" stroke="#414846" stroke-width="14"><rect x="45" y="60" width="360" height="600" rx="25"/><rect x="460" y="60" width="360" height="600" rx="25"/><rect x="875" y="60" width="360" height="600" rx="25"/></g>
+  <g fill="#a96240" stroke="#41403b" stroke-width="10"><circle cx="115" cy="155" r="42"/><circle cx="530" cy="155" r="42"/><circle cx="945" cy="155" r="42"/></g>
+  <g fill="#80634e" stroke="#41403b" stroke-width="12"><path d="M105 410 L225 285 L345 410 Z"/><rect x="135" y="410" width="180" height="150"/><path d="M520 410 L640 285 L760 410 Z"/><rect x="550" y="410" width="180" height="150"/><path d="M935 410 L1055 285 L1175 410 Z"/><rect x="965" y="410" width="180" height="150"/></g>
+  <g fill="#c9cfcc" stroke="#41403b" stroke-width="10"><rect x="150" y="205" width="150" height="95" rx="40"/><rect x="565" y="205" width="150" height="95" rx="40"/><rect x="980" y="205" width="150" height="95" rx="40"/></g>
+  <path d="M115 197 L185 245 M530 197 L600 245 M945 197 L1015 245 M405 360 H460 M820 360 H875" stroke="#718f98" stroke-width="14"/>
+</svg>

@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#aeb4b2"/>
+  <!-- Present-day, hand-free laboratory comparison of horse evidence. -->
+  <rect x="70" y="85" width="1140" height="550" rx="22" fill="#d3d7d3" stroke="#4c5351" stroke-width="16"/>
+  <path d="M145 195 Q240 135 330 205 L345 385 L290 465 L240 400 L190 465 L125 385 Z" fill="#ddd4ba" stroke="#4a433c" stroke-width="14"/>
+  <rect x="445" y="150" width="260" height="380" rx="18" fill="#8e9895" stroke="#4c5351" stroke-width="14"/>
+  <g fill="#c7a268" stroke="#4a433c" stroke-width="9">
+    <circle cx="520" cy="235" r="38"/><circle cx="625" cy="235" r="38"/>
+    <circle cx="520" cy="340" r="38"/><circle cx="625" cy="340" r="38"/>
+    <circle cx="520" cy="445" r="38"/><circle cx="625" cy="445" r="38"/>
+  </g>
+  <path d="M790 190 L925 285 L790 380 M925 285 L1085 190 M925 285 L1085 380 M925 285 V520" fill="none" stroke="#6d4e3a" stroke-width="17"/>
+  <g fill="#d1bd92" stroke="#4a433c" stroke-width="11">
+    <circle cx="790" cy="190" r="48"/><circle cx="790" cy="380" r="48"/>
+    <circle cx="1085" cy="190" r="48"/><circle cx="1085" cy="380" r="48"/><circle cx="925" cy="535" r="48"/>
+  </g>
+  <path d="M150 565 H360 M185 540 V590 M325 540 V590" stroke="#59625f" stroke-width="15"/>
+</svg>

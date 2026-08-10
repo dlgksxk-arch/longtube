@@ -16,6 +16,7 @@ class GPTService(BaseLLMService):
 
     def _client(self):
         """Create a client in the active event loop."""
+        config.require_openai_api_enabled()
         return self._client_factory(api_key=config.OPENAI_API_KEY)
 
     def _is_latest_gpt(self) -> bool:
@@ -177,33 +178,31 @@ class GPTService(BaseLLMService):
         story_plan = await self._ensure_story_plan_for_script(topic, config)
         script_config = dict(config or {})
         script_config["story_plan"] = story_plan
-        project_id = config.get("__project_id")
-        timing_issues: list[dict] = []
-        max_attempts = int(script_config.get("script_timing_retry_attempts") or 3)
-        max_attempts = max(1, min(5, max_attempts))
-        for attempt in range(1, max_attempts + 1):
-            attempt_config = dict(script_config)
-            if timing_issues:
-                attempt_config["__script_timing_retry_instruction"] = self._script_timing_retry_instruction(
-                    script_config,
-                    timing_issues,
-                )
+        from app.services.llm.timing import (
+            clear_script_timing_checkpoint,
+            load_script_timing_checkpoint,
+            repair_script_narration_timing,
+            save_script_timing_checkpoint,
+        )
+
+        project_id = script_config.get("__project_id")
+        parsed = load_script_timing_checkpoint(topic, script_config, self.model_id)
+        if parsed is None:
             raise_if_cancelled("gpt generate_script")
             async with self._client() as client:
                 response = await self._create_json_chat_completion(
                     client,
                     messages=[
-                        {"role": "system", "content": self._get_system_prompt(attempt_config)},
-                        {"role": "user", "content": self._build_user_prompt(topic, attempt_config)},
+                        {"role": "system", "content": self._get_system_prompt(script_config)},
+                        {"role": "user", "content": self._build_user_prompt(topic, script_config)},
                     ],
-                    temperature=0.8 if attempt == 1 else 0.35,
+                    temperature=0.8,
                     max_tokens=dynamic_max,
                     timeout=None,
                 )
             raise_if_cancelled("gpt generate_script")
             self._record_usage(response, "script", project_id)
-            raw_label = "script_response" if attempt == 1 else f"script_timing_retry_{attempt}_response"
-            self._save_raw_response(project_id, raw_label, response)
+            self._save_raw_response(project_id, "script_response", response)
             raw = self._message_content_text(response).strip()
             if not raw:
                 raise RuntimeError(
@@ -219,20 +218,33 @@ class GPTService(BaseLLMService):
                     f"(model={self.model_id}, finish_reason={self._finish_reason(response)}, "
                     f"error={exc})"
                 ) from exc
-            cuts = parsed.get("cuts") or []
-            if len(cuts) != estimated_cuts:
-                raise ValueError(
-                    f"script generation returned {len(cuts)} cuts, expected {estimated_cuts}"
-                )
-            parsed = self.strengthen_visual_context(parsed, config)
-            parsed = self.normalize_v31_story_contract(parsed, config, topic)
+        else:
+            print("[script] timing checkpoint reused; full GPT generation skipped")
+        cuts = parsed.get("cuts") or []
+        if len(cuts) != estimated_cuts:
+            raise ValueError(
+                f"script generation returned {len(cuts)} cuts, expected {estimated_cuts}"
+            )
+        parsed = self.strengthen_visual_context(parsed, config)
+        parsed = self.normalize_v31_story_contract(parsed, config, topic)
+        assert_script_quality(parsed, topic)
+        save_script_timing_checkpoint(parsed, topic, script_config, self.model_id)
+        if self.validate_script_timing(parsed, config):
+            repair_config = dict(script_config)
+            repair_config.setdefault("script_timing_max_llm_repairs", estimated_cuts)
+            repair_config.setdefault("script_timing_repair_concurrency", 4)
+            parsed = await repair_script_narration_timing(
+                parsed,
+                repair_config,
+                topic=topic,
+                llm_service=self,
+                max_rounds=2,
+            )
             assert_script_quality(parsed, topic)
-            timing_issues = self.validate_script_timing(parsed, config)
-            if timing_issues and attempt < max_attempts:
-                continue
-            self.assert_script_timing(parsed, config)
-            return parsed
-        raise RuntimeError("OpenAI script generation did not return a valid script")
+            save_script_timing_checkpoint(parsed, topic, script_config, self.model_id)
+        self.assert_script_timing(parsed, config)
+        clear_script_timing_checkpoint(script_config)
+        return parsed
 
     async def generate_tags(
         self,
@@ -377,6 +389,7 @@ class GPTService(BaseLLMService):
             next_narration=next_narration,
         )
         raise_if_cancelled("gpt timing_rewrite")
+        output_budget = 4096 if self._is_latest_gpt() else 300
         async with self._client() as client:
             response = await self._create_json_chat_completion(
                 client,
@@ -391,9 +404,15 @@ class GPTService(BaseLLMService):
                     {"role": "user", "content": prompt},
                 ],
                 temperature=0.2,
-                max_tokens=300,
+                max_tokens=output_budget,
             )
         raise_if_cancelled("gpt timing_rewrite")
         self._record_usage(response, "timing_rewrite")
-        raw = response.choices[0].message.content or ""
+        raw = self._message_content_text(response).strip()
+        if not raw:
+            raise RuntimeError(
+                "OpenAI timing rewrite response was empty "
+                f"(model={self.model_id}, finish_reason={self._finish_reason(response)}, "
+                f"usage={self._usage_summary(response)})"
+            )
         return self._parse_narration_rewrite_response(raw)

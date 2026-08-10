@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#a8845e"/>
+  <g fill="none" stroke="#718f98" stroke-width="15"><path d="M640 115 V245 M640 245 L360 360 M640 245 L640 360 M640 245 L920 360 M360 360 L170 545 M360 360 L330 545 M640 360 L530 545 M640 360 L750 545 M920 360 L950 545 M920 360 L1110 545"/></g>
+  <g fill="#718f98" stroke="#403832" stroke-width="12"><circle cx="640" cy="115" r="64"/><circle cx="360" cy="360" r="58"/><circle cx="640" cy="360" r="58"/><circle cx="920" cy="360" r="58"/></g>
+  <g stroke="#403832" stroke-width="11"><circle cx="170" cy="545" r="52" fill="#718f98"/><circle cx="330" cy="545" r="52" fill="#a96240"/><circle cx="530" cy="545" r="52" fill="#718f98"/><circle cx="750" cy="545" r="52" fill="#a96240"/><circle cx="950" cy="545" r="52" fill="#718f98"/><circle cx="1110" cy="545" r="52" fill="#a96240"/></g>
+  <g fill="#b9c8c8" stroke="#403832" stroke-width="9"><rect x="565" y="25" width="150" height="70" rx="32"/><rect x="285" y="265" width="150" height="70" rx="32"/><rect x="565" y="265" width="150" height="70" rx="32"/><rect x="845" y="265" width="150" height="70" rx="32"/></g>
+</svg>

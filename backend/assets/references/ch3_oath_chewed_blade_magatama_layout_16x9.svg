@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <defs>
+    <linearGradient id="earth" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#b98d5d"/>
+      <stop offset="1" stop-color="#765039"/>
+    </linearGradient>
+    <linearGradient id="bronze" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#b18a4b"/>
+      <stop offset="1" stop-color="#625039"/>
+    </linearGradient>
+  </defs>
+  <rect width="1280" height="720" fill="url(#earth)"/>
+  <path d="M0 126 Q320 92 640 128 T1280 110 M0 594 Q318 558 644 596 T1280 576" fill="none" stroke="#5d412f" stroke-width="8" opacity=".24"/>
+  <g id="short-broken-blade-fragment-without-hilt">
+    <path d="M196 321 L538 356 L470 420 L258 458 L211 433 L243 402 L207 374 L244 344 Z" fill="url(#bronze)" stroke="#2f2922" stroke-width="16" stroke-linejoin="round"/>
+    <path d="M238 346 L493 371 L454 397" fill="none" stroke="#d1b370" stroke-width="10" opacity=".66"/>
+  </g>
+  <g id="single-green-comma-magatama">
+    <path d="M843 229 C1015 222 1090 350 1027 465 C977 555 829 548 780 445 C735 350 776 242 843 229 C919 214 974 269 960 333 C949 385 886 411 843 376 C817 355 819 314 846 293 C871 274 907 287 916 315 C924 340 909 362 884 365 C935 390 992 347 981 294 C968 239 906 214 843 229 Z" fill="#4f9666" stroke="#273c2c" stroke-width="18" stroke-linejoin="round"/>
+    <circle cx="850" cy="302" r="15" fill="#2e5f42"/>
+  </g>
+</svg>

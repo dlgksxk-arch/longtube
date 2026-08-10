@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <defs><linearGradient id="clayUkehi" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#d0b17f"/><stop offset="1" stop-color="#876145"/></linearGradient></defs>
+  <rect width="1280" height="720" fill="url(#clayUkehi)"/>
+  <path d="M0 115 Q320 77 640 120 T1280 103 M0 607 Q322 563 646 611 T1280 584" fill="none" stroke="#6f533b" stroke-width="7" opacity=".34"/>
+  <circle cx="164" cy="158" r="83" fill="#e5bd42" stroke="#4b3922" stroke-width="14"/>
+  <g id="storm-disk" transform="translate(1010 76)" fill="none" stroke="#294f73" stroke-width="22" stroke-linecap="round"><path d="M0 70 C92-19 183 82 122 148 C67 207-43 154-17 83 C6 24 78 28 94 74 C106 109 63 134 36 109 C18 92 40 66 62 77"/></g>
+  <g id="bow-and-arrows-ukehi"><path d="M65 537 Q260 390 354 241 Q318 430 99 575Z" fill="#8d5a37" stroke="#3c2b22" stroke-width="13"/><path d="M67 539 Q226 453 354 241" fill="none" stroke="#d2bc8b" stroke-width="7"/><path d="M252 332 L426 505 M274 313 L448 486" stroke="#9a7935" stroke-width="11"/><path d="M426 505 l-30-4 l18-23Z M448 486 l-30-4 l18-23Z" fill="#e8dfc5" stroke="#5d5141" stroke-width="6"/></g>
+  <g id="straight-sword-ukehi"><path d="M974 270 L1120 528 L1069 557 L915 309Z" fill="#a08a58" stroke="#39342b" stroke-width="13"/><path d="M914 309 L875 342 L839 286 L887 257Z" fill="#876b42" stroke="#39342b" stroke-width="11"/><rect x="1062" y="530" width="96" height="42" rx="17" transform="rotate(60 1110 551)" fill="#6c4a34" stroke="#39342b" stroke-width="10"/></g>
+  <g id="magatama-ukehi"><path d="M462 485 Q638 414 815 485" fill="none" stroke="#6a4332" stroke-width="9"/><g fill="#5f9b69" stroke="#35583b" stroke-width="6"><path d="M481 472 q28-33 55-5 q-2 30-31 23 q14-9 5-19 q-11-9-29 1Z"/><path d="M550 449 q28-33 55-5 q-2 30-31 23 q14-9 5-19 q-11-9-29 1Z"/><path d="M621 441 q28-33 55-5 q-2 30-31 23 q14-9 5-19 q-11-9-29 1Z"/><path d="M692 449 q28-33 55-5 q-2 30-31 23 q14-9 5-19 q-11-9-29 1Z"/><path d="M761 472 q28-33 55-5 q-2 30-31 23 q14-9 5-19 q-11-9-29 1Z"/></g></g>
+  <g id="two-breath-swirls" fill="none" stroke="#ebe7da" stroke-width="12" stroke-linecap="round"><path d="M526 309 Q572 246 623 301 Q652 332 614 362 Q573 391 543 356 Q520 329 552 313"/><path d="M655 301 Q702 242 752 296 Q783 328 744 359 Q704 388 674 352 Q652 326 683 309"/></g>
+  <g id="three-small-born-tokens" fill="#d9c59a" stroke="#584839" stroke-width="7"><circle cx="581" cy="396" r="18"/><circle cx="640" cy="411" r="18"/><circle cx="699" cy="394" r="18"/></g>
+</svg>

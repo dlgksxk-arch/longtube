@@ -8,10 +8,9 @@ set "PYTHONUTF8=1"
 set "PYTHONIOENCODING=utf-8"
 set "PYTHONLEGACYWINDOWSSTDIO=0"
 set "PYTHONUNBUFFERED=1"
-set "COMFY_ROOT=%LOCALAPPDATA%\Programs\ComfyUI\resources\ComfyUI"
 set "COMFY_DATA=%APPDATA%\ComfyUI-Data"
-set "COMFY_PY=%COMFY_DATA%\.venv\Scripts\python.exe"
-set "COMFY_FRONTEND=%LOCALAPPDATA%\Programs\ComfyUI\resources\ComfyUI\web_custom_versions\desktop_app"
+set "COMFY_ROOT=%COMFY_DATA%\cores\ComfyUI-0.30.0"
+set "COMFY_PY=%COMFY_ROOT%\.venv\Scripts\python.exe"
 set "COMFY_DB=%APPDATA:\=/%/ComfyUI-Data/user/comfyui.db"
 set "LOG_DIR=%~dp0data\logs"
 set "LOG_FILE=%LOG_DIR%\comfyui-lan.log"
@@ -73,7 +72,7 @@ echo.
 echo [%date% %time%] launching ComfyUI python>>"%LOG_FILE%" 2>nul
 
 cd /d "%COMFY_ROOT%"
-"%COMFY_PY%" main.py --windows-standalone-build --disable-auto-launch --listen 0.0.0.0 --port 8188 --base-directory C:\ --user-directory "%COMFY_DATA%\user" --database-url "sqlite:///%COMFY_DB%" --front-end-root "%COMFY_FRONTEND%" >>"%LOG_FILE%" 2>>&1
+"%COMFY_PY%" main.py --windows-standalone-build --disable-auto-launch --listen 0.0.0.0 --port 8188 --base-directory C:\ --user-directory "%COMFY_DATA%\user" --database-url "sqlite:///%COMFY_DB%" >>"%LOG_FILE%" 2>>&1
 
 echo.
 echo ComfyUI LAN server stopped.

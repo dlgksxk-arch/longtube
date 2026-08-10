@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#cbd5c8"/>
+  <path d="M0 315 Q330 280 620 330 Q905 270 1280 310 V720 H0 Z" fill="#b58a55"/>
+  <path d="M0 500 Q360 455 650 505" fill="none" stroke="#8e653d" stroke-width="12" opacity="0.62"/>
+
+  <!-- Left: mobile pastoral equipment, solid plank wheel and rolled hide. -->
+  <circle cx="240" cy="390" r="132" fill="#98693d" stroke="#4b3428" stroke-width="12"/>
+  <path d="M165 275V505M315 275V505" fill="none" stroke="#4b3428" stroke-width="9"/>
+  <circle cx="240" cy="390" r="29" fill="#c5a56f" stroke="#4b3428" stroke-width="10"/>
+  <path d="M90 585 Q105 525 170 515 H445 Q505 525 520 585 Q505 645 445 655 H170 Q105 645 90 585 Z" fill="#c5a46d" stroke="#4b3428" stroke-width="12"/>
+  <path d="M180 520V650M405 520V650" fill="none" stroke="#6f4b32" stroke-width="13"/>
+  <path d="M145 555 Q300 610 465 555M145 615 Q300 560 465 615" fill="none" stroke="#98734e" stroke-width="7" opacity="0.8"/>
+
+  <!-- Right: Mykhailivka river settlement, low daub buildings behind a dry-stone wall and deep ditch. -->
+  <path d="M650 315 Q720 575 790 315 Z" fill="#6e4b34" stroke="#4b3428" stroke-width="11"/>
+  <path d="M680 315 Q720 500 760 315 Z" fill="#cbd5c8" stroke="#4b3428" stroke-width="8"/>
+
+  <!-- Low one- and three-chamber stone-founded daub buildings; no medieval gables. -->
+  <path d="M825 316V250Q905 210 985 250V316Z" fill="#b17e4c" stroke="#4b3428" stroke-width="10"/>
+  <path d="M1000 316V245Q1085 210 1170 245V316Z" fill="#b17e4c" stroke="#4b3428" stroke-width="10"/>
+  <path d="M835 252Q905 220 975 252M1010 247Q1085 218 1160 247" fill="none" stroke="#79603e" stroke-width="15"/>
+  <path d="M1060 246V316M1115 246V316" fill="none" stroke="#4b3428" stroke-width="8"/>
+
+  <!-- One high irregular unmortared dry-stone wall. -->
+  <path d="M795 330H1185V525H795Z" fill="#816f58" stroke="#4b3428" stroke-width="12"/>
+  <path d="M810 348L882 338L915 392L825 407Z M930 340L1012 350L995 405L915 392Z M1025 348L1118 338L1168 390L1090 410L995 405Z M812 420L900 405L940 462L825 480Z M955 415L1040 410L1080 470L940 462Z M1090 410L1170 405L1168 480L1080 470Z M825 490L930 475L980 510L830 513Z M995 480L1090 475L1160 492L1165 513H980Z" fill="#b59a72" stroke="#4b3428" stroke-width="7" stroke-linejoin="round"/>
+  <path d="M1030 720 Q1080 605 1280 555 V720 Z" fill="#6d99a4" stroke="#4b3428" stroke-width="10"/>
+  <path d="M1060 680 Q1165 620 1280 605M1095 715 Q1190 665 1280 650" fill="none" stroke="#aec7c2" stroke-width="9"/>
+</svg>

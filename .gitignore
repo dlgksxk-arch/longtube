@@ -58,3 +58,20 @@ tmp/
 tmp_*
 *.bak
 backend/spend_report.txt
+
+# Local workbench QA, inspection, and recovery artifacts
+# Keep source, tests, workflows, and handoff documents visible to Git.
+.codex_inspection/
+.codex_qa/
+.codex_qa*
+.codex_tmp/
+.codex_tmp_spreadsheet/
+_qa_*
+_tmp_*
+output/
+outputs/
+logs/
+qa_contact_sheets/
+_ch4_retitle_*/
+backend/_qa_*/
+backend/_tmp*

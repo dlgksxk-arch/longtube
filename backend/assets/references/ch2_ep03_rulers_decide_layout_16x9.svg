@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#b8b2a3"/><path d="M0 540 Q640 500 1280 540 V720 H0Z" fill="#95846b"/>
+  <path d="M90 545 V165 H850 V545 M60 165 H885" fill="none" stroke="#3b332a" stroke-width="28"/><path d="M90 170 L210 95 H745 L850 170" fill="#75614b" stroke="#3b332a" stroke-width="18"/>
+  <g fill="#76563f" stroke="#302a25" stroke-width="11"><circle cx="230" cy="305" r="42"/><path d="M185 355 Q230 325 275 355 L290 545 H170Z"/><path d="M205 530 L200 650 M255 530 L262 650" fill="none" stroke-width="20"/><circle cx="410" cy="300" r="42"/><path d="M365 350 Q410 320 455 350 L470 545 H350Z"/><path d="M385 530 L380 650 M435 530 L442 650" fill="none" stroke-width="20"/><circle cx="590" cy="310" r="42"/><path d="M545 360 Q590 330 635 360 L650 545 H530Z"/><path d="M565 530 L560 650 M615 530 L622 650" fill="none" stroke-width="20"/><circle cx="775" cy="335" r="38"/><path d="M735 380 Q775 350 815 380 L827 545 H722Z"/><path d="M752 530 L748 650 M800 530 L806 650" fill="none" stroke-width="19"/></g>
+  <path d="M800 405 L905 330" stroke="#302a25" stroke-width="16"/>
+</svg>

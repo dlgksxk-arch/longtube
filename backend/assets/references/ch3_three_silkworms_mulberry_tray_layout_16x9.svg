@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <defs>
+    <linearGradient id="wood89" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#a87349"/>
+      <stop offset="0.5" stop-color="#c99660"/>
+      <stop offset="1" stop-color="#95603c"/>
+    </linearGradient>
+    <linearGradient id="tray89" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#d0a16c"/>
+      <stop offset="1" stop-color="#8b5835"/>
+    </linearGradient>
+    <linearGradient id="leaf89" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8fb85b"/>
+      <stop offset="1" stop-color="#3f743b"/>
+    </linearGradient>
+    <linearGradient id="worm89" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f4edd8"/>
+      <stop offset="1" stop-color="#c7b894"/>
+    </linearGradient>
+    <filter id="shadow89" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="12"/>
+    </filter>
+  </defs>
+
+  <rect width="1280" height="720" fill="url(#wood89)"/>
+  <g fill="none" stroke="#74492f" stroke-width="7" opacity="0.32">
+    <path d="M0 113 Q294 78 617 122 T1280 105"/>
+    <path d="M0 607 Q312 572 644 615 T1280 590"/>
+  </g>
+
+  <rect x="167" y="123" width="946" height="516" rx="74" fill="#513628" opacity="0.25" filter="url(#shadow89)"/>
+  <g id="one-tray89">
+    <rect x="174" y="103" width="932" height="511" rx="68" fill="url(#tray89)" stroke="#493329" stroke-width="17"/>
+    <rect x="220" y="149" width="840" height="419" rx="42" fill="#c2925d" stroke="#e0b277" stroke-width="12"/>
+    <g fill="none" stroke="#895b3b" stroke-width="6" opacity="0.56">
+      <path d="M249 220 Q640 188 1031 219"/><path d="M249 489 Q640 520 1031 487"/>
+    </g>
+  </g>
+
+  <!-- Exactly three separate mulberry leaves. -->
+  <g id="three-leaves89" fill="url(#leaf89)" stroke="#2f4c2d" stroke-width="11" stroke-linejoin="round">
+    <path d="M293 404 C267 342 300 270 376 244 C405 194 467 201 493 253 C546 281 548 350 509 381 C495 451 414 490 350 451 Z"/>
+    <path d="M508 410 C487 348 524 274 594 253 C622 203 680 202 711 252 C780 275 797 349 751 392 C741 456 664 487 600 451 Z"/>
+    <path d="M764 401 C741 337 778 270 849 245 C879 197 938 203 965 253 C1025 279 1035 350 992 390 C983 455 902 486 839 448 Z"/>
+  </g>
+  <g fill="none" stroke="#315b32" stroke-width="7" stroke-linecap="round">
+    <path d="M335 430 Q406 348 473 270 M375 386 L325 343 M414 343 L467 326"/>
+    <path d="M551 430 Q633 348 697 274 M598 382 L548 335 M642 339 L704 319"/>
+    <path d="M808 428 Q887 347 953 272 M855 383 L803 335 M900 339 L960 322"/>
+  </g>
+
+  <!-- Exactly three cream-white silkworms, one per leaf. -->
+  <g id="three-silkworms89" fill="url(#worm89)" stroke="#5b5140" stroke-width="7" stroke-linejoin="round">
+    <path d="M346 338 C361 315 391 310 415 320 C442 331 463 350 469 373 C449 391 423 392 401 381 C377 369 355 356 346 338 Z"/>
+    <path d="M594 342 C610 317 640 310 665 321 C691 332 712 349 719 371 C701 391 674 394 650 383 C626 372 604 357 594 342 Z"/>
+    <path d="M843 337 C859 315 887 310 912 320 C938 331 961 349 967 372 C948 392 921 393 898 382 C875 371 852 356 843 337 Z"/>
+  </g>
+  <g fill="none" stroke="#96886d" stroke-width="5" opacity="0.8">
+    <path d="M372 322 L371 357 M397 316 L398 378 M423 325 L425 386 M449 342 L450 383"/>
+    <path d="M620 322 L620 361 M646 316 L647 381 M672 324 L675 388 M698 341 L701 383"/>
+    <path d="M869 322 L869 359 M894 316 L896 380 M921 325 L924 387 M947 342 L949 383"/>
+  </g>
+</svg>

@@ -35,8 +35,11 @@ RESULT_ARCHIVE_DIR = Path(os.getenv("RESULT_ARCHIVE_DIR", r"D:\long_result"))
 DB_PATH = BASE_DIR / "data" / "longtube.db"                       # 로컬 DB
 
 # API Keys
+# User policy (2026-07-27): LongTube must not call any OpenAI API unless this
+# source-level lock is deliberately changed after explicit user authorization.
+OPENAI_API_DISABLED = True
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+OPENAI_API_KEY = "" if OPENAI_API_DISABLED else os.getenv("OPENAI_API_KEY", "")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
 FAL_KEY = os.getenv("FAL_KEY", "")
 XAI_API_KEY = os.getenv("XAI_API_KEY", "")
@@ -66,7 +69,16 @@ def _read_env_file_value(name: str) -> str:
 
 def get_runtime_api_key(name: str) -> str:
     """Return the freshest API key value without requiring a server restart."""
+    if OPENAI_API_DISABLED and name in {"OPENAI_API_KEY", "OPENAI_ADMIN_KEY"}:
+        return ""
     return _read_env_file_value(name) or os.environ.get(name, "") or globals().get(name, "") or ""
+
+
+def require_openai_api_enabled() -> None:
+    if OPENAI_API_DISABLED:
+        raise RuntimeError(
+            "LongTube OpenAI API 사용이 사용자 지시로 전면 중지되어 있습니다."
+        )
 
 # YouTube OAuth
 YOUTUBE_CLIENT_ID = os.getenv("YOUTUBE_CLIENT_ID", "")
@@ -275,13 +287,50 @@ DATA_DIR = _DataDirProxy(_RAW_DATA_DIR)
 CUT_VIDEO_DURATION = 4.0
 
 
-CUT_AUDIO_LEAD_IN_SECONDS = 0.3
-CUT_AUDIO_TAIL_SECONDS = 0.3
+CUT_AUDIO_LEAD_IN_SECONDS = 0.5
+CUT_AUDIO_TAIL_SECONDS = 0.5
 MIN_TTS_DRIVEN_CUT_DURATION = 4.0
 TTS_TAIL_FADE_SECONDS = 0.06
 TTS_TAIL_SILENCE_SECONDS = 0.20
 TTS_DRIVEN_CUT_DURATION_DEFAULT = True
 TTS_AUDIO_TIMING_FIT_DEFAULT = False
+MAIN_VIDEO_SUBTITLE_DELIVERY = "burn"
+
+
+def _primary_caption_language(config: dict | None = None) -> str:
+    raw = str((config or {}).get("language") or "ko").strip().lower().replace("_", "-")
+    aliases = {
+        "eng": "en",
+        "english": "en",
+        "kor": "ko",
+        "korean": "ko",
+        "jp": "ja",
+        "jpn": "ja",
+        "japanese": "ja",
+    }
+    return aliases.get(raw, raw) or "ko"
+
+
+def apply_main_caption_delivery_policy(config: dict | None = None) -> dict:
+    """Apply the production-wide main-video caption delivery policy.
+
+    Shorts rendering has its own overlay pipeline and is intentionally unaffected.
+    """
+    cfg = dict(config or {})
+    language = _primary_caption_language(cfg)
+    cfg["cut_level_subtitles"] = True
+    cfg["subtitle_delivery"] = MAIN_VIDEO_SUBTITLE_DELIVERY
+    cfg["variety_highlights_enabled"] = True
+    cfg.setdefault("variety_highlight_panel_mode", "emotion_auto")
+    cfg.setdefault("variety_highlight_style", "neutral")
+    cfg["youtube_captions_enabled"] = False
+    cfg["caption_language"] = language
+    cfg["caption_languages"] = [language]
+    return cfg
+
+
+def resolve_main_subtitle_delivery(config: dict | None = None) -> str:
+    return MAIN_VIDEO_SUBTITLE_DELIVERY
 
 
 def _config_bool(config: dict | None, key: str, default: bool) -> bool:
@@ -299,6 +348,10 @@ def _config_bool(config: dict | None, key: str, default: bool) -> bool:
         if normalized in {"0", "false", "no", "off"}:
             return False
     return bool(default)
+
+
+def should_burn_cut_level_subtitles(config: dict | None = None) -> bool:
+    return True
 
 
 def resolve_cut_video_duration(config: dict | None = None, default: float | None = None) -> float:

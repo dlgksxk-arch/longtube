@@ -1,0 +1,111 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <defs>
+    <linearGradient id="wall102" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#d7c59f"/>
+      <stop offset="1" stop-color="#a98560"/>
+    </linearGradient>
+    <linearGradient id="floor102" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#a26e48"/>
+      <stop offset="1" stop-color="#7f533a"/>
+    </linearGradient>
+    <linearGradient id="cloth102" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#e5dcc3"/>
+      <stop offset="1" stop-color="#b8aa88"/>
+    </linearGradient>
+    <filter id="shadow102" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="9"/>
+    </filter>
+  </defs>
+
+  <rect width="1280" height="720" fill="url(#wall102)"/>
+  <path d="M0 494 Q318 475 640 500 T1280 486 L1280 720 L0 720 Z" fill="url(#floor102)"/>
+  <g fill="#65432f">
+    <rect x="0" y="0" width="1280" height="34"/>
+    <rect x="0" y="31" width="1280" height="22" fill="#986b46"/>
+    <rect x="22" y="0" width="34" height="720"/>
+    <rect x="1224" y="0" width="34" height="720"/>
+    <rect x="42" y="92" width="1196" height="28"/>
+  </g>
+  <g fill="none" stroke="#7b5339" stroke-width="7" opacity="0.28">
+    <path d="M58 180 Q337 151 626 181 T1222 168"/>
+    <path d="M0 630 Q308 596 634 638 T1280 610"/>
+  </g>
+
+  <!-- Exactly four adult East Asian weavers. Faces and shoulders only; all limbs hidden by loom beams and cloth. -->
+  <g id="four-weavers102">
+    <g id="weaver1">
+      <ellipse cx="184" cy="337" rx="92" ry="30" fill="#593a2c" opacity="0.25" filter="url(#shadow102)"/>
+      <path d="M111 340 Q124 281 184 270 Q244 281 257 340 Z" fill="#9c8663" stroke="#4b392e" stroke-width="10"/>
+      <ellipse cx="184" cy="229" rx="52" ry="63" fill="#d9ad84" stroke="#44342d" stroke-width="9"/>
+      <path d="M131 229 Q130 153 185 150 Q241 159 237 232 Q217 193 185 190 Q151 190 131 229 Z" fill="#27231f" stroke="#44342d" stroke-width="8"/>
+      <path d="M137 209 Q121 238 135 272 M232 208 Q247 239 233 271" fill="none" stroke="#27231f" stroke-width="15"/>
+      <path d="M158 230 Q170 224 180 231 M190 231 Q202 224 212 231" fill="none" stroke="#3b302a" stroke-width="5" stroke-linecap="round"/>
+      <path d="M173 253 Q184 260 195 253" fill="none" stroke="#7d4f43" stroke-width="4" stroke-linecap="round"/>
+    </g>
+    <g id="weaver2">
+      <ellipse cx="488" cy="337" rx="92" ry="30" fill="#593a2c" opacity="0.25" filter="url(#shadow102)"/>
+      <path d="M415 340 Q428 280 488 270 Q548 280 561 340 Z" fill="#806f57" stroke="#4b392e" stroke-width="10"/>
+      <ellipse cx="488" cy="229" rx="52" ry="63" fill="#d5a67e" stroke="#44342d" stroke-width="9"/>
+      <path d="M436 229 Q435 151 488 149 Q544 157 541 232 Q521 193 489 189 Q456 190 436 229 Z" fill="#2d2722" stroke="#44342d" stroke-width="8"/>
+      <ellipse cx="488" cy="158" rx="37" ry="23" fill="#2d2722" stroke="#44342d" stroke-width="7"/>
+      <path d="M441 210 Q426 239 440 273 M536 209 Q550 240 536 271" fill="none" stroke="#2d2722" stroke-width="15"/>
+      <path d="M462 230 Q474 224 484 231 M494 231 Q506 224 516 231" fill="none" stroke="#3b302a" stroke-width="5" stroke-linecap="round"/>
+      <path d="M477 253 Q488 260 499 253" fill="none" stroke="#7d4f43" stroke-width="4" stroke-linecap="round"/>
+    </g>
+    <g id="weaver3">
+      <ellipse cx="792" cy="337" rx="92" ry="30" fill="#593a2c" opacity="0.25" filter="url(#shadow102)"/>
+      <path d="M719 340 Q732 281 792 270 Q852 281 865 340 Z" fill="#a18465" stroke="#4b392e" stroke-width="10"/>
+      <ellipse cx="792" cy="229" rx="52" ry="63" fill="#d9ad84" stroke="#44342d" stroke-width="9"/>
+      <path d="M739 229 Q738 154 792 150 Q848 159 845 232 Q825 193 793 190 Q759 190 739 229 Z" fill="#26221f" stroke="#44342d" stroke-width="8"/>
+      <path d="M745 209 Q730 238 744 272 M840 208 Q854 239 840 271" fill="none" stroke="#26221f" stroke-width="15"/>
+      <path d="M766 230 Q778 224 788 231 M798 231 Q810 224 820 231" fill="none" stroke="#3b302a" stroke-width="5" stroke-linecap="round"/>
+      <path d="M781 253 Q792 260 803 253" fill="none" stroke="#7d4f43" stroke-width="4" stroke-linecap="round"/>
+    </g>
+    <g id="weaver4">
+      <ellipse cx="1096" cy="337" rx="92" ry="30" fill="#593a2c" opacity="0.25" filter="url(#shadow102)"/>
+      <path d="M1023 340 Q1036 280 1096 270 Q1156 280 1169 340 Z" fill="#7d745d" stroke="#4b392e" stroke-width="10"/>
+      <ellipse cx="1096" cy="229" rx="52" ry="63" fill="#d5a67e" stroke="#44342d" stroke-width="9"/>
+      <path d="M1044 229 Q1043 151 1096 149 Q1152 157 1149 232 Q1129 193 1097 189 Q1064 190 1044 229 Z" fill="#302922" stroke="#44342d" stroke-width="8"/>
+      <ellipse cx="1096" cy="158" rx="37" ry="23" fill="#302922" stroke="#44342d" stroke-width="7"/>
+      <path d="M1049 210 Q1034 239 1048 273 M1144 209 Q1158 240 1144 271" fill="none" stroke="#302922" stroke-width="15"/>
+      <path d="M1070 230 Q1082 224 1092 231 M1102 231 Q1114 224 1124 231" fill="none" stroke="#3b302a" stroke-width="5" stroke-linecap="round"/>
+      <path d="M1085 253 Q1096 260 1107 253" fill="none" stroke="#7d4f43" stroke-width="4" stroke-linecap="round"/>
+    </g>
+  </g>
+
+  <!-- Exactly four simple archaic vertical frame looms, with no pedals, gears, or visible limbs. -->
+  <g id="four-looms102" stroke-linejoin="round">
+    <g id="loom1">
+      <rect x="72" y="300" width="224" height="35" rx="8" fill="#744a2f" stroke="#3f3028" stroke-width="9"/>
+      <rect x="76" y="318" width="30" height="309" fill="#895a37" stroke="#3f3028" stroke-width="9"/>
+      <rect x="262" y="318" width="30" height="309" fill="#895a37" stroke="#3f3028" stroke-width="9"/>
+      <rect x="101" y="335" width="166" height="232" fill="url(#cloth102)" stroke="#6d5a43" stroke-width="8"/>
+      <path d="M122 341 V559 M147 341 V559 M172 341 V559 M197 341 V559 M222 341 V559 M247 341 V559" stroke="#96886d" stroke-width="4"/>
+      <rect x="66" y="558" width="236" height="35" rx="8" fill="#744a2f" stroke="#3f3028" stroke-width="9"/>
+    </g>
+    <g id="loom2">
+      <rect x="376" y="300" width="224" height="35" rx="8" fill="#744a2f" stroke="#3f3028" stroke-width="9"/>
+      <rect x="380" y="318" width="30" height="309" fill="#895a37" stroke="#3f3028" stroke-width="9"/>
+      <rect x="566" y="318" width="30" height="309" fill="#895a37" stroke="#3f3028" stroke-width="9"/>
+      <rect x="405" y="335" width="166" height="232" fill="url(#cloth102)" stroke="#6d5a43" stroke-width="8"/>
+      <path d="M426 341 V559 M451 341 V559 M476 341 V559 M501 341 V559 M526 341 V559 M551 341 V559" stroke="#96886d" stroke-width="4"/>
+      <rect x="370" y="558" width="236" height="35" rx="8" fill="#744a2f" stroke="#3f3028" stroke-width="9"/>
+    </g>
+    <g id="loom3">
+      <rect x="680" y="300" width="224" height="35" rx="8" fill="#744a2f" stroke="#3f3028" stroke-width="9"/>
+      <rect x="684" y="318" width="30" height="309" fill="#895a37" stroke="#3f3028" stroke-width="9"/>
+      <rect x="870" y="318" width="30" height="309" fill="#895a37" stroke="#3f3028" stroke-width="9"/>
+      <rect x="709" y="335" width="166" height="232" fill="url(#cloth102)" stroke="#6d5a43" stroke-width="8"/>
+      <path d="M730 341 V559 M755 341 V559 M780 341 V559 M805 341 V559 M830 341 V559 M855 341 V559" stroke="#96886d" stroke-width="4"/>
+      <rect x="674" y="558" width="236" height="35" rx="8" fill="#744a2f" stroke="#3f3028" stroke-width="9"/>
+    </g>
+    <g id="loom4">
+      <rect x="984" y="300" width="224" height="35" rx="8" fill="#744a2f" stroke="#3f3028" stroke-width="9"/>
+      <rect x="988" y="318" width="30" height="309" fill="#895a37" stroke="#3f3028" stroke-width="9"/>
+      <rect x="1174" y="318" width="30" height="309" fill="#895a37" stroke="#3f3028" stroke-width="9"/>
+      <rect x="1013" y="335" width="166" height="232" fill="url(#cloth102)" stroke="#6d5a43" stroke-width="8"/>
+      <path d="M1034 341 V559 M1059 341 V559 M1084 341 V559 M1109 341 V559 M1134 341 V559 M1159 341 V559" stroke="#96886d" stroke-width="4"/>
+      <rect x="978" y="558" width="236" height="35" rx="8" fill="#744a2f" stroke="#3f3028" stroke-width="9"/>
+    </g>
+  </g>
+</svg>

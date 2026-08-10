@@ -1,7 +1,7 @@
 {
   "_meta": {
-    "name": "Flux.2 Klein 4B distilled (text-to-image, 4 steps)",
-    "notes": "ComfyUI official Flux.2 Klein 4B text-to-image distilled model set: UNETLoader(flux-2-klein-4b) + CLIPLoader(qwen_3_4b, type=flux2) + VAELoader(flux2-vae). ${...} placeholders are replaced by ComfyUIImageService."
+    "name": "Flux.2 Klein 4B distilled (text-to-image, feathered hand/body inpaint)",
+    "notes": "ComfyUI official Flux.2 Klein 4B text-to-image distilled model set. Body refinement runs before the final hand refinement; all final face, person, and hand detectors inspect the same final hand-detailer output saved by SaveImage. ${...} placeholders are replaced by ComfyUIImageService."
   },
   "1": {
     "class_type": "UNETLoader",
@@ -95,8 +95,322 @@
   "13": {
     "class_type": "SaveImage",
     "inputs": {
-      "images": ["12", 0],
+      "images": ["31", 0],
       "filename_prefix": "${PREFIX}"
+    }
+  },
+  "14": {
+    "class_type": "UltralyticsDetectorProvider",
+    "inputs": {
+      "model_name": "bbox/hand_yolov8s.pt"
+    }
+  },
+  "15": {
+    "class_type": "BboxDetectorSEGS",
+    "inputs": {
+      "bbox_detector": ["14", 0],
+      "image": ["30", 0],
+      "threshold": 0.35,
+      "dilation": 24,
+      "crop_factor": 2.5,
+      "drop_size": 16,
+      "labels": "all"
+    }
+  },
+  "16": {
+    "class_type": "SegsToCombinedMask",
+    "inputs": {
+      "segs": ["15", 0]
+    }
+  },
+  "17": {
+    "class_type": "VAEEncodeForInpaint",
+    "inputs": {
+      "pixels": ["30", 0],
+      "vae": ["3", 0],
+      "mask": ["16", 0],
+      "grow_mask_by": 12
+    }
+  },
+  "18": {
+    "class_type": "SetLatentNoiseMask",
+    "inputs": {
+      "samples": ["17", 0],
+      "mask": ["16", 0]
+    }
+  },
+  "19": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": ["2", 0],
+      "text": "${HAND_REFINE_PROMPT}"
+    }
+  },
+  "20": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": ["2", 0],
+      "text": "${HAND_REFINE_NEGATIVE}"
+    }
+  },
+  "21": {
+    "class_type": "Flux2Scheduler",
+    "inputs": {
+      "steps": 4,
+      "width": "${WIDTH}",
+      "height": "${HEIGHT}"
+    }
+  },
+  "22": {
+    "class_type": "RandomNoise",
+    "inputs": {
+      "noise_seed": "${HAND_SEED}"
+    }
+  },
+  "23": {
+    "class_type": "CFGGuider",
+    "inputs": {
+      "model": ["1", 0],
+      "positive": ["19", 0],
+      "negative": ["20", 0],
+      "cfg": 1.0
+    }
+  },
+  "24": {
+    "class_type": "SamplerCustomAdvanced",
+    "inputs": {
+      "noise": ["22", 0],
+      "guider": ["23", 0],
+      "sampler": ["9", 0],
+      "sigmas": ["21", 0],
+      "latent_image": ["18", 0]
+    }
+  },
+  "25": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": ["24", 0],
+      "vae": ["3", 0]
+    }
+  },
+  "26": {
+    "class_type": "UltralyticsDetectorProvider",
+    "inputs": {
+      "model_name": "segm/person_yolov8m-seg.pt"
+    }
+  },
+  "27": {
+    "class_type": "SegmDetectorSEGS",
+    "inputs": {
+      "segm_detector": ["26", 1],
+      "image": ["12", 0],
+      "threshold": 0.42,
+      "dilation": 12,
+      "crop_factor": 1.35,
+      "drop_size": 64,
+      "labels": "person"
+    }
+  },
+  "28": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": ["2", 0],
+      "text": "${BODY_REFINE_PROMPT}"
+    }
+  },
+  "29": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": ["2", 0],
+      "text": "${BODY_REFINE_NEGATIVE}"
+    }
+  },
+  "30": {
+    "class_type": "DetailerForEach",
+    "inputs": {
+      "image": ["12", 0],
+      "segs": ["27", 0],
+      "model": ["1", 0],
+      "clip": ["2", 0],
+      "vae": ["3", 0],
+      "guide_size": 640,
+      "guide_size_for": true,
+      "max_size": 1024,
+      "seed": "${BODY_SEED}",
+      "steps": 4,
+      "cfg": 1.0,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "positive": ["28", 0],
+      "negative": ["29", 0],
+      "denoise": 0.14,
+      "feather": 48,
+      "noise_mask": true,
+      "force_inpaint": true,
+      "wildcard": "",
+      "cycle": 1,
+      "inpaint_model": false,
+      "noise_mask_feather": 48
+    }
+  },
+  "31": {
+    "class_type": "DetailerForEach",
+    "inputs": {
+      "image": ["30", 0],
+      "segs": ["15", 0],
+      "model": ["1", 0],
+      "clip": ["2", 0],
+      "vae": ["3", 0],
+      "guide_size": 512,
+      "guide_size_for": true,
+      "max_size": 768,
+      "seed": "${HAND_SEED}",
+      "steps": 4,
+      "cfg": 1.0,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "positive": ["19", 0],
+      "negative": ["20", 0],
+      "denoise": 0.22,
+      "feather": 48,
+      "noise_mask": true,
+      "force_inpaint": true,
+      "wildcard": "",
+      "cycle": 1,
+      "inpaint_model": false,
+      "noise_mask_feather": 48
+    }
+  },
+  "32": {
+    "class_type": "ImpactCount_Elts_in_SEGS",
+    "inputs": {
+      "segs": ["44", 0]
+    }
+  },
+  "33": {
+    "class_type": "Display Int (rgthree)",
+    "inputs": {
+      "input": ["32", 0]
+    }
+  },
+  "34": {
+    "class_type": "UltralyticsDetectorProvider",
+    "inputs": {
+      "model_name": "bbox/face_yolov8m.pt"
+    }
+  },
+  "35": {
+    "class_type": "BboxDetectorSEGS",
+    "inputs": {
+      "bbox_detector": ["34", 0],
+      "image": ["31", 0],
+      "threshold": 0.35,
+      "dilation": 4,
+      "crop_factor": 1.25,
+      "drop_size": 20,
+      "labels": "all"
+    }
+  },
+  "36": {
+    "class_type": "ImpactCount_Elts_in_SEGS",
+    "inputs": {
+      "segs": ["35", 0]
+    }
+  },
+  "37": {
+    "class_type": "Display Int (rgthree)",
+    "inputs": {
+      "input": ["36", 0]
+    }
+  },
+  "38": {
+    "class_type": "SegmDetectorSEGS",
+    "inputs": {
+      "segm_detector": ["26", 1],
+      "image": ["31", 0],
+      "threshold": 0.25,
+      "dilation": 4,
+      "crop_factor": 1.2,
+      "drop_size": 32,
+      "labels": "person"
+    }
+  },
+  "39": {
+    "class_type": "ImpactCount_Elts_in_SEGS",
+    "inputs": {
+      "segs": ["38", 0]
+    }
+  },
+  "40": {
+    "class_type": "Display Int (rgthree)",
+    "inputs": {
+      "input": ["39", 0]
+    }
+  },
+  "41": {
+    "class_type": "BboxDetectorSEGS",
+    "inputs": {
+      "bbox_detector": ["14", 0],
+      "image": ["31", 0],
+      "threshold": 0.3,
+      "dilation": 0,
+      "crop_factor": 1.0,
+      "drop_size": 12,
+      "labels": "all"
+    }
+  },
+  "42": {
+    "class_type": "ImpactCount_Elts_in_SEGS",
+    "inputs": {
+      "segs": ["41", 0]
+    }
+  },
+  "43": {
+    "class_type": "Display Int (rgthree)",
+    "inputs": {
+      "input": ["42", 0]
+    }
+  },
+  "44": {
+    "class_type": "SegmDetectorSEGS",
+    "inputs": {
+      "segm_detector": ["26", 1],
+      "image": ["31", 0],
+      "threshold": 0.42,
+      "dilation": 12,
+      "crop_factor": 1.35,
+      "drop_size": 64,
+      "labels": "person"
+    }
+  },
+  "45": {
+    "class_type": "UltralyticsDetectorProvider",
+    "inputs": {
+      "model_name": "bbox/yolov8m.pt"
+    }
+  },
+  "46": {
+    "class_type": "BboxDetectorSEGS",
+    "inputs": {
+      "bbox_detector": ["45", 0],
+      "image": ["31", 0],
+      "threshold": 0.32,
+      "dilation": 2,
+      "crop_factor": 1.1,
+      "drop_size": 32,
+      "labels": "cow"
+    }
+  },
+  "47": {
+    "class_type": "ImpactCount_Elts_in_SEGS",
+    "inputs": {
+      "segs": ["46", 0]
+    }
+  },
+  "48": {
+    "class_type": "Display Int (rgthree)",
+    "inputs": {
+      "input": ["47", 0]
     }
   }
 }

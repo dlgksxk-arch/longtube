@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <defs><linearGradient id="skyPaddy" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8bc5dc"/><stop offset="1" stop-color="#e9dfb9"/></linearGradient><linearGradient id="waterPaddy" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8ec5d1"/><stop offset="1" stop-color="#477b8b"/></linearGradient></defs>
+  <rect width="1280" height="720" fill="url(#skyPaddy)"/>
+  <path d="M0 151 Q120 212 241 157 T489 159 T745 151 T1003 160 T1280 148 L1280 245 L0 245Z" fill="#f2eedf" opacity=".92"/>
+  <path d="M0 246 Q311 208 633 247 T1280 232 L1280 720 L0 720Z" fill="url(#waterPaddy)"/>
+  <path d="M0 338 Q322 291 640 337 T1280 317 M0 528 Q319 463 637 520 T1280 491" fill="none" stroke="#745a3f" stroke-width="31"/>
+  <g fill="none" stroke="#39713d" stroke-width="11" stroke-linecap="round">
+    <path d="M96 318 l0 54 m0-27 l-24-24 m24 24 l25-29 M222 297 l0 57 m0-28 l-24-25 m24 25 l25-30 M361 313 l0 56 m0-27 l-24-24 m24 24 l25-29 M501 290 l0 58 m0-29 l-24-25 m24 25 l25-30 M653 309 l0 58 m0-29 l-24-25 m24 25 l25-30 M815 287 l0 58 m0-29 l-24-25 m24 25 l25-30 M978 308 l0 58 m0-29 l-24-25 m24 25 l25-30 M1142 286 l0 58 m0-29 l-24-25 m24 25 l25-30"/>
+    <path d="M151 503 l0 61 m0-30 l-27-27 m27 27 l27-32 M330 477 l0 63 m0-31 l-27-28 m27 28 l28-33 M525 505 l0 61 m0-30 l-27-27 m27 27 l27-32 M731 474 l0 64 m0-32 l-28-28 m28 28 l28-34 M944 498 l0 62 m0-31 l-27-27 m27 27 l28-33 M1150 470 l0 64 m0-32 l-28-28 m28 28 l28-34"/>
+  </g>
+  <circle cx="1055" cy="108" r="63" fill="#e5bd42" stroke="#5a4527" stroke-width="13"/>
+</svg>

@@ -298,8 +298,34 @@ async def _run_episode(episode: ScheduledEpisode) -> None:
     except Exception as e:
         print(f"[scheduler] 메타데이터 생성 실패 → 폴백 사용: {e}")
         final_title = _fallback_title(episode.topic, episode_number)
-        description = episode.topic or ""
-        tags = []
+        from app.services.youtube_metadata import (
+            expand_tags,
+            format_description,
+            metadata_profile_from_config,
+            validate_metadata_for_profile,
+        )
+
+        metadata_profile = metadata_profile_from_config(config)
+        description = format_description(
+            episode.topic or "",
+            title=final_title,
+            topic=episode.topic or final_title,
+            language=config.get("language") or "ko",
+            profile=metadata_profile,
+        )
+        tags = expand_tags(
+            [],
+            title=final_title,
+            topic=episode.topic or final_title,
+            language=config.get("language") or "ko",
+            profile=metadata_profile,
+        )
+        validate_metadata_for_profile(
+            title=final_title,
+            description=description,
+            tags=tags,
+            profile=metadata_profile,
+        )
 
     # project.title 갱신
     _update_project_title(project_id, final_title)
@@ -344,12 +370,59 @@ async def _run_episode(episode: ScheduledEpisode) -> None:
         _update_project_status(project_id, "failed")
         return
 
-    # 프로젝트별 YouTube 계정이 연결돼 있으면 그걸 사용, 없으면 전역 토큰 fallback.
-    _project_uploader = YouTubeUploader(project_id=project_id)
-    if _project_uploader.is_authenticated():
-        uploader = _project_uploader
+    # An explicit channel binding must never fall back to another account.
+    configured_channel = config.get("youtube_channel") or config.get("channel")
+    try:
+        configured_channel_id = int(configured_channel or 0)
+    except (TypeError, ValueError):
+        configured_channel_id = 0
+    if configured_channel_id:
+        uploader = YouTubeUploader(channel_id=configured_channel_id)
+        if not uploader.is_authenticated():
+            message = f"CH{configured_channel_id} YouTube authentication is unavailable"
+            _update_episode(
+                episode_id,
+                status="failed",
+                finished_at=_utcnow(),
+                error_message=message,
+            )
+            _update_project_status(project_id, "failed")
+            return
     else:
-        uploader = YouTubeUploader()
+        _project_uploader = YouTubeUploader(project_id=project_id)
+        if _project_uploader.is_authenticated():
+            uploader = _project_uploader
+        else:
+            uploader = YouTubeUploader()
+
+    from app.tasks.pipeline_tasks import load_script
+    from app.services.youtube_localization_service import (
+        build_youtube_metadata_localizations,
+    )
+
+    try:
+        script_data = load_script(project_id) or {}
+        metadata_localizations = await build_youtube_metadata_localizations(
+            title=final_title,
+            description=description,
+            script=script_data,
+            config=config,
+        )
+    except Exception as e:
+        message = f"YouTube metadata localization failed: {e}"
+        _update_episode(
+            episode_id,
+            status="failed",
+            finished_at=_utcnow(),
+            error_message=message,
+        )
+        _update_project_status(project_id, "failed")
+        return
+    category_id = str(
+        config.get("youtube_category_id")
+        or config.get("category_id")
+        or ""
+    ).strip() or None
     try:
         result = await asyncio.to_thread(
             uploader.upload,
@@ -360,11 +433,21 @@ async def _run_episode(episode: ScheduledEpisode) -> None:
             None,
             privacy,
             config.get("language", "ko"),
-            None,        # category_id
+            category_id,
             False,       # made_for_kids
             None,        # progress_callback
+            comment_topic=(script_data.get("topic") or script_data.get("title") or final_title),
         )
         result = {**result, "studio_verified": False, "processing_verified": False}
+        if metadata_localizations and result.get("video_id"):
+            localization_result = await asyncio.to_thread(
+                uploader.set_video_localizations,
+                str(result.get("video_id")),
+                metadata_localizations,
+                default_language=config.get("language") or "ko",
+                default_audio_language=config.get("language") or "ko",
+            )
+            result["localization_languages"] = localization_result.get("languages") or []
         if thumb_path and result.get("video_id") and Path(str(thumb_path)).exists():
             try:
                 thumb_result = await asyncio.to_thread(
@@ -404,17 +487,30 @@ async def _run_episode(episode: ScheduledEpisode) -> None:
 
     video_url = result.get("url") or ""
     caption_path = project_dir / "subtitles" / "subtitles.srt"
-    if result.get("video_id") and caption_path.exists() and should_upload_youtube_captions(config):
+    if result.get("video_id") and should_upload_youtube_captions(config):
         try:
+            if not caption_path.exists() or caption_path.stat().st_size <= 100:
+                raise RuntimeError(
+                    f"유효한 SRT가 없습니다: {caption_path}"
+                )
             caption_result = await upload_multilingual_captions(
                 uploader,
                 str(result.get("video_id")),
                 str(caption_path),
                 config,
             )
-            print(f"[scheduler] caption uploaded: {caption_result}")
+            print(f"[scheduler] caption uploaded and verified: {caption_result}")
         except Exception as e:
-            print(f"[scheduler] caption upload failed (non-fatal): {e}")
+            print(f"[scheduler] caption upload failed (fatal): {e}")
+            _update_episode(
+                episode_id,
+                status="failed",
+                finished_at=_utcnow(),
+                error_message=f"자막 업로드 실패: {e}",
+                final_title=final_title,
+            )
+            _update_project_status(project_id, "failed")
+            return
 
     # 6) 성공
     _update_episode(
@@ -505,7 +601,14 @@ async def _generate_metadata(
     else:
         final_title = _fallback_title(topic, episode_number)
 
-    from app.services.youtube_metadata import expand_tags, format_description
+    from app.services.youtube_metadata import (
+        expand_tags,
+        format_description,
+        metadata_profile_from_config,
+        validate_metadata_for_profile,
+    )
+
+    metadata_profile = metadata_profile_from_config(config)
 
     description = format_description(
         result.get("description") or topic or "",
@@ -513,6 +616,7 @@ async def _generate_metadata(
         topic=topic,
         narration=narration,
         language=language,
+        profile=metadata_profile,
     )
     tags = expand_tags(
         result.get("tags") or [],
@@ -521,6 +625,13 @@ async def _generate_metadata(
         narration=narration,
         language=language,
         max_tags=30,
+        profile=metadata_profile,
+    )
+    validate_metadata_for_profile(
+        title=final_title,
+        description=description,
+        tags=tags,
+        profile=metadata_profile,
     )
 
     return final_title[:100], description, tags, language
@@ -550,12 +661,15 @@ async def _generate_thumbnail_for_episode(
         topic=title,
         episode_number=episode_number,
     )
-    from app.services.image.factory import DEFAULT_THUMBNAIL_MODEL, resolve_image_model
+    from app.services.image.factory import (
+        DEFAULT_THUMBNAIL_MODEL,
+        resolve_thumbnail_model,
+    )
     from app.services.llm.factory import get_llm_service
     from app.services.llm.base import BaseLLMService
     from app.models.cut import Cut
 
-    image_model_id = resolve_image_model(
+    image_model_id = resolve_thumbnail_model(
         config.get("thumbnail_model") or DEFAULT_THUMBNAIL_MODEL
     )
     language = config.get("language", "ko")

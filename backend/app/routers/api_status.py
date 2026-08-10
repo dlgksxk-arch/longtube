@@ -44,6 +44,8 @@ def _read_env_file() -> dict:
 
 def _key(name: str) -> str:
     """Always read freshest key value: .env file on disk → os.environ → cfg module."""
+    if cfg.OPENAI_API_DISABLED and name in {"OPENAI_API_KEY", "OPENAI_ADMIN_KEY"}:
+        return ""
     # 1) Source of truth: .env file on disk (read every call, no caching)
     env = _read_env_file()
     if env.get(name):

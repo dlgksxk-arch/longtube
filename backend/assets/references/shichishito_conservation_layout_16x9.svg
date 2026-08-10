@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <defs>
+    <linearGradient id="room" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#e8e2d6"/>
+      <stop offset="0.5" stop-color="#d9d1c3"/>
+      <stop offset="1" stop-color="#eee9df"/>
+    </linearGradient>
+    <pattern id="paper" width="8" height="8" patternUnits="userSpaceOnUse">
+      <path d="M0 1H8M0 5H8" stroke="#9e9588" stroke-width="0.7" opacity="0.28"/>
+      <path d="M1 0V8M5 0V8" stroke="#fffdf7" stroke-width="0.7" opacity="0.42"/>
+    </pattern>
+    <linearGradient id="iron" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#171a18"/>
+      <stop offset="0.35" stop-color="#4a4337"/>
+      <stop offset="0.62" stop-color="#252824"/>
+      <stop offset="1" stop-color="#0d0f0e"/>
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="7" dy="9" stdDeviation="7" flood-color="#30291f" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+
+  <rect width="1280" height="720" fill="url(#room)"/>
+  <rect width="1280" height="720" fill="url(#paper)"/>
+  <rect x="440" y="40" width="400" height="630" rx="26"
+        fill="#b7a98f" stroke="#6d6252" stroke-width="5"/>
+
+  <!-- Two modern conservator layout guides. Their heads and zip-front jackets
+       stay outside the artifact silhouette and provide a stable human-centered frame. -->
+  <g fill="#b8b2a8" stroke="#5f5a53" stroke-width="5" stroke-linejoin="round">
+    <ellipse cx="255" cy="235" rx="62" ry="78"/>
+    <path d="M193 226Q197 150 255 150Q313 150 317 226Q292 184 255 184Q218 184 193 226Z" fill="#66615b"/>
+    <path d="M230 305L218 344L132 388L96 700H414L378 388L292 344L280 305Z"/>
+    <path d="M218 344L255 394L292 344M255 394V700" fill="none"/>
+    <path d="M132 388L205 482M378 388L305 482" fill="none"/>
+    <path d="M218 235Q255 260 292 235" fill="none" opacity="0.55"/>
+
+    <ellipse cx="1025" cy="235" rx="62" ry="78"/>
+    <path d="M963 218Q972 152 1025 152Q1078 152 1087 218Q1058 181 1025 181Q992 181 963 218Z" fill="#66615b"/>
+    <path d="M1000 305L988 344L902 388L866 700H1184L1148 388L1062 344L1050 305Z"/>
+    <path d="M988 344L1025 394L1062 344M1025 394V700" fill="none"/>
+    <path d="M902 388L975 482M1148 388L1075 482" fill="none"/>
+    <path d="M988 235Q1025 260 1062 235" fill="none" opacity="0.55"/>
+  </g>
+
+  <!-- Exact single-piece Seven-Branched Sword silhouette: one central point,
+       one tang, and six integrated branches alternating left and right. -->
+  <g id="artifact" transform="translate(166 80) scale(0.74 0.78)" fill="url(#iron)" stroke="#090b0a" stroke-width="3" stroke-linejoin="round" filter="url(#shadow)">
+    <path d="M620 210H573C542 210 518 196 504 177C493 162 489 143 493 124L500 106L507 125C507 143 513 157 523 168C536 181 552 187 573 187H620Z"/>
+    <path d="M660 278H707C738 278 762 264 776 245C787 230 791 211 787 192L780 174L773 193C773 211 767 225 757 236C744 249 728 255 707 255H660Z"/>
+    <path d="M620 346H573C542 346 518 332 504 313C493 298 489 279 493 260L500 242L507 261C507 279 513 293 523 304C536 317 552 323 573 323H620Z"/>
+    <path d="M660 414H707C738 414 762 400 776 381C787 366 791 347 787 328L780 310L773 329C773 347 767 361 757 372C744 385 728 391 707 391H660Z"/>
+    <path d="M620 482H573C542 482 518 468 504 449C493 434 489 415 493 396L500 378L507 397C507 415 513 429 523 440C536 453 552 459 573 459H620Z"/>
+    <path d="M660 550H707C738 550 762 536 776 517C787 502 791 483 787 464L780 446L773 465C773 483 767 497 757 508C744 521 728 527 707 527H660Z"/>
+    <path d="M618 560V137L640 60L662 137V560H650V650Q650 668 640 677Q630 668 630 650V560Z"/>
+  </g>
+</svg>

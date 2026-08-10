@@ -203,7 +203,7 @@ export default function StepScript({ project, onUpdate, onCutsChange }: Props) {
       <div className="grid grid-cols-3 gap-3">
         <ModelSelector
           label="대본 생성 모델"
-          models={llmModels}
+          models={[{ id: "local-script", name: "로컬 대본", provider: "수동 저장 대본 사용", cost_per_unit: "Free" }, ...llmModels]}
           value={project.config.script_model}
           onChange={changeModel}
         />
@@ -238,6 +238,7 @@ export default function StepScript({ project, onUpdate, onCutsChange }: Props) {
       <GenerationTimer
         projectId={project.id}
         step="script"
+        running={generating}
         label="대본 생성 중..."
         onComplete={() => {
           setGenerating(false);

@@ -37,6 +37,19 @@ from app.config import resolve_project_dir
 THUMB_W = 1280
 THUMB_H = 720
 
+THUMBNAIL_MINIMAL_GENERATION_CONTRACT = (
+    "Landscape 16:9 composition. Keep the lower-left area clean, dark, empty, "
+    "and low-detail. All banners, signs, documents, and visible surfaces are "
+    "plain and completely blank."
+)
+
+THUMBNAIL_CHARACTER_IDENTITY_REFERENCE_LOCK = (
+    "THUMBNAIL CHARACTER IDENTITY REFERENCE LOCK: the first attached character "
+    "reference fixes the primary subject's sex, adult age, face, hair, skin tone, "
+    "and archaic clothing identity. Preserve that same person in the new composition. "
+    "Do not replace the referenced woman with a man or the referenced man with a woman. "
+)
+
 # 폰트 탐색 후보 (OS 별)
 FONT_CANDIDATES = [
     # Windows
@@ -199,6 +212,49 @@ _THUMBNAIL_WEAK_POSITIVE_RE = re.compile(
 )
 
 
+_THUMBNAIL_TEXT_SPACE_REGION = (
+    r"(?:"
+    r"(?:upper|top|lower|bottom)[-\s]+(?:left|right)"
+    r"(?:[-\s]+(?:corner|side|half|third|quadrant|area|region))?"
+    r"|(?:left|right)[-\s]+(?:side|half|third|corner|quadrant|area|region)"
+    r"|(?:upper|top|lower|bottom)[-\s]+(?:side|half|third|area|region)"
+    r"|(?:opposite|other)[-\s]+side"
+    r"|left|right|top|bottom"
+    r")"
+)
+
+_THUMBNAIL_SOURCE_TEXT_SPACE_RE = re.compile(
+    rf"""
+    \b
+    (?=[^,.;]{{0,160}}(?:{_THUMBNAIL_TEXT_SPACE_REGION}|\btext\b))
+    (?:(?:and|with|while|so)\s+)?
+    (?:(?:the\s+)?{_THUMBNAIL_TEXT_SPACE_REGION}\s+(?:remains?|stays?|is)\s+)?
+    (?:(?:leave|leaves|leaving|reserve|reserves|reserving|keep|keeps|keeping|
+    maintain|maintains|maintaining|provide|provides|providing|create|creates|creating)\s+)?
+    (?:(?:about|roughly|approximately)\s+)?
+    (?:\d{{1,2}}\s*(?:[-–—]\s*\d{{1,2}})?\s*(?:%|percent)
+    (?:\s+of\s+(?:the\s+)?(?:frame|image))?\s+)?
+    (?:(?:clean|clear|dark|empty|deliberate|visible|open|low[-\s]?detail|reserved)\s+)*
+    (?:
+        negative\s+space
+        |(?:text|title|caption)[-\s]*(?:safe[-\s]*)?(?:space|zone|area)
+        |(?:space|room|area|zone)
+    )
+    (?:\s+(?:at|in|on|to|from|along|within|across)\s+(?:the\s+)?
+    {_THUMBNAIL_TEXT_SPACE_REGION})?
+    (?:
+        \s+(?:reserved\s+|intended\s+)?for\s+
+        (?:(?:later|large|Korean|Japanese|English|overlay|thumbnail)\s+)*
+        (?:(?:title|caption|overlay)\s+)?text(?:\s+overlay)?(?:\s+later)?
+        |\s+so\s+(?:(?:title|overlay)\s+)?text\s+can\s+be\s+
+        (?:added|placed|composited)(?:\s+later)?
+    )?
+    (?=\s*[,.;]|$)
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
 class ThumbnailError(RuntimeError):
     pass
 
@@ -247,6 +303,32 @@ def _first_cut_image_path(project_dir: Path) -> Path:
     return candidates[0] if candidates else images_dir / "cut_1.png"
 
 
+def _configured_thumbnail_base_image_path(
+    project_dir: Path,
+    config: Optional[dict],
+) -> Optional[Path]:
+    """Resolve an explicitly selected existing project image for local thumbnail rendering."""
+    raw_cut_number = (config or {}).get("thumbnail_base_cut_number")
+    if raw_cut_number in (None, ""):
+        return None
+    try:
+        cut_number = int(raw_cut_number)
+    except (TypeError, ValueError) as exc:
+        raise ThumbnailError("thumbnail_base_cut_number는 정수여야 합니다.") from exc
+    if cut_number < 1:
+        raise ThumbnailError("thumbnail_base_cut_number는 1 이상이어야 합니다.")
+
+    images_dir = project_dir / "images"
+    for suffix in (".png", ".jpg", ".jpeg", ".webp"):
+        for stem in (f"cut_{cut_number}", f"cut_{cut_number:03d}"):
+            candidate = images_dir / f"{stem}{suffix}"
+            if candidate.exists() and candidate.stat().st_size > 100:
+                return candidate
+    raise ThumbnailError(
+        f"선택한 썸네일 원본 컷을 찾을 수 없습니다: cut {cut_number}"
+    )
+
+
 def _basic_thumbnail_file_check(image_path: str) -> tuple[bool, str]:
     path = Path(image_path)
     if not path.exists() or not path.is_file() or path.stat().st_size <= 100:
@@ -288,7 +370,15 @@ def _thumbnail_quality_system_prompt() -> str:
         "person or face and the image replaces the named object, terrain, event, "
         "or mechanism with a human face, portrait, warrior, rider, or unrelated "
         "character. Use pass=false when the main subject does not visibly match "
-        "the prompt. Also fail fake text, letters, "
+        "the prompt. When the prompt specifies an exact count, origin, or color set "
+        "for visible beams, lights, objects, or symbols, use pass=false if any required "
+        "item is missing, merged, has the wrong color, or emerges from the wrong place. "
+        "When the prompt explicitly requires cartoon, graphic-novel, ink-outline, or "
+        "cel-shaded rendering, use pass=false for photorealistic or live-action-looking "
+        "results. When the prompt contains THUMBNAIL HERO SUBJECT OVERRIDE, the configured "
+        "hero's identity, adult age, gender or role, close-up framing, and foreground "
+        "dominance are mandatory; use pass=false when another named person replaces that "
+        "hero or when the configured hero is missing. Also fail fake text, letters, "
         "symbols, glyphs, watermarks, UI, unreadable signage, or weak low-contrast "
         "decorative scenery. If the prompt reserves a lower-left text-safe zone, "
         "use pass=false when any face, eyes, nose, mouth, chin, important hand, "
@@ -318,7 +408,7 @@ def _thumbnail_overlay_quality_system_prompt() -> str:
 
 _THUMBNAIL_PERSON_PROMPT_RE = re.compile(
     r"\b("
-    r"person|human|face|eyes|mouth|head|shoulders|ruler|king|queen|warrior|"
+    r"person|human|face|facial|eyes|mouth|head|shoulders|ruler|king|queen|warrior|"
     r"envoy|commander|soldier|samurai|rider|mythic figure|character|"
     r"Toyotomi|Hideyoshi|Seonjo|Gwanggaeto|Cleopatra|Seondeok|Eulji|Mundeok"
     r")\b",
@@ -326,7 +416,7 @@ _THUMBNAIL_PERSON_PROMPT_RE = re.compile(
 )
 
 _THUMBNAIL_FACE_CLOSEUP_PROMPT_RE = re.compile(
-    r"\b(close[-\s]?up|portrait|face|head[-\s]?and[-\s]?shoulders)\b",
+    r"\b(close[-\s]?up|portrait|face|facial|head[-\s]?and[-\s]?shoulders)\b",
     re.IGNORECASE,
 )
 
@@ -539,6 +629,21 @@ def _thumbnail_closeup_soft_quality_failure(reason: str) -> bool:
             "does not align with the requirement",
             "do not align with the prompt",
             "does not align with the prompt",
+            "does not match the requested subject",
+            "does not match the requested layout",
+            "rather than a clear",
+            "does not show the required",
+            "required outdoor elements",
+            "which is not depicted",
+            "text-safe zone is violated",
+            "text safe zone is violated",
+            "photorealistic",
+            "live-action",
+            "does not match the requested style",
+            "wrong color",
+            "required beam",
+            "beam is missing",
+            "beams are missing",
             "unrelated",
             "replaces the named object",
         )
@@ -591,6 +696,61 @@ def _thumbnail_closeup_soft_quality_failure(reason: str) -> bool:
     return any(marker in lowered for marker in soft_markers)
 
 
+def _thumbnail_has_strict_story_lock(image_prompt: str) -> bool:
+    text = image_prompt or ""
+    return any(
+        marker in text
+        for marker in (
+            "ABANDONED SEA STORM DEITY THUMBNAIL LOCK",
+            "AMATERASU OATH THUMBNAIL LOCK",
+            "AMANO-IWATO RESCUE THUMBNAIL LOCK",
+            "LIFE FROM COVERED MOUND EVENT LOCK",
+            "THUMBNAIL FATAL MECHANISM LOCK",
+            "THUMBNAIL DROWNING DANGER LOCK",
+        )
+    )
+
+
+def _thumbnail_uses_compact_generation_prompt(image_prompt: str) -> bool:
+    text = image_prompt or ""
+    return any(
+        marker in text
+        for marker in (
+            "AMANO-IWATO RESCUE THUMBNAIL LOCK",
+            "SCRIPT THUMBNAIL LITERAL LOCK",
+        )
+    )
+
+
+def _thumbnail_has_complete_layout_contract(image_prompt: str) -> bool:
+    """Return True when the thumbnail prompt already owns its full composition."""
+    text = str(image_prompt or "")
+    return (
+        "LOWER-LEFT TEXT-SAFE ZONE LOCK" in text
+        and any(
+            marker in text
+            for marker in (
+                "THUMBNAIL FACE VISIBILITY LOCK",
+                "THUMBNAIL CLOSE-UP FACE FRAME LOCK",
+                "OBJECT OR EVENT THUMBNAIL LOCK",
+            )
+        )
+    )
+
+
+def _thumbnail_compact_prompt_for_generation(image_prompt: str) -> str:
+    text = str(image_prompt or "")
+    replacements = (
+        ("SCRIPT THUMBNAIL LITERAL LOCK:", ""),
+        ("THUMBNAIL FACE VISIBILITY LOCK:", ""),
+        ("LOWER-LEFT TEXT-SAFE ZONE LOCK:", ""),
+        ("THUMBNAIL RENDERING STYLE:", ""),
+    )
+    for marker, replacement in replacements:
+        text = text.replace(marker, replacement)
+    return re.sub(r"\s+", " ", text).strip()
+
+
 async def _openai_thumbnail_quality_check(
     *,
     image_path: str,
@@ -614,6 +774,20 @@ async def _openai_thumbnail_quality_check(
             f"IMAGE PROMPT:\n{image_prompt}\n\n"
             "Pass only if the main subject is clear, clickable, and matches the prompt."
         )
+        if "ABANDONED SEA STORM DEITY THUMBNAIL LOCK" in (image_prompt or ""):
+            user_text += (
+                "\nThe visible ocean wave is required story evidence, not competing clutter. "
+                "Accept a readable crying face on the right occupying roughly 40-70 percent "
+                "of image height with a wave and open sea on the left. Reject indoor rooms, "
+                "doors, fake writing, missing tears, or missing ocean."
+            )
+        if "AMATERASU OATH THUMBNAIL LOCK" in (image_prompt or ""):
+            user_text += (
+                "\nRequire exactly one dominant visibly adult woman in the foreground, "
+                "broken bronze ritual sword fragments, and magatama beads. Reject a male "
+                "foreground subject, indoor timber room, collapsed building, grinding stone, "
+                "blade through the mouth, fake writing, or missing oath objects."
+            )
         async with AsyncOpenAI(api_key=api_key) as client:
             response = await client.chat.completions.create(
                 model=model,
@@ -856,6 +1030,19 @@ def _thumbnail_click_focus_prompt(prompt: str) -> str:
     if match:
         visual_world = match.group(1).strip()
         base = match.group(2).strip()
+    if "LOWER-LEFT TEXT-SAFE ZONE LOCK" in base and any(
+        marker in base
+        for marker in (
+            "THUMBNAIL FACE VISIBILITY LOCK",
+            "THUMBNAIL CLOSE-UP FACE FRAME LOCK",
+            "OBJECT OR EVENT THUMBNAIL LOCK",
+        )
+    ):
+        return _prepend_thumbnail_visual_world(base, {"visual_world_text": visual_world})
+    if "LOWER-LEFT TEXT-SAFE ZONE LOCK" not in base:
+        base = _THUMBNAIL_SOURCE_TEXT_SPACE_RE.sub(" ", base)
+        base = re.sub(r"([,;])\s*(?:[,;]\s*)+", r"\1 ", base)
+        base = re.sub(r"\.\s*\.", ".", base)
     base = _THUMBNAIL_WEAK_POSITIVE_RE.sub("", base)
     base = re.sub(r"\s+", " ", base).strip(" ,.;")
     if not base:
@@ -886,7 +1073,7 @@ def _thumbnail_click_focus_prompt(prompt: str) -> str:
         drowning_lock = (
             THUMBNAIL_DROWNING_DANGER_LOCK
             if re.search(
-                r"\b(?:drown(?:ed|ing)?|river|water\s+rising|capsized\s+boat|deadly\s+water|forbidden\s+rescue)\b",
+                r"\b(?:drown(?:ed|ing)?|water\s+rising|capsized\s+boat|deadly\s+water|forbidden\s+rescue)\b",
                 base,
                 re.IGNORECASE,
             )
@@ -897,7 +1084,7 @@ def _thumbnail_click_focus_prompt(prompt: str) -> str:
             if mechanism_lock
             else "caught in the fatal water moment"
             if drowning_lock
-            else "standing in command pose"
+            else "caught in the story-critical action named in the prompt"
         )
         body = (
             f"{closeup_base.rstrip()}{closeup_lock} "
@@ -953,6 +1140,94 @@ def _thumbnail_click_focus_prompt(prompt: str) -> str:
     return _prepend_thumbnail_visual_world(body, {"visual_world_text": visual_world})
 
 
+def _thumbnail_generation_prompt_for_model(prompt: str, image_model_id: str) -> str:
+    """Avoid negative-object priming on GPT Image while preserving local-model guards."""
+    text = str(prompt or "")
+    if not str(image_model_id or "").startswith("openai-image-"):
+        return text
+    if "LIFE FROM COVERED MOUND EVENT LOCK" in text:
+        return (
+            "OBJECT OR EVENT THUMBNAIL LOCK. LIFE FROM COVERED MOUND EVENT LOCK. "
+            "Create one continuous 16:9 Japanese myth documentary manhwa scene. "
+            "The complete visible subject inventory is dark fertile soil, one low oval mound "
+            "fully sealed beneath one continuous plain earth-brown woven cover, and one dramatic "
+            "dense cluster of living golden rice panicles, green millet shoots, and bean leaves "
+            "erupting upward from the soil directly around the mound. Life visibly arises after "
+            "death through the contrast between the covered mound and vigorous crops. Keep the "
+            "mound and crops large on the right half under hard warm rim light and deep storm "
+            "shadow. Reserve the lower-left 45 percent as empty dark low-detail soil for title "
+            "overlay. Mature dark ink-and-wash, bold readable silhouette, one full-bleed scene, "
+            "plain natural materials, blank unmarked surfaces."
+        )
+    text = text.replace(
+        "Do not use a horse, mounted rider, full-body rider, distant figure, "
+        "side-profile portrait, large gate, shrine gate, castle gate, wide "
+        "battlefield composition, or army crowd composition.",
+        "Frame only the named head-and-shoulders subject against minimal defocused atmosphere.",
+    )
+    text = re.sub(r",\s*not riding\.", ".", text, flags=re.IGNORECASE)
+    text = text.replace(
+        "No readable text, letters, numbers, watermark, UI, horse, full-body "
+        "scene, distant figure, side-profile portrait, large gate, army crowd "
+        "composition, or object-only still life.",
+        "Keep the image free of writing and graphic overlays. Frame only the named close-up subject.",
+    )
+    text = text.replace(
+        "No face, eyes, nose, mouth, chin, hands, body, animal, weapon, skull, "
+        "monument, bright object, or story-critical detail may enter that zone.",
+        "The reserved zone contains only dark, defocused background texture.",
+    )
+    text = re.sub(
+        r"(THUMBNAIL QA RETRY:\s*the previous image failed because\s*).*?"
+        r"(\.\s*Regenerate (?:with|as)\s+)",
+        r"\1the previous composition did not match the requested subject or layout\2",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _thumbnail_style_prompt_from_config(prompt: str, config: Optional[dict]) -> str:
+    """Prepend only the channel's dedicated thumbnail style.
+
+    Main-image style, subject overrides, and topic heuristics must not leak into
+    thumbnail generation.  The script owns the scene; this setting owns style.
+    """
+    text = re.sub(r"\s+", " ", str(prompt or "")).strip()
+    from app.services.image.channel_style_policy import fixed_channel_image_style
+
+    style = fixed_channel_image_style(
+        config,
+        configured_style=(config or {}).get("thumbnail_style_prompt"),
+    )
+    if not style:
+        return text
+    return f"{style}\n{text}".strip()
+
+
+def _append_thumbnail_minimal_contract(prompt: str) -> str:
+    text = str(prompt or "").strip()
+    if not text:
+        return THUMBNAIL_MINIMAL_GENERATION_CONTRACT
+    if THUMBNAIL_MINIMAL_GENERATION_CONTRACT in text:
+        return text
+    return f"{text}\n{THUMBNAIL_MINIMAL_GENERATION_CONTRACT}"
+
+
+def _remove_thumbnail_text_generation_requests(prompt: str) -> str:
+    """Remove only source clauses that explicitly ask the model to draw writing."""
+    text = str(prompt or "")
+    text = re.sub(
+        r"\b(?:a|the)\s+(banner|sign|signboard|scroll|document|tablet|plaque)"
+        r"[^,.;]{0,140}\b(?:written\s+characters?|readable\s+text|letters?|words?|"
+        r"numbers?|inscriptions?|glyphs?)\b",
+        lambda match: f"a plain unmarked {match.group(1)} remains visible",
+        text,
+        flags=re.IGNORECASE,
+    )
+    return re.sub(r"\s+", " ", text).strip(" ,;")
+
+
 def _thumbnail_visual_world(script: Optional[dict]) -> str:
     script = script or {}
     raw = str(script.get("visual_world_text") or "").strip()
@@ -984,39 +1259,21 @@ def _prepend_thumbnail_visual_world(prompt: str, script: Optional[dict]) -> str:
     return f"{world}. Thumbnail image prompt: {body}"
 
 
-def build_standard_thumbnail_prompt(script: Optional[dict] = None, title: Optional[str] = None) -> str:
+def build_standard_thumbnail_prompt(
+    script: Optional[dict] = None,
+    title: Optional[str] = None,
+    config: Optional[dict] = None,
+) -> str:
     """Build the single thumbnail prompt used by pipeline, oneclick, scheduler, and uploads."""
     script = script or {}
-    thumb_prompt = (script.get("thumbnail_prompt") or "").strip()
-    if thumb_prompt:
-        focused_prompt = _thumbnail_click_focus_prompt(thumb_prompt)
-        if _thumbnail_prompt_expects_face_closeup(thumb_prompt):
-            return focused_prompt
-        return _prepend_thumbnail_visual_world(focused_prompt, script)
-    clean_title = (title or script.get("title") or "Untitled").strip()
-    topic_hint = (script.get("topic") or clean_title).strip()
-    prompt = _thumbnail_click_focus_prompt(
-        f"A high-tension, tabloid-intense but fact-locked YouTube thumbnail about this topic: {topic_hint}. "
-        f"Create a close-up of the most clickable story-critical person or human-like "
-        f"character when one exists. Use an object, artifact, evidence, or decisive "
-        f"event detail only when there is no usable person. Show the single most "
-        f"dramatic factual conflict, forbidden secret, betrayal signal, fatal danger, "
-        f"explosive rage, public humiliation, collapse evidence, or impossible-looking evidence. "
-        f"The subject can be a shocked face, a threatening ruler, a queen, a warrior, "
-        f"an envoy, a mythic figure, a dangerous historical character, or a story object. "
-        f"The subject must feel like the exact second before disaster, revelation, or irreversible collapse. "
-        f"It must be urgent and clickable, not calm, wide, distant, generic, or decorative. "
-        f"Cinematic lighting, hard "
-        f"rim light, deep black shadows, high contrast, one story-matched accent color, "
-        f"strong foreground silhouette, simple background, clean lower-left text-safe "
-        f"zone for large text overlay. No face, eyes, mouth, or important hand may "
-        f"enter that lower-left text-safe zone. 16:9 landscape composition, high-resolution "
-        f"documentary cartoon thumbnail, clean bold shapes. "
-        f"Do not fabricate gore, crimes, symbols, accusations, or causes of death not present in the story. "
-        f"Do not draw the video title. Do not draw any writing. "
-        f"ABSOLUTELY NO text, letters, words, numbers, watermarks, or UI elements."
+    thumb_prompt = _remove_thumbnail_text_generation_requests(
+        (script.get("thumbnail_prompt") or "").strip()
     )
-    return _prepend_thumbnail_visual_world(prompt, script)
+    if not thumb_prompt:
+        clean_title = (title or script.get("title") or "Untitled").strip()
+        thumb_prompt = f"A visual scene representing: {clean_title}."
+    styled_prompt = _thumbnail_style_prompt_from_config(thumb_prompt, config)
+    return _append_thumbnail_minimal_contract(styled_prompt)
 
 
 def build_clickbait_thumbnail_overlay(
@@ -1027,21 +1284,92 @@ def build_clickbait_thumbnail_overlay(
     """Return short, high-impact overlay text instead of copying the full title."""
     script = script or {}
     config = config or {}
-    for key in ("thumbnail_hook", "thumbnail_text", "thumbnail_overlay", "thumbnail_title"):
+    language = str(config.get("language") or script.get("language") or "").lower()
+    target_language = (
+        "ja" if language in {"ja", "jp", "jpn", "japanese"}
+        else "ko" if language in {"ko", "kr", "kor", "korean"}
+        else "en" if language in {"en", "eng", "english"}
+        else ""
+    )
+    configured_overlay = sanitize_thumbnail_title(
+        config.get("thumbnail_overlay_text")
+    )
+    if configured_overlay:
+        explicit_language = _overlay_language(configured_overlay)
+        if explicit_language == "en":
+            return _strong_english_thumbnail_overlay(
+                configured_overlay,
+                title or script.get("title") or script.get("topic") or "",
+            )
+        if explicit_language == "ko":
+            return _strong_korean_thumbnail_overlay(
+                configured_overlay,
+                title or script.get("title") or script.get("topic") or "",
+            )
+        if explicit_language == "ja":
+            return _strong_japanese_thumbnail_overlay(
+                configured_overlay,
+                title or script.get("title") or script.get("topic") or "",
+            )
+        return _wrap_overlay_lines(configured_overlay)
+    if target_language == "ja":
+        japanese_topic_source = re.sub(
+            r"\s+",
+            "",
+            " ".join(
+                str(value or "")
+                for value in (
+                    title,
+                    config.get("youtube_title"),
+                    script.get("title"),
+                    script.get("topic"),
+                )
+            ),
+        )
+        if re.search(
+            r"ヤマタノオロチ|야마타노오로치|八つの頭|8개의머리",
+            japanese_topic_source,
+            re.IGNORECASE,
+        ):
+            return "八つの頭の怪物\nヤマタノオロチ"
+        specific_overlay = _japanese_dead_goddess_overlay(
+            title,
+            config.get("youtube_title"),
+            script.get("title"),
+            script.get("topic"),
+        )
+        if specific_overlay:
+            return specific_overlay
+    for key in (
+        "thumbnail_hook",
+        "thumbnail_text",
+        "thumbnail_overlay",
+        "thumbnail_title",
+        "source_thumbnail_copy",
+    ):
         value = sanitize_thumbnail_title(script.get(key))
         if value:
             explicit_language = _overlay_language(value)
+            if target_language and explicit_language != target_language:
+                continue
             if explicit_language == "en":
                 return _strong_english_thumbnail_overlay(value, title or script.get("title") or script.get("topic") or "")
             if explicit_language == "ko":
                 return _strong_korean_thumbnail_overlay(value, title or script.get("title") or script.get("topic") or "")
+            if explicit_language == "ja":
+                return _strong_japanese_thumbnail_overlay(value, title or script.get("title") or script.get("topic") or "")
             return _wrap_overlay_lines(value)
 
-    base = sanitize_thumbnail_title(title or script.get("title") or script.get("topic") or "")
+    base = sanitize_thumbnail_title(
+        config.get("youtube_title")
+        or title
+        or script.get("title")
+        or script.get("topic")
+        or ""
+    )
     if not base:
         return ""
 
-    language = str(config.get("language") or script.get("language") or "").lower()
     has_hangul = _has_hangul(base)
     if language in {"ko", "kr", "kor", "korean", ""} and has_hangul:
         compact = re.sub(r"\s+", " ", base).strip()
@@ -1076,6 +1404,8 @@ def build_clickbait_thumbnail_overlay(
 
     if _overlay_language(base, script.get("topic") or "") == "en":
         return _strong_english_thumbnail_overlay(base, script.get("topic") or script.get("title") or "")
+    if target_language == "ja" or _overlay_language(base) == "ja":
+        return _strong_japanese_thumbnail_overlay(base, script.get("topic") or script.get("title") or "")
 
     return _wrap_overlay_lines(base)
 
@@ -1093,10 +1423,27 @@ def _overlay_language(*texts: Any) -> str:
     return ""
 
 
+def _japanese_dead_goddess_overlay(*texts: Any) -> str:
+    source = re.sub(
+        r"\s+",
+        "",
+        " ".join(sanitize_thumbnail_title(str(text or "")) for text in texts),
+    )
+    if (
+        "女神" in source
+        and any(word in source for word in ("死んだ", "殺された", "ころされた", "遺体", "死体", "からだ"))
+        and any(word in source for word in ("生命", "芽吹", "米", "稲", "蚕", "カイコ"))
+    ):
+        return "女神の死体から\n米と蚕が生まれた"
+    return ""
+
+
 def _strong_english_thumbnail_overlay(text: Any, fallback: Any = "") -> str:
     raw = sanitize_thumbnail_title(str(text or ""))
     context = sanitize_thumbnail_title(str(fallback or ""))
     blob = f"{raw} {context}".casefold()
+    if all(word in blob for word in ("brother", "death", "created", "world")):
+        return "BROTHER'S DEATH\nCREATED WORLD"
 
     if "peace" in blob and "england" in blob:
         return "PEACE\nLOST ENGLAND"
@@ -1166,6 +1513,29 @@ def _strong_korean_thumbnail_overlay(text: Any, fallback: Any = "") -> str:
     if not source:
         return ""
 
+    # A short, fact-locked cause-and-result hook must keep both clauses. Treating
+    # every occurrence of "죽" as a generic death label erased the actual point
+    # of hooks such as "형이 죽자, 백제는 완성됐다".
+    causal_clauses = [
+        part.strip(" -·")
+        for part in re.split(r"[,，;；]", source)
+        if part.strip(" -·")
+    ]
+    if (
+        raw
+        and len(causal_clauses) == 2
+        and re.search(r"(?:죽자|죽고|죽은\s*(?:뒤|후)|사망하자|사망한\s*(?:뒤|후))", causal_clauses[0])
+        and all(3 <= len(re.sub(r"\s+", "", clause)) <= 12 for clause in causal_clauses)
+    ):
+        return "\n".join(causal_clauses)
+
+    # A creator-supplied hook is the source of truth.  The generic keyword
+    # classifiers below are only for title-derived fallbacks; otherwise a hook
+    # such as "왕을 죽인 반역자를 끝장내다" is incorrectly reduced to
+    # "죽음의 순간" merely because it contains "죽".
+    if raw and len(re.sub(r"\s+", "", raw)) <= 20:
+        return _wrap_overlay_lines(raw)
+
     army = re.search(r"(\d+\s*만\s*대군)", source)
     if army and "심리전" in source:
         army_text = army.group(1).replace(" ", "")
@@ -1183,9 +1553,49 @@ def _strong_korean_thumbnail_overlay(text: Any, fallback: Any = "") -> str:
 
     compact = re.split(r"[!?.。！？]", source, maxsplit=1)[0].strip(" -·")
     compact = re.sub(r"\s+", " ", compact)
-    if len(compact) <= 18:
+    max_chars = 20
+    if len(compact) <= max_chars:
         return _wrap_overlay_lines(compact)
-    return _wrap_overlay_lines(compact[:18].strip())
+    words = compact.split()
+    selected: list[str] = []
+    for word in words:
+        candidate = " ".join([*selected, word])
+        if selected and len(candidate) > max_chars:
+            break
+        selected.append(word)
+    shortened = " ".join(selected) if selected else compact[:max_chars].strip()
+    return _wrap_overlay_lines(shortened)
+
+
+def _strong_japanese_thumbnail_overlay(text: Any, fallback: Any = "") -> str:
+    raw = sanitize_thumbnail_title(str(text or ""))
+    context = sanitize_thumbnail_title(str(fallback or ""))
+    explicit_lines = [
+        re.sub(r"\s+", "", line).strip()
+        for line in raw.splitlines()
+        if line.strip()
+    ]
+    if (
+        2 <= len(explicit_lines) <= 3
+        and all(1 <= len(line) <= 8 for line in explicit_lines)
+    ):
+        return "\n".join(explicit_lines)
+    source = re.sub(r"\s+", "", raw or context).strip()
+    source = re.sub(r"(?:EP\.?\s*0*\d+|第\s*0*\d+\s*話)$", "", source, flags=re.IGNORECASE).strip(" |/-–—:・")
+    if not source:
+        return ""
+    specific_overlay = _japanese_dead_goddess_overlay(source)
+    if specific_overlay:
+        return specific_overlay
+    if "三貴子" in source:
+        lead = "黄泉の禊" if any(word in source for word in ("黄泉", "禊", "穢れ")) else "三柱の神"
+        impact = "三貴子誕生" if "誕生" in source else "三貴子"
+        return f"{lead}\n{impact}"
+    compact = re.split(r"[|/―—–:：。！？]", source, maxsplit=1)[0].strip()
+    if len(compact) <= 8:
+        return compact
+    split_at = min(8, max(4, (len(compact) + 1) // 2))
+    return f"{compact[:split_at]}\n{compact[split_at:16]}".strip()
 
 
 def _short_korean_subject(text: str) -> str:
@@ -1253,6 +1663,48 @@ async def _generate_thumbnail_with_overlay_guard(
     return rendered_path, passed, reason
 
 
+async def _resolve_standard_thumbnail_overlay(
+    script: dict[str, Any],
+    prompt_title: str,
+    config: dict[str, Any],
+) -> str:
+    """Resolve a non-empty overlay in the configured channel language."""
+    overlay_seed = build_clickbait_thumbnail_overlay(script, prompt_title, config)
+    language = str(config.get("language") or script.get("language") or "").strip().lower()
+    if language in {"ja", "jp", "jpn", "japanese"} and _has_hangul(overlay_seed):
+        source_text = sanitize_thumbnail_title(
+            config.get("thumbnail_overlay_text")
+            or script.get("thumbnail_hook")
+            or script.get("thumbnail_text")
+            or script.get("thumbnail_overlay")
+            or script.get("thumbnail_title")
+            or prompt_title
+        )
+        if not source_text:
+            raise ThumbnailError("일본어 썸네일 오버레이 원문이 없습니다.")
+        from app.services.youtube_localization_service import (
+            ensure_primary_youtube_metadata_language,
+        )
+
+        translated_title, _ = await ensure_primary_youtube_metadata_language(
+            title=source_text,
+            description=source_text,
+            config=config,
+        )
+        overlay_seed = _strong_japanese_thumbnail_overlay(
+            translated_title,
+            translated_title,
+        )
+
+    overlay_title, _ = extract_thumbnail_text_parts(overlay_seed or prompt_title, None)
+    overlay_title = suppress_foreign_hangul_thumbnail_overlay(overlay_title, config)
+    if not overlay_title.strip():
+        raise ThumbnailError(
+            "설정된 채널 언어로 된 썸네일 오버레이를 만들지 못했습니다."
+        )
+    return overlay_title
+
+
 async def ensure_standard_thumbnail(
     project_id: str,
     config: Optional[dict] = None,
@@ -1266,11 +1718,10 @@ async def ensure_standard_thumbnail(
     from app.services.image.factory import (
         DEFAULT_THUMBNAIL_MODEL,
         get_image_service,
-        resolve_image_model,
+        resolve_thumbnail_model,
         IMAGE_REGISTRY,
     )
     from app.services.image.prompt_builder import (
-        apply_reference_style_prefix,
         collect_character_images,
         collect_reference_images,
         should_enable_historical_guard_for_context,
@@ -1284,13 +1735,42 @@ async def ensure_standard_thumbnail(
         return str(thumb_path)
 
     thumb_path.parent.mkdir(parents=True, exist_ok=True)
-    prompt_title = (title or script.get("title") or topic or "Untitled").strip()
-    thumb_prompt = build_standard_thumbnail_prompt(script, prompt_title)
-    image_model = resolve_image_model(config.get("thumbnail_model") or DEFAULT_THUMBNAIL_MODEL)
+    prompt_title = (
+        config.get("youtube_title")
+        or title
+        or script.get("title")
+        or topic
+        or "Untitled"
+    ).strip()
+    raw_thumbnail_prompt = script.get("thumbnail_prompt")
+    if not isinstance(raw_thumbnail_prompt, str) or not raw_thumbnail_prompt.strip():
+        raise ThumbnailError("대본 thumbnail_prompt가 비어있습니다.")
+    thumb_prompt = build_standard_thumbnail_prompt(script, prompt_title, config)
+    image_model = resolve_thumbnail_model(
+        config.get("thumbnail_model") or DEFAULT_THUMBNAIL_MODEL
+    )
 
-    overlay_seed = build_clickbait_thumbnail_overlay(script, prompt_title, config)
-    overlay_title, _extracted_episode_label = extract_thumbnail_text_parts(overlay_seed or prompt_title, None)
-    overlay_title = suppress_foreign_hangul_thumbnail_overlay(overlay_title, config)
+    overlay_title = await _resolve_standard_thumbnail_overlay(
+        script,
+        prompt_title,
+        config,
+    )
+
+    configured_base_image = _configured_thumbnail_base_image_path(project_dir, config)
+    if configured_base_image is not None:
+        local_config = dict(config)
+        local_config["_thumbnail_image_prompt"] = thumb_prompt
+        rendered_path = generate_thumbnail(
+            project_id=project_id,
+            title=overlay_title,
+            base_image_path=str(configured_base_image),
+            output_path=str(thumb_path),
+            config=local_config,
+        )
+        passed, reason = _basic_thumbnail_file_check(rendered_path)
+        if not passed:
+            raise ThumbnailError(f"로컬 썸네일 파일 검증 실패: {reason}")
+        return rendered_path
 
     char_paths = collect_character_images(project_id, config)
     ref_paths = collect_reference_images(project_id, config)
@@ -1319,44 +1799,19 @@ async def ensure_standard_thumbnail(
                     f"Selected thumbnail model '{image_model}' does not support reference images."
                 )
 
-    if combined_refs and thumb_prompt:
-        thumb_prompt = apply_reference_style_prefix(
-            thumb_prompt,
-            has_reference=True,
-            enable_historical_guard=enable_historical_guard,
-        )
-
-    try:
-        result = await generate_ai_thumbnail(
-            project_id=project_id,
-            image_prompt=thumb_prompt,
-            image_model_id=image_model,
-            overlay_title_text=overlay_title,
-            overlay_subtitle=None,
-            output_path=str(thumb_path),
-            reference_images=combined_refs or None,
-            enable_historical_guard=enable_historical_guard,
-            config=config,
-        )
-        return str(result.get("path") or thumb_path)
-    except Exception as exc:
-        if not _thumbnail_error_allows_first_cut_fallback(exc):
-            raise
-        base_cut = _first_cut_image_path(project_dir)
-        if not base_cut.exists():
-            raise
-        fallback_title = overlay_title or prompt_title
-        rendered_path, accepted, overlay_reason = await _generate_thumbnail_with_overlay_guard(
-            project_id=project_id,
-            title=fallback_title,
-            base_image_path=str(base_cut),
-            output_path=str(thumb_path),
-            image_prompt=thumb_prompt,
-            config=config,
-        )
-        if not accepted:
-            raise ThumbnailError(f"AI 썸네일 최종 오버레이 품질검증 실패: {overlay_reason}")
-        return rendered_path
+    result = await generate_ai_thumbnail(
+        project_id=project_id,
+        image_prompt=thumb_prompt,
+        image_model_id=image_model,
+        overlay_title_text=overlay_title,
+        overlay_subtitle=None,
+        output_path=str(thumb_path),
+        reference_images=combined_refs or None,
+        enable_historical_guard=enable_historical_guard,
+        config=config,
+        preserve_image_prompt=True,
+    )
+    return str(result.get("path") or thumb_path)
 
 
 
@@ -1590,10 +2045,25 @@ def _wrap_text(text: str, font: ImageFont.ImageFont, max_width: int, draw: Image
                 current = word
         if current:
             segment_lines.append(current)
+        for index in range(1, len(segment_lines)):
+            current_line = segment_lines[index]
+            previous_line = segment_lines[index - 1]
+            if (
+                len(current_line) == 1
+                and len(previous_line) >= 3
+                and re.fullmatch(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]", current_line)
+                and re.search(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]$", previous_line)
+            ):
+                segment_lines[index - 1] = previous_line[:-1]
+                segment_lines[index] = previous_line[-1] + current_line
         return segment_lines
 
+    raw_text = str(text or "")
+    if "\n" in raw_text:
+        return [segment.strip() for segment in raw_text.splitlines() if segment.strip()]
+
     lines: list[str] = []
-    for segment in str(text or "").splitlines():
+    for segment in raw_text.splitlines():
         lines.extend(wrap_segment(segment.strip()))
     return lines
 
@@ -1791,9 +2261,20 @@ def _thumbnail_overlay_local_geometry_pass(image_path: str, image_prompt: str) -
     except Exception:
         return False
 
+    background: Optional[Image.Image] = None
+    background_path = Path(image_path).with_name("thumbnail_bg.png")
+    if background_path.exists() and background_path.resolve() != Path(image_path).resolve():
+        try:
+            candidate = Image.open(background_path).convert("RGB")
+            if candidate.size != image.size:
+                candidate = _cover_resize(candidate, image.size[0], image.size[1])
+            background = candidate
+        except Exception:
+            background = None
+
     w, h = image.size
-    detected = [_expand_rect(box, 96, 90) for box in _detect_thumbnail_face_boxes(image)]
-    protected = detected or [(int(w * 0.32), int(h * 0.08), w, int(h * 0.92))]
+    detected = [_expand_rect(box, 24, 20) for box in _detect_thumbnail_face_boxes(image)]
+    protected = detected or [(int(w * 0.45), int(h * 0.08), w, int(h * 0.92))]
 
     for x1, y1, x2, y2 in protected:
         crop = image.crop((
@@ -1802,11 +2283,25 @@ def _thumbnail_overlay_local_geometry_pass(image_path: str, image_prompt: str) -
             min(w, int(x2)),
             min(h, int(y2)),
         ))
+        background_crop = background.crop((
+            max(0, int(x1)),
+            max(0, int(y1)),
+            min(w, int(x2)),
+            min(h, int(y2)),
+        )) if background is not None else None
         text_like_pixels = 0
+        background_pixels = iter(background_crop.getdata()) if background_crop is not None else None
         for r, g, b in crop.getdata():
             is_white_fill = r >= 238 and g >= 238 and b >= 238
             is_yellow_fill = r >= 215 and g >= 170 and b <= 95
-            if is_white_fill or is_yellow_fill:
+            is_new_overlay_fill = is_white_fill or is_yellow_fill
+            if background_pixels is not None:
+                br, bg, bb = next(background_pixels)
+                background_was_white = br >= 220 and bg >= 220 and bb >= 220
+                background_was_yellow = br >= 190 and bg >= 140 and bb <= 125
+                if background_was_white or background_was_yellow:
+                    is_new_overlay_fill = False
+            if is_new_overlay_fill:
                 text_like_pixels += 1
                 if text_like_pixels > 900:
                     return False
@@ -1827,6 +2322,36 @@ def _thumbnail_text_layout_score(
             if overlap:
                 score += 1_000_000 + overlap * 20
     return score
+
+
+def _thumbnail_reflow_short_two_line_hook(text: str, fallback_face_safe_zone: bool) -> str:
+    if not fallback_face_safe_zone:
+        return text
+    explicit_lines = [line.strip() for line in str(text or "").splitlines() if line.strip()]
+    compact_length = len(re.sub(r"\s+", "", str(text or "")))
+    if len(explicit_lines) != 2 or compact_length > 14:
+        return text
+    longest_index = max(range(2), key=lambda index: len(re.sub(r"\s+", "", explicit_lines[index])))
+    longest_words = explicit_lines[longest_index].split()
+    if len(longest_words) < 2:
+        return text
+    reflowed = list(explicit_lines)
+    if len(longest_words) == 2:
+        split_lines = longest_words
+    else:
+        split_at = min(
+            range(1, len(longest_words)),
+            key=lambda index: abs(
+                len("".join(longest_words[:index]))
+                - len("".join(longest_words[index:]))
+            ),
+        )
+        split_lines = [
+            " ".join(longest_words[:split_at]),
+            " ".join(longest_words[split_at:]),
+        ]
+    reflowed[longest_index:longest_index + 1] = split_lines
+    return "\n".join(reflowed)
 
 
 def generate_thumbnail(
@@ -1923,26 +2448,28 @@ def generate_thumbnail(
         )
         face_boxes = _thumbnail_fallback_face_safe_boxes(prompt_for_layout)
         fallback_face_safe_zone = bool(face_boxes)
+    layout_text = _thumbnail_reflow_short_two_line_hook(text, bool(face_boxes))
 
     # ── 메인 후크: 큰 그림텍스트 ──
     # 박스 없이 크게 — 박스가 먹던 공간이 없으므로 폰트를 확 키움.
     # 후보 사이즈를 높은 것부터 내려가며 전체 문장이 잘리지 않도록 줄바꿈/축소한다.
     # v2.1.2: 폰트 크기 상향 — 제목이 짧아졌으므로 더 크게 표시
-    candidates = (98, 87, 76, 67, 60, 53, 48, 42, 38, 34, 29, 25, 22, 20, 17)
+    candidates = (124, 116, 108, 98, 87, 76, 67, 60, 53, 48, 42, 38, 34, 29, 25, 22, 20, 17)
 
     def pick_title_font(max_text_w: int, max_title_block_h: int) -> tuple[ImageFont.ImageFont, list[str]]:
         for size in candidates:
-            f = _find_font(size, text)
-            lines = _wrap_text(text, f, max_text_w, draw)
+            f = _find_font(size, layout_text)
+            lines = _wrap_text(layout_text, f, max_text_w, draw)
             if not lines:
                 continue
             lh = _text_size(draw, "가Ag", f)[1]
+            max_line_w = max((_text_size(draw, line, f)[0] for line in lines), default=0)
             total_h = len(lines) * lh + (len(lines) - 1) * int(lh * 0.15)
-            if total_h <= max_title_block_h:
+            if max_line_w <= max_text_w and total_h <= max_title_block_h:
                 return f, lines
         # 폴백: 가장 작은 폰트
-        f = _find_font(candidates[-1], text)
-        return f, _wrap_text(text, f, max_text_w, draw) or [text]
+        f = _find_font(candidates[-1], layout_text)
+        return f, _wrap_text(layout_text, f, max_text_w, draw) or [layout_text]
 
     # 라인 높이
     def line_h(font):
@@ -1969,9 +2496,9 @@ def generate_thumbnail(
         return rects
 
     def build_layout(layout_name: str, preference: int):
-        max_text_ratio = 0.22 if fallback_face_safe_zone else (0.50 if face_boxes else 0.56)
+        max_text_ratio = 0.44 if fallback_face_safe_zone else (0.54 if face_boxes else 0.60)
         max_text_w = min(THUMB_W - 2 * pad_x, int(THUMB_W * max_text_ratio))
-        max_title_block_ratio = 0.32 if fallback_face_safe_zone else (0.52 if face_boxes else 0.62)
+        max_title_block_ratio = 0.46 if fallback_face_safe_zone else (0.52 if face_boxes else 0.62)
         max_title_block_h = int(THUMB_H * max_title_block_ratio)
         title_font_value, title_lines_value = pick_title_font(max_text_w, max_title_block_h)
         title_size_value = getattr(title_font_value, "size", 96)
@@ -2054,10 +2581,8 @@ def generate_thumbnail(
             sub_placed_value,
         )
 
-    layouts = [
-        build_layout(name, preference)
-        for preference, name in enumerate(("lower_left", "lower_right", "upper_left", "upper_right"))
-    ]
+    # 채널 공통 썸네일 규칙: 문구는 항상 좌측 하단에 고정한다.
+    layouts = [build_layout("lower_left", 0)]
     (
         _layout_score,
         title_font,
@@ -2148,6 +2673,7 @@ async def generate_ai_thumbnail(
     reference_images: Optional[list[str]] = None,
     enable_historical_guard: bool = False,
     config: Optional[dict] = None,
+    preserve_image_prompt: bool = False,
 ) -> dict:
     """AI image 모델로 1280x720 배경을 생성하고 선택적으로 텍스트 오버레이.
 
@@ -2174,10 +2700,11 @@ async def generate_ai_thumbnail(
     Raises:
         ThumbnailError: image 서비스 호출이 실패했거나 파일을 쓰지 못한 경우.
     """
-    from app.services.image.factory import get_image_service
+    from app.services.image.factory import get_image_service, resolve_thumbnail_model
 
     if not image_prompt or not image_prompt.strip():
         raise ThumbnailError("image_prompt 가 비어있습니다.")
+    image_model_id = resolve_thumbnail_model(image_model_id)
 
     # 경로 결정
     if output_path is None:
@@ -2195,6 +2722,21 @@ async def generate_ai_thumbnail(
     except Exception as e:
         raise ThumbnailError(f"image 모델 로드 실패 ({image_model_id}): {e}") from e
 
+    from app.services.image.prompt_compiler import (
+        configured_prompt_profile,
+        supports_scene_contract_v2_model,
+    )
+
+    prompt_profile = configured_prompt_profile(config)
+    if not supports_scene_contract_v2_model(
+        getattr(image_service, "model_id", image_model_id)
+    ):
+        prompt_profile = ""
+    try:
+        image_service.prompt_profile = prompt_profile
+    except Exception:
+        pass
+
     from app.services.image.prompt_builder import (
         append_prompt_specific_negative_prompt,
         apply_reference_style_prefix,
@@ -2204,13 +2746,16 @@ async def generate_ai_thumbnail(
         text_negative_prompt,
     )
 
-    image_prompt = _thumbnail_click_focus_prompt(image_prompt)
+    if not preserve_image_prompt:
+        image_prompt = _append_thumbnail_minimal_contract(
+            _thumbnail_style_prompt_from_config(image_prompt, config)
+        )
+    compact_generation_prompt = True
+    try:
+        image_service.compact_thumbnail_prompt = compact_generation_prompt
+    except Exception:
+        pass
     object_event_thumbnail = "OBJECT OR EVENT THUMBNAIL LOCK" in image_prompt and not _thumbnail_prompt_expects_person(image_prompt)
-    image_prompt = apply_reference_style_prefix(
-        image_prompt,
-        has_reference=bool(reference_images),
-        enable_historical_guard=False if object_event_thumbnail else enable_historical_guard,
-    )
     try:
         current_neg = (getattr(image_service, "negative_prompt", "") or "").strip()
         for required_negative in (text_negative_prompt(), map_negative_prompt(), symbol_negative_prompt()):
@@ -2256,7 +2801,13 @@ async def generate_ai_thumbnail(
     quality_checked = False
     quality_reason = "quality_check_disabled"
     prompt_for_attempt = image_prompt
-    max_attempts = _thumbnail_quality_attempt_count(config) if _thumbnail_quality_enabled(config) else 1
+    max_attempts = (
+        1
+        if preserve_image_prompt
+        else _thumbnail_quality_attempt_count(config)
+        if _thumbnail_quality_enabled(config)
+        else 1
+    )
     overlay_applied = False
     final_path = output_path
 
@@ -2297,11 +2848,13 @@ async def generate_ai_thumbnail(
         return True, "no_overlay"
 
     for attempt in range(1, max_attempts + 1):
-        if attempt > 1:
-            prompt_for_attempt = _thumbnail_retry_prompt(image_prompt, quality_reason)
+        # Retry changes only the model-generated seed.  The application-owned
+        # thumbnail prompt must remain byte-for-byte stable across attempts.
+        prompt_for_attempt = image_prompt
+        model_prompt_for_attempt = prompt_for_attempt
         try:
             saved_bg = await image_service.generate(
-                prompt_for_attempt,
+                model_prompt_for_attempt,
                 THUMB_W,
                 THUMB_H,
                 bg_path,
@@ -2321,38 +2874,39 @@ async def generate_ai_thumbnail(
                 bg_path = saved_bg  # 그냥 반환된 경로 쓴다
 
         if not _thumbnail_quality_enabled(config):
-            accepted, overlay_reason = await accept_thumbnail_attempt(prompt_for_attempt)
+            accepted, overlay_reason = await accept_thumbnail_attempt(model_prompt_for_attempt)
             if not accepted:
                 quality_reason = f"final_overlay_qa_failed:{overlay_reason}"
                 if attempt < max_attempts:
                     print(f"[thumbnail] final overlay QA failed, retrying ({attempt}/{max_attempts}): {overlay_reason}")
                     continue
                 raise ThumbnailError(f"AI 썸네일 최종 오버레이 품질검증 실패: {overlay_reason}")
-            image_prompt = prompt_for_attempt
+            image_prompt = model_prompt_for_attempt
             break
 
         quality_checked = True
         passed, quality_reason = await _validate_thumbnail_background(
             image_path=bg_path,
-            image_prompt=prompt_for_attempt,
+            image_prompt=model_prompt_for_attempt,
             config=config,
         )
         if passed:
-            accepted, overlay_reason = await accept_thumbnail_attempt(prompt_for_attempt)
+            accepted, overlay_reason = await accept_thumbnail_attempt(model_prompt_for_attempt)
             if not accepted:
                 quality_reason = f"final_overlay_qa_failed:{overlay_reason}"
                 if attempt < max_attempts:
                     print(f"[thumbnail] final overlay QA failed, retrying ({attempt}/{max_attempts}): {overlay_reason}")
                     continue
                 raise ThumbnailError(f"AI 썸네일 최종 오버레이 품질검증 실패: {overlay_reason}")
-            image_prompt = prompt_for_attempt
+            image_prompt = model_prompt_for_attempt
             break
         if attempt < max_attempts:
             print(f"[thumbnail] QA failed, retrying ({attempt}/{max_attempts}): {quality_reason}")
             continue
 
         if (
-            _thumbnail_prompt_expects_face_closeup(prompt_for_attempt)
+            _thumbnail_prompt_expects_face_closeup(model_prompt_for_attempt)
+            and not _thumbnail_has_strict_story_lock(model_prompt_for_attempt)
             and _thumbnail_closeup_soft_quality_failure(quality_reason)
         ):
             soft_reason = f"vision_soft_pass_face_closeup_warning: {quality_reason}"
@@ -2362,18 +2916,18 @@ async def generate_ai_thumbnail(
                 "model": str((config or {}).get("thumbnail_quality_model") or "gpt-4o-mini"),
                 "raw": {"pass": True, "override": "face_closeup_soft_quality_warning"},
             })
-            accepted, overlay_reason = await accept_thumbnail_attempt(prompt_for_attempt)
+            accepted, overlay_reason = await accept_thumbnail_attempt(model_prompt_for_attempt)
             if not accepted:
                 quality_reason = f"final_overlay_qa_failed:{overlay_reason}"
                 raise ThumbnailError(f"AI 썸네일 최종 오버레이 품질검증 실패: {overlay_reason}")
-            image_prompt = prompt_for_attempt
+            image_prompt = model_prompt_for_attempt
             quality_reason = soft_reason
             break
 
         base_cut = _first_cut_image_path(resolve_project_dir(project_id, config or {}, create=True))
         allow_first_cut_fallback = not (
-            _thumbnail_prompt_expects_face_closeup(prompt_for_attempt)
-            or _thumbnail_prompt_expects_person(prompt_for_attempt)
+            _thumbnail_prompt_expects_face_closeup(model_prompt_for_attempt)
+            or _thumbnail_prompt_expects_person(model_prompt_for_attempt)
         )
         if allow_first_cut_fallback and base_cut.exists() and overlay_title_text and overlay_title_text.strip():
             _, accepted, overlay_reason = await _generate_thumbnail_with_overlay_guard(
@@ -2381,7 +2935,7 @@ async def generate_ai_thumbnail(
                 title=overlay_title_text.strip(),
                 base_image_path=str(base_cut),
                 output_path=output_path,
-                image_prompt=prompt_for_attempt,
+                image_prompt=model_prompt_for_attempt,
                 episode_label=(overlay_episode_label or "").strip() or None,
                 subtitle=(overlay_subtitle or "").strip() or None,
                 config=config,

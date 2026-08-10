@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#d8bd84"/>
+  <!-- Herd wealth: one plain cattle yoke. -->
+  <path d="M420 105 Q640 310 860 105" fill="none" stroke="#4b3428" stroke-width="62" stroke-linecap="round"/>
+  <path d="M440 105V250M840 105V250" fill="none" stroke="#4b3428" stroke-width="42" stroke-linecap="round"/>
+  <path d="M430 105 Q640 285 850 105" fill="none" stroke="#99683a" stroke-width="36" stroke-linecap="round"/>
+  <path d="M440 105V250M840 105V250" fill="none" stroke="#99683a" stroke-width="23" stroke-linecap="round"/>
+
+  <!-- Enemies: one plain copper blade blank without handle. -->
+  <path d="M145 355 Q270 460 205 650 Q140 460 145 355 Z" fill="#aa613d" stroke="#4b3428" stroke-width="13"/>
+  <path d="M205 380V620" fill="none" stroke="#754331" stroke-width="8"/>
+
+  <!-- Obligations and supplies: one closed woven packet. -->
+  <rect x="410" y="420" width="340" height="205" rx="30" fill="#a87842" stroke="#4b3428" stroke-width="12"/>
+  <path d="M440 470H720M440 520H720M440 570H720M500 438V610M580 438V610M660 438V610" fill="none" stroke="#6d4a32" stroke-width="8"/>
+  <path d="M580 420V625" fill="none" stroke="#4b3428" stroke-width="18"/>
+
+  <!-- Logistical risk: one solid transport-wheel disk. -->
+  <circle cx="1035" cy="505" r="142" fill="#98693d" stroke="#4b3428" stroke-width="13"/>
+  <path d="M950 380V630M1120 380V630" fill="none" stroke="#4b3428" stroke-width="9"/>
+  <circle cx="1035" cy="505" r="31" fill="#c5a56f" stroke="#4b3428" stroke-width="10"/>
+</svg>

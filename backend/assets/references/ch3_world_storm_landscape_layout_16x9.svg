@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <defs><linearGradient id="stormSky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1d2732"/><stop offset=".58" stop-color="#4d6471"/><stop offset="1" stop-color="#81674d"/></linearGradient><linearGradient id="stormWater" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3f687c"/><stop offset="1" stop-color="#1f3c4d"/></linearGradient></defs>
+  <rect width="1280" height="720" fill="url(#stormSky)"/>
+  <path d="M0 132 Q112 202 222 131 T445 134 T672 126 T895 137 T1119 128 T1280 139 L1280 0 L0 0Z" fill="#17212b" stroke="#10171e" stroke-width="13"/>
+  <path d="M0 512 L161 276 L283 401 L414 221 L544 474 L0 720Z" fill="#5c5a54" stroke="#2e3030" stroke-width="15"/>
+  <path d="M414 222 L389 341 L437 396 L407 467" fill="none" stroke="#b98e62" stroke-width="11"/>
+  <path d="M467 720 Q586 580 688 506 Q781 438 865 323" fill="#97704d" stroke="#49382d" stroke-width="16"/>
+  <path d="M594 697 Q651 592 722 529 Q785 475 821 398" fill="none" stroke="#d3b17a" stroke-width="19" opacity=".55"/>
+  <path d="M820 720 Q884 521 993 449 Q1101 379 1280 441 L1280 720Z" fill="url(#stormWater)" stroke="#273f4c" stroke-width="15"/>
+  <g fill="none" stroke="#b6d5de" stroke-width="14" stroke-linecap="round"><path d="M891 572 C1000 451 1183 518 1134 637 C1094 734 914 691 934 598 C950 528 1055 533 1078 589 C1095 632 1028 662 998 627 C980 606 1004 577 1030 587"/><path d="M890 475 Q1014 413 1148 459"/></g>
+  <path d="M568 141 L630 221 L592 221 L650 318" fill="none" stroke="#d7e2e2" stroke-width="11"/>
+  <path d="M740 119 L699 195 L735 194 L688 281" fill="none" stroke="#d7e2e2" stroke-width="9"/>
+</svg>

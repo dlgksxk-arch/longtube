@@ -32,6 +32,9 @@ DEFAULT_WORKBOOKS = (
 # Backward-compatible name for callers that still import it. Production uses
 # DEFAULT_WORKBOOKS and convert_workbooks().
 DEFAULT_WORKBOOK = DEFAULT_WORKBOOKS[0]
+ENGLISH_CONTINUITY_WORKBOOK = Path(
+    r"Z:\HDD2\longtube\CH2 유럽사\유럽사\Europe_History_Season_1_EP001-034_English_Continuity_Reviewed_0715.xlsx"
+)
 DEFAULT_OUTPUT_DIR = resolve_project_dir(
     "e6619f7e",
     {"channel": 2, "youtube_channel": 2},
@@ -75,6 +78,21 @@ INTEGRATED_META_LABELS = (
     "배경 국가",
     "배경 지역",
 )
+ENGLISH_CONTINUITY_EXPECTED_HEADER = [
+    "Cut Number",
+    "Shorts Tag",
+    "Dialogue",
+    "Image Prompt",
+]
+ENGLISH_CONTINUITY_META_LABELS = (
+    "Episode Number",
+    "Episode Title",
+    "Thumbnail Text",
+    "Thumbnail Image Prompt",
+    "Period",
+    "Background Country",
+    "Background Region",
+)
 EXPECTED_SOURCE_RANGES = {
     DEFAULT_WORKBOOKS[0].name: (1, 34),
     DEFAULT_WORKBOOKS[1].name: (35, 69),
@@ -82,8 +100,92 @@ EXPECTED_SOURCE_RANGES = {
     DEFAULT_WORKBOOKS[3].name: (102, 130),
     DEFAULT_WORKBOOKS[4].name: (131, 179),
 }
-SCRIPT_VERSION = "prepared-ch2-europe-en-v2"
+ENGLISH_CONTINUITY_SOURCE_RANGES = {
+    ENGLISH_CONTINUITY_WORKBOOK.name: (1, 34),
+}
+SCRIPT_VERSION = "prepared-ch2-europe-en-v3"
 SOURCE_LOCKED_VISUAL_POLICY_MODE = "source-locked"
+INTEGRATED_SOURCE_SCHEMA = "integrated-ko-en-v2"
+ENGLISH_CONTINUITY_SOURCE_SCHEMA = "english-continuity-v1"
+
+ENGLISH_CONTINUITY_MATERIAL_LOCK = (
+    "period-accurate clothing, architecture, tools, and material culture"
+)
+ENGLISH_CONTINUITY_END_LOCK = (
+    "cinematic documentary realism, natural skin and fabric texture, 16:9, "
+    "image only, no text, no watermark"
+)
+ENGLISH_CONTINUITY_CAMERA_CYCLE = (
+    "wide establishing shot",
+    "eye-level medium shot",
+    "tight character close-up",
+    "overhead environmental shot",
+    "low-angle action shot",
+    "lateral tracking composition",
+    "detail-focused close shot",
+)
+ENGLISH_CONTINUITY_LENS_CYCLE = (
+    "35mm documentary lens",
+    "50mm documentary lens",
+    "85mm portrait lens",
+    "28mm lens",
+    "35mm lens",
+    "50mm lens",
+    "100mm macro lens",
+)
+ENGLISH_CONTINUITY_LIGHT_CYCLE = (
+    "cold dawn light",
+    "soft overcast daylight",
+    "warm firelight with natural shadows",
+    "late-afternoon side light",
+    "moonlit blue-black night",
+    "dusty interior window light",
+)
+
+# Guarded transition repair: the reviewed source workbook's EP12 ending previews
+# EP14 (Persian Wars) even though the immediate next worksheet is EP13 (Roman
+# Republic). Each entry requires the exact source narration and scene before the
+# converter applies the replacement.
+_ENGLISH_CONTINUITY_TRANSITION_OVERRIDES: dict[
+    tuple[int, int], dict[str, str]
+] = {
+    (12, 145): {
+        "source_narration": "Their next test would arrive not from an aristocratic family, but from the Persian Empire.",
+        "source_scene": "Achaemenid fleet and army approaching the Aegean toward democratic Athens",
+        "narration": "Next, citizen rule reaches Rome, where one household's tragedy helps topple a monarchy.",
+        "prompt_body": "Lucretia's household tragedy spreading into a Roman uprising against the Tarquin monarchy, dark cinematic late sixth-century BCE Roman political and military thriller grounded in early central Italian material culture, 509 BCE, Rome, Latium, Roman Republic, Etruscan city-states",
+    },
+    (12, 146): {
+        "source_narration": "Next, Persian ships land at Marathon with the exiled tyrant Hippias guiding them.",
+        "source_scene": "Elderly Hippias pointing Persian commanders toward Marathon's beach",
+        "narration": "Lucretia names Sextus Tarquinius, turning private violence into a crisis for Rome's royal family.",
+        "prompt_body": "Lucretia naming Sextus Tarquinius before Brutus, Collatinus, and her father, dark cinematic late sixth-century BCE Roman political and military thriller grounded in early central Italian material culture, 509 BCE, Rome, Latium, Roman Republic, Etruscan city-states, character continuity: Lucretia: young Roman noblewoman, long dark braided hair, white wool stola, spindle and dagger, composed dignified expression",
+    },
+    (12, 147): {
+        "source_narration": "Miltiades persuades divided generals to attack before Spartan reinforcements can arrive.",
+        "source_scene": "Miltiades arguing before ten Athenian generals overlooking Persian lines",
+        "narration": "Brutus raises her dagger and swears to drive Tarquin the Proud and his family from Rome.",
+        "prompt_body": "Brutus raising Lucretia's dagger as Roman nobles swear to expel the Tarquins, dark cinematic late sixth-century BCE Roman political and military thriller grounded in early central Italian material culture, 509 BCE, Rome, Latium, Roman Republic, Etruscan city-states",
+    },
+    (12, 148): {
+        "source_narration": "Then Xerxes returns, Leonidas holds Thermopylae, and Themistocles traps a fleet at Salamis.",
+        "source_scene": "Thermopylae pass and Salamis strait joined in one approaching-war tableau",
+        "narration": "Tradition says Rome replaces its king with two annually elected consuls and a fragile republic.",
+        "prompt_body": "Romans removing royal insignia as two consuls take office before the citizen body, dark cinematic late sixth-century BCE Roman political and military thriller grounded in early central Italian material culture, 509 BCE, Rome, Latium, Roman Republic, Etruscan city-states",
+    },
+    (12, 149): {
+        "source_narration": "Subscribe before citizen government meets an empire built across three continents.",
+        "source_scene": "Athenian voters exchanging ballots for shields as Persian standards advance",
+        "narration": "Conspiracy reaches Brutus's own sons, and the republic answers betrayal with execution and war.",
+        "prompt_body": "Brutus seated in judgment as his condemned sons face Roman lictors, dark cinematic late sixth-century BCE Roman political and military thriller grounded in early central Italian material culture, 509 BCE, Rome, Latium, Roman Republic, Etruscan city-states",
+    },
+    (12, 150): {
+        "source_narration": "And like this episode if the Acropolis siege changed what power meant.",
+        "source_scene": "Athenian citizens watching Spartan troops withdraw from the Acropolis",
+        "narration": "Subscribe and like before Rome's first republic is tested by betrayal, execution, and war.",
+        "prompt_body": "Brutus and Roman soldiers confronting returning royal forces beyond Rome, dark cinematic late sixth-century BCE Roman political and military thriller grounded in early central Italian material culture, 509 BCE, Rome, Latium, Roman Republic, Etruscan city-states",
+    },
+}
 
 _MAIN_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 _OFFICE_REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
@@ -323,6 +425,163 @@ def _load_xlsx_workbook(
 
 def _compact_text(value: Any) -> str:
     return re.sub(r"\s+", " ", str(value or "").replace("\r", " ").replace("\n", " ")).strip()
+
+
+def _english_continuity_prompt_cycle(
+    cut_number: int,
+) -> tuple[str, str, str]:
+    if cut_number < 1:
+        raise ValueError(f"invalid cut number: {cut_number}")
+    return (
+        ENGLISH_CONTINUITY_CAMERA_CYCLE[
+            (cut_number - 1) % len(ENGLISH_CONTINUITY_CAMERA_CYCLE)
+        ],
+        ENGLISH_CONTINUITY_LENS_CYCLE[
+            (cut_number - 1) % len(ENGLISH_CONTINUITY_LENS_CYCLE)
+        ],
+        ENGLISH_CONTINUITY_LIGHT_CYCLE[
+            (cut_number - 1) % len(ENGLISH_CONTINUITY_LIGHT_CYCLE)
+        ],
+    )
+
+
+def _rebuild_english_continuity_prompt(value: Any, cut_number: int) -> str:
+    """Restore only the workbook's deterministic production-lock tail."""
+    text = _compact_text(value)
+    if not text:
+        raise ValueError("image prompt is blank")
+    if CJK_RE.search(text):
+        raise ValueError("image prompt contains CJK")
+
+    end_match = re.search(
+        rf"{re.escape(ENGLISH_CONTINUITY_END_LOCK)}\s*$",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if end_match is None:
+        raise ValueError("image prompt end lock is missing or changed")
+
+    body_with_gaps = text[: end_match.start()].rstrip(" ,;")
+    body = re.sub(r",\s*,+", ",", body_with_gaps).rstrip(" ,;")
+    marker_positions: list[int] = []
+
+    material_index = body.casefold().rfind("period-accurate")
+    if material_index >= 0:
+        marker_positions.append(material_index)
+
+    for clause in ENGLISH_CONTINUITY_CAMERA_CYCLE:
+        index = body.casefold().rfind(clause.casefold())
+        if index >= 0:
+            marker_positions.append(index)
+
+    lens_matches = list(
+        re.finditer(
+            r"\b\d{2,3}mm(?:\s+(?:documentary|portrait|macro))?(?:\s+lens)?\b",
+            body,
+            flags=re.IGNORECASE,
+        )
+    )
+    if lens_matches:
+        marker_positions.append(lens_matches[-1].start())
+
+    last_segment_start = body.rfind(",") + 1
+    last_segment = body[last_segment_start:].strip()
+    if re.fullmatch(
+        r"(?:cold\s+dawn(?:\s+light)?|"
+        r"soft\s+overcast(?:\s+daylight)?|"
+        r"warm\s+firelight(?:\s+with(?:\s+natural(?:\s+shadows)?)?)?|"
+        r"late-afternoon(?:\s+side(?:\s+light)?)?|"
+        r"moonlit(?:\s+blue-black(?:\s+night)?)?|"
+        r"dusty\s+interior(?:\s+window(?:\s+light)?)?)",
+        last_segment,
+        flags=re.IGNORECASE,
+    ):
+        marker_positions.append(last_segment_start)
+
+    # Production-lock clauses live in the final half of every reviewed source
+    # prompt. This guard prevents scene wording near the opening from being cut.
+    final_half = max(0, len(body) // 2)
+    tail_positions = [position for position in marker_positions if position >= final_half]
+    source_body = (body[: min(tail_positions)] if tail_positions else body).rstrip(
+        " ,;"
+    )
+    source_body = re.sub(
+        r"(?:\bturning\s+to|\b(?:and|with|to))\s*$",
+        "",
+        source_body,
+        flags=re.IGNORECASE,
+    ).rstrip(" ,;")
+    if not source_body:
+        raise ValueError("image prompt source scene is blank after tail cleanup")
+
+    camera, lens, light = _english_continuity_prompt_cycle(cut_number)
+    rebuilt = ", ".join(
+        (
+            source_body,
+            ENGLISH_CONTINUITY_MATERIAL_LOCK,
+            camera,
+            lens,
+            light,
+            ENGLISH_CONTINUITY_END_LOCK,
+        )
+    )
+    if ",," in rebuilt:
+        raise ValueError("duplicate comma remains after prompt rebuild")
+    if rebuilt.casefold().count(ENGLISH_CONTINUITY_MATERIAL_LOCK.casefold()) != 1:
+        raise ValueError("material lock count mismatch after prompt rebuild")
+    if not rebuilt.endswith(ENGLISH_CONTINUITY_END_LOCK):
+        raise ValueError("end lock mismatch after prompt rebuild")
+    return rebuilt
+
+
+def _rebuild_english_continuity_thumbnail_prompt(value: Any) -> str:
+    """Restore the thumbnail prompt's material and end locks without new scene text."""
+    text = _compact_text(value)
+    if not text:
+        raise ValueError("thumbnail prompt is blank")
+    if CJK_RE.search(text):
+        raise ValueError("thumbnail prompt contains CJK")
+    end_match = re.search(
+        rf"{re.escape(ENGLISH_CONTINUITY_END_LOCK)}\s*$",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if end_match is None:
+        raise ValueError("thumbnail prompt end lock is missing or changed")
+    body = re.sub(
+        r",\s*,+",
+        ",",
+        text[: end_match.start()].rstrip(" ,;"),
+    ).rstrip(" ,;")
+    material_index = body.casefold().rfind("period-accurate")
+    if material_index >= len(body) // 2:
+        body = body[:material_index].rstrip(" ,;")
+    body = re.sub(
+        r"(?:\bturning\s+to|\b(?:and|with|to))\s*$",
+        "",
+        body,
+        flags=re.IGNORECASE,
+    ).rstrip(" ,;")
+    if not body:
+        raise ValueError("thumbnail prompt source scene is blank after tail cleanup")
+    rebuilt = ", ".join(
+        (body, ENGLISH_CONTINUITY_MATERIAL_LOCK, ENGLISH_CONTINUITY_END_LOCK)
+    )
+    if ",," in rebuilt:
+        raise ValueError("duplicate comma remains after thumbnail prompt rebuild")
+    if rebuilt.casefold().count(ENGLISH_CONTINUITY_MATERIAL_LOCK.casefold()) != 1:
+        raise ValueError("thumbnail material lock count mismatch after rebuild")
+    return rebuilt
+
+
+def _workbook_sheet_schema(ws: _Worksheet) -> str:
+    header4 = [_compact_text(ws.cell(9, column).value) for column in range(1, 5)]
+    if header4 == ENGLISH_CONTINUITY_EXPECTED_HEADER and ws.max_column == 4:
+        return ENGLISH_CONTINUITY_SOURCE_SCHEMA
+    header5 = [_compact_text(ws.cell(9, column).value) for column in range(1, 6)]
+    if header5 == INTEGRATED_EXPECTED_HEADER and ws.max_column == 5:
+        return INTEGRATED_SOURCE_SCHEMA
+    return "unknown"
 
 
 def _clean_flux_prompt(value: Any) -> str:
@@ -1186,6 +1445,238 @@ def _build_integrated_script_for_sheet(
     return (script if not errors else None), errors
 
 
+def _build_english_continuity_script_for_sheet(
+    ws: _Worksheet,
+    workbook_path: Path,
+    workbook_sha256: str,
+    *,
+    applied_transition_overrides: set[tuple[int, int]],
+) -> tuple[dict[str, Any] | None, list[str]]:
+    errors: list[str] = []
+    match = INTEGRATED_EP_SHEET_RE.fullmatch(ws.title)
+    if not match:
+        return None, [f"invalid English continuity episode sheet name: {ws.title}"]
+    episode_number = int(match.group(1))
+    episode_code = f"EP{episode_number:03d}"
+
+    if ws.max_row != 159 or ws.max_column != 4:
+        errors.append(
+            f"{ws.title}: expected used range A1:D159, "
+            f"got rows={ws.max_row}, cols={ws.max_column}"
+        )
+    header = [_compact_text(ws.cell(9, column).value) for column in range(1, 5)]
+    if header != ENGLISH_CONTINUITY_EXPECTED_HEADER:
+        errors.append(f"{ws.title}: header row 9 mismatch: {header}")
+    labels = tuple(_compact_text(ws.cell(row, 1).value) for row in range(2, 9))
+    if labels != ENGLISH_CONTINUITY_META_LABELS:
+        errors.append(f"{ws.title}: metadata labels mismatch: {labels}")
+
+    source_code = _required_cell(ws, 2, 2, "episode code", errors)
+    title = _required_cell(ws, 3, 2, "episode title", errors)
+    thumbnail_copy = _required_cell(ws, 4, 2, "thumbnail copy", errors)
+    source_thumbnail_prompt = _required_cell(ws, 5, 2, "thumbnail prompt", errors)
+    source_period = _required_cell(ws, 6, 2, "period", errors)
+    background_country = _required_cell(ws, 7, 2, "background country", errors)
+    background_region = _required_cell(ws, 8, 2, "background region", errors)
+    if source_code != episode_code:
+        errors.append(f"{ws.title}: episode code {source_code!r} != {episode_code!r}")
+    expected_banner = f"{episode_code} | {title}"
+    if _compact_text(ws.cell(1, 1).value) != expected_banner:
+        errors.append(f"{ws.title}: title banner mismatch")
+    for label, value in (
+        ("title", title),
+        ("thumbnail copy", thumbnail_copy),
+        ("thumbnail prompt", source_thumbnail_prompt),
+        ("period", source_period),
+        ("background country", background_country),
+        ("background region", background_region),
+    ):
+        if CJK_RE.search(value):
+            errors.append(f"{ws.title}: {label} contains CJK")
+    try:
+        thumbnail_prompt = _rebuild_english_continuity_thumbnail_prompt(
+            source_thumbnail_prompt
+        )
+    except ValueError as exc:
+        errors.append(f"{ws.title}: {exc}")
+        thumbnail_prompt = ""
+    source_thumbnail_scene = source_thumbnail_prompt.split(",", 1)[0].strip()
+    if (
+        thumbnail_prompt
+        and source_thumbnail_scene
+        and not thumbnail_prompt.startswith(source_thumbnail_scene + ",")
+    ):
+        errors.append(f"{ws.title}: thumbnail source scene changed during prompt rebuild")
+
+    cuts: list[dict[str, Any]] = []
+    shorts_groups: dict[int, list[tuple[int, int]]] = {}
+    for cut_number in range(1, 151):
+        row = cut_number + 9
+        raw_cut = _compact_text(ws.cell(row, 1).value)
+        try:
+            parsed_cut = int(float(raw_cut))
+        except (TypeError, ValueError):
+            parsed_cut = 0
+        if parsed_cut != cut_number:
+            errors.append(
+                f"{ws.title}: cut row {row} has {raw_cut!r}, expected {cut_number}"
+            )
+
+        short_tag = _compact_text(ws.cell(row, 2).value)
+        source_narration = _compact_text(ws.cell(row, 3).value)
+        narration = source_narration
+        source_prompt = _compact_text(ws.cell(row, 4).value)
+        source_scene = source_prompt.split(",", 1)[0].strip()
+        if not source_narration:
+            errors.append(f"{ws.title}: cut {cut_number:03d} missing English narration")
+        if not source_prompt:
+            errors.append(f"{ws.title}: cut {cut_number:03d} missing image prompt")
+        if CJK_RE.search(source_narration):
+            errors.append(
+                f"{ws.title}: cut {cut_number:03d} English narration contains CJK"
+            )
+
+        prompt_source = source_prompt
+        expected_prompt_scene = source_scene
+        cut_period = source_period
+        cut_country = background_country
+        cut_region = background_region
+        cut_source_cue = thumbnail_copy
+        transition_override = _ENGLISH_CONTINUITY_TRANSITION_OVERRIDES.get(
+            (episode_number, cut_number)
+        )
+        transition_override_applied = False
+        if transition_override is not None:
+            if source_narration != transition_override["source_narration"]:
+                errors.append(
+                    f"{ws.title}: cut {cut_number:03d} transition narration source mismatch"
+                )
+            elif source_scene != transition_override["source_scene"]:
+                errors.append(
+                    f"{ws.title}: cut {cut_number:03d} transition scene source mismatch"
+                )
+            else:
+                narration = transition_override["narration"]
+                prompt_source = (
+                    f"{transition_override['prompt_body']}, "
+                    f"{ENGLISH_CONTINUITY_END_LOCK}"
+                )
+                expected_prompt_scene = transition_override["prompt_body"].split(
+                    ",", 1
+                )[0]
+                cut_period = "509 BCE"
+                cut_country = "Roman Republic, Etruscan city-states"
+                cut_region = "Rome, Latium"
+                cut_source_cue = "The Birth of the Roman Republic"
+                transition_override_applied = True
+                applied_transition_overrides.add((episode_number, cut_number))
+
+        try:
+            image_prompt = _rebuild_english_continuity_prompt(
+                prompt_source,
+                cut_number,
+            )
+        except ValueError as exc:
+            errors.append(f"{ws.title}: cut {cut_number:03d}: {exc}")
+            image_prompt = ""
+        if (
+            image_prompt
+            and expected_prompt_scene
+            and not image_prompt.startswith(expected_prompt_scene + ",")
+        ):
+            errors.append(
+                f"{ws.title}: cut {cut_number:03d} source scene changed during prompt rebuild"
+            )
+        if narration and len(narration) >= 20 and narration in image_prompt:
+            errors.append(f"{ws.title}: cut {cut_number:03d} narration leaked into prompt")
+
+        shorts_group = 0
+        try:
+            parsed_tag = _integrated_shorts_tag(short_tag)
+            if parsed_tag is not None:
+                shorts_group, shorts_sequence = parsed_tag
+                shorts_groups.setdefault(shorts_group, []).append(
+                    (cut_number, shorts_sequence)
+                )
+        except ValueError as exc:
+            errors.append(f"{ws.title}: cut {cut_number:03d}: {exc}")
+
+        visual_subject = image_prompt.split(",", 1)[0].strip()[:220]
+        cut: dict[str, Any] = {
+            "cut_number": cut_number,
+            "narration": narration,
+            "caption_tracks": {"en": narration},
+            "image_prompt": image_prompt,
+            "visual_year": cut_period,
+            "visual_period": f"European historical documentary scene, {cut_period}",
+            "visual_location": f"{cut_region}; {cut_country}",
+            "visual_evidence": f"Source workbook scene: {visual_subject}",
+            "visual_subject": visual_subject,
+            "visual_scene": image_prompt,
+            "scene_type": "body",
+            "source_cue": cut_source_cue,
+            "shorts_candidate": shorts_group > 0,
+            "shorts_group": shorts_group,
+        }
+        if transition_override_applied:
+            cut["source_narration"] = source_narration
+            cut["transition_override"] = "EP12-to-EP13"
+        if shorts_group > 0:
+            cut["shorts_reason"] = f"workbook tag {short_tag}"
+        cuts.append(cut)
+
+    if set(shorts_groups) != {1, 2, 3, 4}:
+        errors.append(f"{ws.title}: expected shorts groups 1-4, got {sorted(shorts_groups)}")
+    for group in range(1, 5):
+        entries = shorts_groups.get(group, [])
+        sequences = [sequence for _, sequence in entries]
+        cut_numbers = [number for number, _ in entries]
+        if len(entries) < 10:
+            errors.append(f"{ws.title}: shorts group {group} has only {len(entries)} cuts")
+        if sequences != list(range(1, len(entries) + 1)):
+            errors.append(f"{ws.title}: shorts group {group} sequence is not contiguous")
+        if cut_numbers and cut_numbers != list(range(cut_numbers[0], cut_numbers[-1] + 1)):
+            errors.append(f"{ws.title}: shorts group {group} cut block is not contiguous")
+
+    for left in range(len(cuts)):
+        for right in range(left + 1, min(len(cuts), left + 6)):
+            if cuts[left]["narration"] == cuts[right]["narration"]:
+                errors.append(
+                    f"{ws.title}: near duplicate narration at cuts {left + 1} and {right + 1}"
+                )
+
+    script = {
+        "script_version": SCRIPT_VERSION,
+        "prepared_source": True,
+        "visual_policy_mode": SOURCE_LOCKED_VISUAL_POLICY_MODE,
+        "title": title,
+        "topic": title,
+        "language": "en",
+        "episode_number": episode_number,
+        "episode_code": episode_code,
+        "episode_id": episode_code,
+        "source_sheet": episode_code,
+        "source_workbook": str(workbook_path),
+        "source_schema": ENGLISH_CONTINUITY_SOURCE_SCHEMA,
+        "source": {
+            "workbook": str(workbook_path),
+            "workbook_sha256": workbook_sha256,
+            "worksheet": ws.title,
+            "episode_code": source_code,
+            "schema": ENGLISH_CONTINUITY_SOURCE_SCHEMA,
+        },
+        "source_title": title,
+        "source_background": f"{background_country} | {background_region}",
+        "source_period": source_period,
+        "source_thumbnail_copy": thumbnail_copy,
+        "thumbnail_prompt": thumbnail_prompt,
+        "caption_languages": ["en"],
+        "caption_source": "script_tracks",
+        "cuts": cuts,
+    }
+    return (script if not errors else None), errors
+
+
 def convert_workbooks(
     workbook_paths: list[Path] | tuple[Path, ...],
     output_dir: Path,
@@ -1199,9 +1690,10 @@ def convert_workbooks(
     paths = [Path(path) for path in workbook_paths]
     errors: list[str] = []
     sources: list[dict[str, Any]] = []
-    sheets: list[tuple[int, _Worksheet, Path, str]] = []
+    sheets: list[tuple[int, _Worksheet, Path, str, str]] = []
     seen_episodes: set[int] = set()
     seen_sheet_names: set[tuple[str, str]] = set()
+    detected_schemas: set[str] = set()
 
     for path in paths:
         if not path.is_file():
@@ -1219,6 +1711,19 @@ def convert_workbooks(
         if not names:
             errors.append(f"{path}: zero integrated episode sheets")
             continue
+        source_schema_by_name = {
+            name: _workbook_sheet_schema(workbook[name]) for name in names
+        }
+        source_schemas = set(source_schema_by_name.values())
+        if len(source_schemas) != 1 or "unknown" in source_schemas:
+            errors.append(
+                f"{path}: unsupported or mixed workbook schemas: {sorted(source_schemas)}"
+            )
+        source_schema = (
+            next(iter(source_schemas)) if len(source_schemas) == 1 else "unknown"
+        )
+        if source_schema != "unknown":
+            detected_schemas.add(source_schema)
         source_episode_numbers: list[int] = []
         for name in names:
             match = INTEGRATED_EP_SHEET_RE.fullmatch(name)
@@ -1234,8 +1739,25 @@ def convert_workbooks(
                 continue
             seen_episodes.add(episode_number)
             seen_sheet_names.add(sheet_key)
-            sheets.append((episode_number, workbook[name], path, workbook_sha256))
-        expected_range = EXPECTED_SOURCE_RANGES.get(path.name)
+            sheets.append(
+                (
+                    episode_number,
+                    workbook[name],
+                    path,
+                    workbook_sha256,
+                    source_schema_by_name[name],
+                )
+            )
+        range_catalog = (
+            ENGLISH_CONTINUITY_SOURCE_RANGES
+            if source_schema == ENGLISH_CONTINUITY_SOURCE_SCHEMA
+            else EXPECTED_SOURCE_RANGES
+        )
+        expected_range = range_catalog.get(path.name)
+        if expected_range is None:
+            errors.append(
+                f"{path.name}: source workbook is not registered for schema {source_schema}"
+            )
         if expected_range is not None:
             expected_numbers = list(range(expected_range[0], expected_range[1] + 1))
             if sorted(source_episode_numbers) != expected_numbers:
@@ -1247,6 +1769,7 @@ def convert_workbooks(
                 "path": str(path),
                 "sha256": workbook_sha256,
                 "size": path.stat().st_size,
+                "schema": source_schema,
                 "episode_count": len(names),
                 "first_episode": min(source_episode_numbers),
                 "last_episode": max(source_episode_numbers),
@@ -1259,46 +1782,99 @@ def convert_workbooks(
     applied_corrections: set[tuple[int, int]] = set()
     global_fix_counts: dict[str, int] = {}
     applied_period_overrides: set[tuple[int, int]] = set()
+    applied_transition_overrides: set[tuple[int, int]] = set()
+    prompt_contract_rebuild_count = 0
+    thumbnail_prompt_rebuild_count = 0
     scripts: list[tuple[str, dict[str, Any]]] = []
-    for episode_number, worksheet, path, workbook_sha256 in sheets:
-        script, sheet_errors = _build_integrated_script_for_sheet(
-            worksheet,
-            path,
-            workbook_sha256,
-            applied_corrections=applied_corrections,
-            global_fix_counts=global_fix_counts,
-            applied_period_overrides=applied_period_overrides,
-        )
+    for episode_number, worksheet, path, workbook_sha256, source_schema in sheets:
+        if source_schema == ENGLISH_CONTINUITY_SOURCE_SCHEMA:
+            script, sheet_errors = _build_english_continuity_script_for_sheet(
+                worksheet,
+                path,
+                workbook_sha256,
+                applied_transition_overrides=applied_transition_overrides,
+            )
+        elif source_schema == INTEGRATED_SOURCE_SCHEMA:
+            script, sheet_errors = _build_integrated_script_for_sheet(
+                worksheet,
+                path,
+                workbook_sha256,
+                applied_corrections=applied_corrections,
+                global_fix_counts=global_fix_counts,
+                applied_period_overrides=applied_period_overrides,
+            )
+        else:
+            script = None
+            sheet_errors = [f"{worksheet.title}: unsupported source schema"]
         errors.extend(sheet_errors)
         if script is not None:
             scripts.append((f"EP{episode_number:03d}", script))
+            if source_schema == ENGLISH_CONTINUITY_SOURCE_SCHEMA:
+                prompt_contract_rebuild_count += len(script.get("cuts") or [])
+                thumbnail_prompt_rebuild_count += 1
 
     if require_full and not limit:
-        expected_episodes = set(range(1, 180))
+        if detected_schemas == {ENGLISH_CONTINUITY_SOURCE_SCHEMA}:
+            expected_episodes: set[int] = set()
+            for path in paths:
+                expected_range = ENGLISH_CONTINUITY_SOURCE_RANGES.get(path.name)
+                if expected_range is not None:
+                    expected_episodes.update(
+                        range(expected_range[0], expected_range[1] + 1)
+                    )
+        elif detected_schemas == {INTEGRATED_SOURCE_SCHEMA}:
+            expected_episodes = set(range(1, 180))
+        else:
+            expected_episodes = set()
+            errors.append(
+                f"global source schema mismatch: {sorted(detected_schemas)}"
+            )
         if seen_episodes != expected_episodes:
             missing = sorted(expected_episodes - seen_episodes)
             extra = sorted(seen_episodes - expected_episodes)
             errors.append(
                 f"global episode coverage mismatch: found={len(seen_episodes)}, missing={missing}, extra={extra}"
             )
-        if len(scripts) != 179:
-            errors.append(f"script count mismatch: expected 179, got {len(scripts)}")
+        expected_script_count = len(expected_episodes)
+        if len(scripts) != expected_script_count:
+            errors.append(
+                f"script count mismatch: expected {expected_script_count}, got {len(scripts)}"
+            )
         cut_count = sum(len(script.get("cuts") or []) for _, script in scripts)
-        if cut_count != 26850:
-            errors.append(f"cut count mismatch: expected 26850, got {cut_count}")
-        missing_corrections = sorted(set(_VERIFIED_ENGLISH_OVERRIDES) - applied_corrections)
-        if missing_corrections:
-            errors.append(f"verified corrections not applied: {missing_corrections}")
-        missing_period_overrides = sorted(
-            set(_CUT_VISUAL_PERIOD_OVERRIDES) - applied_period_overrides
-        )
-        if missing_period_overrides:
-            errors.append(f"cut period overrides not applied: {missing_period_overrides}")
-        for source_text, (_replacement, expected_count) in _GLOBAL_ENGLISH_FIXES.items():
-            actual_count = global_fix_counts.get(source_text, 0)
-            if actual_count != expected_count:
+        expected_cut_count = expected_script_count * 150
+        if cut_count != expected_cut_count:
+            errors.append(
+                f"cut count mismatch: expected {expected_cut_count}, got {cut_count}"
+            )
+        if detected_schemas == {INTEGRATED_SOURCE_SCHEMA}:
+            missing_corrections = sorted(
+                set(_VERIFIED_ENGLISH_OVERRIDES) - applied_corrections
+            )
+            if missing_corrections:
+                errors.append(f"verified corrections not applied: {missing_corrections}")
+            missing_period_overrides = sorted(
+                set(_CUT_VISUAL_PERIOD_OVERRIDES) - applied_period_overrides
+            )
+            if missing_period_overrides:
                 errors.append(
-                    f"global correction count mismatch: {source_text!r}: expected {expected_count}, got {actual_count}"
+                    f"cut period overrides not applied: {missing_period_overrides}"
+                )
+            for source_text, (_replacement, expected_count) in _GLOBAL_ENGLISH_FIXES.items():
+                actual_count = global_fix_counts.get(source_text, 0)
+                if actual_count != expected_count:
+                    errors.append(
+                        f"global correction count mismatch: {source_text!r}: "
+                        f"expected {expected_count}, got {actual_count}"
+                    )
+        elif detected_schemas == {ENGLISH_CONTINUITY_SOURCE_SCHEMA}:
+            missing_transition_overrides = sorted(
+                set(_ENGLISH_CONTINUITY_TRANSITION_OVERRIDES)
+                - applied_transition_overrides
+            )
+            if missing_transition_overrides:
+                errors.append(
+                    "English continuity transition overrides not applied: "
+                    f"{missing_transition_overrides}"
                 )
 
     if write and errors:
@@ -1334,6 +1910,9 @@ def convert_workbooks(
             "episode_count": len(scripts),
             "cut_count": sum(len(script["cuts"]) for _, script in scripts),
             "cleaned_prompt_count": sum(len(script["cuts"]) for _, script in scripts),
+            "prompt_contract_rebuild_count": prompt_contract_rebuild_count,
+            "thumbnail_prompt_rebuild_count": thumbnail_prompt_rebuild_count,
+            "source_schemas": sorted(detected_schemas),
             "verified_cell_corrections": [
                 f"EP{episode:03d}:{cut:03d}" for episode, cut in sorted(applied_corrections)
             ],
@@ -1341,6 +1920,10 @@ def convert_workbooks(
             "cut_period_overrides": [
                 f"EP{episode:03d}:{cut:03d}"
                 for episode, cut in sorted(applied_period_overrides)
+            ],
+            "transition_overrides": [
+                f"EP{episode:03d}:{cut:03d}"
+                for episode, cut in sorted(applied_transition_overrides)
             ],
             "sources": sources,
             "files": file_entries,
@@ -1361,6 +1944,10 @@ def convert_workbooks(
         "verified_correction_count": len(applied_corrections),
         "global_correction_count": sum(global_fix_counts.values()),
         "cut_period_override_count": len(applied_period_overrides),
+        "transition_override_count": len(applied_transition_overrides),
+        "prompt_contract_rebuild_count": prompt_contract_rebuild_count,
+        "thumbnail_prompt_rebuild_count": thumbnail_prompt_rebuild_count,
+        "source_schemas": sorted(detected_schemas),
         "written_count": len(written),
         "manifest": manifest_path,
         "error_count": len(errors),

@@ -122,21 +122,27 @@ export interface VoiceChangePatch {
 
 interface Props {
   projectId: string;
+  /** 드롭다운 위에 표시할 역할명. */
+  label?: string;
   /** 현재 편집 중인 TTS 모델. fetch 대상을 결정한다. */
   ttsModel: string;
   voiceId: string;
   voicePreset?: string;
   onChange: (patch: VoiceChangePatch) => void;
+  /** 저장값이 없을 때 목록의 첫 보이스를 자동 선택할지 여부. */
+  autoSelectFirst?: boolean;
   /** true 면 select 박스 높이를 ModelSelector 와 동일하게 맞춘다. (StepSettings 용) */
   compact?: boolean;
 }
 
 export default function VoiceSelector({
   projectId,
+  label = "목소리 선택",
   ttsModel,
   voiceId,
   voicePreset,
   onChange,
+  autoSelectFirst = true,
   compact = false,
 }: Props) {
   const [open, setOpen] = useState(false);
@@ -160,7 +166,7 @@ export default function VoiceSelector({
       const voices: ApiVoice[] = Array.isArray(data?.voices) ? data.voices : [];
       setApiVoices(voices);
       // 저장된 voice_id 가 없고 목록이 있으면 첫 번째를 자동 선택.
-      if (!voiceId && voices.length > 0) {
+      if (autoSelectFirst && !voiceId && voices.length > 0) {
         onChange({ tts_voice_id: voices[0].id, tts_voice_preset: "" });
       }
     } catch (e: any) {
@@ -229,7 +235,7 @@ export default function VoiceSelector({
   return (
     <div ref={ref} className="relative">
       <label className="block text-xs text-gray-400 mb-1">
-        목소리 선택
+        {label}
         {isElevenLabs && apiVoices.length > 0 && (
           <span className="ml-2 text-[10px] text-gray-600">
             ({apiVoices.length}개 사용 가능)

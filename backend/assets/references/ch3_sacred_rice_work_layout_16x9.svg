@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <defs><linearGradient id="waterWork" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#9fcbd2"/><stop offset="1" stop-color="#527f8d"/></linearGradient></defs>
+  <rect width="1280" height="720" fill="#d7c08f"/>
+  <rect y="210" width="1280" height="510" fill="url(#waterWork)"/>
+  <path d="M0 250 Q300 210 628 252 T1280 238 M0 580 Q290 525 625 576 T1280 558" fill="none" stroke="#795c3f" stroke-width="38" opacity=".85"/>
+  <circle cx="151" cy="123" r="70" fill="#e5bd41" stroke="#4c3a22" stroke-width="14"/>
+  <g id="five-seedlings" fill="none" stroke-linecap="round">
+    <g transform="translate(250 310)"><path d="M0 91 Q0 45 2 0 M0 52 L-36 16 M2 45 L35 8" stroke="#386f3c" stroke-width="13"/></g>
+    <g transform="translate(430 390)"><path d="M0 91 Q0 45 2 0 M0 52 L-36 16 M2 45 L35 8" stroke="#386f3c" stroke-width="13"/></g>
+    <g transform="translate(620 299)"><path d="M0 91 Q0 45 2 0 M0 52 L-36 16 M2 45 L35 8" stroke="#386f3c" stroke-width="13"/></g>
+    <g transform="translate(805 415)"><path d="M0 91 Q0 45 2 0 M0 52 L-36 16 M2 45 L35 8" stroke="#386f3c" stroke-width="13"/></g>
+    <g transform="translate(1035 315)"><path d="M0 91 Q0 45 2 0 M0 52 L-36 16 M2 45 L35 8" stroke="#386f3c" stroke-width="13"/></g>
+  </g>
+  <g id="wooden-tool" transform="rotate(-24 930 230)">
+    <rect x="916" y="54" width="28" height="430" rx="13" fill="#8b5938" stroke="#3f2b22" stroke-width="10"/>
+    <path d="M855 458 Q930 426 1005 458 L984 526 Q930 552 876 526Z" fill="#99633e" stroke="#3f2b22" stroke-width="12"/>
+  </g>
+  <path d="M106 590 Q205 553 308 592 L281 663 Q208 693 132 657Z" fill="#e7dfcb" stroke="#534539" stroke-width="12"/>
+  <path d="M119 608 Q205 580 292 610 M137 646 Q210 668 273 641" fill="none" stroke="#b8a98d" stroke-width="8"/>
+</svg>

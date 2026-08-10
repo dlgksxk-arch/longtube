@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <!-- The mounted conservation panel is immutable. The transparent room and
+       two conservator regions are regenerated around it. -->
+  <rect x="440" y="40" width="400" height="630" rx="26" fill="#000"/>
+</svg>

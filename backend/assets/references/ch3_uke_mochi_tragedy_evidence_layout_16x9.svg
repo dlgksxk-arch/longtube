@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <defs>
+    <linearGradient id="stone21" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#74746f"/>
+      <stop offset="0.5" stop-color="#5e625f"/>
+      <stop offset="1" stop-color="#454b49"/>
+    </linearGradient>
+    <linearGradient id="bronze21" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#b0a16c"/>
+      <stop offset="0.46" stop-color="#6f7258"/>
+      <stop offset="1" stop-color="#9b8151"/>
+    </linearGradient>
+  </defs>
+  <rect width="1280" height="720" fill="url(#stone21)"/>
+  <g fill="none" stroke="#343a39" stroke-width="9" opacity="0.62" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M0 130 L175 110 L245 185 L398 158"/>
+    <path d="M914 108 L1030 156 L1150 122 L1280 166"/>
+    <path d="M0 576 L140 520 L245 572 L392 548"/>
+    <path d="M868 568 L1010 526 L1135 584 L1280 542"/>
+  </g>
+
+  <g id="flat-sash">
+    <ellipse cx="625" cy="405" rx="248" ry="38" fill="#222625" opacity="0.34"/>
+    <path d="M384 299 L839 282 L870 405 L402 432 L422 410 L392 389 L417 365 L388 343 L414 321 Z" fill="#8a663f" stroke="#302a25" stroke-width="14" stroke-linejoin="round"/>
+    <path d="M437 325 L816 308 M442 399 L828 380" fill="none" stroke="#c09862" stroke-width="10"/>
+  </g>
+
+  <g id="aged-bronze-blade" transform="rotate(-34 610 355)">
+    <ellipse cx="610" cy="386" rx="236" ry="25" fill="#222625" opacity="0.34"/>
+    <path d="M350 354 L452 319 L830 319 L888 354 L830 389 L452 389 Z" fill="url(#bronze21)" stroke="#2c302e" stroke-width="14" stroke-linejoin="round"/>
+    <path d="M382 354 H852" fill="none" stroke="#d0c28a" stroke-width="8" opacity="0.62"/>
+  </g>
+
+  <g id="grain-scatter" stroke="#3b3327" stroke-width="5">
+    <g fill="#ded4ad">
+      <ellipse cx="970" cy="405" rx="13" ry="8" transform="rotate(18 970 405)"/>
+      <ellipse cx="1008" cy="390" rx="13" ry="8" transform="rotate(-12 1008 390)"/>
+      <ellipse cx="1042" cy="418" rx="13" ry="8" transform="rotate(24 1042 418)"/>
+      <ellipse cx="980" cy="445" rx="13" ry="8" transform="rotate(-28 980 445)"/>
+      <ellipse cx="1022" cy="456" rx="13" ry="8" transform="rotate(8 1022 456)"/>
+      <ellipse cx="1063" cy="450" rx="13" ry="8" transform="rotate(-18 1063 450)"/>
+    </g>
+    <g fill="#b38a4f">
+      <circle cx="956" cy="476" r="10"/><circle cx="999" cy="486" r="10"/><circle cx="1044" cy="490" r="10"/>
+      <circle cx="1081" cy="477" r="10"/><circle cx="1092" cy="430" r="10"/>
+    </g>
+  </g>
+</svg>

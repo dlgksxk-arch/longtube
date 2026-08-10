@@ -22,8 +22,14 @@ from scripts.ch2_europe_workbook_to_prepared_scripts import (  # noqa: E402
     CJK_RE,
     DEFAULT_OUTPUT_DIR,
     DEFAULT_WORKBOOKS,
+    ENGLISH_CONTINUITY_EXPECTED_HEADER,
+    ENGLISH_CONTINUITY_META_LABELS,
+    ENGLISH_CONTINUITY_SOURCE_RANGES,
+    ENGLISH_CONTINUITY_SOURCE_SCHEMA,
+    ENGLISH_CONTINUITY_WORKBOOK,
     EXPECTED_SOURCE_RANGES,
     INTEGRATED_EP_SHEET_RE,
+    INTEGRATED_SOURCE_SCHEMA,
     SCRIPT_VERSION,
     SOURCE_LOCKED_VISUAL_POLICY_MODE,
     _compact_text,
@@ -36,6 +42,16 @@ CHANNEL = 2
 SERIES_NAME = "Scartography"
 # Proven by the completed CH2 English projects already stored in the project DB.
 CH2_ENGLISH_VOICE_ID = "fIGaHjfrR8KmMy0vGEVJ"
+CH2_IMAGE_MODEL = "comfyui-flux2-klein-4b"
+CH2_IMAGE_GLOBAL_PROMPT = (
+    "mature vintage dark historical manhwa illustration, variable-width scratchy dip-pen "
+    "contour lines, thin angular interior contours, controlled heavy black silhouette accents only "
+    "at focal outer edges, dry-brush texture, dense hatching with intersecting hatch strokes, "
+    "aged fibrous print-stock grain, muted watercolor and gouache washes, sepia dirty-ivory tobacco rust faded-burgundy "
+    "soot-black palette, hard directional shadow masses, elongated angular adult anatomy, "
+    "weathered expressive adult faces, bleak ominous tension, dynamic full-bleed composition, "
+    "rendering style only, named scene content only, no photorealism, no live action, no 3D render"
+)
 DEFAULT_QUEUE_WORKBOOK = Path(
     r"Z:\HDD2\longtube\CH2 유럽사\유럽사\유럽사_시크릿_179부작_큐시트_설계.xlsx"
 )
@@ -67,6 +83,10 @@ EXPECTED_QUEUE_HEADER = (
 QUEUE_EP_RE = re.compile(r"^유럽사 시크릿-EP(\d{3})$")
 EXPECTED_EPISODE_CODES = {f"EP{number:03d}" for number in range(1, 180)}
 EXPECTED_SOURCE_NAMES = {path.name for path in DEFAULT_WORKBOOKS}
+ENGLISH_CONTINUITY_EPISODE_CODES = {
+    f"EP{number:03d}" for number in range(1, 35)
+}
+ENGLISH_CONTINUITY_SOURCE_NAMES = {ENGLISH_CONTINUITY_WORKBOOK.name}
 ACTIVE_QUEUE_STATUSES = {
     "running",
     "queued",
@@ -95,12 +115,39 @@ def _manifest_file_index(
     manifest: dict[str, Any],
 ) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]], list[str]]:
     errors: list[str] = []
+    source_schemas = {
+        _compact_text(value) for value in manifest.get("source_schemas") or []
+    }
+    is_english_continuity = source_schemas == {ENGLISH_CONTINUITY_SOURCE_SCHEMA}
+    expected_episode_codes = (
+        ENGLISH_CONTINUITY_EPISODE_CODES
+        if is_english_continuity
+        else EXPECTED_EPISODE_CODES
+    )
+    expected_source_names = (
+        ENGLISH_CONTINUITY_SOURCE_NAMES
+        if is_english_continuity
+        else EXPECTED_SOURCE_NAMES
+    )
+    expected_source_ranges = (
+        ENGLISH_CONTINUITY_SOURCE_RANGES
+        if is_english_continuity
+        else EXPECTED_SOURCE_RANGES
+    )
+    expected_episode_count = len(expected_episode_codes)
+    expected_cut_count = expected_episode_count * 150
     checks = (
         (manifest.get("script_version") == SCRIPT_VERSION, "script_version"),
         (_compact_text(manifest.get("language")) == "en", "language"),
         (manifest.get("caption_languages") == ["en"], "caption_languages"),
-        (_int_value(manifest.get("episode_count")) == 179, "episode_count"),
-        (_int_value(manifest.get("cut_count")) == 26850, "cut_count"),
+        (
+            _int_value(manifest.get("episode_count")) == expected_episode_count,
+            "episode_count",
+        ),
+        (
+            _int_value(manifest.get("cut_count")) == expected_cut_count,
+            "cut_count",
+        ),
     )
     errors.extend(f"manifest {label} mismatch" for ok, label in checks if not ok)
 
@@ -118,9 +165,9 @@ def _manifest_file_index(
             errors.append(f"manifest duplicate source workbook: {source_name}")
             continue
         source_index[source_name] = entry
-        if source_name not in EXPECTED_SOURCE_NAMES:
+        if source_name not in expected_source_names:
             errors.append(f"manifest unexpected source workbook: {source_name}")
-        expected_range = EXPECTED_SOURCE_RANGES.get(source_name)
+        expected_range = expected_source_ranges.get(source_name)
         if expected_range is not None:
             first_episode, last_episode = expected_range
             expected_count = last_episode - first_episode + 1
@@ -136,10 +183,12 @@ def _manifest_file_index(
             errors.append(f"manifest source workbook is missing: {source_path}")
         elif _sha256_file(source_path) != str(entry.get("sha256") or "").upper():
             errors.append(f"manifest source hash mismatch: {source_name}")
-    if set(source_index) != EXPECTED_SOURCE_NAMES:
+        if is_english_continuity and _compact_text(entry.get("schema")) != ENGLISH_CONTINUITY_SOURCE_SCHEMA:
+            errors.append(f"manifest source schema mismatch: {source_name}")
+    if set(source_index) != expected_source_names:
         errors.append(
             "manifest source workbook coverage mismatch: "
-            f"found {len(source_index)}, expected {len(EXPECTED_SOURCE_NAMES)}"
+            f"found {len(source_index)}, expected {len(expected_source_names)}"
         )
 
     file_index: dict[str, dict[str, Any]] = {}
@@ -149,7 +198,7 @@ def _manifest_file_index(
             continue
         episode_code = _compact_text(entry.get("episode_code"))
         expected_file = f"{episode_code}.json"
-        if episode_code not in EXPECTED_EPISODE_CODES:
+        if episode_code not in expected_episode_codes:
             errors.append(f"manifest invalid episode code: {episode_code!r}")
             continue
         if episode_code in file_index:
@@ -162,9 +211,10 @@ def _manifest_file_index(
             errors.append(f"manifest cut count mismatch: {episode_code}")
         if not re.fullmatch(r"[0-9A-Fa-f]{64}", str(entry.get("sha256") or "")):
             errors.append(f"manifest invalid file hash: {episode_code}")
-    if set(file_index) != EXPECTED_EPISODE_CODES:
+    if set(file_index) != expected_episode_codes:
         errors.append(
-            f"manifest episode coverage mismatch: found {len(file_index)}, expected 179"
+            "manifest episode coverage mismatch: "
+            f"found {len(file_index)}, expected {expected_episode_count}"
         )
     return file_index, source_index, errors
 
@@ -212,6 +262,9 @@ def _english_only_project_config(current: dict[str, Any]) -> dict[str, Any]:
             "caption_languages": ["en"],
             "caption_source": "script_tracks",
             "youtube_captions_enabled": True,
+            "image_model": CH2_IMAGE_MODEL,
+            "image_prompt_profile": "scene_contract_v2",
+            "image_global_prompt": CH2_IMAGE_GLOBAL_PROMPT,
         }
     )
     if not _compact_text(config.get("tts_voice_id")):
@@ -255,6 +308,9 @@ def _configure_project_english_only(*, write: bool) -> tuple[dict[str, Any], lis
             "caption_languages": target.get("caption_languages"),
             "caption_source": target.get("caption_source"),
             "youtube_captions_enabled": target.get("youtube_captions_enabled"),
+            "image_model": target.get("image_model"),
+            "image_prompt_profile": target.get("image_prompt_profile"),
+            "image_global_prompt": target.get("image_global_prompt"),
         }, []
     except Exception:
         db.rollback()
@@ -269,6 +325,8 @@ def _queue_item(
     episode_code: str,
     title: str,
     queued_at: str,
+    source_label: str = "Europe integrated workbooks (5 files)",
+    queued_note: str = "Integrated Europe workbooks / English prepared script ready",
 ) -> dict[str, Any]:
     return {
         "id": f"ch2-europe-ep{episode_number:03d}",
@@ -281,7 +339,7 @@ def _queue_item(
         "endings": [],
         "core_content": (
             f"[Prepared Script] {episode_code}.json\n"
-            "[Source] Europe integrated workbooks (5 files)\n"
+            f"[Source] {source_label}\n"
             "[Cuts] 150\n"
             "[Audio] English\n"
             "[Captions] English"
@@ -293,11 +351,122 @@ def _queue_item(
         "next_episode_preview": "",
         "queued_source": "import",
         "queued_at": queued_at,
-        "queued_note": "Integrated Europe workbooks / English prepared script ready",
+        "queued_note": queued_note,
         "requeued_from_task_id": "",
         "restored_from_project_id": "",
         "status": "pending",
     }
+
+
+def _build_prepared_queue_item(
+    *,
+    prepared_dir: Path,
+    manifest_files: dict[str, dict[str, Any]],
+    manifest_sources: dict[str, dict[str, Any]],
+    episode_number: int,
+    expected_title: str,
+    expected_source_episode_code: str,
+    expected_source_schema: str,
+    expected_source_worksheet: str | None,
+    queued_at: str,
+    source_label: str,
+    queued_note: str,
+) -> tuple[dict[str, Any] | None, list[str]]:
+    from app.tasks.pipeline_tasks import _validate_prepared_script
+
+    errors: list[str] = []
+    expected_code = f"EP{episode_number:03d}"
+    script_path = prepared_dir / f"{expected_code}.json"
+    if not script_path.is_file():
+        return None, [f"{expected_code}: prepared script is missing"]
+    try:
+        script = json.loads(script_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return None, [f"{expected_code}: invalid JSON: {type(exc).__name__}: {exc}"]
+    if not isinstance(script, dict):
+        return None, [f"{expected_code}: prepared script must be a JSON object"]
+
+    source = script.get("source") if isinstance(script.get("source"), dict) else {}
+    source_workbook = Path(str(source.get("workbook") or ""))
+    source_manifest = manifest_sources.get(source_workbook.name)
+    source_worksheet = _compact_text(source.get("worksheet"))
+    source_match = INTEGRATED_EP_SHEET_RE.fullmatch(source_worksheet)
+    worksheet_matches = (
+        source_worksheet == expected_source_worksheet
+        if expected_source_worksheet is not None
+        else source_match is not None and int(source_match.group(1)) == episode_number
+    )
+    checks = (
+        (script.get("script_version") == SCRIPT_VERSION, "script_version"),
+        (script.get("prepared_source") is True, "prepared_source"),
+        (
+            _compact_text(script.get("visual_policy_mode"))
+            == SOURCE_LOCKED_VISUAL_POLICY_MODE,
+            "visual_policy_mode",
+        ),
+        (_int_value(script.get("episode_number")) == episode_number, "episode_number"),
+        (_compact_text(script.get("episode_code")) == expected_code, "episode_code"),
+        (_compact_text(script.get("source_sheet")) == expected_code, "source_sheet"),
+        (_compact_text(script.get("title")) == expected_title, "English title"),
+        (_compact_text(script.get("topic")) == expected_title, "English topic"),
+        (len(script.get("cuts") or []) == 150, "cut count"),
+        (
+            _compact_text(script.get("source_schema")) == expected_source_schema,
+            "source_schema",
+        ),
+        (
+            _compact_text(source.get("episode_code")) == expected_source_episode_code,
+            "source episode_code",
+        ),
+        (
+            _compact_text(source.get("schema")) == expected_source_schema,
+            "source schema",
+        ),
+        (worksheet_matches, "source worksheet"),
+        (source_manifest is not None, "source workbook manifest"),
+        (
+            source_manifest is not None
+            and str(source_workbook) == str(source_manifest.get("path") or ""),
+            "source workbook path",
+        ),
+        (
+            source_manifest is not None
+            and str(source.get("workbook_sha256") or "").upper()
+            == str(source_manifest.get("sha256") or "").upper(),
+            "source workbook hash",
+        ),
+    )
+    failed_checks = [label for ok, label in checks if not ok]
+    if failed_checks:
+        return None, [f"{expected_code}: mismatch in {', '.join(failed_checks)}"]
+
+    manifest_entry = manifest_files.get(expected_code)
+    if manifest_entry is None:
+        return None, [f"{expected_code}: manifest file entry is missing"]
+    if _sha256_file(script_path) != str(manifest_entry.get("sha256") or "").upper():
+        return None, [f"{expected_code}: prepared script hash mismatch"]
+    try:
+        _validate_prepared_script(script, script_path, expected_cut_count=150)
+    except Exception as exc:
+        errors.append(
+            f"{expected_code}: pipeline validation failed: {type(exc).__name__}: {exc}"
+        )
+    language_errors = _english_only_script_errors(script)
+    if language_errors:
+        errors.append(f"{expected_code}: " + "; ".join(language_errors[:8]))
+    if errors:
+        return None, errors
+    return (
+        _queue_item(
+            episode_number=episode_number,
+            episode_code=expected_code,
+            title=expected_title,
+            queued_at=queued_at,
+            source_label=source_label,
+            queued_note=queued_note,
+        ),
+        [],
+    )
 
 
 def build_queue_items(
@@ -306,8 +475,6 @@ def build_queue_items(
     *,
     queued_at: str | None = None,
 ) -> tuple[list[dict[str, Any]], list[str]]:
-    from app.tasks.pipeline_tasks import _validate_prepared_script
-
     queued_at = queued_at or _utc_timestamp()
     errors: list[str] = []
     manifest_path = prepared_dir / "manifest.json"
@@ -321,6 +488,91 @@ def build_queue_items(
         return [], ["prepared-script manifest must be a JSON object"]
     manifest_files, manifest_sources, manifest_errors = _manifest_file_index(manifest)
     errors.extend(manifest_errors)
+
+    source_schemas = {
+        _compact_text(value) for value in manifest.get("source_schemas") or []
+    }
+    if source_schemas == {ENGLISH_CONTINUITY_SOURCE_SCHEMA}:
+        source_manifest = manifest_sources.get(ENGLISH_CONTINUITY_WORKBOOK.name)
+        if source_manifest is not None and str(workbook_path) != str(
+            source_manifest.get("path") or ""
+        ):
+            errors.append(
+                "English continuity workbook path does not match the prepared manifest"
+            )
+        workbook = _load_xlsx_workbook(workbook_path)
+        worksheet_by_episode: dict[int, Any] = {}
+        for name in workbook.sheetnames:
+            match = INTEGRATED_EP_SHEET_RE.fullmatch(name)
+            if match is None:
+                continue
+            episode_number = int(match.group(1))
+            if episode_number in worksheet_by_episode:
+                errors.append(f"duplicate episode worksheet: EP{episode_number:03d}")
+                continue
+            worksheet_by_episode[episode_number] = workbook[name]
+
+        expected_numbers = set(range(1, 35))
+        if set(worksheet_by_episode) != expected_numbers:
+            errors.append(
+                "English continuity worksheet coverage mismatch: "
+                f"found {len(worksheet_by_episode)}, expected 34"
+            )
+        items: list[dict[str, Any]] = []
+        for episode_number in sorted(expected_numbers):
+            ws = worksheet_by_episode.get(episode_number)
+            if ws is None:
+                continue
+            episode_code = f"EP{episode_number:03d}"
+            sheet_errors: list[str] = []
+            if ws.max_row != 159 or ws.max_column != 4:
+                sheet_errors.append(
+                    f"{ws.title}: expected used range A1:D159, "
+                    f"got rows={ws.max_row}, cols={ws.max_column}"
+                )
+            header = tuple(
+                _compact_text(ws.cell(9, column).value) for column in range(1, 5)
+            )
+            if header != tuple(ENGLISH_CONTINUITY_EXPECTED_HEADER):
+                sheet_errors.append(f"{ws.title}: header row 9 mismatch")
+            labels = tuple(
+                _compact_text(ws.cell(row, 1).value) for row in range(2, 9)
+            )
+            if labels != ENGLISH_CONTINUITY_META_LABELS:
+                sheet_errors.append(f"{ws.title}: metadata labels mismatch")
+            source_episode_code = _compact_text(ws.cell(2, 2).value)
+            expected_title = _compact_text(ws.cell(3, 2).value)
+            if source_episode_code != episode_code:
+                sheet_errors.append(
+                    f"{ws.title}: episode code {source_episode_code!r} != {episode_code!r}"
+                )
+            if not expected_title:
+                sheet_errors.append(f"{ws.title}: episode title is blank")
+            if CJK_RE.search(expected_title):
+                sheet_errors.append(f"{ws.title}: episode title contains CJK")
+            if sheet_errors:
+                errors.extend(sheet_errors)
+                continue
+
+            item, item_errors = _build_prepared_queue_item(
+                prepared_dir=prepared_dir,
+                manifest_files=manifest_files,
+                manifest_sources=manifest_sources,
+                episode_number=episode_number,
+                expected_title=expected_title,
+                expected_source_episode_code=episode_code,
+                expected_source_schema=ENGLISH_CONTINUITY_SOURCE_SCHEMA,
+                expected_source_worksheet=ws.title,
+                queued_at=queued_at,
+                source_label="English continuity workbook (EP001-034)",
+                queued_note="Reviewed English continuity workbook / prepared script ready",
+            )
+            errors.extend(item_errors)
+            if item is not None:
+                items.append(item)
+        if len(items) != 34:
+            errors.append(f"queue item count mismatch: built {len(items)}, expected 34")
+        return items, errors
 
     workbook = _load_xlsx_workbook(workbook_path)
     if QUEUE_SHEET_NAME not in workbook.sheetnames:
@@ -358,91 +610,23 @@ def build_queue_items(
             continue
         seen_codes.add(expected_code)
 
-        script_path = prepared_dir / f"{expected_code}.json"
-        if not script_path.exists():
-            errors.append(f"{expected_code}: prepared script is missing")
-            continue
-        try:
-            script = json.loads(script_path.read_text(encoding="utf-8"))
-        except Exception as exc:
-            errors.append(f"{expected_code}: invalid JSON: {type(exc).__name__}: {exc}")
-            continue
-        if not isinstance(script, dict):
-            errors.append(f"{expected_code}: prepared script must be a JSON object")
-            continue
-
         expected_title = english_episode_title(episode_number)
-        source = script.get("source") if isinstance(script.get("source"), dict) else {}
-        source_workbook = Path(str(source.get("workbook") or ""))
-        source_manifest = manifest_sources.get(source_workbook.name)
-        source_worksheet = _compact_text(source.get("worksheet"))
-        source_match = INTEGRATED_EP_SHEET_RE.fullmatch(source_worksheet)
-        checks = (
-            (script.get("script_version") == SCRIPT_VERSION, "script_version"),
-            (script.get("prepared_source") is True, "prepared_source"),
-            (
-                _compact_text(script.get("visual_policy_mode"))
-                == SOURCE_LOCKED_VISUAL_POLICY_MODE,
-                "visual_policy_mode",
-            ),
-            (int(script.get("episode_number") or 0) == episode_number, "episode_number"),
-            (_compact_text(script.get("episode_code")) == expected_code, "episode_code"),
-            (_compact_text(script.get("source_sheet")) == expected_code, "source_sheet"),
-            (_compact_text(script.get("title")) == expected_title, "English title"),
-            (len(script.get("cuts") or []) == 150, "cut count"),
-            (
-                _compact_text(source.get("episode_code"))
-                == f"유럽사 시크릿-{expected_code}",
-                "source episode_code",
-            ),
-            (
-                source_match is not None and int(source_match.group(1)) == episode_number,
-                "source worksheet",
-            ),
-            (source_manifest is not None, "source workbook manifest"),
-            (
-                source_manifest is not None
-                and str(source_workbook) == str(source_manifest.get("path") or ""),
-                "source workbook path",
-            ),
-            (
-                source_manifest is not None
-                and str(source.get("workbook_sha256") or "").upper()
-                == str(source_manifest.get("sha256") or "").upper(),
-                "source workbook hash",
-            ),
+        item, item_errors = _build_prepared_queue_item(
+            prepared_dir=prepared_dir,
+            manifest_files=manifest_files,
+            manifest_sources=manifest_sources,
+            episode_number=episode_number,
+            expected_title=expected_title,
+            expected_source_episode_code=f"유럽사 시크릿-{expected_code}",
+            expected_source_schema=INTEGRATED_SOURCE_SCHEMA,
+            expected_source_worksheet=None,
+            queued_at=queued_at,
+            source_label="Europe integrated workbooks (5 files)",
+            queued_note="Integrated Europe workbooks / English prepared script ready",
         )
-        failed_checks = [label for ok, label in checks if not ok]
-        if failed_checks:
-            errors.append(f"{expected_code}: mismatch in {', '.join(failed_checks)}")
-            continue
-        manifest_entry = manifest_files.get(expected_code)
-        if manifest_entry is None:
-            errors.append(f"{expected_code}: manifest file entry is missing")
-            continue
-        if _sha256_file(script_path) != str(manifest_entry.get("sha256") or "").upper():
-            errors.append(f"{expected_code}: prepared script hash mismatch")
-            continue
-        try:
-            _validate_prepared_script(script, script_path, expected_cut_count=150)
-        except Exception as exc:
-            errors.append(
-                f"{expected_code}: pipeline validation failed: {type(exc).__name__}: {exc}"
-            )
-            continue
-        language_errors = _english_only_script_errors(script)
-        if language_errors:
-            errors.append(f"{expected_code}: " + "; ".join(language_errors[:8]))
-            continue
-
-        items.append(
-            _queue_item(
-                episode_number=episode_number,
-                episode_code=expected_code,
-                title=expected_title,
-                queued_at=queued_at,
-            )
-        )
+        errors.extend(item_errors)
+        if item is not None:
+            items.append(item)
 
     if seen_codes != EXPECTED_EPISODE_CODES:
         errors.append(
@@ -530,11 +714,21 @@ def register_queue(
     result_state = state
     if write:
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup = SYSTEM_DIR / f"oneclick_queue.before_ch2_europe_179_{stamp}.json"
+        existing_ch2_count = sum(
+            1
+            for item in current.get("items") or []
+            if int(item.get("channel") or 1) == CHANNEL
+        )
+        replacement_label = f"{existing_ch2_count}_to_{len(ch2_items)}"
+        backup = SYSTEM_DIR / (
+            f"oneclick_queue.before_ch2_europe_{replacement_label}_{stamp}.json"
+        )
         if queue_file.exists():
             shutil.copy2(queue_file, backup)
             backup_path = str(backup)
-        db_backup = DB_PATH.with_name(f"longtube.before_ch2_europe_179_{stamp}.db")
+        db_backup = DB_PATH.with_name(
+            f"longtube.before_ch2_europe_{replacement_label}_{stamp}.db"
+        )
         shutil.copy2(DB_PATH, db_backup)
         db_backup_path = str(db_backup)
         project_config, project_errors = _configure_project_english_only(write=True)

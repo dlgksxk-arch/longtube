@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#d8bd84"/>
+  <!-- Movement: one solid three-plank wheel disk. -->
+  <circle cx="220" cy="205" r="132" fill="#98693d" stroke="#4b3428" stroke-width="12"/>
+  <path d="M145 90V320M295 90V320" fill="none" stroke="#4b3428" stroke-width="9"/>
+  <circle cx="220" cy="205" r="28" fill="#c5a56f" stroke="#4b3428" stroke-width="10"/>
+
+  <!-- Settled dispute: exactly two equal balance stones. -->
+  <ellipse cx="165" cy="550" rx="82" ry="58" fill="#777064" stroke="#4b3428" stroke-width="11"/>
+  <ellipse cx="355" cy="550" rx="82" ry="58" fill="#777064" stroke="#4b3428" stroke-width="11"/>
+
+  <!-- Central chiefdom token. -->
+  <circle cx="645" cy="360" r="148" fill="#a96c3d" stroke="#4b3428" stroke-width="14"/>
+  <circle cx="645" cy="360" r="42" fill="#c99758" stroke="#4b3428" stroke-width="10"/>
+
+  <!-- Relationships beyond one camp: three blank camp disks joined by plant-fibre cords. -->
+  <path d="M765 300L970 150M790 360H1060M765 430L970 575" fill="none" stroke="#6f5034" stroke-width="18" stroke-linecap="round"/>
+  <circle cx="1050" cy="120" r="74" fill="#aaa294" stroke="#4b3428" stroke-width="11"/>
+  <circle cx="1140" cy="360" r="74" fill="#aaa294" stroke="#4b3428" stroke-width="11"/>
+  <circle cx="1050" cy="600" r="74" fill="#aaa294" stroke="#4b3428" stroke-width="11"/>
+</svg>

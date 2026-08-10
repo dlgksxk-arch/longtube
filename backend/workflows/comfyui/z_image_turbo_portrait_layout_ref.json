@@ -1,0 +1,41 @@
+{
+  "_meta": {
+    "name": "Z-Image Turbo exact three-portrait img2img",
+    "notes": "Three-face narration repairs only. Preserves a full-canvas three-person crop without automatic hand detection or hand inpaint."
+  },
+  "1": {"class_type": "UNETLoader", "inputs": {"unet_name": "z_image_turbo_bf16.safetensors", "weight_dtype": "default"}},
+  "2": {"class_type": "CLIPLoader", "inputs": {"clip_name": "qwen_3_4b.safetensors", "type": "qwen_image", "device": "default"}},
+  "3": {"class_type": "VAELoader", "inputs": {"vae_name": "ae.safetensors"}},
+  "5": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": "${PROMPT}"}},
+  "6": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": ""}},
+  "17": {"class_type": "LoadImage", "inputs": {"image": "${REF_IMAGE_NAME}"}},
+  "18": {
+    "class_type": "ImageScale",
+    "inputs": {"image": ["17", 0], "upscale_method": "lanczos", "width": "${GEN_WIDTH}", "height": "${GEN_HEIGHT}", "crop": "center"}
+  },
+  "19": {"class_type": "VAEEncode", "inputs": {"pixels": ["18", 0], "vae": ["3", 0]}},
+  "8": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": ["1", 0], "positive": ["5", 0], "negative": ["6", 0], "latent_image": ["19", 0],
+      "seed": "${SEED}", "steps": 8, "cfg": 1.0, "sampler_name": "euler", "scheduler": "simple", "denoise": 0.15
+    }
+  },
+  "9": {"class_type": "VAEDecode", "inputs": {"samples": ["8", 0], "vae": ["3", 0]}},
+  "20": {"class_type": "LoadImage", "inputs": {"image": "${REF_MASK_NAME}"}},
+  "21": {"class_type": "VAEEncodeForInpaint", "inputs": {"pixels": ["9", 0], "vae": ["3", 0], "mask": ["20", 1], "grow_mask_by": 6}},
+  "22": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": ["1", 0], "positive": ["5", 0], "negative": ["6", 0], "latent_image": ["21", 0],
+      "seed": "${BODY_SEED}", "steps": 8, "cfg": 1.0, "sampler_name": "euler", "scheduler": "simple", "denoise": 1.0
+    }
+  },
+  "23": {"class_type": "VAEDecode", "inputs": {"samples": ["22", 0], "vae": ["3", 0]}},
+  "24": {
+    "class_type": "ImageCompositeMasked",
+    "inputs": {"destination": ["18", 0], "source": ["23", 0], "x": 0, "y": 0, "resize_source": false, "mask": ["20", 1]}
+  },
+  "16": {"class_type": "ImageCrop", "inputs": {"image": ["24", 0], "width": "${WIDTH}", "height": "${HEIGHT}", "x": "${EDGE_CROP_X}", "y": "${EDGE_CROP_Y}"}},
+  "10": {"class_type": "SaveImage", "inputs": {"images": ["16", 0], "filename_prefix": "${PREFIX}"}}
+}

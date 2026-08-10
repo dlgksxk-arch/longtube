@@ -140,6 +140,249 @@ const SUBTITLE_SIZE_OPTIONS = [
   { label: "매우 큼", size: 87 },
 ] as const;
 
+const VARIETY_CAPTION_PANELS = [
+  { id: "neutral", label: "담백 정보", desc: "차분한 설명·생각", tags: ["slowly", "flatly", "thoughtful", "softly"], color: "#FFFFFF", bg: "#171717", border: "#FFFFFF" },
+  { id: "epic", label: "웅장 선언", desc: "극적 선언·권위", tags: ["dramatic", "booming"], color: "#FFD24A", bg: "#171717", border: "#FFD24A" },
+  { id: "anger", label: "분노 폭발", desc: "분노·짜증·격앙", tags: ["angry", "annoyed", "upset"], color: "#FF3B30", bg: "#171717", border: "#FF3B30" },
+  { id: "shout", label: "고함 충격", desc: "외침·비명", tags: ["shouts"], color: "#FF6B35", bg: "#171717", border: "#FF6B35" },
+  { id: "whisper", label: "은밀 속삭임", desc: "낮은 목소리·비밀", tags: ["quietly", "whispers"], color: "#C4A7FF", bg: "#171717", border: "#C4A7FF" },
+  { id: "tension", label: "긴장 초조", desc: "불안·다급·말더듬", tags: ["worried", "rushed", "nervously", "stammers"], color: "#3DE0C5", bg: "#171717", border: "#3DE0C5" },
+  { id: "sad", label: "슬픔 여운", desc: "슬픔·울음·한숨", tags: ["sorrowful", "crying", "sighs"], color: "#76B7FF", bg: "#171717", border: "#76B7FF" },
+  { id: "shock", label: "놀람 의문", desc: "놀람·호기심·질문", tags: ["surprised", "gasps", "curious", "questioning"], color: "#55E7FF", bg: "#171717", border: "#55E7FF" },
+  { id: "sly", label: "능청 반전", desc: "장난·빈정거림", tags: ["mischievously", "sarcastic"], color: "#D86BFF", bg: "#171717", border: "#D86BFF" },
+  { id: "joy", label: "환호 유쾌", desc: "기쁨·흥분·웃음", tags: ["happily", "excited", "laughs", "giggle"], color: "#FF6DAE", bg: "#171717", border: "#FF6DAE" },
+] as const;
+
+type VarietyCaptionPanelId = (typeof VARIETY_CAPTION_PANELS)[number]["id"];
+
+const VARIETY_HERO_PREVIEW_TEXT: Record<VarietyCaptionPanelId, string> = {
+  neutral: "사건의 전말",
+  epic: "왕의 선언!",
+  anger: "분노 폭발!",
+  shout: "말도 안 돼!",
+  whisper: "아무도 몰랐다…",
+  tension: "숨 막히는 순간",
+  sad: "끝내 무너진…",
+  shock: "진짜라고?!",
+  sly: "그런데 말입니다?",
+  joy: "완전 대박!",
+};
+
+function VarietyCaptionPreview({ panelId }: { panelId: VarietyCaptionPanelId }) {
+  const panel = VARIETY_CAPTION_PANELS.find((item) => item.id === panelId) || VARIETY_CAPTION_PANELS[0];
+  return (
+    <div
+      className="relative mb-2 flex h-24 items-center justify-center overflow-hidden rounded-md border border-white/10"
+      style={{ background: "linear-gradient(135deg, #969ba4 0%, #737983 52%, #a4a8af 100%)" }}
+      aria-hidden="true"
+    >
+      <span
+        className="whitespace-nowrap text-[22px] font-black leading-none"
+        style={{
+          color: panel.color,
+          WebkitTextStroke: "2px rgba(0,0,0,0.95)",
+          paintOrder: "stroke fill",
+          textShadow: "0 4px 0 rgba(0,0,0,.9), 0 0 10px rgba(0,0,0,.92), 2px 0 0 #050505, -2px 0 0 #050505, 0 2px 0 #050505, 0 -2px 0 #050505",
+        }}
+      >
+        {VARIETY_HERO_PREVIEW_TEXT[panelId]}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * 설정 카드에서도 실제 결과의 인상이 보이도록 만든 예능 자막 축소 미리보기.
+ * 저장되는 패널 id와 감정 태그 매핑은 건드리지 않고 시각 표현만 담당한다.
+ */
+function LegacyVarietyCaptionPreview({ panelId }: { panelId: VarietyCaptionPanelId }) {
+  let artwork: React.ReactNode;
+
+  switch (panelId) {
+    case "epic":
+      artwork = (
+        <>
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,#835718_0%,#241607_46%,#080604_100%)]" />
+          {[18, 42, 66, 90, 114, 138].map((angle) => (
+            <span
+              key={angle}
+              className="absolute left-1/2 top-1/2 h-[2px] w-[58%] origin-left bg-gradient-to-r from-amber-200/70 to-transparent"
+              style={{ transform: `rotate(${angle}deg)` }}
+            />
+          ))}
+          <div className="absolute inset-x-0 top-2 text-center text-[8px] font-black tracking-[0.28em] text-amber-200">역사를 뒤흔든</div>
+          <div
+            className="absolute inset-x-0 bottom-3 -rotate-1 text-center text-[19px] font-black italic leading-none text-amber-200"
+            style={{ textShadow: "-2px -2px 0 #4b2500, 2px -2px 0 #4b2500, -2px 2px 0 #4b2500, 2px 2px 0 #4b2500, 0 4px 0 #120900, 0 6px 8px #000" }}
+          >
+            왕의 <span className="text-[25px] text-yellow-300">선언!</span>
+          </div>
+          <span className="absolute bottom-2 left-3 text-lg text-amber-300">✦</span>
+          <span className="absolute right-3 top-5 text-sm text-amber-100">✦</span>
+        </>
+      );
+      break;
+    case "anger":
+      artwork = (
+        <>
+          <div className="absolute inset-0 bg-[linear-gradient(135deg,#260000,#6e0808_52%,#190000)]" />
+          <div className="absolute -left-7 top-2 h-20 w-28 rotate-6 bg-orange-500/80" style={{ clipPath: "polygon(50% 0,60% 28%,87% 10%,72% 39%,100% 50%,70% 60%,88% 90%,59% 72%,50% 100%,40% 72%,12% 91%,28% 61%,0 50%,30% 39%,12% 10%,40% 28%)" }} />
+          <div className="absolute -right-9 -top-4 h-28 w-32 bg-red-500/55" style={{ clipPath: "polygon(50% 0,60% 28%,87% 10%,72% 39%,100% 50%,70% 60%,88% 90%,59% 72%,50% 100%,40% 72%,12% 91%,28% 61%,0 50%,30% 39%,12% 10%,40% 28%)" }} />
+          <div
+            className="absolute inset-x-0 bottom-4 -rotate-2 text-center text-[21px] font-black italic leading-none text-white"
+            style={{ textShadow: "-3px -3px 0 #130000, 3px -3px 0 #130000, -3px 3px 0 #130000, 3px 3px 0 #130000, 0 6px 0 #6b0000" }}
+          >
+            분노 <span className="text-[28px] text-yellow-300">폭발!</span>
+          </div>
+          <span className="absolute right-2 top-1 rotate-6 text-[10px] font-black text-red-100">부글부글</span>
+        </>
+      );
+      break;
+    case "shout":
+      artwork = (
+        <>
+          <div className="absolute inset-0 bg-[linear-gradient(110deg,#101820,#252f38_45%,#0a0d10)]" />
+          {[12, 24, 36, 48, 60, 72].map((top, index) => (
+            <span key={top} className="absolute right-0 h-[2px] bg-yellow-300/80" style={{ top, width: `${44 + index * 7}%`, transform: `skewX(-24deg)` }} />
+          ))}
+          <div className="absolute left-2 top-2 -rotate-6 rounded bg-red-600 px-1.5 py-0.5 text-[8px] font-black text-white shadow-[2px_2px_0_#000]">고함</div>
+          <div
+            className="absolute bottom-3 left-1/2 w-[90%] -translate-x-1/2 -skew-x-6 whitespace-nowrap text-center text-[20px] font-black text-white"
+            style={{ textShadow: "-3px 0 #050505, 0 -3px #050505, 3px 0 #050505, 0 3px #050505, 5px 5px 0 #e44718" }}
+          >
+            말도 <span className="text-[27px] text-yellow-300">안 돼!</span>
+          </div>
+          <span className="absolute right-2 top-1 text-xl font-black text-yellow-300">!!</span>
+        </>
+      );
+      break;
+    case "whisper":
+      artwork = (
+        <>
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_65%_40%,#51406c,#171124_72%)]" />
+          <div className="absolute left-2 top-2 z-10 rounded-full border-2 border-violet-200 bg-violet-700 px-2 py-1 text-[9px] font-black text-white shadow-[0_2px_0_#160d26]">쉿…</div>
+          <div className="absolute bottom-3 left-1/2 w-[88%] -translate-x-1/2 rounded-[18px] border-2 border-violet-200 bg-black/65 px-2 py-2 text-center shadow-[0_4px_12px_#000]">
+            <span
+              className="text-[14px] font-black tracking-tight text-violet-100"
+              style={{ textShadow: "-1px -1px 0 #28163f, 1px 1px 0 #28163f, 0 0 8px #c4b5fd" }}
+            >
+              아무도 <span className="text-[19px] text-white">몰랐다…</span>
+            </span>
+          </div>
+          <span className="absolute bottom-0 left-8 h-4 w-4 rotate-45 border-b-2 border-r-2 border-violet-200 bg-black/70" />
+        </>
+      );
+      break;
+    case "tension":
+      artwork = (
+        <>
+          <div className="absolute inset-0 bg-[linear-gradient(135deg,#06221f,#0b4f49_55%,#031615)]" />
+          <div className="absolute inset-x-0 top-0 h-2 bg-[repeating-linear-gradient(135deg,#facc15_0_8px,#111827_8px_16px)]" />
+          <span className="absolute left-2 top-4 h-8 w-[2px] -rotate-[28deg] bg-teal-200/90" />
+          <span className="absolute left-5 top-3 h-11 w-[2px] -rotate-[18deg] bg-teal-200/60" />
+          <div
+            className="absolute inset-x-0 bottom-4 text-center text-[17px] font-black italic text-teal-50"
+            style={{ textShadow: "-2px -2px 0 #022c2a, 2px 2px 0 #022c2a, 0 4px 0 #00110f" }}
+          >
+            숨 막히는 <span className="text-[23px] text-yellow-300">순간</span>
+          </div>
+          <span className="absolute right-7 top-4 h-3 w-2 rotate-[22deg] rounded-[80%_20%_70%_30%] bg-cyan-200 shadow-[0_0_5px_#67e8f9]" />
+          <span className="absolute right-3 top-8 h-4 w-2 rotate-[28deg] rounded-[80%_20%_70%_30%] bg-cyan-300 shadow-[0_0_5px_#67e8f9]" />
+        </>
+      );
+      break;
+    case "sad":
+      artwork = (
+        <>
+          <div className="absolute inset-0 bg-[linear-gradient(#142b46,#07111d)]" />
+          <span className="absolute left-5 top-2 h-7 w-3 rotate-[12deg] rounded-[70%_30%_70%_30%] bg-blue-300/80 shadow-[0_0_8px_#60a5fa]" />
+          <span className="absolute right-6 top-5 h-9 w-4 -rotate-[12deg] rounded-[70%_30%_70%_30%] bg-blue-200/70 shadow-[0_0_8px_#60a5fa]" />
+          <div className="absolute inset-x-0 top-2 text-center text-[8px] font-bold tracking-[0.22em] text-blue-200">마침내 드러난 진심</div>
+          <div
+            className="absolute inset-x-0 bottom-3 text-center text-[18px] font-black text-white"
+            style={{ textShadow: "-2px -2px 0 #071a31, 2px 2px 0 #071a31, 0 4px 0 #020711, 0 0 10px #60a5fa" }}
+          >
+            끝내 <span className="text-[24px] text-sky-200">무너진…</span>
+          </div>
+        </>
+      );
+      break;
+    case "shock":
+      artwork = (
+        <>
+          <div className="absolute inset-0 bg-[linear-gradient(135deg,#071827,#0b5063)]" />
+          <div className="absolute left-1/2 top-1/2 h-24 w-[115%] -translate-x-1/2 -translate-y-1/2 bg-cyan-300/90" style={{ clipPath: "polygon(0 44%,16% 38%,8% 20%,29% 31%,32% 4%,43% 28%,57% 0,59% 29%,81% 12%,72% 35%,100% 30%,82% 50%,100% 65%,73% 60%,81% 87%,59% 69%,50% 100%,42% 69%,20% 89%,29% 60%,0 67%,18% 51%)" }} />
+          <div
+            className="absolute inset-x-0 top-1/2 -translate-y-1/2 rotate-1 whitespace-nowrap text-center text-[20px] font-black text-slate-950"
+            style={{ textShadow: "-2px -2px 0 #fff, 2px -2px 0 #fff, -2px 2px 0 #fff, 2px 2px 0 #fff, 4px 4px 0 #facc15" }}
+          >
+            진짜라고<span className="text-[31px] text-red-600">?!</span>
+          </div>
+        </>
+      );
+      break;
+    case "sly":
+      artwork = (
+        <>
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,#7e22ce,#301147_58%,#13051d)]" />
+          <div className="absolute right-2 top-2 rotate-6 rounded-full border border-fuchsia-200 bg-fuchsia-500 px-2 py-0.5 text-[8px] font-black text-white shadow-[2px_2px_0_#38104d]">반전</div>
+          <span className="absolute left-3 top-3 rotate-[-18deg] text-xl text-lime-300">✦</span>
+          <div
+            className="absolute inset-x-0 bottom-3 -rotate-2 text-center text-[14px] font-black text-white"
+            style={{ textShadow: "-2px -2px 0 #2b093b, 2px 2px 0 #2b093b, 0 4px 0 #13031d" }}
+          >
+            그런데 <span className="text-[23px] text-lime-300">말입니다?</span>
+          </div>
+          <span className="absolute bottom-1 right-4 text-[9px] font-black text-fuchsia-200">씨익―</span>
+        </>
+      );
+      break;
+    case "joy":
+      artwork = (
+        <>
+          <div className="absolute inset-0 bg-[linear-gradient(135deg,#831843,#db2777_52%,#f97316)]" />
+          {[
+            ["10%", "18%", "#fde047"], ["23%", "72%", "#67e8f9"], ["78%", "14%", "#bef264"], ["88%", "68%", "#fef3c7"],
+          ].map(([left, top, color], index) => (
+            <span key={index} className="absolute h-1.5 w-1.5 rotate-45" style={{ left, top, backgroundColor: color }} />
+          ))}
+          <span className="absolute left-3 top-2 -rotate-12 text-lg text-pink-100">♥</span>
+          <span className="absolute right-4 top-1 rotate-12 text-2xl text-yellow-200">♥</span>
+          <div
+            className="absolute inset-x-0 bottom-3 -rotate-1 whitespace-nowrap text-center text-[20px] font-black text-white"
+            style={{ textShadow: "-2px -2px 0 #831843, 2px -2px 0 #831843, -2px 2px 0 #831843, 2px 2px 0 #831843, 0 5px 0 #4a0925" }}
+          >
+            완전 <span className="text-[27px] text-yellow-200">대박!</span>
+          </div>
+        </>
+      );
+      break;
+    case "neutral":
+    default:
+      artwork = (
+        <>
+          <div className="absolute inset-0 bg-[linear-gradient(135deg,#111827,#26364b_55%,#0f172a)]" />
+          <div className="absolute inset-x-2 bottom-3 flex items-center gap-1.5 rounded border-l-4 border-cyan-400 bg-black/70 px-2 py-2 shadow-[0_4px_12px_#000]">
+            <span className="shrink-0 rounded bg-cyan-500 px-1.5 py-0.5 text-[8px] font-black text-slate-950">핵심</span>
+            <span
+              className="whitespace-nowrap text-[14px] font-black text-white"
+              style={{ textShadow: "-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000, 0 3px 0 #000" }}
+            >
+              사건의 <span className="text-[19px] text-yellow-300">전말</span>
+            </span>
+          </div>
+          <span className="absolute right-3 top-2 text-[8px] font-bold tracking-widest text-slate-400">POINT</span>
+        </>
+      );
+  }
+
+  return (
+    <div className="relative mb-2 h-24 overflow-hidden rounded-md border border-white/10 bg-black" aria-hidden="true">
+      {artwork}
+    </div>
+  );
+}
+
 function _fmtBytes(n?: number): string {
   if (!n || n <= 0) return "-";
   if (n < 1024) return `${n} B`;
@@ -309,6 +552,9 @@ export default function StepSettings({ project, onUpdate, onNextStep, onDirtyCha
     ...currentSubtitlePreset.style,
     ...(config.subtitle_style || {}),
   };
+  const varietyHighlightsEnabled = Boolean(config.variety_highlights_enabled);
+  const varietyPanelMode = config.variety_highlight_panel_mode || "emotion_auto";
+  const selectedVarietyPanel = config.variety_highlight_style || "neutral";
   const previewSubtitleFontSize = Math.max(18, Math.min(42, Math.round((Number(currentSubtitleStyle.size) || 68) * 0.42)));
   const previewSubtitleOutline = Math.max(1, Math.round((Number(currentSubtitleStyle.outline_width) || 6) * 0.34));
   const previewSubtitleShadow = [
@@ -342,6 +588,21 @@ export default function StepSettings({ project, onUpdate, onNextStep, onDirtyCha
     }));
   };
 
+  type ExtraVoiceRole = "male_1" | "male_2" | "female_1" | "female_2";
+  const applyExtraVoicePatch = (role: ExtraVoiceRole, patch: VoiceChangePatch) => {
+    setConfig((prev) => ({
+      ...prev,
+      [`tts_voice_${role}_id`]: patch.tts_voice_id,
+      ...(patch.tts_voice_preset !== undefined
+        ? { [`tts_voice_${role}_preset`]: patch.tts_voice_preset }
+        : {}),
+      ...(patch.tts_voice_lang !== undefined
+        ? { [`tts_voice_${role}_lang`]: patch.tts_voice_lang }
+        : {}),
+    }));
+    markDirty();
+  };
+
   // v1.1.46: TTS 모델을 바꾸면 기존에 선택돼 있던 voice_id / preset 은 무효가 되므로 비운다.
   // VoiceSelector 가 fetch 후 첫 번째 보이스로 자동 채운다(ElevenLabs) 혹은
   // OpenAI TTS 기본 preset 으로 표시만 된다(저장 시 patch 필요).
@@ -351,6 +612,14 @@ export default function StepSettings({ project, onUpdate, onNextStep, onDirtyCha
       tts_model: modelId,
       tts_voice_id: "",
       tts_voice_preset: "",
+      tts_voice_male_1_id: "",
+      tts_voice_male_1_preset: "",
+      tts_voice_male_2_id: "",
+      tts_voice_male_2_preset: "",
+      tts_voice_female_1_id: "",
+      tts_voice_female_1_preset: "",
+      tts_voice_female_2_id: "",
+      tts_voice_female_2_preset: "",
     }));
   };
 
@@ -652,7 +921,7 @@ export default function StepSettings({ project, onUpdate, onNextStep, onDirtyCha
         <h3 className="text-sm font-medium text-gray-300">AI 모델 선택</h3>
         <div className="grid grid-cols-2 gap-4">
           <ModelSelector label="스토리 설계 모델 (LLM)" models={llmModels} value={config.story_model || config.script_model} onChange={(v) => updateConfig("story_model", v)} />
-          <ModelSelector label="대본 모델 (LLM)" models={llmModels} value={config.script_model} onChange={(v) => updateConfig("script_model", v)} />
+          <ModelSelector label="대본 모델" models={[{ id: "local-script", name: "로컬 대본", provider: "수동 저장 대본 사용", cost_per_unit: "Free" }, ...llmModels]} value={config.script_model} onChange={(v) => updateConfig("script_model", v)} />
           <ModelSelector label="이미지 모델" models={imageModels} value={config.image_model} onChange={(v) => updateConfig("image_model", v)} />
           <ModelSelector label="썸네일 모델" models={imageModels} value={config.thumbnail_model || config.image_model} onChange={(v) => updateConfig("thumbnail_model", v)} />
           <ModelSelector label="영상 모델" models={videoModels} value={config.video_model} onChange={(v) => updateConfig("video_model", v)} />
@@ -660,14 +929,57 @@ export default function StepSettings({ project, onUpdate, onNextStep, onDirtyCha
           {/* v1.1.46: 목소리 선택을 프로젝트 설정으로 이관.
               이전에는 StepVoice 에만 있어서 설정을 다시 거슬러 올라가 바꿔야 했다.
               StepSettings 의 로컬 config 에 직접 반영되고, "저장" 버튼이 한 번에 영속화한다. */}
-          <VoiceSelector
-            projectId={project.id}
-            ttsModel={config.tts_model}
-            voiceId={config.tts_voice_id || ""}
-            voicePreset={config.tts_voice_preset}
-            onChange={applyVoicePatch}
-            compact
-          />
+          <div className="col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
+            <VoiceSelector
+              projectId={project.id}
+              label="해설자"
+              ttsModel={config.tts_model}
+              voiceId={config.tts_voice_id || ""}
+              voicePreset={config.tts_voice_preset}
+              onChange={(patch) => { applyVoicePatch(patch); markDirty(); }}
+              compact
+            />
+            <VoiceSelector
+              projectId={project.id}
+              label="남성1"
+              ttsModel={config.tts_model}
+              voiceId={config.tts_voice_male_1_id || ""}
+              voicePreset={config.tts_voice_male_1_preset}
+              onChange={(patch) => applyExtraVoicePatch("male_1", patch)}
+              autoSelectFirst={false}
+              compact
+            />
+            <VoiceSelector
+              projectId={project.id}
+              label="남성2"
+              ttsModel={config.tts_model}
+              voiceId={config.tts_voice_male_2_id || ""}
+              voicePreset={config.tts_voice_male_2_preset}
+              onChange={(patch) => applyExtraVoicePatch("male_2", patch)}
+              autoSelectFirst={false}
+              compact
+            />
+            <VoiceSelector
+              projectId={project.id}
+              label="여성1"
+              ttsModel={config.tts_model}
+              voiceId={config.tts_voice_female_1_id || ""}
+              voicePreset={config.tts_voice_female_1_preset}
+              onChange={(patch) => applyExtraVoicePatch("female_1", patch)}
+              autoSelectFirst={false}
+              compact
+            />
+            <VoiceSelector
+              projectId={project.id}
+              label="여성2"
+              ttsModel={config.tts_model}
+              voiceId={config.tts_voice_female_2_id || ""}
+              voicePreset={config.tts_voice_female_2_preset}
+              onChange={(patch) => applyExtraVoicePatch("female_2", patch)}
+              autoSelectFirst={false}
+              compact
+            />
+          </div>
         </div>
 
         {/* v1.1.47: TTS 미리듣기 — 저장 없이 local config 로 바로 재생 */}
@@ -927,6 +1239,99 @@ export default function StepSettings({ project, onUpdate, onNextStep, onDirtyCha
             </div>
           </div>
         </div>
+      </div>
+
+
+      {/* 대본에 명시된 주요 장면만 ElevenLabs v3 감정 태그와 연동 */}
+      <div className="bg-bg-secondary border border-border rounded-lg p-5 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-medium text-gray-300">한국식 예능 자막 (주요 장면용)</h3>
+            <p className="mt-1 text-[11px] text-gray-500">
+              대본의 같은 이름 항목에 직접 작성된 문구만 표시합니다. 모든 패널은 하단 중앙에 기존 대비 1.5배 크기로 표시됩니다.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => updateConfig("variety_highlights_enabled", !varietyHighlightsEnabled)}
+            className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors ${
+              varietyHighlightsEnabled
+                ? "border-emerald-400 bg-emerald-400/10 text-emerald-300"
+                : "border-border bg-bg-primary text-gray-500"
+            }`}
+          >
+            {varietyHighlightsEnabled ? "사용 중" : "사용 안 함"}
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <button
+            type="button"
+            disabled={!varietyHighlightsEnabled}
+            onClick={() => updateConfig("variety_highlight_panel_mode", "emotion_auto")}
+            className={`rounded-lg border px-3 py-2 text-left transition-colors disabled:opacity-40 ${
+              varietyPanelMode === "emotion_auto"
+                ? "border-accent-primary bg-accent-primary/10 text-white"
+                : "border-border bg-bg-primary text-gray-400"
+            }`}
+          >
+            <div className="text-xs font-semibold">감정 태그 자동</div>
+            <div className="mt-0.5 text-[11px] text-gray-500">명시 자막이 있는 컷에서만 첫 번째 매칭 태그로 패널 선택</div>
+          </button>
+          <button
+            type="button"
+            disabled={!varietyHighlightsEnabled}
+            onClick={() => updateConfig("variety_highlight_panel_mode", "fixed")}
+            className={`rounded-lg border px-3 py-2 text-left transition-colors disabled:opacity-40 ${
+              varietyPanelMode === "fixed"
+                ? "border-accent-primary bg-accent-primary/10 text-white"
+                : "border-border bg-bg-primary text-gray-400"
+            }`}
+          >
+            <div className="text-xs font-semibold">선택 패널 고정</div>
+            <div className="mt-0.5 text-[11px] text-gray-500">명시 자막이 있는 컷에 선택한 패널 하나를 사용</div>
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-5">
+          {VARIETY_CAPTION_PANELS.map((panel) => {
+            const selected = varietyPanelMode === "fixed" && selectedVarietyPanel === panel.id;
+            return (
+              <button
+                key={panel.id}
+                type="button"
+                disabled={!varietyHighlightsEnabled}
+                onClick={() => {
+                  updateConfig("variety_highlight_style", panel.id);
+                  updateConfig("variety_highlight_panel_mode", "fixed");
+                }}
+                className={`min-h-[138px] rounded-lg border p-2.5 text-left transition-colors disabled:opacity-40 ${
+                  selected
+                    ? "border-accent-primary bg-accent-primary/10"
+                    : "border-border bg-bg-primary hover:border-gray-500"
+                }`}
+              >
+                <VarietyCaptionPreview panelId={panel.id} />
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-xs font-black text-gray-200">{panel.label}</div>
+                  <span
+                    className="h-2.5 w-2.5 shrink-0 rounded-full border"
+                    style={{ backgroundColor: panel.bg, borderColor: panel.border }}
+                  />
+                </div>
+                <div className="mt-0.5 text-[11px] text-gray-500">{panel.desc}</div>
+                <div className="mt-2 flex flex-wrap gap-1">
+                  {panel.tags.map((tag) => (
+                    <span key={tag} className="rounded bg-white/5 px-1.5 py-0.5 text-[9px] text-gray-500">
+                      [{tag}]
+                    </span>
+                  ))}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
       </div>
 
 
@@ -1231,7 +1636,7 @@ export default function StepSettings({ project, onUpdate, onNextStep, onDirtyCha
           <label className="block text-xs text-gray-400 mb-1 flex items-center gap-1.5">
             <Clock size={12} />
             인터미션 간격 (컷)
-            <span className="text-gray-600">· 첫 3컷 뒤 1번 넣고, 이후 이 컷 수마다 3초 인터미션을 끼워넣습니다.</span>
+            <span className="text-gray-600">· 첫 3컷 뒤 1번 넣고, 이후 이 컷 수마다 인터미션 원본 전체 길이를 끼워넣습니다.</span>
           </label>
           <input
             type="number"

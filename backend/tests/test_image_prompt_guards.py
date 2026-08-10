@@ -1,3 +1,4 @@
+import json
 import sys
 import tempfile
 import unittest
@@ -7,22 +8,31 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.services.image import prompt_builder  # noqa: E402
+from app.services.image.prompt_compiler import compile_image_prompt  # noqa: E402
 from app.services.llm.visual_policy import normalize_cut_image_prompt  # noqa: E402
 from app.services.image.asset_guard import (  # noqa: E402
+    expected_comfyui_positive_prompt,
     image_matches_prompt,
     prompt_hash,
     write_prompt_sidecar,
 )
 from app.services.image.comfyui_service import (  # noqa: E402
+    _apply_longtube_dark_manhwa_style,
+    _apply_task_historical_hard_lock,
     _append_common_carried_transport_final_suffix,
     _append_local_v1_final_composition_suffix,
     _compact_flux2_klein_4b_prompt,
     _enforce_comfyui_common_positive_prompt,
+    _enforce_final_visible_surface_textless_contract,
     _enrich_local_v1_positive_prompt,
     _enforce_local_armed_figure_loadout_prompt,
     _enforce_local_single_closeup_head_prompt,
     _flux2_klein_md_negative_contract,
     _flux2_klein_md_positive_contract,
+    _flux2_klein_9b_photoreal_negative_prompt,
+    _flux2_klein_9b_photoreal_positive_prompt,
+    _flux2_klein_direct_cut_brief,
+    _flux2_klein_should_use_direct_cut_lock,
     _flux2_klein_is_japanese_courier_exchange_context,
     _flux2_klein_is_japanese_messenger_group_context,
     _flux2_klein_is_japanese_mounted_courier_context,
@@ -48,13 +58,575 @@ from app.services.image.comfyui_service import (  # noqa: E402
     _promote_ep13_final_scene_overrides,
     _should_check_internal_text_after_generation,
     _should_check_inset_frame_after_generation,
+    _should_ignore_corner_signature_detector,
+    _should_ignore_dark_outer_frame_detector,
+    _should_ignore_framed_internal_text_detector,
+    _should_ignore_internal_text_detector,
+    _should_check_japanese_myth_wide_bottom_credit,
+    _should_ignore_object_person_segmentation,
+    _should_ignore_strict_nonhuman_person_segmentation,
     _should_use_japanese_document_table_retry,
     _strip_local_v1_positive_only_prompt,
+    _z_image_concise_costume_character_prompt,
+    _z_image_should_use_concise_costume_character_prompt,
     apply_longtube_local_v1_master_prompt,
 )
 
 
 class ImagePromptGuardTests(unittest.TestCase):
+    def test_baekje_ep08_475_source_row_cannot_be_hijacked_by_sui_context(self):
+        source_prompt = (
+            "Era/period: 475 AD; Exact place: Hanseong Baekje emergency war council; "
+            "Material culture: Baekje court robes and black silk caps; "
+            "Main subject: one worried Baekje official considering distant allies; "
+            "Scene: The official studies a blank route map while messengers wait outside; "
+            "Source workbook row 08-083. "
+            "Narration: 전쟁이 시작되면 먼 동맹군이 수도보다 빨리 움직일 수 있을지는 알 수 없었습니다."
+        )
+
+        normalized = normalize_cut_image_prompt(
+            source_prompt,
+            script_context="612 Eulji Mundeok strategy command mat beside Sui soldiers",
+        )
+
+        self.assertIn("475 AD", normalized)
+        self.assertIn("Source workbook row 08-083", normalized)
+        self.assertIn("Hanseong", normalized)
+        self.assertNotIn("612", normalized)
+        self.assertNotIn("Eulji Mundeok", normalized)
+        self.assertNotIn("Sui soldiers", normalized)
+        self.assertNotIn("open river battlefield", normalized)
+        self.assertNotIn("command mat", normalized)
+
+    def test_object_only_scene_removes_human_wear_and_role_modifier_from_positive(self):
+        compiled = compile_image_prompt(
+            "Era/period: 668 AD; Exact place: Pyongyang command district aftermath; "
+            "Material culture: wrap-front Goguryeo hemp robes, soft cloth shoes, cloth sashes, "
+            "small square bronze seals with stamp faces turned down; "
+            "Main subject: one fallen command beam crushing civilian grain objects; "
+            "Scene: Object-only close view of one heavy fallen beam crushing one empty woven "
+            "grain basket and exactly three household clay bowls; zero people",
+            model_id="comfyui-flux2-klein-4b",
+        )
+        positive = compiled.positive.lower()
+        self.assertIn("household grain objects", positive)
+        self.assertIn("bronze seals", positive)
+        self.assertNotIn("civilian grain objects", positive)
+        self.assertNotIn("robes", positive)
+        self.assertNotIn("shoes", positive)
+        self.assertNotIn("sashes", positive)
+
+    def test_ep30_plain_roof_beam_scene_removes_seal_material_cue(self):
+        compiled = compile_image_prompt(
+            "Era/period: 668 AD; Exact place: Pyongyang command district aftermath; "
+            "Material culture: small square bronze seals with stamp faces turned down; "
+            "Main subject: one fallen plain roof beam above exactly three cracked clay grain bowls; "
+            "Scene: Still object-only aftermath view of one plain roof beam resting across "
+            "exactly three clay bowls; zero people, baskets, plaques, seals or writing",
+            model_id="comfyui-flux2-klein-4b",
+        )
+        self.assertNotIn("bronze seals", compiled.positive.lower())
+
+    def test_ep30_verified_false_positive_detector_exceptions_are_scene_scoped(self):
+        self.assertTrue(
+            _should_ignore_framed_internal_text_detector(
+                "Main subject: abandoned Goguryeo command equipment after the final collapse; "
+                "Exact place: Pyongyang Fortress aftermath"
+            )
+        )
+        self.assertTrue(
+            _should_ignore_internal_text_detector(
+                "Main subject: one wounded adult Goguryeo witness; "
+                "Exact place: Goguryeo fortress aftermath; Scene: blank smoke-dark rubble"
+            )
+        )
+        self.assertFalse(
+            _should_ignore_internal_text_detector(
+                "Main subject: one wounded adult Goguryeo witness; "
+                "Exact place: Goguryeo fortress archive; Scene: written wall plaque"
+            )
+        )
+        self.assertTrue(
+            _should_ignore_framed_internal_text_detector(
+                "Main subject: one wounded adult Goguryeo witness; "
+                "Exact place: Goguryeo fortress aftermath"
+            )
+        )
+        self.assertFalse(
+            _should_ignore_framed_internal_text_detector(
+                "Main subject: a written wall plaque in a fortress hall"
+            )
+        )
+        self.assertTrue(
+            _should_ignore_dark_outer_frame_detector(
+                "Exact place: bare smoke-dark Pyongyang ash floor; Main subject: exactly three "
+                "separated face-down blank hardwood heroic record slips"
+            )
+        )
+        self.assertTrue(
+            _should_ignore_corner_signature_detector(
+                "Main subject: one scorched solid-color victory standard above a collapsed inner gate"
+            )
+        )
+
+    def test_natural_three_realm_scenes_skip_false_person_segmentation(self):
+        self.assertTrue(
+            _should_ignore_strict_nonhuman_person_segmentation(
+                "one uninterrupted natural horizon joins all three regions"
+            )
+        )
+        self.assertTrue(
+            _should_ignore_strict_nonhuman_person_segmentation(
+                "exactly three separated celestial forms above a river"
+            )
+        )
+        self.assertTrue(
+            _should_ignore_strict_nonhuman_person_segmentation(
+                "one blue-black storm front advances toward a calm golden sunlit cloud plain"
+            )
+        )
+        self.assertTrue(
+            _should_ignore_strict_nonhuman_person_segmentation(
+                "one continuous natural transition from a sealed black Yomi cave"
+            )
+        )
+        self.assertFalse(
+            _should_ignore_strict_nonhuman_person_segmentation(
+                "one adult man stands beside the river"
+            )
+        )
+        self.assertTrue(
+            _should_ignore_object_person_segmentation(
+                "nonhuman black shadow-smoke tendrils rise from fissures"
+            )
+        )
+        self.assertTrue(
+            _should_ignore_object_person_segmentation(
+                "vast arid basin from foreground to horizon"
+            )
+        )
+        self.assertTrue(
+            _should_ignore_object_person_segmentation(
+                "one continuous natural transition from a sealed black Yomi cave"
+            )
+        )
+        day_night_prompt = "a broad twilight boundary permanently separating day from night"
+        self.assertTrue(_should_ignore_object_person_segmentation(day_night_prompt))
+        self.assertTrue(_should_ignore_strict_nonhuman_person_segmentation(day_night_prompt))
+        new_cycle_prompt = (
+            "one continuous empty primordial river valley at the start of a new cycle"
+        )
+        self.assertTrue(_should_ignore_object_person_segmentation(new_cycle_prompt))
+        self.assertTrue(_should_ignore_strict_nonhuman_person_segmentation(new_cycle_prompt))
+        no_meeting_prompt = (
+            "one broad empty twilight corridor keeping both regions apart"
+        )
+        self.assertTrue(_should_ignore_object_person_segmentation(no_meeting_prompt))
+        self.assertTrue(
+            _should_ignore_strict_nonhuman_person_segmentation(no_meeting_prompt)
+        )
+        permanent_separation_prompt = (
+            "one permanent curved natural twilight corridor following the empty river"
+        )
+        self.assertTrue(
+            _should_ignore_object_person_segmentation(permanent_separation_prompt)
+        )
+        self.assertTrue(
+            _should_ignore_strict_nonhuman_person_segmentation(
+                permanent_separation_prompt
+            )
+        )
+        grain_husk_prompt = (
+            "one dark mud-coated grain husk split open to reveal one pale living rice seed"
+        )
+        self.assertTrue(_should_ignore_object_person_segmentation(grain_husk_prompt))
+        self.assertTrue(
+            _should_ignore_strict_nonhuman_person_segmentation(grain_husk_prompt)
+        )
+        scattered_shoots_prompt = (
+            "seven randomly scattered tiny fresh-green grain seedlings, each with exactly two narrow leaves"
+        )
+        self.assertTrue(_should_ignore_object_person_segmentation(scattered_shoots_prompt))
+        self.assertTrue(
+            _should_ignore_strict_nonhuman_person_segmentation(scattered_shoots_prompt)
+        )
+        for object_prompt in (
+            "Object-only close view of one uninterrupted earth-tone shroud sealed over one long low form",
+            "Object-only strict top-down outdoor view of one soft irregular earth-tone woven shroud lying flat on bare soil",
+            "one dull leaf-shaped aged-bronze ritual blade discarded beside fresh rice shoots",
+            "one dull leaf-shaped aged-bronze ritual blade half-buried beside fresh rice shoots",
+            "one golden rice stalk and one tiny green seedling rising together",
+            "exactly three separate short small cream-white segmented silkworm caterpillars above three white cocoons",
+            "Object-only strict top-down animal-birth evidence with two hoof imprints",
+            "one low woven basket filled with rice, millet and silk cocoons beside fresh furrows",
+            "exactly one plain handleless round aged-bronze ritual mirror disk across a twilight gradient",
+            "Object-only close value-conflict tableau with one pebble and one living rice seed",
+            "Landscape-only one continuous narrow trail of disturbed wet sand leaving the sea",
+            "Landscape-only one narrow continuous blue storm-light trail climbing a mountain",
+            "Object-only next-episode ritual teaser on one bare river stone",
+        ):
+            self.assertTrue(_should_ignore_object_person_segmentation(object_prompt))
+            self.assertTrue(
+                _should_ignore_strict_nonhuman_person_segmentation(object_prompt)
+            )
+        storm_shelf_prompt = (
+            "one broad horizontal blue-black storm shelf advances from the left toward a calm golden cloud plain"
+        )
+        self.assertTrue(_should_ignore_object_person_segmentation(storm_shelf_prompt))
+        self.assertTrue(_should_ignore_strict_nonhuman_person_segmentation(storm_shelf_prompt))
+        animal_prompt = (
+            "Animal-only tight paired head-and-neck view of exactly one completely bare unadorned fully grown cow "
+            "at left and exactly one completely bare unadorned fully grown horse at right"
+        )
+        self.assertTrue(_should_ignore_object_person_segmentation(animal_prompt))
+        self.assertTrue(_should_ignore_strict_nonhuman_person_segmentation(animal_prompt))
+        self.assertTrue(
+            _should_check_japanese_myth_wide_bottom_credit(
+                "Object-only strict top-down textless view of one leaf-shaped aged-bronze blade"
+            )
+        )
+        self.assertTrue(
+            _should_check_japanese_myth_wide_bottom_credit(
+                "Object-only strict top-down next-episode ritual teaser on one bare river stone"
+            )
+        )
+        self.assertFalse(
+            _should_check_japanese_myth_wide_bottom_credit(
+                "one adult man stands beside a bronze blade"
+            )
+        )
+
+    def test_flux2_klein_direct_cut_lock_detects_simple_aligned_camera_prompt(self):
+        prompt = (
+            "Izanagi lighting a small, single tooth of a wooden comb to create a tiny spark of light. "
+            "Extreme close-up action shot, 100mm macro lens, f/2.8, breaking the rule.; "
+            "NARRATION VISUAL ALIGNMENT: match this cut's spoken moment through visible action"
+        )
+
+        self.assertTrue(_flux2_klein_should_use_direct_cut_lock(prompt))
+
+    def test_flux2_klein_direct_cut_lock_skips_structured_prompt(self):
+        prompt = (
+            "Year/period: 645year; Exact place: Ansi Fortress; "
+            "Main subject: Goguryeo soldiers at the wall; "
+            "Scene: defenders watching a Tang siege line; "
+            "NARRATION VISUAL ALIGNMENT: match this cut's spoken moment"
+        )
+
+        self.assertFalse(_flux2_klein_should_use_direct_cut_lock(prompt))
+
+    def test_flux2_klein_direct_cut_brief_extracts_scene_after_guard_blocks(self):
+        prompt = (
+            "TOP-OF-PROMPT ANATOMY LOCK: before style, mood, lighting, and composition, obey physical anatomy. "
+            "OUTDOOR LOCATION EVIDENCE LOCK - long guard block. "
+            "Scene: A beautiful ancient Japanese coastal landscape. High ocean waves crashing against jagged rocks.; "
+            "NARRATION VISUAL ALIGNMENT: match this cut. || "
+            "A beautiful ancient Japanese coastal landscape. High ocean waves crashing against jagged rocks. "
+            "Editorial landscape photography, 24mm lens, f/8, natural daylight.; "
+            "NARRATION VISUAL ALIGNMENT: match this cut's spoken moment through visible action "
+            "Apply this as rendering style only while preserving the subject. || "
+            "PAPER EVIDENCE SURFACE LOCK - paper, book, document, scroll, petition, letter, page."
+        )
+
+        brief = _flux2_klein_direct_cut_brief(prompt)
+
+        self.assertTrue(brief.startswith("A beautiful ancient Japanese coastal landscape"))
+        self.assertNotIn("OUTDOOR LOCATION EVIDENCE LOCK", brief)
+        self.assertNotIn("PAPER EVIDENCE SURFACE LOCK", brief)
+        self.assertNotIn("NARRATION VISUAL ALIGNMENT", brief)
+
+    def test_flux2_klein_direct_cut_brief_prefers_freeform_scene_over_style_text(self):
+        prompt = (
+            "ANATOMY LOCK FIRST: every visible human has exactly one head, two arms, two legs. "
+            "Ancient late-7th-century Goguryeo, Pyongyang fortress political collapse. "
+            "SCENE: A blood-and-iron royal power symbol shakes from its roots: "
+            "a massive cracked stone throne and iron pillar split upward, red light glowing "
+            "through the base, shattered spearheads around it, no marks in corners.; "
+            "NARRATION VISUAL ALIGNMENT: match this cut's spoken moment through visible action. "
+            "Apply this as rendering style only while preserving the subject, action, setting, period, and props "
+            "from the scene: Stylish high-impact historical documentary illustration. Make every image cinematic."
+        )
+
+        brief = _flux2_klein_direct_cut_brief(prompt)
+
+        self.assertTrue(brief.startswith("A blood-and-iron royal power symbol"))
+        self.assertIn("massive cracked stone throne and iron pillar", brief)
+        self.assertNotIn("Stylish high-impact", brief)
+        self.assertNotIn("Make every image cinematic", brief)
+
+    def test_flux2_klein_cartoon_cut_lock_blocks_modern_high_rise_city_for_ancient_city_shadow(self):
+        prompt = _flux2_klein_9b_photoreal_positive_prompt(
+            "A luxurious, dark cape casting a shadow of a crumbling city"
+        )
+        negative = _flux2_klein_9b_photoreal_negative_prompt("")
+
+        self.assertIn("low ancient fortress walls", prompt)
+        self.assertIn("Never add skyscrapers", prompt)
+        self.assertIn("apartment blocks", prompt)
+        self.assertIn("skyscraper", negative)
+        self.assertIn("high-rise", negative)
+        self.assertIn("modern city skyline", negative)
+
+    def test_flux2_klein_4b_md_contract_blocks_modern_high_rise_city_for_ancient_city_shadow(self):
+        source = (
+            "Global visual world: Time range: 665around year; "
+            "Place scope: ancient Northeast Asia, Goguryeo-related court and frontier settings; "
+            "Culture scope: Goguryeo and neighboring ancient Northeast Asian political and military world; "
+            "Material culture: Iron weapons, lamellar armor, fortification walls, ancient court clothing, wooden palace interiors; "
+            "Continuity rule: Every scene stays in an ancient Northeast Asian setting. "
+            "No modern objects, no modern clothing, no modern text, no anachronistic technology; "
+            "Year/period: 665 AD; Goguryeo court crisis; Exact place: Pyongyang Fortress; "
+            "Style: serious adult Korean graphic novel manhwa; Main subject: luxurious; "
+            "Scene: A luxurious, dark cape casting a shadow of a crumbling city"
+        )
+
+        compact, _ = _compact_flux2_klein_4b_prompt(source, "")
+        final = _flux2_klein_md_positive_contract(compact, source)
+        negative = _flux2_klein_md_negative_contract(source, final)
+
+        self.assertIn("Ancient skyline detail:", final)
+        self.assertIn("low fortress walls", final)
+        self.assertIn("timber roof edges", final)
+        self.assertIn("skyscraper", negative)
+        self.assertIn("high-rise", negative)
+        self.assertIn("modern city skyline", negative)
+
+    def test_flux2_klein_4b_md_contract_does_not_push_dark_hall_to_exterior_skyline(self):
+        source = (
+            "Global visual world: Time range: c. 665 AD; "
+            "Place scope: ancient Northeast Asia, Goguryeo-related court and frontier settings; "
+            "Culture scope: Goguryeo and neighboring ancient Northeast Asian political and military world; "
+            "Material culture: Iron weapons, lamellar armor, hemp garments, wooden halls, fortress walls; "
+            "Year/period: c. 665 AD; Goguryeo succession crisis, c. 665 AD; "
+            "Exact place: Pyongyang Fortress; "
+            "Scene evidence: Namsaeng grows nervous inside fortress halls after Yeon Gaesomun's death; "
+            "Style: serious adult Korean graphic novel manhwa; "
+            "Main subject: Namsaeng pacing nervously in a dark hall; "
+            "Scene: Namsaeng pacing back and forth nervously in a dark hall"
+        )
+
+        compact, _ = _compact_flux2_klein_4b_prompt(source, "")
+        final = _flux2_klein_md_positive_contract(compact, source)
+
+        self.assertIn("dark hall", final)
+        self.assertNotIn("Ancient skyline detail:", final)
+        self.assertNotIn("distant silhouettes show low fortress walls", final)
+
+    def test_flux2_klein_4b_empty_candle_cut_does_not_call_people_with_clothing(self):
+        source = (
+            "Global visual world: Time range: c. 665 AD; "
+            "Place scope: ancient Northeast Asia, Goguryeo-related court and frontier settings; "
+            "Culture scope: Goguryeo and neighboring ancient Northeast Asian political and military world; "
+            "Material culture: Iron weapons, lamellar armor, hemp garments, wooden halls, fortress walls; "
+            "Year/period: c. 665 AD; Goguryeo succession crisis, c. 665 AD; "
+            "Exact place: Pyongyang Fortress; "
+            "Scene evidence: The narration describes the last breath and anxiety; the frame is an empty single-candle object shot, not a portrait.; "
+            "Style: serious adult Korean graphic novel manhwa; "
+            "Main subject: single candle alone in darkness; "
+            "Scene: A single small candle flame stands alone in an empty dark Pyongyang fortress room, unoccupied space, black surrounding shadows, rough wooden floor, cracked plaster wall, smoke rising into dark rafters, no person, no hand, no face, no figure"
+        )
+
+        compact, _ = _compact_flux2_klein_4b_prompt(source, "")
+        final = _flux2_klein_md_positive_contract(compact, source)
+        negative = _flux2_klein_md_negative_contract(source, final)
+
+        self.assertIn("single candle", final.lower())
+        self.assertNotIn("Visible clothing:", final)
+        self.assertIn("human figure", negative)
+        self.assertIn("armored person", negative)
+
+    def test_flux2_klein_4b_nonhuman_pillar_cut_does_not_inherit_global_people(self):
+        source = (
+            "Global visual world: Time range: c. 665 AD; "
+            "Place scope: ancient Northeast Asia, Goguryeo-related court and frontier settings; "
+            "Culture scope: Goguryeo and neighboring ancient Northeast Asian political and military world; "
+            "Material culture: Iron weapons, lamellar armor, hemp garments, wooden halls, fortress walls; "
+            "Year/period: c. 665 AD; Goguryeo succession crisis, c. 665 AD; "
+            "Exact place: Pyongyang Fortress; "
+            "Scene evidence: The cut belongs to the c. 665 AD Goguryeo succession crisis at Pyongyang Fortress, "
+            "after Yeon Gaesomun's death, with Yeon Namsaeng, Namgeon, Namsan, rebel palace guards, court officials, "
+            "fortress halls, lamellar armor, plain hemp robes, iron weapons, smoke, and broken court order as relevant evidence.; "
+            "Style: serious adult Korean graphic novel manhwa; "
+            "Main subject: massive stone pillar cracking violently from the base up; "
+            "Scene: A massive stone pillar cracking violently from the base up"
+        )
+        built = prompt_builder.build_image_prompt(source, "", enable_historical_guard=True)
+
+        compact, _ = _compact_flux2_klein_4b_prompt(f"{source}\n{built}", "")
+        final = _flux2_klein_md_positive_contract(compact, source)
+        negative = _flux2_klein_md_negative_contract(source, final)
+
+        self.assertIn("stone pillar", final)
+        self.assertNotIn("Visible clothing:", final)
+        self.assertIn("person", negative)
+        self.assertIn("people", negative)
+        self.assertIn("human figure", negative)
+        self.assertIn("inscription on stone", negative)
+        self.assertIn("carved characters", negative)
+
+    def test_flux2_klein_4b_animal_symbol_cut_does_not_inherit_global_people(self):
+        source = (
+            "Global visual world: Time range: c. 665 AD; "
+            "Place scope: ancient Northeast Asia, Goguryeo-related court and frontier settings; "
+            "Culture scope: Goguryeo and neighboring ancient Northeast Asian political and military world; "
+            "Material culture: Iron weapons, lamellar armor, hemp garments, wooden halls, fortress walls; "
+            "Year/period: c. 665 AD; Goguryeo succession crisis, c. 665 AD; "
+            "Exact place: Pyongyang Fortress; "
+            "Scene evidence: The cut belongs to the c. 665 AD Goguryeo succession crisis with rebel palace guards, "
+            "court officials, fortress halls, lamellar armor, plain hemp robes, iron weapons, smoke, and broken court order.; "
+            "Style: serious adult Korean graphic novel manhwa; "
+            "Main subject: predatory wolf tearing the weak neck of a wounded deer; "
+            "Scene: A predatory wolf tearing directly into the weak neck of a wounded deer"
+        )
+        built = prompt_builder.build_image_prompt(source, "", enable_historical_guard=True)
+
+        compact, _ = _compact_flux2_klein_4b_prompt(f"{source}\n{built}", "")
+        final = _flux2_klein_md_positive_contract(compact, source)
+        negative = _flux2_klein_md_negative_contract(source, final)
+
+        self.assertIn("wolf", final.lower())
+        self.assertNotIn("Visible clothing:", final)
+        self.assertIn("person", negative)
+        self.assertIn("people", negative)
+        self.assertIn("human figure", negative)
+
+    def test_flux2_klein_4b_fish_token_object_cut_stays_tabletop_without_people_or_skyline(self):
+        source = (
+            "Global visual world: Time range: c. 665 AD; "
+            "Place scope: ancient Northeast Asia, Goguryeo-related court and frontier settings; "
+            "Culture scope: Goguryeo and neighboring ancient Northeast Asian political and military world; "
+            "Material culture: Iron weapons, lamellar armor, hemp garments, wooden halls, fortress walls; "
+            "Year/period: c. 665 AD; Goguryeo succession crisis, c. 665 AD; "
+            "Exact place: Pyongyang Fortress; "
+            "Scene evidence: The spoken line compares brothers to water and fish; use three dry bronze fish-shaped tally tokens as symbolic evidence, not real fish and not a food bowl.; "
+            "Style: serious adult Korean graphic novel manhwa; "
+            "Main subject: exactly three dry fish-shaped bronze tally tokens on black cloth; "
+            "Scene: Object-only symbolic close-up on a low wooden table: exactly three flat fish-shaped bronze tally tokens made of aged green bronze lie fully visible and separate in a triangle on dry black cloth beside one empty shallow ceramic dish; all three tokens are solid metal objects with carved edges, no scales, no flesh, no water, no bowl of fish, no hands, no faces, no people"
+        )
+
+        compact, _ = _compact_flux2_klein_4b_prompt(source, "")
+        final = _flux2_klein_md_positive_contract(compact, source)
+        negative = _flux2_klein_md_negative_contract(source, final)
+
+        self.assertIn("three flat fish-shaped bronze tally tokens", final)
+        self.assertNotIn("Visible clothing:", final)
+        self.assertNotIn("Ancient skyline detail:", final)
+        self.assertIn("human figure", negative)
+        self.assertIn("people", negative)
+
+    def test_flux2_klein_4b_gear_door_painting_emblem_scenes_do_not_inherit_people(self):
+        cases = [
+            (
+                "object-only massive iron gear grinding heavily and dangerously against another",
+                "Object-only close-up: a massive iron gear grinding heavily and dangerously against another, sparks flying",
+                "person pushing gear",
+            ),
+            (
+                "object-only heavy iron gate slamming shut",
+                "Object-only view of a heavy iron gate slamming shut, cutting off the light, plunging into complete black",
+                "soldiers running through open gate",
+            ),
+            (
+                "object-only glorious victory painting tearing cleanly down the middle",
+                "Object-only close-up of a glorious victory painting tearing cleanly down the middle, revealing a skull",
+                "extra arm holding skull",
+            ),
+            (
+                "object-only poisoned arrow striking the center of a royal emblem",
+                "Object-only close-up of a poisoned arrow striking the very center of a beautiful royal emblem",
+                "person pierced by arrow",
+            ),
+        ]
+        for subject, scene, expected_negative in cases:
+            with self.subTest(subject=subject):
+                source = (
+                    "Global visual world: Time range: c. 665 AD; "
+                    "Place scope: ancient Northeast Asia, Goguryeo-related court and frontier settings; "
+                    "Culture scope: Goguryeo and neighboring ancient Northeast Asian political and military world; "
+                    "Material culture: Iron weapons, lamellar armor, hemp garments, wooden halls, fortress walls; "
+                    "Year/period: c. 665 AD; Goguryeo succession crisis, c. 665 AD; "
+                    "Exact place: Pyongyang Fortress; "
+                    "Scene evidence: The cut belongs to the c. 665 AD Goguryeo succession crisis with rebel palace guards, "
+                    "court officials, fortress halls, lamellar armor, plain hemp robes, iron weapons, smoke, and broken court order.; "
+                    "Style: serious adult Korean graphic novel manhwa; "
+                    f"Main subject: {subject}; "
+                    f"Scene: {scene}"
+                )
+
+                compact, _ = _compact_flux2_klein_4b_prompt(source, "")
+                final = _flux2_klein_md_positive_contract(compact, source)
+                negative = _flux2_klein_md_negative_contract(source, final)
+
+                self.assertNotIn("Visible clothing:", final)
+                self.assertIn("strict human-free object-only frame", final)
+                self.assertIn("cropped body parts", final)
+                self.assertIn("human figure", negative)
+                self.assertIn("people", negative)
+                self.assertIn(expected_negative, negative)
+
+    def test_flux2_klein_4b_title_card_scene_blocks_generated_text(self):
+        source = (
+            "Global visual world: Time range: c. 665 AD; "
+            "Place scope: ancient Northeast Asia, Goguryeo-related court and frontier settings; "
+            "Culture scope: Goguryeo and neighboring ancient Northeast Asian political and military world; "
+            "Material culture: Iron weapons, lamellar armor, hemp garments, wooden halls, fortress walls; "
+            "Year/period: c. 665 AD; Goguryeo succession crisis, c. 665 AD; "
+            "Exact place: Pyongyang Fortress; "
+            "Style: serious adult Korean graphic novel manhwa; "
+            "Main subject: title card for Episode 29; "
+            "Scene: The title card for Episode 29, illuminated by dark, gritty, and bloody red lighting"
+        )
+
+        compact, _ = _compact_flux2_klein_4b_prompt(source, "")
+        final = _flux2_klein_md_positive_contract(compact, source)
+        negative = _flux2_klein_md_negative_contract(source, final)
+
+        self.assertNotIn("Visible clothing:", final)
+        self.assertIn("human figure", negative)
+        self.assertIn("misspelled title", negative)
+        self.assertIn("episode text", negative)
+
+    def test_flux2_klein_cartoon_cut_lock_keeps_cut_subject_without_hand_terms(self):
+        prompt = _flux2_klein_9b_photoreal_positive_prompt(
+            "Muscular hands desperately grabbing three plump, glowing pink peaches from a green branch. "
+            "Extreme close-up action shot, 100mm macro lens, f/2.8, high tension."
+        )
+
+        self.assertIn("Three plump glowing pink peaches tearing from a green branch", prompt)
+        self.assertNotIn("Muscular hands", prompt)
+        self.assertNotIn("six fingers", prompt.lower())
+
+    def test_flux2_klein_cartoon_cut_lock_forces_empty_landscape_when_no_person_named(self):
+        prompt = _flux2_klein_9b_photoreal_positive_prompt(
+            "A beautiful ancient Japanese coastal landscape. High ocean waves crashing against jagged rocks. "
+            "Editorial landscape photography, 24mm lens, f/8, natural daylight, clear sky, sharp focus."
+        )
+
+        self.assertIn("empty non-human landscape, object, or effect shot only", prompt)
+        self.assertIn("High ocean waves crashing against jagged rocks", prompt)
+        self.assertIn("completely free of people", prompt)
+
+    def test_flux2_klein_cartoon_cut_lock_rewrites_comb_spark_without_visible_hand_terms(self):
+        prompt = _flux2_klein_9b_photoreal_positive_prompt(
+            "Izanagi lighting a small, single tooth of a wooden comb to create a tiny spark of light. "
+            "Extreme close-up action shot, 100mm macro lens, f/2.8, breaking the rule."
+        )
+
+        self.assertIn("A small single tooth of a wooden comb igniting", prompt)
+        self.assertNotIn("lighting a small, single tooth", prompt)
+        self.assertNotIn("hand", prompt.lower())
+        self.assertNotIn("finger", prompt.lower())
+
+    def test_flux2_klein_cartoon_cut_lock_rewrites_rotting_face_as_izanami_closeup(self):
+        prompt = _flux2_klein_9b_photoreal_positive_prompt(
+            "A half-beautiful, half-rotting face screaming in silent agony in the dark shadows. "
+            "Emotional horror photography, 85mm lens, f/2.8, tragic contrast, loss of beauty."
+        )
+
+        self.assertIn("Izanami's half-beautiful, half-rotting female goddess face", prompt)
+        self.assertIn("tight face-only close-up", prompt)
+        self.assertIn("no full-body figure", prompt)
+
     def test_prompt_hash_uses_full_prompt_not_first_guard_segment(self):
         first = (
             "HARD HISTORICAL MATERIAL CULTURE LOCK - FIRST RENDERING RULE. || "
@@ -106,6 +678,189 @@ class ImagePromptGuardTests(unittest.TestCase):
         self.assertIn(prompt_hash("actual comfyui positive prompt"), sidecar)
         self.assertIn("pre-service final prompt", sidecar)
 
+    def test_sidecar_compiled_positive_mismatch_forces_regeneration(self):
+        final_prompt = (
+            "Manu and Yemo walking beside a white cow, symbolic Proto-Indo-European myth "
+            "reenactment grounded in prehistoric Pontic-Caspian steppe materials"
+        )
+        current_positive = expected_comfyui_positive_prompt(
+            final_prompt,
+            image_model="comfyui-dreamshaper-xl-longtube-v15",
+            prompt_profile="scene_contract_v2",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            image_path = Path(tmp) / "cut_18.png"
+            image_path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * 64)
+            write_prompt_sidecar(
+                image_path,
+                cut_number=18,
+                image_model="comfyui-dreamshaper-xl-longtube-v15",
+                source_prompt=final_prompt,
+                final_prompt=final_prompt,
+                comfyui_positive_prompt="old one-person compiled prompt",
+            )
+
+            matches, reason = image_matches_prompt(
+                image_path,
+                source_prompt=final_prompt,
+                final_prompt=final_prompt,
+                image_model="comfyui-dreamshaper-xl-longtube-v15",
+                comfyui_positive_prompt=current_positive,
+            )
+
+        self.assertFalse(matches)
+        self.assertEqual(reason, "sidecar_comfyui_positive_prompt_mismatch")
+
+    def test_z_image_expected_positive_matches_runtime_style_lock(self):
+        final_prompt = (
+            "Style: historical documentary illustration. "
+            "Visible action: Exactly two adult historians compare the chronology in one room. "
+            "Body integrity: each visible adult has one head and one coherent torso."
+        )
+
+        current_positive = expected_comfyui_positive_prompt(
+            final_prompt,
+            image_model="comfyui-z-image-turbo",
+            prompt_profile="scene_contract_v2",
+        )
+
+        self.assertTrue(current_positive.startswith("Exactly two adult historians"))
+        self.assertNotIn("VISIBLE ACTION FIRST", current_positive)
+        self.assertNotIn("SCENE CONTENT FIRST", current_positive)
+        self.assertIn("Z-IMAGE DARK HARD-BOILED HISTORICAL MANHWA STYLE LOCK", current_positive)
+        self.assertNotIn("Style: historical documentary illustration", current_positive)
+
+    def test_z_image_baekje_mixed_settlers_runtime_prompt_keeps_background_crop(self):
+        final_prompt = (
+            "Year/period: Baekje foundation traditions preserved in conflicting later records; "
+            "Culture scope: Baekje, Goguryeo, and Daifang Commandery; "
+            "Scene: crowded settlement street beside timber houses; "
+            "Global style: historical documentary NARRATIVE_FIDELITY_REGEN_V1; "
+            "Narration context: 여기에 예계 주민과 중국 군현에서 이동한 사람들까지 섞이며,"
+        )
+
+        current_positive = expected_comfyui_positive_prompt(
+            final_prompt,
+            image_model="comfyui-z-image-turbo",
+            prompt_profile="scene_contract_v2",
+        )
+
+        self.assertIn("Chinese-commandery migrant woman right", current_positive)
+        self.assertIn("flat weathered tobacco-brown ink-wash background", current_positive)
+        self.assertNotIn("Material culture:", current_positive)
+
+    def test_z_image_baekje_seven_branched_sword_runtime_prompt_keeps_full_shape(self):
+        final_prompt = (
+            "Year/period: Baekje foundation traditions preserved in conflicting later records; "
+            "Culture scope: Baekje, Goguryeo, and Daifang Commandery; "
+            "Scene: archaeological trench with a generic sword; "
+            "Global style: historical documentary NARRATIVE_FIDELITY_REGEN_V1; "
+            "Narration context: 칠지도 같은 유물은 그 복잡한 관계가 물질로 남은 사례죠."
+        )
+
+        current_positive = expected_comfyui_positive_prompt(
+            final_prompt,
+            image_model="comfyui-z-image-turbo",
+            prompt_profile="scene_contract_v2",
+        )
+        compiled = compile_image_prompt(final_prompt, model_id="comfyui-z-image-turbo")
+
+        self.assertIn("three left and three right", current_positive)
+        self.assertIn("charcoal zip lab jackets", current_positive)
+        for term in ("ordinary straight sword", "crossguard", "white eyes"):
+            self.assertIn(term, compiled.negative)
+
+    def test_z_image_text_free_interview_omits_renderable_action_label(self):
+        final_prompt = (
+            "Style: historical documentary illustration. "
+            "Visible action: Present-day 2020s extreme three-face-only office-interview close-up. "
+            "Only faces, necks, zipped collars, and shoulders appear; every hand, desk, board, "
+            "paper, screen, and held object stays outside the frame. "
+            "Body integrity: each visible adult has one head and one coherent torso."
+        )
+
+        current_positive = expected_comfyui_positive_prompt(
+            final_prompt,
+            image_model="comfyui-z-image-turbo",
+            prompt_profile="scene_contract_v2",
+        )
+
+        self.assertTrue(current_positive.startswith("Present-day 2020s extreme three-face-only"))
+        self.assertNotIn("VISIBLE ACTION FIRST", current_positive)
+        self.assertIn("Z-IMAGE DARK HARD-BOILED HISTORICAL MANHWA STYLE LOCK", current_positive)
+
+    def test_sidecar_detector_retry_positive_is_accepted_when_current_compiler_reproduces_it(self):
+        final_prompt = (
+            "Year/period: Japanese mythic creation era; Exact place: bare primordial riverbank; "
+            "Main subject: exactly one adult female Amaterasu; "
+            "Scene: Extreme facial close-up of Amaterasu speaking toward the empty left edge"
+        )
+        image_model = "comfyui-flux2-klein-4b"
+        current_positive = expected_comfyui_positive_prompt(
+            final_prompt,
+            image_model=image_model,
+            prompt_profile="scene_contract_v2",
+        )
+        retry_positive = compile_image_prompt(
+            final_prompt,
+            model_id=image_model,
+            quality_hint="Corner continuity: local sky fills every corner",
+        ).positive
+        self.assertNotEqual(current_positive, retry_positive)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            image_path = Path(tmp) / "cut_1.png"
+            image_path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * 64)
+            write_prompt_sidecar(
+                image_path,
+                cut_number=1,
+                image_model=image_model,
+                source_prompt=final_prompt,
+                final_prompt=final_prompt,
+                comfyui_positive_prompt=retry_positive,
+            )
+
+            matches, reason = image_matches_prompt(
+                image_path,
+                source_prompt=final_prompt,
+                final_prompt=final_prompt,
+                image_model=image_model,
+                comfyui_positive_prompt=current_positive,
+            )
+
+        self.assertTrue(matches)
+        self.assertEqual(reason, "sidecar_final_prompt_match")
+
+    def test_natural_only_contract_revision_invalidates_legacy_sidecar(self):
+        natural_prompt = (
+            "Scene: Landscape-only underwater cross-section; "
+            "only water, natural rock, sunlight, and golden sparks are visible"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            image_path = Path(tmp) / "cut_34.png"
+            image_path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * 64)
+            write_prompt_sidecar(
+                image_path,
+                cut_number=34,
+                image_model="test-model",
+                source_prompt=natural_prompt,
+                final_prompt=natural_prompt,
+            )
+            sidecar_path = image_path.with_suffix(image_path.suffix + ".prompt.json")
+            payload = json.loads(sidecar_path.read_text(encoding="utf-8"))
+            payload.pop("prompt_contract_revision", None)
+            sidecar_path.write_text(json.dumps(payload), encoding="utf-8")
+
+            matches, reason = image_matches_prompt(
+                image_path,
+                source_prompt=natural_prompt,
+                final_prompt=natural_prompt,
+                image_model="test-model",
+            )
+
+        self.assertFalse(matches)
+        self.assertEqual(reason, "sidecar_prompt_contract_mismatch")
+
     def test_solid_light_outer_margin_detector_catches_white_strips(self):
         from PIL import Image
 
@@ -122,6 +877,26 @@ class ImagePromptGuardTests(unittest.TestCase):
 
             self.assertTrue(_image_has_solid_light_outer_margin(bad))
             self.assertFalse(_image_has_solid_light_outer_margin(good))
+
+    def test_solid_light_outer_margin_detector_ignores_full_bleed_pale_surface(self):
+        from PIL import Image
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "pale_full_bleed.png"
+            Image.new("RGB", (1280, 720), (232, 229, 218)).save(path)
+
+            self.assertFalse(_image_has_solid_light_outer_margin(path))
+
+    def test_solid_light_outer_margin_detector_ignores_open_white_sky(self):
+        from PIL import Image, ImageDraw
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "white_sky.png"
+            image = Image.new("RGB", (1280, 720), (252, 252, 250))
+            ImageDraw.Draw(image).rectangle((0, 430, 1279, 719), fill=(118, 91, 62))
+            image.save(path)
+
+            self.assertFalse(_image_has_solid_light_outer_margin(path))
 
     def test_solid_dark_outer_frame_detector_catches_full_black_frame(self):
         from PIL import Image
@@ -306,6 +1081,26 @@ class ImagePromptGuardTests(unittest.TestCase):
 
             self.assertFalse(_image_has_internal_text_like_marks(good))
 
+    def test_internal_text_scope_skips_living_plain_cloth_packet_scene(self):
+        living_packet = (
+            "Exact place: Chang'an Tang court; "
+            "Main subject: exactly two people, teenage envoy and older registrar; "
+            "Scene: teenage envoy kneels while a small tan cord-tied cloth packet lies between them"
+        )
+        living_bundles = (
+            "Exact place: Tang-held Goguryeo gate; "
+            "Main subject: one adult collaborator; "
+            "Scene: the adult slips through the gate while confiscated cloth bundles remain in mud"
+        )
+        written_packet = (
+            "Exact place: Chang'an Tang court; Main subject: one document bundle; "
+            "Scene: a paper document bundle with calligraphy lies on a table"
+        )
+
+        self.assertFalse(_should_check_internal_text_after_generation(living_packet))
+        self.assertFalse(_should_check_internal_text_after_generation(living_bundles))
+        self.assertTrue(_should_check_internal_text_after_generation(written_packet))
+
     def test_internal_text_check_includes_645_ansi_fortress_battlefield(self):
         prompt = (
             "Time range: 645year; Place scope: Ansi Fortress; "
@@ -443,6 +1238,50 @@ class ImagePromptGuardTests(unittest.TestCase):
             self.assertTrue(_image_has_lower_right_signature_mark(bad))
             self.assertFalse(_image_has_lower_right_signature_mark(good))
 
+    def test_lower_right_signature_detector_catches_initials_connected_to_ground_ink(self):
+        from PIL import Image, ImageDraw
+
+        with tempfile.TemporaryDirectory() as tmp:
+            bad = Path(tmp) / "bad_connected_initials.png"
+            image = Image.new("RGB", (1280, 720), (132, 112, 88))
+            draw = ImageDraw.Draw(image)
+            draw.line((1190, 719, 1279, 719), fill=(24, 22, 20), width=3)
+            draw.line(((1214, 679), (1222, 696), (1230, 679)), fill=(24, 22, 20), width=4)
+            draw.line(((1235, 677), (1243, 700), (1252, 684)), fill=(24, 22, 20), width=4)
+            draw.line((1252, 684, 1254, 704), fill=(24, 22, 20), width=3)
+            draw.line((1254, 704, 1258, 719), fill=(24, 22, 20), width=2)
+            image.save(bad)
+
+            self.assertTrue(_image_has_lower_right_signature_mark(bad))
+
+    def test_lower_right_signature_detector_catches_grey_initials_on_brown_ground(self):
+        from PIL import Image, ImageDraw
+
+        with tempfile.TemporaryDirectory() as tmp:
+            bad = Path(tmp) / "bad_grey_initials.png"
+            image = Image.new("RGB", (1280, 720), (116, 84, 58))
+            draw = ImageDraw.Draw(image)
+            draw.line(((1216, 694), (1221, 708), (1227, 694)), fill=(132, 132, 126), width=3)
+            draw.line(((1231, 695), (1231, 707), (1238, 707)), fill=(128, 128, 122), width=3)
+            draw.line(((1243, 695), (1250, 707), (1257, 695)), fill=(136, 136, 130), width=3)
+            draw.line(((1259, 692), (1265, 705)), fill=(130, 130, 124), width=3)
+            image.save(bad)
+
+            self.assertTrue(_image_has_lower_right_signature_mark(bad))
+
+    def test_lower_right_signature_detector_catches_two_low_grey_glyph_clusters(self):
+        from PIL import Image, ImageDraw
+
+        with tempfile.TemporaryDirectory() as tmp:
+            bad = Path(tmp) / "bad_two_grey_glyphs.png"
+            image = Image.new("RGB", (1280, 720), (68, 58, 48))
+            draw = ImageDraw.Draw(image)
+            draw.line(((1204, 696), (1210, 710), (1217, 696)), fill=(152, 152, 146), width=3)
+            draw.line(((1221, 696), (1221, 710), (1230, 710)), fill=(148, 148, 142), width=3)
+            image.save(bad)
+
+            self.assertTrue(_image_has_lower_right_signature_mark(bad))
+
     def test_lower_right_signature_detector_ignores_short_stone_crack(self):
         from PIL import Image, ImageDraw
 
@@ -454,6 +1293,52 @@ class ImagePromptGuardTests(unittest.TestCase):
             draw.line([(1210, 646), (1242, 651)], fill=(18, 18, 17), width=2)
             draw.line([(1235, 642), (1265, 647)], fill=(22, 22, 20), width=2)
             img.save(good)
+
+            self.assertFalse(_image_has_lower_right_signature_mark(good))
+
+    def test_lower_right_signature_detector_ignores_road_edge_hatching_above_baseline(self):
+        from PIL import Image, ImageDraw
+
+        with tempfile.TemporaryDirectory() as tmp:
+            good = Path(tmp) / "good_road_edge_hatching.png"
+            img = Image.new("RGB", (1280, 720), (188, 188, 180))
+            draw = ImageDraw.Draw(img)
+            for offset in range(0, 36, 6):
+                draw.line(
+                    [(1223 + offset, 655), (1248 + offset, 706)],
+                    fill=(18, 18, 17),
+                    width=2,
+                )
+            img.save(good)
+
+            self.assertFalse(_image_has_lower_right_signature_mark(good))
+
+    def test_lower_right_signature_detector_ignores_distributed_ground_texture(self):
+        from PIL import Image, ImageDraw
+
+        with tempfile.TemporaryDirectory() as tmp:
+            good = Path(tmp) / "good_distributed_ground_texture.png"
+            img = Image.new("RGB", (1280, 720), (104, 96, 68))
+            draw = ImageDraw.Draw(img)
+            draw.rectangle((1203, 694, 1210, 708), fill=(28, 26, 22))
+            draw.rectangle((1212, 669, 1222, 680), fill=(31, 29, 24))
+            draw.rectangle((1237, 669, 1244, 675), fill=(26, 24, 21))
+            img.save(good)
+
+            self.assertFalse(_image_has_lower_right_signature_mark(good))
+
+    def test_lower_right_signature_detector_ignores_dense_corner_rock(self):
+        from PIL import Image, ImageDraw
+
+        with tempfile.TemporaryDirectory() as tmp:
+            good = Path(tmp) / "good_dense_corner_rock.png"
+            image = Image.new("RGB", (1280, 720), (174, 145, 96))
+            draw = ImageDraw.Draw(image)
+            draw.polygon(
+                [(1216, 683), (1224, 675), (1237, 678), (1242, 691), (1232, 699), (1218, 697)],
+                fill=(31, 28, 22),
+            )
+            image.save(good)
 
             self.assertFalse(_image_has_lower_right_signature_mark(good))
 
@@ -572,7 +1457,7 @@ class ImagePromptGuardTests(unittest.TestCase):
         self.assertIn("animal with extra legs", negative)
         self.assertNotIn("channel", prompt.lower())
 
-    def test_visual_qa_readiness_and_character_entrance_locks_are_common(self):
+    def test_character_entrance_and_period_locks_are_common(self):
         prompt = prompt_builder.build_image_prompt(
             (
                 "Global visual world: Time range: 612 AD; Place scope: Liaodong Fortress, Liaodong; "
@@ -585,37 +1470,12 @@ class ImagePromptGuardTests(unittest.TestCase):
             enable_historical_guard=True,
         )
 
-        self.assertIn("VISUAL QA READINESS LOCK", prompt)
-        self.assertIn("exactly one thumb and four fingers", prompt)
-        self.assertIn("Animals keep a normal species body plan", prompt)
         self.assertIn("CHARACTER ENTRANCE GRANDEUR LOCK", prompt)
         self.assertIn("face, eyes, shoulders, silhouette, and emotional pressure", prompt)
         self.assertIn("PERIOD WEAPON AND PROP AUDIT LOCK", prompt)
         self.assertIn("Do not borrow later, foreign, fantasy, or modern gear", prompt)
 
-    def test_visual_qa_negative_blocks_workbench_failure_types(self):
-        prompt = prompt_builder.build_image_prompt(
-            (
-                "Year/period: 375 AD; Exact place: Brigetio command camp; "
-                "Culture scope: Late Roman imperial command world; "
-                "Main subject: Valentinian I; "
-                "Scene: Valentinian I grips a command table while horses wait outside the command tent"
-            ),
-            "",
-            enable_historical_guard=True,
-        )
-        negative = prompt_builder.append_prompt_specific_negative_prompt("", prompt)
-
-        self.assertIn("workbench QA failure", negative)
-        self.assertIn("six fingers", negative)
-        self.assertIn("hand fused to weapon", negative)
-        self.assertIn("extra animal legs", negative)
-        self.assertIn("animal-human hybrid", negative)
-        self.assertIn("wrong-period weapon", negative)
-        self.assertIn("fantasy armor", negative)
-        self.assertIn("modern tactical gear", negative)
-
-    def test_global_style_uses_thick_ink_and_historical_accuracy_priority(self):
+    def test_global_style_uses_variable_ink_and_historical_accuracy_priority(self):
         prompt = prompt_builder.build_image_prompt(
             (
                 "Year/period: 400~415년; Exact place: 신라 종발성; "
@@ -628,13 +1488,46 @@ class ImagePromptGuardTests(unittest.TestCase):
         negative = prompt_builder.append_prompt_specific_negative_prompt("", prompt)
         comfy_prompt, comfy_negative = _enforce_comfyui_common_positive_prompt(prompt, negative)
 
-        self.assertIn("extra-thick black outer contours", prompt)
+        self.assertIn("variable-width scratchy dip-pen linework", prompt)
+        self.assertIn("aged fibrous print-stock grain", prompt)
         self.assertIn("Historical material accuracy outranks style", prompt)
-        self.assertIn("Default visible hand budget is zero", prompt)
-        self.assertIn("extra-thick black ink contour lines", comfy_prompt)
+        self.assertNotIn("Default visible hand budget is zero", prompt)
+        self.assertIn("stay secondary to the requested face, torso, named prop, and environment", prompt)
+        self.assertIn("variable-width scratchy dip-pen contour lines", comfy_prompt)
+        self.assertIn("dense hatching with intersecting hatch strokes", comfy_prompt)
         self.assertIn("Historical material accuracy is higher priority than style", comfy_prompt)
         self.assertIn("default visible hand budget is zero", comfy_prompt)
+        self.assertNotIn("matte cel shading", comfy_prompt.lower())
         self.assertIn("hands added without scene reason", comfy_negative)
+
+    def test_final_dark_manhwa_style_rewrites_legacy_masculine_cel_prompt(self):
+        styled = _apply_longtube_dark_manhwa_style(
+            "2D hard-boiled rugged masculine historical action cartoon, "
+            "extra-thick bold black ink contour lines, matte cel shading"
+        )
+
+        self.assertTrue(styled.startswith("DEFAULT VISUAL STYLE LOCK"))
+        self.assertIn("variable-width scratchy dip-pen contour lines", styled)
+        self.assertIn("aged fibrous print-stock grain", styled)
+        self.assertNotIn("rugged masculine", styled.lower())
+        self.assertNotIn("matte cel shading", styled.lower())
+
+    def test_z_image_concise_costume_character_route_avoids_unrelated_scene_guards(self):
+        source = (
+            "Year/period: 1880s; Exact place: isolated open barren badlands; "
+            "Main subject: exactly one mature adult woman, age 28; "
+            "Scene: Exactly one mature adult woman with wind-worn skin; "
+            "Visible costume inventory: sleeveless weathered linen bodice and riding skirt"
+        )
+
+        guarded, _ = _enforce_comfyui_common_positive_prompt(source, "")
+        self.assertNotIn("MEDIEVAL WET LINEN SKIN CLOSEUP FIRST RULE", guarded)
+        self.assertTrue(_z_image_should_use_concise_costume_character_prompt(source))
+        concise = _z_image_concise_costume_character_prompt(source)
+        self.assertTrue(concise.startswith("Z-IMAGE CONCISE SINGLE-CHARACTER SCENE LOCK"))
+        self.assertIn("Visible costume inventory", concise)
+        self.assertIn("Both lower corners remain broad uninterrupted", concise)
+        self.assertNotIn("TEXTLESS SURFACE FIRST RULE", concise)
 
     def test_medieval_central_asian_context_gets_period_local_lock(self):
         prompt = prompt_builder.build_image_prompt(
@@ -1782,7 +2675,8 @@ class ImagePromptGuardTests(unittest.TestCase):
 
         self.assertTrue(comfy_prompt.startswith("TEXTLESS SURFACE FIRST RULE"))
         self.assertIn("BANNER ARMOR STORY FRAME", comfy_prompt)
-        self.assertIn("2D painted adult graphic novel illustration", comfy_prompt)
+        self.assertIn("DEFAULT VISUAL STYLE LOCK", comfy_prompt)
+        self.assertIn("aged fibrous print-stock grain", comfy_prompt)
         self.assertIn("BANNER CLOTH FIRST RULE", comfy_prompt)
         self.assertIn("ARMOR SURFACE FIRST RULE", comfy_prompt)
         self.assertIn("do-maru or haramaki-style torso wraps", comfy_prompt)
@@ -1810,7 +2704,8 @@ class ImagePromptGuardTests(unittest.TestCase):
         comfy_prompt, comfy_negative = _enforce_comfyui_common_positive_prompt(prompt, "")
 
         self.assertIn("MEDIEVAL JAPANESE ARMOR STORY FRAME", comfy_prompt)
-        self.assertIn("2D painted adult graphic novel illustration", comfy_prompt)
+        self.assertIn("DEFAULT VISUAL STYLE LOCK", comfy_prompt)
+        self.assertIn("aged fibrous print-stock grain", comfy_prompt)
         self.assertIn("every named person", comfy_prompt)
         self.assertIn("Only the person directly described as armored wears armor", comfy_prompt)
         self.assertIn("mothers, children, civilians", comfy_prompt)
@@ -3230,6 +4125,60 @@ class ImagePromptGuardTests(unittest.TestCase):
         self.assertNotIn("frame rails", prompt.lower())
         self.assertNotIn("retainers recoil in confusion", prompt.lower())
         self.assertNotIn("simple cartoon", prompt.lower())
+
+    def test_freeform_scene_label_does_not_turn_global_abstract_maps_style_into_map_cut(self):
+        prompt = prompt_builder.build_image_prompt(
+            (
+                "ANATOMY LOCK FIRST: every visible human has exactly one head, two arms, two legs. "
+                "Ancient late-7th-century Goguryeo, Pyongyang fortress political collapse, "
+                "serious adult Korean graphic novel manhwa. "
+                "SCENE: Three ambitious sons in ancient Goguryeo robes stare with blood-red eyes "
+                "from separate positions around a dark throne, each silhouette clear, hands hidden, "
+                "power lust visible through expressions and lighting.; "
+                "NARRATION VISUAL ALIGNMENT: match this cut's spoken moment through visible action."
+            ),
+            (
+                "Stylish high-impact historical documentary illustration. Avoid flat explanatory shots, "
+                "generic landscapes, generic buildings, calm distant crowds, unreadable symbolic filler, "
+                "and abstract maps unless the narration directly requires a map. "
+                "First five cuts prioritize scroll-stopping hook images."
+            ),
+            enable_historical_guard=True,
+        )
+
+        self.assertIn("Three ambitious sons in ancient Goguryeo robes", prompt)
+        self.assertIn("attention-grabbing hook images", prompt)
+        self.assertNotIn("first visible subject: the requested strategic planning evidence", prompt)
+        self.assertNotIn("EMPTY EVIDENCE FRAME LOCK", prompt)
+        self.assertNotIn("low horizontal tactile marker layout", prompt)
+        self.assertNotIn("rolled blank cream paper bundles", prompt)
+
+    def test_freeform_symbol_scene_uses_generic_object_evidence_not_map_surface(self):
+        prompt = prompt_builder.build_image_prompt(
+            (
+                "Ancient late-7th-century Goguryeo, Pyongyang fortress political collapse, "
+                "serious adult Korean graphic novel manhwa. "
+                "SCENE: A blood-and-iron royal power symbol shakes from its roots: "
+                "a massive cracked stone throne and iron pillar split upward, red light glowing "
+                "through the base, shattered spearheads around it, no marks in corners.; "
+                "NARRATION VISUAL ALIGNMENT: match this cut's spoken moment through visible action."
+            ),
+            (
+                "Stylish high-impact historical documentary illustration. Avoid flat explanatory shots, "
+                "generic landscapes, generic buildings, calm distant crowds, unreadable symbolic filler, "
+                "and abstract maps unless the narration directly requires a map. "
+                "First five cuts prioritize scroll-stopping hook images."
+            ),
+            enable_historical_guard=True,
+        )
+
+        self.assertIn("massive cracked stone throne and iron pillar", prompt)
+        self.assertIn("attention-grabbing hook images", prompt)
+        self.assertIn("requested location, animal, or object only", prompt)
+        self.assertNotIn("first visible subject: the requested strategic planning evidence", prompt)
+        self.assertNotIn("Visible content is limited to the requested low horizontal surface", prompt)
+        self.assertNotIn("low horizontal tactile marker layout", prompt)
+        self.assertNotIn("rolled blank cream paper bundles", prompt)
 
     def test_group_floor_plan_uses_blank_planning_surface_with_people(self):
         prompt = prompt_builder.build_image_prompt(
@@ -5152,7 +6101,8 @@ class ImagePromptGuardTests(unittest.TestCase):
         self.assertIn("pre-gunpowder timber siege pressure before Ansi Fortress", final)
         self.assertIn("rough wooden ladders", final)
         self.assertIn("blank packed-earth fortress wall", final)
-        self.assertIn("thick black contours only around visible objects and figures", final)
+        self.assertIn("scratchy variable-width dip-pen contours", final)
+        self.assertIn("focal black silhouettes", final)
         self.assertIn("free of drawn ink borders", final)
         self.assertNotRegex(final.lower(), r"\b(?:giant|mechanical|cannon|artillery|gun barrel|metal tube)\b")
         self.assertIn("cannon", negative)
@@ -11607,7 +12557,8 @@ class ImagePromptGuardTests(unittest.TestCase):
         self.assertIn("Visible action: armored infantry march forward", final)
         self.assertLess(final.index("Render as"), final.index("Scene subject:"))
         self.assertIn("northeastern frontier", final)
-        self.assertIn("full-bleed 2D historical ink-and-cel", final)
+        self.assertIn("full-bleed dark historical ink-and-wash manhwa", final)
+        self.assertIn("hatched aged print grain", final)
         self.assertIn("Visible surface detail:", final)
         self.assertIn("mud", final)
         self.assertNotIn("bare textured plaster", final)
@@ -13556,3 +14507,100 @@ class ImagePromptGuardTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_task_historical_hard_lock_never_rewrites_positive_prompt() -> None:
+    original = (
+        "Scene: an archive chronicle beside family registers and one decisive object; "
+        "clean light-ivory paper, aged-paper patina, and paper-shadow. Two adults "
+        "exchange a royal seal in a guarded doorway beside a map, wooden tablet, "
+        "grave marker, shop sign, plaque, banner, and market storefront."
+    )
+    prompt, negative = _apply_task_historical_hard_lock(
+        original,
+        "unreadable text",
+        "Global style. HISTORICAL HARD LOCK: every image is specifically in Baekje, "
+        "Ungjin, 501 CE. No Yamato/Japanese reception hall, no Goryeo or Joseon "
+        "architecture. ANATOMY HARD LOCK: every person has two natural hands and limbs.",
+    )
+
+    assert prompt == original
+    assert "Japanese reception hall" in negative
+    assert "Joseon architecture" in negative
+    assert "extra fingers" in negative
+    for forbidden_injection in (
+        "burgundy cloth bundle",
+        "single covered authority bundle",
+        "bare timber chamber",
+        "open ground outline",
+        "plain unmarked stone",
+        "plain blank storefront",
+        "TASK SINGLE",
+        "TASK BAMBOO",
+        "TASK PEOPLE-ONLY",
+    ):
+        assert forbidden_injection not in prompt
+
+
+def test_comfyui_rewrites_backlit_human_silhouette_and_blocks_corner_signature() -> None:
+    prompt = (
+        "Scene: Restrained backlit silhouette at a guarded Han River crossing. "
+        "A focal adult person stands before surrounding figures."
+    )
+
+    comfy_prompt, comfy_negative = _enforce_comfyui_common_positive_prompt(prompt, "")
+
+    assert "backlit silhouette" not in comfy_prompt.lower()
+    assert "every foreground or focal person is fully rendered" in comfy_prompt.lower()
+    assert "no person is an opaque solid-black shape" in comfy_prompt.lower()
+    assert "featureless solid-black person" in comfy_negative.lower()
+    assert "bottom-right artist scrawl" in comfy_negative.lower()
+
+    original = (
+        "Scene: Restrained backlit silhouette at the mountain-ringed Ungjin capital. "
+        "A royal seal, guarded doorway, and shifting court posture. An archive "
+        "chronicle, family registers, one decisive object, map, wooden tablet, grave "
+        "marker, shop sign, market storefront, plaque, banner, and settlement remain visible."
+    )
+    final_prompt, final_negative = _enforce_final_visible_surface_textless_contract(
+        original,
+        "unreadable text",
+        "A conflicting source string must not overwrite the compiled positive prompt.",
+        literal_scene_prompt="For the first time.",
+    )
+
+    assert final_prompt == original
+    assert "artist signature" in final_negative.lower()
+    assert "bottom-left artist scrawl" in final_negative.lower()
+    for source_object in (
+        "royal seal",
+        "guarded doorway",
+        "archive",
+        "chronicle",
+        "family registers",
+        "one decisive object",
+        "map",
+        "wooden tablet",
+        "grave marker",
+        "shop sign",
+        "market storefront",
+        "plaque",
+        "banner",
+        "settlement",
+    ):
+        assert source_object in final_prompt.lower()
+        assert source_object not in final_negative.lower()
+    for forbidden_injection in (
+        "burgundy cloth bundle",
+        "single covered authority bundle",
+        "blank plaster court wall",
+        "bare timber chamber",
+        "open ground outline",
+        "plain unmarked stone",
+        "plain blank storefront",
+        "source scene literal preservation",
+        "final map composition override",
+        "final monument override",
+        "final landscape override",
+    ):
+        assert forbidden_injection not in final_prompt.lower()

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <defs>
+    <clipPath id="faceCrop"><rect x="735" y="0" width="545" height="720"/></clipPath>
+  </defs>
+  <rect width="1280" height="720" fill="#cbd5c8"/>
+  <path d="M0 250Q300 220 650 260Q980 225 1280 250V720H0Z" fill="#b88d5b"/>
+
+  <!-- Left: one empty straight-sided exposed kurgan pit profile. -->
+  <path d="M70 315L620 315L555 680H135Z" fill="#6f4c35" stroke="#4b3428" stroke-width="12"/>
+  <path d="M125 345L565 345L520 635H175Z" fill="#9b7048" stroke="#4b3428" stroke-width="10"/>
+  <path d="M145 415H545M155 500H532M165 580H520" fill="none" stroke="#745039" stroke-width="9"/>
+
+  <!-- Right: verified Gorodtsov portrait cropped to face only; no hands or limbs. -->
+  <image href="../../../.codex_tmp/gorodcov_reference.jpg" x="580" y="-30" width="954" height="1377" preserveAspectRatio="xMidYMin meet" clip-path="url(#faceCrop)"/>
+</svg>

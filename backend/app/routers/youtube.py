@@ -28,6 +28,7 @@ from app.services.youtube_service import (
     YouTubeAuthError,
     YouTubeUploadError,
     VALID_PRIVACY,
+    prepare_youtube_thumbnail_upload_path,
 )
 from app.services.thumbnail_service import (
     generate_thumbnail,
@@ -39,11 +40,18 @@ from app.services.thumbnail_service import (
     suppress_foreign_hangul_thumbnail_overlay,
     normalize_episode_label,
 )
-from app.services.image.factory import DEFAULT_THUMBNAIL_MODEL, resolve_image_model
+from app.services.image.factory import DEFAULT_THUMBNAIL_MODEL, resolve_thumbnail_model
 from app.services.llm.factory import get_llm_service
 from app.services.llm.base import BaseLLMService
 from app.services.title_utils import strong_main_upload_title
-from app.services.youtube_metadata import DEFAULT_MAX_TAGS, clean_tags, expand_tags, format_description
+from app.services.youtube_metadata import (
+    DEFAULT_MAX_TAGS,
+    clean_tags,
+    expand_tags,
+    format_description,
+    metadata_profile_from_config,
+    validate_metadata_for_profile,
+)
 from app.services.multilingual_caption_service import should_upload_youtube_captions, upload_multilingual_captions
 
 router = APIRouter()
@@ -173,6 +181,11 @@ def _final_video_path(project_id: str, config: Optional[dict] = None) -> Optiona
 
 def _thumbnail_path(project_id: str, config: Optional[dict] = None) -> Path:
     return _project_dir(project_id, config) / "output" / "thumbnail.png"
+
+
+def _youtube_thumbnail_upload_path(path: Path) -> Path:
+    """Backward-compatible router wrapper for the shared upload helper."""
+    return prepare_youtube_thumbnail_upload_path(path)
 
 
 def _caption_path(project_id: str, config: Optional[dict] = None) -> Path:
@@ -313,8 +326,8 @@ async def reset_auth():
 
 
 def _validate_channel(ch: int) -> int:
-    if ch not in (1, 2, 3, 4):
-        raise HTTPException(400, "channel 은 1~4 만 허용됩니다.")
+    if ch < 1 or ch > 32:
+        raise HTTPException(400, "channel 은 1~32 만 허용됩니다.")
     return ch
 
 
@@ -325,7 +338,7 @@ def _project_channel_id(project: Project) -> Optional[int]:
         ch = int(raw)
     except (TypeError, ValueError):
         return None
-    return ch if ch in (1, 2, 3, 4) else None
+    return ch if 1 <= ch <= 32 else None
 
 
 def _uploader_for_project(project: Project) -> YouTubeUploader:
@@ -539,6 +552,7 @@ async def create_thumbnail(
                 base_image_path=base_image,
                 episode_label=episode_label,
                 subtitle=subtitle,
+                config=config,
             )
         except ThumbnailError as e:
             raise HTTPException(500, f"썸네일 생성 실패: {e}")
@@ -556,7 +570,7 @@ async def create_thumbnail(
 
     # ─── 모드 2/3: AI 기반 ───
     # image 모델 결정
-    image_model_id = resolve_image_model(
+    image_model_id = resolve_thumbnail_model(
         body.image_model or config.get("thumbnail_model") or DEFAULT_THUMBNAIL_MODEL
     )
 
@@ -853,6 +867,7 @@ async def recommend_tags(
         narration=narration_snippet,
         language=language,
         max_tags=body.max_tags,
+        profile=metadata_profile_from_config(project.config or {}),
     )
 
     return {
@@ -933,6 +948,7 @@ async def recommend_metadata(
         topic=topic,
         narration=narration_snippet,
         language=language,
+        profile=metadata_profile_from_config(project.config or {}),
     )
 
     # tags 폴백
@@ -949,6 +965,7 @@ async def recommend_metadata(
         narration=narration_snippet,
         language=language,
         max_tags=body.max_tags,
+        profile=metadata_profile_from_config(project.config or {}),
     )
 
     return {
@@ -1069,16 +1086,18 @@ async def upload_to_youtube(
     #   body.description > config.youtube_description > script.json description > project.topic
     _cfg_desc = ((project.config or {}).get("youtube_description") or "").strip()
     _script_desc = ""
-    if not body.description and not _cfg_desc:
-        try:
-            import json
-            _script_path = _project_dir(project_id, project.config or {}) / "script.json"
-            if _script_path.exists():
-                with open(_script_path, "r", encoding="utf-8") as _sf:
-                    _script_data = json.load(_sf)
+    _script_data: dict = {}
+    try:
+        import json
+        _script_path = _project_dir(project_id, project.config or {}) / "script.json"
+        if _script_path.exists():
+            with open(_script_path, "r", encoding="utf-8") as _sf:
+                loaded_script = json.load(_sf)
+            if isinstance(loaded_script, dict):
+                _script_data = loaded_script
                 _script_desc = (_script_data.get("description") or "").strip()
-        except Exception:
-            pass
+    except Exception:
+        pass
     description = (body.description or _cfg_desc or _script_desc or project.topic or "").strip()
     narration_seed = _collect_narration(db, project_id, limit=2500)
     upload_language = body.language or (project.config or {}).get("language") or "ko"
@@ -1088,6 +1107,7 @@ async def upload_to_youtube(
         topic=project.topic or "",
         narration=narration_seed,
         language=upload_language,
+        profile=metadata_profile_from_config(project.config or {}),
     )
     upload_tags = expand_tags(
         body.tags or [],
@@ -1096,7 +1116,31 @@ async def upload_to_youtube(
         narration=narration_seed,
         language=upload_language,
         max_tags=DEFAULT_MAX_TAGS,
+        profile=metadata_profile_from_config(project.config or {}),
     )
+    metadata_profile = metadata_profile_from_config(project.config or {})
+    validate_metadata_for_profile(
+        title=title,
+        description=description,
+        tags=upload_tags,
+        profile=metadata_profile,
+    )
+    from app.services.youtube_localization_service import (
+        build_youtube_metadata_localizations,
+    )
+
+    metadata_localizations = await build_youtube_metadata_localizations(
+        title=title,
+        description=description,
+        script=_script_data,
+        config=project.config or {},
+    )
+    upload_category_id = str(
+        body.category_id
+        or (project.config or {}).get("youtube_category_id")
+        or (project.config or {}).get("category_id")
+        or ""
+    ).strip() or None
 
     # 썸네일 경로 결정
     thumb_path: Optional[str] = None
@@ -1134,13 +1178,24 @@ async def upload_to_youtube(
             None,
             body.privacy,
             upload_language,
-            body.category_id,
+            upload_category_id,
             body.made_for_kids,
             None,  # progress_callback (아직 프론트로 연결 안 함)
+            comment_topic=(project.topic or _script_data.get("topic") or title),
         )
         result = {**result, "studio_verified": False, "processing_verified": False}
+        if metadata_localizations and result.get("video_id"):
+            localization_result = await asyncio.to_thread(
+                uploader.set_video_localizations,
+                str(result.get("video_id")),
+                metadata_localizations,
+                default_language=upload_language,
+                default_audio_language=upload_language,
+            )
+            result["localization_languages"] = localization_result.get("languages") or []
         if thumb_path and result.get("video_id"):
             try:
+                thumb_path = str(_youtube_thumbnail_upload_path(Path(thumb_path)))
                 thumb_result = await asyncio.to_thread(
                     uploader.set_thumbnail,
                     str(result.get("video_id")),
@@ -1172,8 +1227,10 @@ async def upload_to_youtube(
     caption_result = None
     caption_error = None
     caption_file = _caption_path(project_id, project.config or {})
-    if result.get("video_id") and _should_upload_caption(project.config or {}) and caption_file.exists():
+    if result.get("video_id") and _should_upload_caption(project.config or {}):
         try:
+            if not caption_file.exists() or caption_file.stat().st_size <= 100:
+                raise RuntimeError(f"유효한 SRT가 없습니다: {caption_file}")
             caption_result = await upload_multilingual_captions(
                 uploader,
                 str(result.get("video_id")),
@@ -1182,7 +1239,8 @@ async def upload_to_youtube(
             )
         except Exception as e:
             caption_error = str(e)
-            print(f"[youtube upload] caption upload failed (non-fatal): {e}")
+            print(f"[youtube upload] caption upload failed (fatal): {e}")
+            raise HTTPException(500, f"YouTube 자막 업로드 실패: {e}")
 
     project.youtube_url = video_url
     if caption_result or caption_error:
@@ -1219,6 +1277,7 @@ async def upload_to_youtube(
         "studio_verified": bool(result.get("studio_verified")),
         "caption_uploaded": caption_result is not None,
         "caption_error": caption_error,
+        "top_comment": result.get("top_comment"),
     }
 
 

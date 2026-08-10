@@ -69,5 +69,119 @@
       "images": ["6", 0],
       "filename_prefix": "${PREFIX}"
     }
+  },
+  "26": {
+    "class_type": "UltralyticsDetectorProvider",
+    "inputs": {
+      "model_name": "segm/person_yolov8m-seg.pt"
+    }
+  },
+  "32": {
+    "class_type": "ImpactCount_Elts_in_SEGS",
+    "inputs": {
+      "segs": ["44", 0]
+    }
+  },
+  "33": {
+    "class_type": "Display Int (rgthree)",
+    "inputs": {
+      "input": ["32", 0]
+    }
+  },
+  "34": {
+    "class_type": "UltralyticsDetectorProvider",
+    "inputs": {
+      "model_name": "bbox/face_yolov8m.pt"
+    }
+  },
+  "35": {
+    "class_type": "BboxDetectorSEGS",
+    "inputs": {
+      "bbox_detector": ["34", 0],
+      "image": ["6", 0],
+      "threshold": 0.35,
+      "dilation": 4,
+      "crop_factor": 1.25,
+      "drop_size": 20,
+      "labels": "all"
+    }
+  },
+  "36": {
+    "class_type": "ImpactCount_Elts_in_SEGS",
+    "inputs": {
+      "segs": ["35", 0]
+    }
+  },
+  "37": {
+    "class_type": "Display Int (rgthree)",
+    "inputs": {
+      "input": ["36", 0]
+    }
+  },
+  "38": {
+    "class_type": "SegmDetectorSEGS",
+    "inputs": {
+      "segm_detector": ["26", 1],
+      "image": ["6", 0],
+      "threshold": 0.25,
+      "dilation": 4,
+      "crop_factor": 1.2,
+      "drop_size": 32,
+      "labels": "person"
+    }
+  },
+  "39": {
+    "class_type": "ImpactCount_Elts_in_SEGS",
+    "inputs": {
+      "segs": ["38", 0]
+    }
+  },
+  "40": {
+    "class_type": "Display Int (rgthree)",
+    "inputs": {
+      "input": ["39", 0]
+    }
+  },
+  "44": {
+    "class_type": "SegmDetectorSEGS",
+    "inputs": {
+      "segm_detector": ["26", 1],
+      "image": ["6", 0],
+      "threshold": 0.42,
+      "dilation": 12,
+      "crop_factor": 1.35,
+      "drop_size": 64,
+      "labels": "person"
+    }
+  },
+  "45": {
+    "class_type": "UltralyticsDetectorProvider",
+    "inputs": {
+      "model_name": "bbox/yolov8m.pt"
+    }
+  },
+  "46": {
+    "class_type": "BboxDetectorSEGS",
+    "inputs": {
+      "bbox_detector": ["45", 0],
+      "image": ["6", 0],
+      "threshold": 0.32,
+      "dilation": 2,
+      "crop_factor": 1.1,
+      "drop_size": 32,
+      "labels": "cow"
+    }
+  },
+  "47": {
+    "class_type": "ImpactCount_Elts_in_SEGS",
+    "inputs": {
+      "segs": ["46", 0]
+    }
+  },
+  "48": {
+    "class_type": "Display Int (rgthree)",
+    "inputs": {
+      "input": ["47", 0]
+    }
   }
 }

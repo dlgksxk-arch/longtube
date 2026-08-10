@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <defs>
+    <linearGradient id="air16" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7893a1"/>
+      <stop offset="1" stop-color="#4f7082"/>
+    </linearGradient>
+    <linearGradient id="earth16" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#93623f"/>
+      <stop offset="0.5" stop-color="#b07b4d"/>
+      <stop offset="1" stop-color="#855538"/>
+    </linearGradient>
+    <radialGradient id="gold16" cx="36%" cy="28%" r="72%">
+      <stop offset="0" stop-color="#fae985"/>
+      <stop offset="0.58" stop-color="#d9ad32"/>
+      <stop offset="1" stop-color="#976616"/>
+    </radialGradient>
+  </defs>
+  <rect width="1280" height="720" fill="url(#air16)"/>
+  <path d="M0 0 H1280 V164
+           C1225 198 1164 198 1110 164
+           C1054 208 976 207 920 159
+           C862 202 785 197 735 151
+           C680 199 596 198 543 150
+           C489 203 403 205 345 156
+           C292 200 213 200 160 160
+           C108 200 48 197 0 169 Z"
+        fill="#e5e2d6"/>
+  <path d="M0 169 C48 197 108 200 160 160 C213 200 292 200 345 156 C403 205 489 203 543 150 C596 198 680 199 735 151 C785 197 862 202 920 159 C976 207 1054 208 1110 164 C1164 198 1225 198 1280 164"
+        fill="none" stroke="#403c37" stroke-width="12" stroke-linejoin="round"/>
+  <path d="M0 495 Q300 475 640 492 T1280 490 V720 H0 Z" fill="url(#earth16)"/>
+  <path d="M0 495 Q300 475 640 492 T1280 490" fill="none" stroke="#493426" stroke-width="12"/>
+  <path d="M0 585 Q300 552 650 578 T1280 570" fill="none" stroke="#6f4932" stroke-width="8" opacity="0.55"/>
+  <g id="messenger-disk">
+    <ellipse cx="640" cy="394" rx="86" ry="27" fill="#263944" opacity="0.32"/>
+    <circle cx="640" cy="364" r="70" fill="url(#gold16)" stroke="#3f3218" stroke-width="13"/>
+    <circle cx="640" cy="364" r="47" fill="none" stroke="#f5d969" stroke-width="7"/>
+  </g>
+</svg>

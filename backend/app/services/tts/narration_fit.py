@@ -14,6 +14,11 @@ from typing import Any, Optional
 
 from app import config as app_config
 from app.services.llm.factory import get_llm_service
+from app.services.tts.alignment import (
+    copy_alignment_sidecar,
+    remove_alignment_sidecar,
+    scale_alignment_sidecar,
+)
 from app.services.tts.base import _resolve_bins
 
 
@@ -269,6 +274,8 @@ def _fit_audio_duration_in_place(path: str, current_duration: float, config: dic
             return current_duration
         os.replace(tmp, path)
         measured = _probe_audio_duration(path) or final_target
+        if current_duration > final_target and measured > 0:
+            scale_alignment_sidecar(path, measured / current_duration)
         if log:
             log(f"local duration fit: {current_duration:.2f}s -> {measured:.2f}s")
         return measured
@@ -434,6 +441,7 @@ async def generate_tts_with_auto_narration_fit(
     script: dict | None = None,
     same_text_attempts: int = 1,
     max_rewrites: int = 0,
+    request_context: dict | None = None,
     log=None,
 ) -> dict:
     """Generate TTS, repairing narration text only when measured timing misses."""
@@ -453,12 +461,17 @@ async def generate_tts_with_auto_narration_fit(
     for attempt in range(configured_max_rewrites + 1):
         candidate_path = _candidate_audio_path(audio_path, attempt)
         temp_paths.append(candidate_path)
+        generate_kwargs = {
+            "speed": speed,
+            "voice_settings": voice_settings,
+        }
+        if request_context is not None:
+            generate_kwargs["request_context"] = request_context
         result = await tts_service.generate(
             current,
             voice_id,
             candidate_path,
-            speed=speed,
-            voice_settings=voice_settings,
+            **generate_kwargs,
         )
         duration = float(result.get("duration") or 0.0)
         if attempt == 0:
@@ -564,11 +577,14 @@ async def generate_tts_with_auto_narration_fit(
         fitted_spoken_duration = min(max_sec, _hard_max_duration(config))
     if chosen_path != audio_path:
         shutil.copyfile(chosen_path, audio_path)
+        if not copy_alignment_sidecar(chosen_path, audio_path):
+            remove_alignment_sidecar(audio_path)
     for path in temp_paths:
         try:
             os.remove(path)
         except OSError:
             pass
+        remove_alignment_sidecar(path)
     final_result["path"] = _relative_output_path(audio_path)
     final_result["original_duration"] = original_duration or final_duration
     final_result["spoken_duration"] = fitted_spoken_duration

@@ -177,6 +177,19 @@ export interface ProjectConfig {
   tts_voice_id: string;
   tts_voice_lang?: string;
   tts_voice_preset?: string;
+  /** 역할별 추가 음성. 실제 컷 TTS는 화자 정보가 없으면 해설자를 사용한다. */
+  tts_voice_male_1_id?: string;
+  tts_voice_male_1_lang?: string;
+  tts_voice_male_1_preset?: string;
+  tts_voice_male_2_id?: string;
+  tts_voice_male_2_lang?: string;
+  tts_voice_male_2_preset?: string;
+  tts_voice_female_1_id?: string;
+  tts_voice_female_1_lang?: string;
+  tts_voice_female_1_preset?: string;
+  tts_voice_female_2_id?: string;
+  tts_voice_female_2_lang?: string;
+  tts_voice_female_2_preset?: string;
   /** 음성 속도. 1.0=기본, <1.0=느리게, >1.0=빠르게. OpenAI:0.25~4.0, ElevenLabs:0.7~1.2. */
   tts_speed?: number;
   language: string;
@@ -213,6 +226,10 @@ export interface ProjectConfig {
   };
   subtitle_delivery?: string;
   youtube_captions_enabled?: boolean;
+  /** Sparse Korean-variety key-point captions; full narration remains in SRT. */
+  variety_highlights_enabled?: boolean;
+  variety_highlight_panel_mode?: "emotion_auto" | "fixed";
+  variety_highlight_style?: string;
   /** v1.1.55: YouTube 공개 범위 — "private" | "unlisted" | "public" */
   youtube_privacy?: string;
   /** v1.1.55: YouTube 업로드 대상 채널 1~4. 0/null = 자동. */
@@ -1393,6 +1410,7 @@ export interface OneClickQueueItem {
   topic: string;
   template_project_id: string | null;
   target_duration: number | null;  // 초 단위. null 이면 템플릿 기본값
+  target_cuts?: number | null;     // 준비 대본의 실제 컷 수. 지정 시 4초/컷으로 고정
   channel: number;                 // v1.1.57: 채널 1~4 (기본 1)
   // v1.2.9: 에피소드 상세 — 스크립트 생성 프롬프트에 주입된다.
   openings?: string[];             // 오프닝 대사 1~5 (고정 길이 5, 빈 문자열 허용)
@@ -1436,6 +1454,7 @@ export const oneclickApi = {
     topic: string;
     title?: string;
     target_duration?: number;
+    target_cuts?: number;
     // v1.2.9: 에피소드 상세 — 스크립트 프롬프트에 주입.
     openings?: string[];
     endings?: string[];
@@ -1560,6 +1579,19 @@ export const oneclickApi = {
     api.post(
       `/oneclick/queue/run-next${typeof channel === "number" ? `?channel=${channel}` : ""}`,
     ),
+  runQueueBatch: (count: 2 | 3 | 4): Promise<{
+    ok: boolean;
+    first_task: OneClickTask;
+    batch: {
+      active: boolean;
+      requested_count: number;
+      started_count: number;
+      interval_seconds: number;
+      started_task_ids: string[];
+      next_start_at: string | null;
+      error: string | null;
+    };
+  }> => api.post(`/oneclick/queue/run-batch`, { count }),
   recoverExistingQueueItem: (itemId: string): Promise<{
     ok: boolean;
     task: OneClickTask | null;

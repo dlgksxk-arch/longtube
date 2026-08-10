@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#99968e"/>
+  <g fill="#b99b70" stroke="#403832" stroke-width="13"><rect x="45" y="45" width="350" height="265" rx="22"/><rect x="885" y="45" width="350" height="265" rx="22"/><rect x="45" y="410" width="350" height="265" rx="22"/><rect x="885" y="410" width="350" height="265" rx="22"/></g>
+  <path d="M105 230 Q220 85 335 230 Z" fill="#a8845e" stroke="#403832" stroke-width="12"/><circle cx="220" cy="180" r="28" fill="#a96240" stroke="#403832" stroke-width="8"/>
+  <ellipse cx="1060" cy="180" rx="70" ry="100" fill="#9e6a42" stroke="#403832" stroke-width="12"/><path d="M1005 160 H1115 M1010 205 H1110" stroke="#d0a06b" stroke-width="9"/>
+  <rect x="105" y="475" width="230" height="130" fill="none" stroke="#403832" stroke-width="12"/><path d="M105 540 H335 M180 475 V605 M260 475 V605" stroke="#665446" stroke-width="9"/>
+  <path d="M930 520 Q1040 465 1155 520 T1230 520 Q1120 590 1010 545 T930 550 Z" fill="#718f98" stroke="#403832" stroke-width="10"/>
+  <g fill="none" stroke="#665446" stroke-width="17"><path d="M395 175 L540 300 M885 175 L740 300 M395 545 L540 420 M885 545 L740 420"/></g>
+  <path d="M500 410 Q640 205 780 410 Z" fill="#a8845e" stroke="#403832" stroke-width="15"/><rect x="575" y="410" width="130" height="105" fill="#6f513c" stroke="#403832" stroke-width="12"/>
+</svg>

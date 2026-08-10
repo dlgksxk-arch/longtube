@@ -1116,9 +1116,12 @@ export default function QueuePage() {
     setRecovering(true);
     setErr(null);
     try {
-      await oneclickApi.recoverProject(pid);
+      const recovered = await oneclickApi.recoverProject(pid);
+      setTasks((prev) => [
+        recovered,
+        ...prev.filter((task) => task.task_id !== recovered.task_id),
+      ]);
       setRecoverInput("");
-      await load();
     } catch (e: any) {
       setErr(e?.message || String(e) || "복구 실패");
     } finally {

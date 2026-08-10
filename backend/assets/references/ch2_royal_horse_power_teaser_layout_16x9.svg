@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#a5a39b"/>
+  <rect x="60" y="75" width="1160" height="570" rx="28" fill="#c9cfcc" stroke="#414846" stroke-width="16"/>
+  <g fill="#9e6a42" stroke="#41403b" stroke-width="12"><rect x="135" y="250" width="300" height="150" rx="60"/><path d="M385 275 L500 165 L555 205 L475 335 Z"/><circle cx="545" cy="195" r="45"/><rect x="175" y="390" width="42" height="150" rx="14"/><rect x="245" y="390" width="42" height="150" rx="14"/><rect x="330" y="390" width="42" height="150" rx="14"/><rect x="400" y="390" width="42" height="150" rx="14"/></g>
+  <circle cx="720" cy="235" r="68" fill="#80634e" stroke="#41403b" stroke-width="13"/>
+  <g fill="#a96240" stroke="#41403b" stroke-width="10"><circle cx="970" cy="170" r="45"/><circle cx="1080" cy="255" r="45"/><circle cx="965" cy="350" r="45"/></g>
+  <rect x="650" y="425" width="470" height="150" fill="#b99b70" stroke="#41403b" stroke-width="13"/><path d="M650 500 H1120 M745 425 V575 M840 425 V575 M935 425 V575 M1030 425 V575" stroke="#5e7141" stroke-width="9"/>
+</svg>

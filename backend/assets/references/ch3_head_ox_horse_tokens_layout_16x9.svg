@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <defs>
+    <linearGradient id="earth26" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#d5bd8e"/>
+      <stop offset="0.55" stop-color="#b89262"/>
+      <stop offset="1" stop-color="#8e6b48"/>
+    </linearGradient>
+    <linearGradient id="shroud26" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#b2936d"/>
+      <stop offset="1" stop-color="#6f5239"/>
+    </linearGradient>
+    <linearGradient id="clay26" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#d1a66e"/>
+      <stop offset="1" stop-color="#875b38"/>
+    </linearGradient>
+  </defs>
+  <rect width="1280" height="720" fill="url(#earth26)"/>
+  <g fill="none" stroke="#765b3f" stroke-width="7" opacity="0.34" stroke-linecap="round">
+    <path d="M0 116 Q286 82 610 123 T1280 105"/>
+    <path d="M0 603 Q318 568 647 614 T1280 589"/>
+  </g>
+
+  <g id="closed-shroud26">
+    <ellipse cx="791" cy="464" rx="343" ry="54" fill="#4c3828" opacity="0.3"/>
+    <path d="M505 257 Q735 211 1006 271 Q1065 348 1015 438 Q754 500 507 433 Q462 349 505 257 Z" fill="url(#shroud26)" stroke="#3b2d23" stroke-width="15"/>
+    <path d="M552 285 Q774 248 970 296 M530 350 Q770 316 1000 359 M553 416 Q778 449 967 411" fill="none" stroke="#c9ad82" stroke-width="9" opacity="0.62"/>
+    <path d="M620 245 Q760 343 904 244 M614 450 Q760 365 912 453" fill="none" stroke="#5c4431" stroke-width="11" opacity="0.72"/>
+    <path d="M505 289 Q470 348 509 409" fill="none" stroke="#d5bc91" stroke-width="12" opacity="0.74"/>
+  </g>
+
+  <g id="ox-head-token26" transform="translate(92 204)">
+    <rect x="0" y="0" width="175" height="225" rx="42" fill="url(#clay26)" stroke="#4b3325" stroke-width="14"/>
+    <path d="M65 92 Q36 84 18 55 Q43 54 64 69 Q75 77 82 91 M110 92 Q139 84 157 55 Q132 54 111 69 Q100 77 93 91" fill="none" stroke="#4b3325" stroke-width="13" stroke-linecap="round"/>
+    <path d="M46 94 Q87 55 129 94 L120 165 Q87 194 55 165 Z" fill="#b57d4d" stroke="#4b3325" stroke-width="12"/>
+    <path d="M48 101 L33 86 L54 80 M126 101 L142 86 L121 80" fill="#b57d4d" stroke="#4b3325" stroke-width="10" stroke-linejoin="round"/>
+    <ellipse cx="69" cy="120" rx="9" ry="8" fill="#34261f"/>
+    <ellipse cx="106" cy="120" rx="9" ry="8" fill="#34261f"/>
+    <path d="M73 158 Q87 168 102 158" fill="none" stroke="#4b3325" stroke-width="8" stroke-linecap="round"/>
+  </g>
+
+  <g id="horse-head-token26" transform="translate(290 204)">
+    <rect x="0" y="0" width="175" height="225" rx="42" fill="url(#clay26)" stroke="#4b3325" stroke-width="14"/>
+    <path d="M58 89 L50 43 Q75 51 85 75 L111 55 Q132 84 122 116 L111 169 Q86 194 62 166 L46 118 Z" fill="#b57d4d" stroke="#4b3325" stroke-width="12" stroke-linejoin="round"/>
+    <path d="M77 83 Q96 95 117 91" fill="none" stroke="#6e452e" stroke-width="9" stroke-linecap="round"/>
+    <ellipse cx="79" cy="113" rx="9" ry="8" fill="#34261f"/>
+    <path d="M67 158 Q85 168 105 158" fill="none" stroke="#4b3325" stroke-width="8" stroke-linecap="round"/>
+  </g>
+</svg>

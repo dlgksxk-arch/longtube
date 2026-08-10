@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#bd9562"/>
+
+  <!-- Upper-left: one isolated cattle horn core, never a skull or face. -->
+  <path d="M110 245 Q260 95 455 150 Q310 165 145 315 Q118 300 110 245 Z"
+        fill="#ded1ac" stroke="#4b3428" stroke-width="14"/>
+  <path d="M152 270 Q285 150 410 160" fill="none" stroke="#a99a78" stroke-width="10"/>
+
+  <!-- Upper-right: one isolated curled sheep horn core, no skull or facial features. -->
+  <path d="M1025 150 C1185 150 1210 350 1050 385 C900 418 820 280 905 190 C960 132 1080 165 1085 250 C1090 320 1010 342 968 300"
+        fill="none" stroke="#4b3428" stroke-width="68" stroke-linecap="round"/>
+  <path d="M1025 150 C1185 150 1210 350 1050 385 C900 418 820 280 905 190 C960 132 1080 165 1085 250 C1090 320 1010 342 968 300"
+        fill="none" stroke="#d0bd91" stroke-width="45" stroke-linecap="round"/>
+
+  <!-- Lower-left and lower-right: exactly two fully closed hide-wrapped meat packets. -->
+  <rect x="155" y="445" width="380" height="190" rx="42" fill="#8f6546" stroke="#4b3428" stroke-width="14"/>
+  <path d="M345 448 V632 M160 540 H530" fill="none" stroke="#d0b078" stroke-width="15"/>
+  <path d="M210 490 L480 590 M480 490 L210 590" fill="none" stroke="#654634" stroke-width="8"/>
+
+  <rect x="745" y="445" width="380" height="190" rx="42" fill="#8f6546" stroke="#4b3428" stroke-width="14"/>
+  <path d="M935 448 V632 M750 540 H1120" fill="none" stroke="#d0b078" stroke-width="15"/>
+  <path d="M800 490 L1070 590 M1070 490 L800 590" fill="none" stroke="#654634" stroke-width="8"/>
+</svg>

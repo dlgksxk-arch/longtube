@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <defs><linearGradient id="tableMeal" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#c58f5b"/><stop offset="1" stop-color="#835237"/></linearGradient></defs>
+  <rect width="1280" height="720" fill="url(#tableMeal)"/>
+  <path d="M0 111 Q310 70 633 113 T1280 95 M0 609 Q320 563 642 611 T1280 584" fill="none" stroke="#65422e" stroke-width="8" opacity=".35"/>
+  <rect x="174" y="112" width="932" height="503" rx="66" fill="#8d5a39" stroke="#3e2e25" stroke-width="16"/>
+  <rect x="218" y="154" width="844" height="419" rx="43" fill="#bc8451" stroke="#dfa86b" stroke-width="11"/>
+  <g id="rice-bowl-meal"><path d="M298 321 Q430 277 562 321 L537 469 Q430 523 323 469Z" fill="#9e6842" stroke="#3d2d25" stroke-width="14"/><ellipse cx="430" cy="322" rx="112" ry="42" fill="#f3eee1" stroke="#3d2d25" stroke-width="10"/><g fill="#fffdf7"><ellipse cx="394" cy="316" rx="14" ry="8"/><ellipse cx="430" cy="307" rx="14" ry="8"/><ellipse cx="465" cy="319" rx="14" ry="8"/></g></g>
+  <g id="soup-bowl"><path d="M654 341 Q762 303 870 341 L846 465 Q762 509 678 465Z" fill="#6b4030" stroke="#342720" stroke-width="14"/><ellipse cx="762" cy="341" rx="91" ry="35" fill="#8b5937" stroke="#342720" stroke-width="9"/><path d="M709 339 Q762 313 814 339" fill="none" stroke="#6b8c47" stroke-width="13"/></g>
+  <g id="vegetable-dish"><ellipse cx="931" cy="475" rx="105" ry="62" fill="#a36b44" stroke="#3d2d25" stroke-width="13"/><g fill="#6f984d" stroke="#35542f" stroke-width="6"><path d="M868 468 q34-39 69 0 q-34 38-69 0Z"/><path d="M931 449 q34-39 69 0 q-34 38-69 0Z"/><path d="M905 493 q34-39 69 0 q-34 38-69 0Z"/></g></g>
+  <g id="one-pair-chopsticks" stroke="#3f2d23" stroke-width="11" stroke-linecap="round"><path d="M891 233 L1042 369"/><path d="M922 214 L1068 348"/></g>
+  <path d="M265 532 Q640 568 1008 526" fill="none" stroke="#d2b460" stroke-width="8" opacity=".8"/>
+</svg>

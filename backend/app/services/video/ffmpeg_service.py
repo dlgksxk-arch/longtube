@@ -1,9 +1,21 @@
 """FFmpeg local video generation."""
 import asyncio
 import os
+import re
 from typing import Optional
 from app.services.video.base import BaseVideoService
 from app.services.video.subprocess_helper import run_subprocess, find_ffmpeg
+
+
+LONGFORM_VIDEO_ENCODE_ARGS = [
+    "-c:v", "libx264",
+    "-preset", "medium",
+    "-crf", "16",
+    "-profile:v", "high",
+    "-level:v", "4.2",
+    "-pix_fmt", "yuv420p",
+    "-movflags", "+faststart",
+]
 
 
 def _resolve_ffmpeg_cmd(cmd: list[str]) -> list[str]:
@@ -158,30 +170,39 @@ class FFmpegService(BaseVideoService):
 
     @staticmethod
     async def probe_duration(video_path: str) -> float:
-        """ffprobe 로 영상 길이(초) 조회. 실패 시 0.0 반환."""
+        """영상 길이(초) 조회. ffprobe 가 없으면 ffmpeg stderr 를 파싱한다."""
         try:
             ffbin = find_ffmpeg()
         except RuntimeError:
             return 0.0
-        ffprobe = ffbin.replace("ffmpeg.exe", "ffprobe.exe").replace("ffmpeg", "ffprobe")
-        if not os.path.exists(ffprobe):
-            return 0.0
+        ffprobe = os.path.join(os.path.dirname(ffbin), "ffprobe.exe")
+        if os.path.exists(ffprobe):
+            try:
+                rc, stdout, _ = await run_subprocess(
+                    [ffprobe, "-v", "error", "-show_entries", "format=duration",
+                     "-of", "default=noprint_wrappers=1:nokey=1", video_path],
+                    timeout=30.0,
+                    capture_stdout=True,
+                    capture_stderr=False,
+                )
+                if rc == 0:
+                    txt = (stdout or b"").decode(errors="replace").strip()
+                    return float(txt) if txt else 0.0
+            except Exception:
+                pass
         try:
-            rc, stdout, _ = await run_subprocess(
-                [ffprobe, "-v", "error", "-show_entries", "format=duration",
-                 "-of", "default=noprint_wrappers=1:nokey=1", video_path],
+            rc, _, stderr = await run_subprocess(
+                [ffbin, "-hide_banner", "-i", video_path],
                 timeout=30.0,
-                capture_stdout=True,
-                capture_stderr=False,
+                capture_stdout=False,
+                capture_stderr=True,
             )
+            text = (stderr or b"").decode(errors="replace")
+            m = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", text)
+            if not m:
+                return 0.0
+            return int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
         except Exception:
-            return 0.0
-        if rc != 0:
-            return 0.0
-        txt = (stdout or b"").decode(errors="replace").strip()
-        try:
-            return float(txt) if txt else 0.0
-        except ValueError:
             return 0.0
 
     @staticmethod
@@ -306,6 +327,7 @@ class FFmpegService(BaseVideoService):
         video_paths: list[str],
         output_path: str,
         resolution: str = "1920x1080",
+        overlay_image_path: str | None = None,
     ) -> str:
         """여러 영상 클립을 재인코딩 concat 으로 이어붙임.
 
@@ -318,6 +340,9 @@ class FFmpegService(BaseVideoService):
         valid_paths = [p for p in video_paths if os.path.exists(p) and os.path.getsize(p) > 0]
         if not valid_paths:
             raise RuntimeError("merge_videos_reencode: no valid input files")
+        overlay_path = str(overlay_image_path or "").strip()
+        if overlay_path and not os.path.isfile(overlay_path):
+            raise FileNotFoundError(f"Overlay image not found: {overlay_path}")
 
         # Windows has a fairly small command-line length limit. The old
         # filter_complex path passes every clip as a separate "-i", which
@@ -335,13 +360,29 @@ class FFmpegService(BaseVideoService):
             pad_wh = resolution.replace("x", ":")
             cmd = [
                 "ffmpeg", "-y",
+                "-fflags", "+genpts",
                 "-f", "concat", "-safe", "0", "-i", concat_file,
-                "-vf",
-                f"scale={resolution}:force_original_aspect_ratio=decrease,"
-                f"pad={pad_wh}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30",
-                "-c:v", "libx264", "-preset", "ultrafast", "-crf", "20",
-                "-pix_fmt", "yuv420p",
+            ]
+            if overlay_path:
+                cmd += ["-loop", "1", "-framerate", "30", "-i", overlay_path]
+                cmd += [
+                    "-filter_complex",
+                    f"[0:v]scale={resolution}:force_original_aspect_ratio=decrease,"
+                    f"pad={pad_wh}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30[base];"
+                    f"[base][1:v]overlay=0:0:shortest=1[v]",
+                    "-map", "[v]", "-map", "0:a",
+                ]
+            else:
+                cmd += [
+                    "-vf",
+                    f"scale={resolution}:force_original_aspect_ratio=decrease,"
+                    f"pad={pad_wh}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30",
+                ]
+            cmd += [
+                "-af", "aresample=async=1:first_pts=0",
+                *LONGFORM_VIDEO_ENCODE_ARGS,
                 "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
+                "-avoid_negative_ts", "make_zero",
                 output_path,
             ]
             try:
@@ -356,6 +397,8 @@ class FFmpegService(BaseVideoService):
         inputs: list[str] = []
         for vp in valid_paths:
             inputs += ["-i", vp]
+        if overlay_path:
+            inputs += ["-loop", "1", "-framerate", "30", "-i", overlay_path]
 
         n = len(valid_paths)
         # v1.1.30: pad 필터는 WxH 지름길을 안 받아서 ``1920:1080`` 로 분리.
@@ -366,9 +409,13 @@ class FFmpegService(BaseVideoService):
                 f"[{i}:v]scale={resolution}:force_original_aspect_ratio=decrease,"
                 f"pad={pad_wh}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30[v{i}];"
             )
-            filter_parts.append(f"[{i}:a]aresample=48000[a{i}];")
+            filter_parts.append(f"[{i}:a]aresample=async=1:first_pts=0,aformat=sample_rates=48000[a{i}];")
         concat_inputs = "".join(f"[v{i}][a{i}]" for i in range(n))
-        filter_parts.append(f"{concat_inputs}concat=n={n}:v=1:a=1[v][a]")
+        if overlay_path:
+            filter_parts.append(f"{concat_inputs}concat=n={n}:v=1:a=1[base][a];")
+            filter_parts.append(f"[base][{n}:v]overlay=0:0:shortest=1[v]")
+        else:
+            filter_parts.append(f"{concat_inputs}concat=n={n}:v=1:a=1[v][a]")
         filter_complex = "".join(filter_parts)
 
         cmd = [
@@ -376,8 +423,7 @@ class FFmpegService(BaseVideoService):
             *inputs,
             "-filter_complex", filter_complex,
             "-map", "[v]", "-map", "[a]",
-            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "20",
-            "-pix_fmt", "yuv420p",
+            *LONGFORM_VIDEO_ENCODE_ARGS,
             "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
             output_path,
         ]
@@ -494,6 +540,61 @@ class FFmpegService(BaseVideoService):
         if rc != 0:
             err_text = (stderr or b"").decode(errors="replace")[:800]
             raise RuntimeError(f"FFmpeg subtitle burn failed: {err_text}")
+        return output_path
+
+    @staticmethod
+    async def mux_cut_audio(
+        video_path: str,
+        audio_path: str,
+        output_path: str,
+        *,
+        duration: float,
+        audio_start_offset: float = 0.0,
+        resolution: str = "1920x1080",
+    ) -> str:
+        """Replace a generated cut's audio with the cut TTS on the final timeline.
+
+        The cut timeline is:
+        video starts -> audio_start_offset silence -> full TTS -> trailing silence
+        until ``duration``. The video stream is padded by cloning the final frame
+        and then trimmed, so the next cut cannot start before the TTS slot ends.
+        """
+        if not os.path.exists(video_path):
+            raise FileNotFoundError(f"Video not found: {video_path}")
+        if not os.path.exists(audio_path):
+            raise FileNotFoundError(f"Audio not found: {audio_path}")
+
+        dur = max(0.1, float(duration or 0.0))
+        try:
+            offset_ms = max(0, int(round(float(audio_start_offset or 0.0) * 1000)))
+        except (TypeError, ValueError):
+            offset_ms = 0
+
+        audio_filter = "apad"
+        if offset_ms > 0:
+            audio_filter = f"adelay={offset_ms}:all=1,apad"
+
+        pad_wh = resolution.replace("x", ":")
+        filter_complex = (
+            f"[0:v]scale={resolution}:force_original_aspect_ratio=decrease,"
+            f"pad={pad_wh}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30,format=yuv420p,"
+            f"tpad=stop_mode=clone:stop_duration={dur:.3f},"
+            f"trim=duration={dur:.3f},setpts=PTS-STARTPTS[v];"
+            f"[1:a]{audio_filter},atrim=duration={dur:.3f},asetpts=PTS-STARTPTS[a]"
+        )
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", video_path,
+            "-i", audio_path,
+            "-filter_complex", filter_complex,
+            "-map", "[v]",
+            "-map", "[a]",
+            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "20",
+            "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
+            output_path,
+        ]
+        await FFmpegService._run_ffmpeg(cmd, timeout=300.0)
         return output_path
 
 
