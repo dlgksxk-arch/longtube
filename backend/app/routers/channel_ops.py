@@ -387,13 +387,14 @@ async def _translate_loaded_comments(comments: list[dict]) -> None:
     ]
     if not targets:
         return
-    if not config.OPENAI_API_KEY:
+    api_key = config.get_channel_comment_openai_api_key()
+    if not api_key:
         for index, _text in targets:
             comments[index]["translation_error"] = "OPENAI_API_KEY 가 설정되지 않았습니다."
         return
 
     try:
-        async with AsyncOpenAI(api_key=config.OPENAI_API_KEY) as client:
+        async with AsyncOpenAI(api_key=api_key) as client:
             response = await client.chat.completions.create(
                 model=COMMENT_TRANSLATION_MODEL,
                 messages=[
@@ -464,7 +465,8 @@ async def _generate_reply(target: CommentReplyTarget) -> str:
     comment_text = _clean_text(target.comment_text)
     if not comment_text:
         raise HTTPException(status_code=400, detail="댓글 내용이 비어 있습니다.")
-    if not config.OPENAI_API_KEY:
+    api_key = config.get_channel_comment_openai_api_key()
+    if not api_key:
         raise HTTPException(status_code=400, detail="OPENAI_API_KEY 가 설정되지 않았습니다.")
     profile = _reply_profile(target)
 
@@ -499,7 +501,7 @@ async def _generate_reply(target: CommentReplyTarget) -> str:
         },
     ]
 
-    async with AsyncOpenAI(api_key=config.OPENAI_API_KEY) as client:
+    async with AsyncOpenAI(api_key=api_key) as client:
         response = await client.chat.completions.create(
             model=COMMENT_REPLY_MODEL,
             messages=messages,

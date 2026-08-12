@@ -44,7 +44,7 @@ from app.services.shorts_service import (
     select_shorts_segments,
 )
 from app.services.remotion_shorts_renderer import SHARED_SHORTS_PIPELINE_ID
-from app.services.remotion_longform_renderer import render_remotion_longform
+from app.services.ffmpeg_longform_renderer import render_ffmpeg_longform
 from app.services.video.ffmpeg_service import FFmpegService
 from app.services.video.longform_header import (
     resolve_longform_channel_name,
@@ -1121,6 +1121,30 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
     output_dir.mkdir(parents=True, exist_ok=True)
     tmp_dir = project_dir / "tmp_render"
     tmp_dir.mkdir(parents=True, exist_ok=True)
+    render_progress_path = tmp_dir / "render_progress.json"
+
+    def _render_progress_callback(phase: str, base: float, span: float):
+        def callback(detail: dict) -> None:
+            try:
+                phase_progress = max(0.0, min(1.0, float(detail.get("progress") or 0.0)))
+                payload = {
+                    "phase": phase,
+                    "stage": detail.get("stage"),
+                    "completed_clips": int(detail.get("completedClips") or 0),
+                    "total_clips": int(detail.get("totalClips") or 0),
+                    "progress": round(max(0.0, min(1.0, base + span * phase_progress)), 6),
+                    "updated_at": detail.get("updatedAt"),
+                }
+                temporary = render_progress_path.with_name(".render_progress.json.tmp")
+                temporary.write_text(
+                    json.dumps(payload, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+                os.replace(temporary, render_progress_path)
+            except Exception as progress_error:
+                print(f"[subtitle/render] progress write skipped: {progress_error}")
+
+        return callback
 
     subtitle_file = subtitle_dir / "subtitles.ass"
     highlight_file = subtitle_dir / "variety_highlights.ass"
@@ -1187,6 +1211,14 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
         .all()
     )
     script_data = _load_script(project_id)
+    channel_id = infer_project_channel(project_id, project.config or {})
+    longform_title = resolve_longform_title(
+        project.title,
+        script_data,
+        config=project.config or {},
+        channel_id=channel_id,
+    )
+    longform_channel_name = resolve_longform_channel_name(project.config or {}, channel_id)
     script_cut_map = {
         int(item.get("cut_number")): item
         for item in (script_data.get("cuts", []) or [])
@@ -1280,11 +1312,13 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
     shorts_body_path = str(tmp_dir / "shorts_body_no_interludes.mp4")
     try:
         t_shorts_body = _t.time()
-        await render_remotion_longform(
+        await render_ffmpeg_longform(
             normalized_cuts,
             shorts_body_path,
             resolution=resolution,
             shorten_silence=False,
+            stream_copy_compatible_inputs=True,
+            progress_callback=_render_progress_callback("shorts-source", 0.0, 0.45),
         )
         print(
             f"[subtitle/render] shorts source merged without opening/intermission/ending "
@@ -1333,12 +1367,17 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
     body_timeline: list[dict] = []
     try:
         t_body = _t.time()
-        await render_remotion_longform(
+        # Runtime follows the measured narration and cut media.  The long-form
+        # renderer does not apply a fixed target-duration value.
+        await render_ffmpeg_longform(
             body_sequence,
             body_path,
             resolution=resolution,
+            title=longform_title,
+            channel_name=longform_channel_name,
             shorten_silence=True,
             timeline_out=body_timeline,
+            progress_callback=_render_progress_callback("body", 0.45, 0.50),
         )
         print(f"[subtitle/render] body merged in {_t.time()-t_body:.1f}s")
     except Exception as e:
@@ -1375,7 +1414,7 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
         float(item.get("silence_shortened_seconds") or 0.0) for item in body_timeline
     )
     print(
-        f"[subtitle/render] Remotion silence compressed to 50% "
+        f"[subtitle/render] FFmpeg silence compressed to 50% "
         f"saved={shortened_seconds:.3f}s"
     )
 
@@ -1454,7 +1493,15 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
     prepared_opening_duration = 0.0
     if opening_raw:
         opening_timeline = str(tmp_dir / "opening_timeline.mp4")
-        await _prepare_interlude_timeline_clip(opening_raw, opening_timeline, resolution)
+        await render_ffmpeg_longform(
+            [opening_raw],
+            opening_timeline,
+            resolution=resolution,
+            title=longform_title,
+            channel_name=longform_channel_name,
+            shorten_silence=False,
+            progress_callback=_render_progress_callback("opening", 0.95, 0.02),
+        )
         prepared_opening_duration = await FFmpegService.probe_duration(opening_timeline)
         if prepared_opening_duration <= 0.0:
             prepared_opening_duration = await _interlude_duration_seconds(
@@ -1464,7 +1511,15 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
     final_sequence.append(body_sub_path)
     if ending_raw:
         ending_timeline = str(tmp_dir / "ending_timeline.mp4")
-        await _prepare_interlude_timeline_clip(ending_raw, ending_timeline, resolution)
+        await render_ffmpeg_longform(
+            [ending_raw],
+            ending_timeline,
+            resolution=resolution,
+            title=longform_title,
+            channel_name=longform_channel_name,
+            shorten_silence=False,
+            progress_callback=_render_progress_callback("ending", 0.97, 0.02),
+        )
         final_sequence.append(ending_timeline)
 
     if opening_raw and (not cut_level_subs or subtitle_delivery == "youtube_caption"):
@@ -1477,25 +1532,27 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
             cut_video_durations=compressed_cut_durations,
         )
 
-    channel_id = infer_project_channel(project_id, project.config or {})
-    longform_title = resolve_longform_title(project.title, script_data)
-    longform_channel_name = resolve_longform_channel_name(project.config or {}, channel_id)
     print(
-        f"[subtitle/render] Remotion longform header prepared "
+        f"[subtitle/render] FFmpeg longform header prepared "
         f"title={longform_title!r} channel={longform_channel_name!r}"
     )
 
     try:
         t_final = _t.time()
-        await render_remotion_longform(
+        await FFmpegService.merge_videos(
             final_sequence,
             str(merged_output_path),
-            resolution=resolution,
-            title=longform_title,
-            channel_name=longform_channel_name,
-            shorten_silence=False,
         )
-        print(f"[subtitle/render] merged baseline saved in {_t.time()-t_final:.1f}s → {merged_output_path}")
+        _render_progress_callback("final-concat", 0.99, 0.01)({
+            "stage": "completed",
+            "progress": 1.0,
+            "completedClips": len(final_sequence),
+            "totalClips": len(final_sequence),
+        })
+        print(
+            f"[subtitle/render] stream-copy baseline saved in "
+            f"{_t.time()-t_final:.1f}s → {merged_output_path}"
+        )
     except Exception as e:
         import traceback
         print(f"[subtitle/render] MERGED CONCAT FAILED: {e}\n{traceback.format_exc()}")

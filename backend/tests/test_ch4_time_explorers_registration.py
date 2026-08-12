@@ -17,6 +17,7 @@ from app.services import oneclick_service as svc  # noqa: E402
 from app.services.oneclick_queue_normalizer import normalize_queue_state  # noqa: E402
 from scripts.ch4_register_time_explorers_queue import _registration_state, validate_prepared_scripts  # noqa: E402
 from scripts.ch4_time_explorers_workbook_to_prepared_scripts import (  # noqa: E402
+    _load_xlsx_workbook,
     build_prepared_scripts,
     write_prepared_scripts,
 )
@@ -107,6 +108,7 @@ def _write_workbook(
     *,
     include_variety_caption: bool = False,
     include_numberless_caption_row: bool = False,
+    absolute_relationship_targets: bool = False,
 ) -> None:
     names = ("Ep01_시체 재판", "Ep02_중세 동물 재판", "Ep03_세일럼 마녀 재판", "Ep04_교황 요안나 출산 소동")
     counts = (150, 150, 135, 149)
@@ -122,7 +124,7 @@ def _write_workbook(
     rels_xml = (
         '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
         + "".join(
-            f'<Relationship Id="rId{index}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet{index}.xml"/>'
+            f'<Relationship Id="rId{index}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="{("/xl/" if absolute_relationship_targets else "")}worksheets/sheet{index}.xml"/>'
             for index in range(1, 5)
         )
         + "</Relationships>"
@@ -251,6 +253,20 @@ def _write_workbook_5_7(path: Path) -> None:
 
 
 class Ch4TimeExplorersRegistrationTests(unittest.TestCase):
+    def test_loader_accepts_absolute_package_sheet_targets(self):
+        with tempfile.TemporaryDirectory() as temp:
+            workbook = Path(temp) / "absolute-targets.xlsx"
+            _write_workbook(workbook, absolute_relationship_targets=True)
+
+            sheets = _load_xlsx_workbook(workbook)
+
+        self.assertEqual([name for name, _ in sheets], [
+            "Ep01_시체 재판",
+            "Ep02_중세 동물 재판",
+            "Ep03_세일럼 마녀 재판",
+            "Ep04_교황 요안나 출산 소동",
+        ])
+
     def test_current_prepared_queue_contract_overrides_stale_task_cut_count(self):
         task = {
             "config": {

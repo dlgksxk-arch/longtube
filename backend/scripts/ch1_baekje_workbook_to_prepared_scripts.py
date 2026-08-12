@@ -43,9 +43,14 @@ DEFAULT_OUTPUT_DIR = resolve_project_dir(
 
 EXPECTED_SHEETS = tuple(f"{episode:02d}화" for episode in range(1, 41))
 EXPECTED_HEADERS = ("컷번호", "숏츠태그", "대사", "이미지프롬프트")
+VARIETY_CAPTION_HEADERS = (
+    "한국식 예능 자막 (전 컷 수록)",
+    "한국식 예능 자막",
+)
 EXPECTED_CUTS_PER_EPISODE = 150
 LEGACY_SOURCE_SHA256 = "AA6F37C166B4F135823201FA5EBBC6855C2F6F1202BE0D117844096DE7C1339C"
 FINAL_REVIEW_SOURCE_SHA256 = "B99193FE2645311E0CD6DF39309E029467D42BE4645830B5797C6DB7710EA137"
+FINAL_REVIEW_CONTENT_SHA256 = "E5A5FFD8D4F95F1A52563049F286DAD3E8F2F4877AECF65A2B161B9B6F145067"
 SOURCE_CONTRACTS: dict[str, dict[str, Any]] = {
     LEGACY_SOURCE_SHA256: {
         "schema": "baekje-integrated-v1",
@@ -57,6 +62,9 @@ SOURCE_CONTRACTS: dict[str, dict[str, Any]] = {
         "cleaned_prompt_count": 0,
         "shorts_cut_count": 2293,
     },
+}
+SOURCE_CONTENT_CONTRACTS: dict[str, dict[str, Any]] = {
+    FINAL_REVIEW_CONTENT_SHA256: SOURCE_CONTRACTS[FINAL_REVIEW_SOURCE_SHA256],
 }
 SHORTS_MARKER_RE = re.compile(r"^#([1-9]\d*)-([1-9]\d*)$")
 CJK_RE = re.compile(r"[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af]")
@@ -1357,6 +1365,26 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest().upper()
 
 
+def _source_content_sha256(workbook) -> str:
+    """Hash the authoritative A:D source contract while ignoring caption column E."""
+    payload = [
+        [
+            sheet_name,
+            [
+                [_text(workbook[sheet_name].cell(row, column).value) for column in range(1, 5)]
+                for row in range(1, 160)
+            ],
+        ]
+        for sheet_name in EXPECTED_SHEETS
+    ]
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest().upper()
+
+
 def clean_image_prompt(raw_prompt: Any, narration: Any) -> tuple[str, bool]:
     prompt = _text(raw_prompt)
     spoken = _text(narration)
@@ -1782,6 +1810,11 @@ def _build_episode(
     headers = tuple(_text(worksheet.cell(9, column).value) for column in range(1, 5))
     if headers != EXPECTED_HEADERS:
         raise ValueError(f"{sheet_name}: 헤더 불일치 {headers!r}")
+    variety_caption_header = _text(worksheet.cell(9, 5).value)
+    if variety_caption_header and variety_caption_header not in VARIETY_CAPTION_HEADERS:
+        raise ValueError(
+            f"{sheet_name}: 한국식 예능 자막 헤더 불일치 {variety_caption_header!r}"
+        )
 
     cuts: list[dict[str, Any]] = []
     marker_sequences: dict[int, list[int]] = {}
@@ -1797,6 +1830,9 @@ def _build_episode(
         narration = _text(worksheet.cell(row, 3).value)
         if not narration:
             raise ValueError(f"{sheet_name}: cut {cut_number} 대사 누락")
+        highlight_caption = _text(worksheet.cell(row, 5).value)
+        if variety_caption_header and not highlight_caption:
+            raise ValueError(f"{sheet_name}: cut {cut_number} 한국식 예능 자막 누락")
         image_prompt, was_cleaned = clean_image_prompt(
             worksheet.cell(row, 4).value,
             narration,
@@ -1822,8 +1858,7 @@ def _build_episode(
         if shorts_candidate:
             marker_sequences.setdefault(shorts_group, []).append(shorts_order)
 
-        cuts.append(
-            {
+        cut_payload = {
                 "cut_number": cut_number,
                 "narration": narration,
                 "image_prompt": image_prompt,
@@ -1841,7 +1876,9 @@ def _build_episode(
                 "shorts_title": "",
                 "shorts_score": 0,
             }
-        )
+        if highlight_caption:
+            cut_payload["highlight_caption"] = highlight_caption
+        cuts.append(cut_payload)
 
     if set(marker_sequences) != {1, 2, 3, 4}:
         raise ValueError(
@@ -1924,9 +1961,6 @@ def build_prepared_scripts(workbook_path: Path) -> tuple[list[dict[str, Any]], d
     if not workbook_path.is_file():
         raise FileNotFoundError(workbook_path)
     workbook_sha256 = _sha256(workbook_path)
-    source_contract = SOURCE_CONTRACTS.get(workbook_sha256)
-    if source_contract is None:
-        raise ValueError(f"검증되지 않은 백제사 통합대본 SHA-256: {workbook_sha256}")
     workbook = _load_xlsx_workbook(
         workbook_path,
         sheet_names=set(EXPECTED_SHEETS),
@@ -1935,6 +1969,15 @@ def build_prepared_scripts(workbook_path: Path) -> tuple[list[dict[str, Any]], d
         raise ValueError(
             "시트 구성 불일치: "
             f"expected={EXPECTED_SHEETS!r}, actual={tuple(workbook.sheetnames)!r}"
+        )
+    source_content_sha256 = _source_content_sha256(workbook)
+    source_contract = SOURCE_CONTRACTS.get(workbook_sha256)
+    if source_contract is None:
+        source_contract = SOURCE_CONTENT_CONTRACTS.get(source_content_sha256)
+    if source_contract is None:
+        raise ValueError(
+            "검증되지 않은 백제사 통합대본: "
+            f"file_sha256={workbook_sha256}, content_sha256={source_content_sha256}"
         )
 
     created_at = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
@@ -1977,6 +2020,7 @@ def build_prepared_scripts(workbook_path: Path) -> tuple[list[dict[str, Any]], d
     manifest = {
         "source_workbook": str(workbook_path),
         "source_sha256": workbook_sha256,
+        "source_content_sha256": source_content_sha256,
         "source_size": workbook_path.stat().st_size,
         "source_contract": source_contract["schema"],
         "episode_count": len(scripts),

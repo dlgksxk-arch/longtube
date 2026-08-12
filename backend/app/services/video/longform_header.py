@@ -7,6 +7,11 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
+from app.services.video.channel_episode_titles import (
+    resolve_channel_episode_title,
+    validate_channel_title_language,
+)
+
 
 CHANNEL_DISPLAY_NAMES = {
     1: "10분역공",
@@ -40,11 +45,55 @@ def resolve_longform_channel_name(config: dict | None, channel_id: int | None) -
     return CHANNEL_DISPLAY_NAMES.get(int(channel_id or 0), "")
 
 
-def resolve_longform_title(project_title: str | None, script: dict | None) -> str:
+def _episode_number(
+    project_title: str | None,
+    script: dict,
+    config: dict,
+) -> int | None:
+    for value in (
+        config.get("episode_number"),
+        script.get("episode_number"),
+    ):
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            continue
+        if number > 0:
+            return number
+    match = re.search(
+        r"\bEP(?:ISODE)?\.?\s*(\d{1,3})\b",
+        str(script.get("title") or project_title or ""),
+        re.IGNORECASE,
+    )
+    return int(match.group(1)) if match else None
+
+
+def resolve_longform_title(
+    project_title: str | None,
+    script: dict | None,
+    *,
+    config: dict | None = None,
+    channel_id: int | None = None,
+) -> str:
     source = script if isinstance(script, dict) else {}
+    cfg = config if isinstance(config, dict) else {}
+    if int(channel_id or 0) == 3:
+        for value in (
+            cfg.get("longform_title"),
+            source.get("longform_title"),
+            source.get("title_ja"),
+        ):
+            if str(value or "").strip():
+                return validate_channel_title_language(str(value), channel_id)
+        reviewed = resolve_channel_episode_title(
+            channel_id,
+            _episode_number(project_title, source, cfg),
+        )
+        if reviewed:
+            return validate_channel_title_language(reviewed, channel_id)
     topic = str(source.get("topic") or "").strip()
     if topic:
-        return re.sub(r"\s+", " ", topic)
+        return validate_channel_title_language(topic, channel_id)
     title = str(source.get("title") or project_title or "").strip()
     title = re.sub(
         r"^.*?[-–—]?\s*EP(?:ISODE)?\.?\s*\d+\s*[:：\-–—]?\s*",
@@ -52,7 +101,7 @@ def resolve_longform_title(project_title: str | None, script: dict | None) -> st
         title,
         flags=re.IGNORECASE,
     )
-    return re.sub(r"\s+", " ", title)
+    return validate_channel_title_language(title, channel_id)
 
 
 def _font(size: int) -> ImageFont.ImageFont:

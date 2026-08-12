@@ -3811,14 +3811,14 @@ class ChannelOpsCommentLoadingTests(unittest.TestCase):
             {"text": "한국어 댓글입니다."},
         ]
         original_openai = channel_ops_router.AsyncOpenAI
-        original_key = app_config.OPENAI_API_KEY
+        original_key_getter = app_config.get_channel_comment_openai_api_key
         try:
             channel_ops_router.AsyncOpenAI = FakeOpenAI
-            app_config.OPENAI_API_KEY = "test-key"
+            app_config.get_channel_comment_openai_api_key = lambda: "test-key"
             asyncio.run(channel_ops_router._translate_loaded_comments(comments))
         finally:
             channel_ops_router.AsyncOpenAI = original_openai
-            app_config.OPENAI_API_KEY = original_key
+            app_config.get_channel_comment_openai_api_key = original_key_getter
 
         self.assertEqual(captured["texts"], ["日本語の使い方が意味わかんねぇ"])
         self.assertEqual(comments[0]["translated_text"], "일본어 사용법이 이해가 잘 안 되네요.")

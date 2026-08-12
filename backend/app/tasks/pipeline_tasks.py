@@ -2225,10 +2225,9 @@ def _step_video(project_id: str, config: dict):
     # 실패해도 생성 완료된 컷을 다시 만들지 않게 하기 위한 안전장치.
     db.commit()
 
-    # 컷-only 병합본은 videos/merged.mp4 에 둔다.
-    # output/merged.mp4 는 렌더 단계에서 오프닝/인터미션/엔딩까지 포함한 무BGM 기준본으로 만든다.
-    merged = str(project_dir / "videos" / "merged.mp4")
-    from app.services.remotion_longform_renderer import render_remotion_longform as _render_longform
+    # Full timeline assembly is deferred to the render step.  Creating
+    # videos/merged.mp4 here was a complete duplicate pass that was overwritten
+    # by the silence-compressed body during rendering.
     if not video_paths:
         raise RuntimeError(
             f"영상 클립이 하나도 생성되지 않았습니다 (총 {len(all_cuts)}컷). "
@@ -2242,7 +2241,6 @@ def _step_video(project_id: str, config: dict):
         video_paths = [p for p in video_paths if _os.path.exists(p)]
     if not video_paths:
         raise RuntimeError("영상 클립 파일이 모두 디스크에서 누락되었습니다.")
-    run_async(_render_longform(video_paths, merged, resolution=_cut_mux_resolution(aspect_ratio)))
 
     db.commit()
     db.close()

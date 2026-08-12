@@ -26,7 +26,7 @@
 - **클라우드 AI**: Anthropic / OpenAI / ElevenLabs / fal.ai / xAI / Kling / Runway / Midjourney
 
 ## 현재 버전
-- **V4.0** — `backend/app/main.py`, `/api/health`, `frontend/src/lib/version.ts` 기준. `frontend/package.json` 메타 버전은 `4.0.0`.
+- **V4.1** — `backend/app/main.py`, `/api/health`, `frontend/src/lib/version.ts` 기준. `frontend/package.json` 메타 버전은 `4.1.0`.
 
 ## 폴더 구조
 ```

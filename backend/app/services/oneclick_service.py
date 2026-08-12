@@ -4091,8 +4091,8 @@ def _compute_progress_pct(task: dict, *, verify_outputs: bool = True) -> float:
     """task 상태 + Redis 컷 카운터를 읽어 0~100 의 총 진행률을 계산.
 
     각 step_num 의 기여도(STEP_WEIGHTS) 는 완료 시 100% 더해지고, 실행 중인
-    스텝은 (컷카운터 / 총 컷 수) 비율만큼 부분 가산된다. render(6) 만 컷 단위
-    카운터가 없어 'running' 이면 0, 'completed' 면 풀 가산.
+    스텝은 (컷카운터 / 총 컷 수) 비율만큼 부분 가산된다. render(6) 은
+    FFmpeg 렌더 상태 파일의 실제 클립 진행률을 사용한다.
 
     v1.1.38: 부수효과로 task["current_step_completed/total/label"] 도 갱신하여
     UI 가 "N/M 컷" 표시를 바로 쓸 수 있게 한다.
@@ -4158,10 +4158,30 @@ def _compute_progress_pct(task: dict, *, verify_outputs: bool = True) -> float:
                 running_labels.append(label)
                 continue
             if step_num == 6:
-                # 렌더링은 컷 단위 카운터가 없음 — 단계 라벨만 노출
+                # FFmpeg long-form renderer writes real clip progress while
+                # normalizing and concatenating.  Surface it instead of leaving
+                # the Workbench fixed at the step boundary.
+                try:
+                    progress_path = resolve_project_dir(
+                        project_id,
+                        task.get("config") if isinstance(task.get("config"), dict) else {},
+                        create=False,
+                    ) / "tmp_render" / "render_progress.json"
+                    progress_data = json.loads(progress_path.read_text(encoding="utf-8"))
+                    render_ratio = max(
+                        0.0,
+                        min(1.0, float(progress_data.get("progress") or 0.0)),
+                    )
+                    pct += weight * render_ratio
+                    completed = int(progress_data.get("completed_clips") or 0)
+                    total_for_step = int(progress_data.get("total_clips") or 0)
+                    task["completed_cuts_by_step"][str(step_num)] = completed
+                    task["current_step_completed"] = completed
+                    task["current_step_total"] = total_for_step
+                    task["current_step_cut_progress_pct"] = round(render_ratio * 100, 1)
+                except Exception:
+                    pass
                 running_labels.append(label)
-                task["current_step_completed"] = 0
-                task["current_step_total"] = 0
                 continue
             if step_num == 2:
                 raw = _redis_get(f"pipeline:step_progress:{project_id}:{step_num}")

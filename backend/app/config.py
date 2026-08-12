@@ -38,6 +38,10 @@ DB_PATH = BASE_DIR / "data" / "longtube.db"                       # 로컬 DB
 # User policy (2026-07-27): LongTube must not call any OpenAI API unless this
 # source-level lock is deliberately changed after explicit user authorization.
 OPENAI_API_DISABLED = True
+# Explicit user authorization (2026-08-11): OpenAI remains disabled for the
+# production pipeline, but Channel Operations may use GPT for viewer-comment
+# translation and replies.
+OPENAI_CHANNEL_COMMENTS_ENABLED = True
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 OPENAI_API_KEY = "" if OPENAI_API_DISABLED else os.getenv("OPENAI_API_KEY", "")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
@@ -72,6 +76,13 @@ def get_runtime_api_key(name: str) -> str:
     if OPENAI_API_DISABLED and name in {"OPENAI_API_KEY", "OPENAI_ADMIN_KEY"}:
         return ""
     return _read_env_file_value(name) or os.environ.get(name, "") or globals().get(name, "") or ""
+
+
+def get_channel_comment_openai_api_key() -> str:
+    """Return the OpenAI key only for Channel Operations comment features."""
+    if not OPENAI_CHANNEL_COMMENTS_ENABLED:
+        return ""
+    return _read_env_file_value("OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY", "") or ""
 
 
 def require_openai_api_enabled() -> None:

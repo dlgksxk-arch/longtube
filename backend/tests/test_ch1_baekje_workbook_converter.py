@@ -25,12 +25,47 @@ from scripts.ch1_baekje_workbook_to_prepared_scripts import (
     _ep03_full_frame_qa_location,
     _ep03_full_frame_qa_scene,
     _resolve_cut_visual_context,
+    _source_content_sha256,
     _shorts_fields,
     clean_image_prompt,
 )
 
 
 class BaekjePreparedScriptConverterTest(unittest.TestCase):
+    def test_source_content_hash_ignores_caption_column_only(self):
+        class Cell:
+            def __init__(self, value):
+                self.value = value
+
+        class Sheet:
+            def __init__(self, source_value: str, caption_value: str):
+                self.source_value = source_value
+                self.caption_value = caption_value
+
+            def cell(self, row: int, column: int):
+                if row == 10 and column == 3:
+                    return Cell(self.source_value)
+                if row == 10 and column == 5:
+                    return Cell(self.caption_value)
+                return Cell("")
+
+        class Workbook:
+            def __init__(self, source_value: str, caption_value: str):
+                self.sheets = {
+                    f"{episode:02d}화": Sheet(source_value, caption_value)
+                    for episode in range(1, 41)
+                }
+
+            def __getitem__(self, name: str):
+                return self.sheets[name]
+
+        original = _source_content_sha256(Workbook("원본 대사", ""))
+        caption_extended = _source_content_sha256(Workbook("원본 대사", "새 자막"))
+        changed_source = _source_content_sha256(Workbook("변경 대사", "새 자막"))
+
+        self.assertEqual(original, caption_extended)
+        self.assertNotEqual(original, changed_source)
+
     def test_clean_image_prompt_removes_generated_korean_context(self):
         narration = "왕이 성문을 열었습니다."
         raw = (

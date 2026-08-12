@@ -424,9 +424,9 @@ async def build_interlude_sequence(
 
     # 2) 본편을 먼저 타임스탬프 재생성 병합
     body_path = str(output_dir / "body_merged.mp4")
-    from app.services.remotion_longform_renderer import render_remotion_longform
+    from app.services.ffmpeg_longform_renderer import render_ffmpeg_longform
     ff = FFmpegService()
-    await render_remotion_longform(body_sequence, body_path, resolution=resolution)
+    await render_ffmpeg_longform(body_sequence, body_path, resolution=resolution)
 
     # 3) 오프닝 + 본편을 크로스페이드로 이어붙이기
     FADE_SEC = 0.5

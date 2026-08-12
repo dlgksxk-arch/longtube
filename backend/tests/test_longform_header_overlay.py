@@ -10,6 +10,7 @@ from app.services.video.longform_header import (
     resolve_longform_channel_name,
     resolve_longform_title,
 )
+from app.services.video.channel_episode_titles import CH3_EPISODE_TITLES_JA
 
 
 def test_longform_header_uses_registered_channel_names_and_script_title(tmp_path: Path):
@@ -21,6 +22,16 @@ def test_longform_header_uses_registered_channel_names_and_script_title(tmp_path
     assert resolve_longform_title("DB title", {"title": "백제사-EP15: 이전 제목", "topic": "  실제   제목  "}) == "실제 제목"
     assert resolve_longform_title("DB title", {"title": "백제사-EP15: 불교 문화의 황금기"}) == "불교 문화의 황금기"
     assert resolve_longform_title("DB title", {"title": "Ep.10 10,000m 추락 생존자"}) == "10,000m 추락 생존자"
+    assert resolve_longform_title(
+        "독한 술 8통과 쿠시나다히메 EP.15",
+        {
+            "title": "일본사 시크릿-EP15: 독한 술 8통과 쿠시나다히메",
+            "topic": "독한 술 8통과 쿠시나다히메",
+            "episode_number": 15,
+        },
+        config={"language": "ja", "episode_number": 15},
+        channel_id=3,
+    ) == "八つの酒樽とクシナダヒメ"
 
     output = create_longform_header_overlay(
         tmp_path / "header.png",
@@ -48,6 +59,22 @@ def test_longform_header_uses_registered_channel_names_and_script_title(tmp_path
             for x in range(900, 1280)
             for y in range(0, 150)
         )
+
+
+def test_ch3_longform_title_rejects_hangul_without_reviewed_title():
+    with pytest.raises(ValueError, match="contains Hangul"):
+        resolve_longform_title(
+            "한국어 제목 EP.41",
+            {"topic": "한국어 제목", "episode_number": 41},
+            config={"language": "ja", "episode_number": 41},
+            channel_id=3,
+        )
+
+
+def test_ch3_reviewed_longform_titles_cover_remaining_episodes():
+    assert set(CH3_EPISODE_TITLES_JA) == set(range(15, 41))
+    assert all(title.strip() for title in CH3_EPISODE_TITLES_JA.values())
+    assert all(not any("가" <= char <= "힣" for char in title) for title in CH3_EPISODE_TITLES_JA.values())
 
 
 @pytest.mark.asyncio

@@ -935,50 +935,23 @@ async def generate_all_videos(project_id: str, db: Session = Depends(get_db)):
                 "error": str(e)
             })
 
-    # Merge all clips into final video
+    # Long-form assembly belongs to the render step.  Building merged.mp4 here
+    # rendered the same complete timeline again and the render step overwrote it.
     merged_path = None
     if clip_paths:
-        try:
-            merged_path = str(video_dir / "merged.mp4")
-            from app.services.remotion_longform_renderer import render_remotion_longform
-            await render_remotion_longform(
-                clip_paths, merged_path, resolution=_cut_mux_resolution(aspect_ratio)
-            )
-
-            # Mark step completed
-            step_states = dict(project.step_states or {})
-            step_states["5"] = "completed"
-            project.step_states = step_states
-            db.commit()
-
-            # 간지영상이 준비돼 있으면 final_with_interludes.mp4 까지 자동 생성
-            interlude_info = None
-            try:
-                from app.routers.interlude import build_interlude_sequence
-                interlude_info = await build_interlude_sequence(project, project_id, db)
-                if interlude_info and interlude_info.get("status") == "composed":
-                    print(
-                        f"[video/generate] interlude auto-compose → "
-                        f"{interlude_info.get('output_path')}"
-                    )
-            except Exception as ie:
-                import traceback
-                print(
-                    f"[video/generate] interlude auto-compose failed (non-fatal): "
-                    f"{ie}\n{traceback.format_exc()}"
-                )
-
-            return {
-                "project_id": project_id,
-                "video_model": video_model,
-                "results": results,
-                "total": len(cuts),
-                "completed": sum(1 for r in results if r["status"] == "completed"),
-                "merged_video": merged_path,
-                "interlude": interlude_info,
-            }
-        except Exception as e:
-            raise HTTPException(500, f"Video merge failed: {str(e)}")
+        step_states = dict(project.step_states or {})
+        step_states["5"] = "completed"
+        project.step_states = step_states
+        db.commit()
+        return {
+            "project_id": project_id,
+            "video_model": video_model,
+            "results": results,
+            "total": len(cuts),
+            "completed": sum(1 for r in results if r["status"] == "completed"),
+            "merged_video": None,
+            "interlude": None,
+        }
     else:
         return {
             "project_id": project_id,
@@ -1341,64 +1314,12 @@ async def generate_all_videos_async(project_id: str, db: Session = Depends(get_d
                 f"primary_disabled={primary_disabled[0]}"
             )
 
-            # 메인 세션 재개 — merge & step_state 업데이트
+            # 메인 세션 재개 — long-form assembly is deferred to auto-render.
             local_db = SessionLocal()
-
-            # Merge
-            merge_ok = True
-            if clip_paths:
-                try:
-                    from app.services.remotion_longform_renderer import render_remotion_longform
-                    await render_remotion_longform(
-                        clip_paths, str(v_dir / "merged.mp4"), resolution=_cut_mux_resolution(aspect_ratio)
-                    )
-                except Exception as merge_err:
-                    import traceback
-                    merge_tb = traceback.format_exc()
-                    print(f"[video-async] Merge failed: {merge_err}\n{merge_tb}")
-                    merge_ok = False
-                    tb_lines = [ln for ln in merge_tb.strip().splitlines() if ln.strip()]
-                    tail = "\n".join(tb_lines[-6:])
-                    exc_line = (
-                        f"{type(merge_err).__name__}: {merge_err}"
-                        if str(merge_err)
-                        else f"{type(merge_err).__name__}: (no message)"
-                    )
-                    record_item_error(
-                        project_id,
-                        "video",
-                        0,  # 0 = merge step, not a specific cut
-                        f"MERGE FAILED — {exc_line}\n---\n{tail}\n(컷은 전부 생성됐지만 병합이 실패했습니다. 자막 렌더 단계에서 자동 재시도합니다.)",
-                    )
 
             proj = local_db.query(Project).filter(Project.id == project_id).first()
             ss = dict(proj.step_states or {})
             if clip_paths:
-                # Auto-compose final_with_interludes.mp4 if interlude clips exist
-                if merge_ok:
-                    try:
-                        from app.routers.interlude import build_interlude_sequence
-                        inter_info = await build_interlude_sequence(
-                            proj, project_id, local_db
-                        )
-                        if inter_info and inter_info.get("status") == "composed":
-                            print(
-                                f"[video-async] interlude auto-compose → "
-                                f"{inter_info.get('output_path')} "
-                                f"(clips={inter_info.get('total_clips')})"
-                            )
-                        else:
-                            print(
-                                f"[video-async] interlude auto-compose skipped: "
-                                f"{inter_info.get('reason') if inter_info else 'no result'}"
-                            )
-                    except Exception as ie:
-                        import traceback
-                        print(
-                            f"[video-async] interlude auto-compose FAILED "
-                            f"(non-fatal): {ie}\n{traceback.format_exc()}"
-                        )
-
                 # v2.1.1: 영상 생성 완료 후 자동 렌더링 (자막 번인 포함)
                 _auto_render_log = str(resolve_project_dir(project_id, proj.config if proj else {}, create=True) / "auto_render.log")
                 try:
@@ -1797,37 +1718,6 @@ async def resume_videos_async(project_id: str, db: Session = Depends(get_db)):
 
             local_db = SessionLocal()
 
-            # Merge all clips (existing + newly generated). Always re-collect
-            # from DB so already-completed clips are included in merge order.
-            try:
-                db_cuts = local_db.query(Cut).filter(Cut.project_id == project_id).order_by(Cut.cut_number).all()
-                ordered_clips = [_to_absolute(project_id, c.video_path) for c in db_cuts if c.video_path]
-            except Exception:
-                ordered_clips = []
-            if ordered_clips:
-                try:
-                    from app.services.remotion_longform_renderer import render_remotion_longform
-                    await render_remotion_longform(
-                        ordered_clips, str(v_dir / "merged.mp4"), resolution=_cut_mux_resolution(aspect_ratio)
-                    )
-                except Exception as merge_err:
-                    import traceback
-                    merge_tb = traceback.format_exc()
-                    print(f"[video-resume] Merge failed: {merge_err}\n{merge_tb}")
-                    tb_lines = [ln for ln in merge_tb.strip().splitlines() if ln.strip()]
-                    tail = "\n".join(tb_lines[-6:])
-                    exc_line = (
-                        f"{type(merge_err).__name__}: {merge_err}"
-                        if str(merge_err)
-                        else f"{type(merge_err).__name__}: (no message)"
-                    )
-                    record_item_error(
-                        project_id,
-                        "video",
-                        0,
-                        f"MERGE FAILED — {exc_line}\n---\n{tail}\n(컷은 전부 생성됐지만 병합이 실패했습니다. 자막 렌더 단계에서 자동 재시도합니다.)",
-                    )
-
             # Determine final step state based on whether ANY cut in the whole project has video
             proj = local_db.query(Project).filter(Project.id == project_id).first()
             db_cuts = local_db.query(Cut).filter(Cut.project_id == project_id).order_by(Cut.cut_number).all()
@@ -1839,25 +1729,6 @@ async def resume_videos_async(project_id: str, db: Session = Depends(get_db)):
                 local_db.commit()
                 complete_task(project_id, "video")
                 print(f"[video-resume] DONE: {sum(1 for c in db_cuts if c.video_path)}/{len(db_cuts)} total clips")
-
-                # Auto-compose final_with_interludes.mp4 if interlude clips exist
-                try:
-                    from app.routers.interlude import build_interlude_sequence
-                    inter_info = await build_interlude_sequence(
-                        proj, project_id, local_db
-                    )
-                    if inter_info and inter_info.get("status") == "composed":
-                        print(
-                            f"[video-resume] interlude auto-compose → "
-                            f"{inter_info.get('output_path')} "
-                            f"(clips={inter_info.get('total_clips')})"
-                        )
-                except Exception as ie:
-                    import traceback
-                    print(
-                        f"[video-resume] interlude auto-compose FAILED "
-                        f"(non-fatal): {ie}\n{traceback.format_exc()}"
-                    )
 
                 # v2.1.1: 영상 생성 완료 후 자동 렌더링 (자막 번인 포함)
                 _auto_render_log = str(resolve_project_dir(project_id, proj.config if proj else {}, create=True) / "auto_render.log")

@@ -209,7 +209,11 @@ def _load_xlsx_workbook(workbook_path: Path) -> list[tuple[str, dict[int, dict[i
             target = targets.get(relationship_id)
             if not name or not target:
                 raise ValueError(f"worksheet relationship is incomplete: {name!r}")
-            sheet_path = str(PurePosixPath("xl") / PurePosixPath(target)).replace("xl/xl/", "xl/")
+            normalized_target = str(target).lstrip("/")
+            if normalized_target.startswith("xl/"):
+                sheet_path = normalized_target
+            else:
+                sheet_path = str(PurePosixPath("xl") / PurePosixPath(normalized_target))
             result.append((name, _read_sheet_rows(book, sheet_path, shared_strings)))
     return result
 
