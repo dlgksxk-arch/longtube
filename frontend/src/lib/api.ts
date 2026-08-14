@@ -1448,6 +1448,9 @@ export interface OneClickQueueItem {
   core_content?: string;           // 이번 에피소드 핵심 내용 (자유 서술)
   // v1.2.10: 시리즈 연속성.
   episode_number?: number | null;  // 이번 에피소드 번호 (1 이상 정수, null 이면 미지정)
+  series?: string;
+  episode_code?: string;
+  episode_id?: string;
   next_episode_preview?: string;   // 다음 에피소드 예고 (엔딩 부근에 자연스럽게 노출)
   // v1.2.30: 대기열 등록 경로/시각. 라이브 큐에서 "자동 실행 03:00",
   // "수동 등록", "복구" 등 운영 판단 정보를 보여준다.
@@ -1475,6 +1478,16 @@ export interface OneClickQueueState {
   channel_presets?: Record<string, string | null>;
   last_run_dates: Record<string, string | null>;  // 백엔드가 관리하는 읽기 전용 필드
   items: OneClickQueueItem[];
+}
+
+export interface QueueScriptRegistration {
+  item_id: string;
+  registered: boolean;
+  preset_id?: string | null;
+  source_name?: string | null;
+  source_path?: string | null;
+  reason?: "preset_missing" | "preset_not_found" | "validation_error" | "not_found" | string;
+  error?: string;
 }
 
 export const oneclickApi = {
@@ -1587,6 +1600,8 @@ export const oneclickApi = {
 
   // v1.1.43: 주제 큐
   getQueue: (): Promise<OneClickQueueState> => api.get(`/oneclick/queue`),
+  getQueueScriptStatus: (): Promise<{ items: QueueScriptRegistration[] }> =>
+    api.get(`/oneclick/queue/script-status`),
   getAutoProduction: (): Promise<{ enabled: boolean; remaining_seconds: number }> =>
     api.get(`/oneclick/queue/auto-production`),
   setAutoProduction: (enabled: boolean): Promise<{ enabled: boolean; remaining_seconds: number }> =>

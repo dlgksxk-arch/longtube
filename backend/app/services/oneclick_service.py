@@ -115,7 +115,13 @@ from app.services.youtube_publish_schedule import next_production_publish_schedu
 
 # v1.1.52: pipeline_tasks 의 _redis_get 을 사용 — 인메모리 fallback 포함이라
 # Redis 없어도 같은 프로세스 내에서 진행률을 정확히 읽는다.
-from app.tasks.pipeline_tasks import _redis_get, _redis_delete, run_async, PipelineCancelled
+from app.tasks.pipeline_tasks import (
+    _load_prepared_script,
+    _redis_delete,
+    _redis_get,
+    PipelineCancelled,
+    run_async,
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -10532,6 +10538,86 @@ def get_queue() -> dict[str, Any]:
         "channel_presets": dict(_QUEUE.get("channel_presets") or {}),
         "items": list(_QUEUE.get("items") or []),
     }
+
+
+def _queue_item_prepared_script_config(item: dict[str, Any], project: Project) -> dict[str, Any]:
+    """Build the same episode identity used when a queue item starts production."""
+    config = dict(project.config or {})
+    try:
+        episode_number = int(item.get("episode_number") or 0)
+    except (TypeError, ValueError):
+        episode_number = 0
+    if episode_number > 0:
+        config["episode_number"] = episode_number
+
+    episode_code = str(item.get("episode_code") or item.get("episode_id") or "").strip()
+    if episode_code:
+        config["episode_code"] = episode_code
+        config["episode_id"] = episode_code
+
+    for key in ("target_cuts", "target_duration"):
+        try:
+            value = int(item.get(key) or 0)
+        except (TypeError, ValueError):
+            value = 0
+        if value > 0:
+            config[key] = value
+    return config
+
+
+def get_queue_script_status() -> dict[str, Any]:
+    """Return read-only prepared-script registration status for every queue item.
+
+    Registration is decided by the production pipeline's own prepared-script
+    loader, including episode matching and validation. Queue state is not changed.
+    """
+    _ensure_state_loaded()
+    project_cache: dict[str, Optional[Project]] = {}
+    rows: list[dict[str, Any]] = []
+    for index, raw_item in enumerate(_QUEUE.get("items") or []):
+        item = dict(raw_item or {})
+        item_id = str(item.get("id") or f"queue-index-{index}")
+        preset_id = _resolve_item_preset(item)
+        row: dict[str, Any] = {
+            "item_id": item_id,
+            "registered": False,
+            "preset_id": preset_id,
+            "source_name": None,
+        }
+        if not preset_id:
+            row["reason"] = "preset_missing"
+            rows.append(row)
+            continue
+
+        if preset_id not in project_cache:
+            project_cache[preset_id] = _load_project(preset_id)
+        project = project_cache[preset_id]
+        if project is None:
+            row["reason"] = "preset_not_found"
+            rows.append(row)
+            continue
+
+        config = _queue_item_prepared_script_config(item, project)
+        try:
+            prepared = _load_prepared_script(
+                preset_id,
+                config,
+                str(item.get("topic") or "").strip(),
+            )
+        except Exception as exc:
+            row["reason"] = "validation_error"
+            row["error"] = f"{type(exc).__name__}: {exc}"
+            rows.append(row)
+            continue
+        if prepared:
+            _script, source_path = prepared
+            row["registered"] = True
+            row["source_name"] = Path(source_path).name
+            row["source_path"] = source_path
+        else:
+            row["reason"] = "not_found"
+        rows.append(row)
+    return {"items": rows}
 
 
 def set_queue(new_state: dict[str, Any]) -> dict[str, Any]:

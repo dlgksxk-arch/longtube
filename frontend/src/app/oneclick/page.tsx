@@ -36,6 +36,7 @@ import {
   projectsApi,
   type OneClickTask,
   type OneClickQueueItem,
+  type QueueScriptRegistration,
   type OrphanProject,
   type Project,
 } from "@/lib/api";
@@ -483,12 +484,14 @@ function QueueMetaBadges({
   triggeredBy,
   projects,
   channelPresets,
+  scriptRegistration,
 }: {
   channel?: number | null;
   templateProjectId?: string | null;
   triggeredBy?: "manual" | "schedule";
   projects: Project[];
   channelPresets?: Record<string, string>;
+  scriptRegistration?: QueueScriptRegistration;
 }) {
   const ch = String(channel || 1);
   const channelPresetId = channelPresets?.[ch] || null;
@@ -509,6 +512,26 @@ function QueueMetaBadges({
       {usesChannelPreset && (
         <span className="text-[10px] text-accent-primary bg-accent-primary/10 border border-accent-primary/30 rounded px-1.5 py-0.5">
           채널 기본
+        </span>
+      )}
+      {scriptRegistration ? (
+        <span
+          className={`text-[10px] border rounded px-1.5 py-0.5 ${
+            scriptRegistration.registered
+              ? "text-accent-success bg-accent-success/10 border-accent-success/30"
+              : "text-amber-400 bg-amber-400/10 border-amber-400/30"
+          }`}
+          title={
+            scriptRegistration.registered
+              ? scriptRegistration.source_path || scriptRegistration.source_name || "등록된 준비 대본"
+              : scriptRegistration.error || "이 에피소드에 일치하는 검증 완료 대본이 없습니다."
+          }
+        >
+          {scriptRegistration.registered ? "대본 등록됨" : "대본 미등록"}
+        </span>
+      ) : (
+        <span className="text-[10px] text-gray-500 bg-bg-primary/80 border border-border rounded px-1.5 py-0.5">
+          대본 확인 중
         </span>
       )}
       {triggeredBy && (
@@ -630,6 +653,7 @@ export default function QueuePage() {
   });
   const [tasks, setTasks] = useState<OneClickTask[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [scriptRegistrations, setScriptRegistrations] = useState<Record<string, QueueScriptRegistration>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -682,10 +706,11 @@ export default function QueuePage() {
 
   const load = useCallback(async () => {
     try {
-      const [q, { tasks: t }, p] = await Promise.all([
+      const [q, { tasks: t }, p, scriptStatus] = await Promise.all([
         oneclickApi.getQueue(),
         oneclickApi.list(),
         projectsApi.list(),
+        oneclickApi.getQueueScriptStatus().catch(() => ({ items: [] })),
       ]);
       // v1.1.55: 편집 중(dirty) 이거나 save 직후 보호 기간(saveGuard) 이면
       // 큐 데이터를 서버 데이터로 덮어쓰지 않는다.
@@ -698,6 +723,9 @@ export default function QueuePage() {
       const nextTasks = t || [];
       setTasks(nextTasks);
       setProjects(p || []);
+      setScriptRegistrations(
+        Object.fromEntries((scriptStatus.items || []).map((item) => [item.item_id, item])),
+      );
     } catch {
       // ignore polling errors
     }
@@ -1705,6 +1733,7 @@ export default function QueuePage() {
                                       templateProjectId={q.template_project_id}
                                       projects={projects}
                                       channelPresets={channelPresets}
+                                      scriptRegistration={q.id ? scriptRegistrations[q.id] : undefined}
                                     />
                                   </div>
                                   <div className="flex flex-col gap-1">

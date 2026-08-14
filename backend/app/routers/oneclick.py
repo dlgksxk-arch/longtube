@@ -661,6 +661,12 @@ def get_queue():
     return oneclick_service.get_queue()
 
 
+@router.get("/queue/script-status")
+def get_queue_script_status():
+    """제작 큐 각 에피소드의 준비 대본 등록 상태를 조회한다."""
+    return oneclick_service.get_queue_script_status()
+
+
 @router.put("/queue")
 def put_queue(state: QueueStateModel):
     """v1.1.43 — 주제 큐 전체 저장 (스케줄 시각 + 채널별 프리셋 + 아이템)."""
