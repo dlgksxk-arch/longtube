@@ -378,7 +378,7 @@ def _parallelism_for(video_model: str) -> int:
     fal.ai/kling 같은 클라우드 API 는 네트워크 bound 라 4 병렬이 유리."""
     from app.services.video.factory import VIDEO_REGISTRY, resolve_video_model
     video_model = resolve_video_model(video_model)
-    if VIDEO_REGISTRY.get(video_model, {}).get("provider") == "comfyui":
+    if VIDEO_REGISTRY.get(video_model, {}).get("provider") in {"comfyui", "minimax-h3-local"}:
         return 1
     return VIDEO_PARALLELISM
 

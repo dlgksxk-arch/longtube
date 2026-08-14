@@ -7,6 +7,7 @@ import ModelSelector from "@/components/common/ModelSelector";
 import CostEstimate from "@/components/common/CostEstimate";
 import { imageApi, modelsApi, projectsApi, scriptApi, taskApi, assetUrl, type Project, type Cut, type ModelInfo } from "@/lib/api";
 import GenerationTimer from "@/components/common/GenerationTimer";
+import ProductEditPanel from "@/components/studio/ProductEditPanel";
 
 interface Props {
   project: Project;
@@ -246,6 +247,8 @@ export default function StepImage({ project, cuts, onUpdate }: Props) {
           <CostEstimate label="이미지 예상 비용" amount={estimatedImageCost} detail={`${cutCount}장`} />
         </div>
       </div>
+
+      <ProductEditPanel projectId={project.id} />
 
       </div>{/* 상단 컨트롤 끝 */}
 

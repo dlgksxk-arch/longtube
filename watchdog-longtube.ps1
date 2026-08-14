@@ -6,7 +6,7 @@ New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 $LogFile = Join-Path $LogDir "longtube-watchdog.log"
 $StateFile = Join-Path $LogDir "longtube-watchdog-state.json"
 
-$BackendFailThreshold = 3
+$BackendFailThreshold = 10
 $FrontendFailThreshold = 3
 $ComfyFailThreshold = 5
 $WatchdogMutex = New-Object System.Threading.Mutex($false, "Global\LongTubeWatchdog")
@@ -61,13 +61,34 @@ function Test-Port([int]$Port) {
   }
 }
 
-function Test-Http([string]$Url, [int]$TimeoutSec = 5) {
+function Test-Http([string]$Url, [int]$TimeoutSec = 20) {
   try {
     $response = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec $TimeoutSec
     return ($response.StatusCode -ge 200 -and $response.StatusCode -lt 500)
   } catch {
     return $false
   }
+}
+
+function Test-OneClickProductionActive {
+  $tasksFile = Join-Path (Split-Path -Parent $Root) "longsult\_system\oneclick_tasks.json"
+  if (!(Test-Path $tasksFile)) { return $false }
+  if (((Get-Date) - (Get-Item $tasksFile).LastWriteTime).TotalMinutes -gt 15) { return $false }
+  try {
+    $tasks = Get-Content -Raw -Encoding UTF8 -Path $tasksFile | ConvertFrom-Json
+    foreach ($property in $tasks.PSObject.Properties) {
+      $task = $property.Value
+      $status = [string]$task.status
+      $started = -not [string]::IsNullOrWhiteSpace([string]$task.started_at)
+      $finished = -not [string]::IsNullOrWhiteSpace([string]$task.finished_at)
+      if (($status -eq "running" -or $status -eq "queued") -and $started -and -not $finished) {
+        return $true
+      }
+    }
+  } catch {
+    Write-WatchLog "OneClick production state check failed: $($_.Exception.Message)"
+  }
+  return $false
 }
 
 function Test-ProcessCommand([string]$Pattern) {
@@ -159,15 +180,19 @@ try {
   if (!(Test-Port 8000)) {
     $state["backend_failures"] = 0
     Start-Backend
-  } elseif (Test-Http "http://127.0.0.1:8000/api/health" 5) {
+  } elseif (Test-Http "http://127.0.0.1:8000/api/health" 20) {
     $state["backend_failures"] = 0
   } else {
     $state["backend_failures"] = [int]$state["backend_failures"] + 1
     Write-WatchLog "Backend health failed ($($state["backend_failures"])/$BackendFailThreshold)"
     if ([int]$state["backend_failures"] -ge $BackendFailThreshold) {
-      Stop-Port 8000 "Backend"
-      Start-Sleep -Seconds 2
-      Start-Backend
+      if (Test-OneClickProductionActive) {
+        Write-WatchLog "Backend health failed during active OneClick production; preserving process"
+      } else {
+        Stop-Port 8000 "Backend"
+        Start-Sleep -Seconds 2
+        Start-Backend
+      }
       $state["backend_failures"] = 0
     }
   }

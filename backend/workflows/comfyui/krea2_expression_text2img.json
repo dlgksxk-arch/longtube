@@ -1,0 +1,116 @@
+{
+  "_meta": {
+    "name": "Krea 2 RAW Facial Expression Text-to-Image",
+    "notes": "Separate expression-focused workflow. RAW Int8 Convrot + Turbo LoRA 0.6 + 2-vector bypass 1.0 + independent RES4LYF dual sampling. Existing Krea 2 Turbo workflow remains unchanged."
+  },
+  "1": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "krea2_raw_int8_convrot.safetensors",
+      "weight_dtype": "default"
+    }
+  },
+  "2": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "lora_name": "krea2_turbo_lora_rank_64_bf16.safetensors",
+      "strength_model": 0.6,
+      "model": ["1", 0]
+    }
+  },
+  "3": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "lora_name": "krea2filterbypass.safetensors",
+      "strength_model": 1.0,
+      "model": ["2", 0]
+    }
+  },
+  "4": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "qwen3vl_4b_bf16.safetensors",
+      "type": "krea2",
+      "device": "default"
+    }
+  },
+  "5": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "${PROMPT}",
+      "clip": ["4", 0]
+    }
+  },
+  "6": {
+    "class_type": "ConditioningZeroOut",
+    "inputs": {
+      "conditioning": ["5", 0]
+    }
+  },
+  "7": {
+    "class_type": "EmptyLatentImage",
+    "inputs": {
+      "width": "${WIDTH}",
+      "height": "${HEIGHT}",
+      "batch_size": 1
+    }
+  },
+  "8": {
+    "class_type": "ClownsharKSampler_Beta",
+    "inputs": {
+      "eta": 0.5,
+      "sampler_name": "exponential/res_2s",
+      "scheduler": "beta",
+      "steps": 6,
+      "steps_to_run": -1,
+      "denoise": 1.0,
+      "cfg": 1.0,
+      "seed": "${SEED}",
+      "sampler_mode": "standard",
+      "bongmath": true,
+      "model": ["3", 0],
+      "positive": ["5", 0],
+      "negative": ["6", 0],
+      "latent_image": ["7", 0]
+    }
+  },
+  "9": {
+    "class_type": "ClownsharKSampler_Beta",
+    "inputs": {
+      "eta": 0.5,
+      "sampler_name": "multistep/deis_3m",
+      "scheduler": "bong_tangent",
+      "steps": 2,
+      "steps_to_run": -1,
+      "denoise": 0.2,
+      "cfg": 1.0,
+      "seed": "${SEED}",
+      "sampler_mode": "standard",
+      "bongmath": true,
+      "model": ["3", 0],
+      "positive": ["5", 0],
+      "negative": ["6", 0],
+      "latent_image": ["8", 0]
+    }
+  },
+  "10": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "Wan2_1_VAE_fp32.safetensors"
+    }
+  },
+  "11": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": ["9", 0],
+      "vae": ["10", 0]
+    }
+  },
+  "12": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "filename_prefix": "${PREFIX}",
+      "images": ["11", 0]
+    }
+  }
+}

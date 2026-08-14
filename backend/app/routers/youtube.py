@@ -53,6 +53,7 @@ from app.services.youtube_metadata import (
     validate_metadata_for_profile,
 )
 from app.services.multilingual_caption_service import should_upload_youtube_captions, upload_multilingual_captions
+from app.services.youtube_publish_schedule import next_main_publish_at
 
 router = APIRouter()
 
@@ -1169,6 +1170,7 @@ async def upload_to_youtube(
 
     # 동기 서비스를 이벤트 루프 블로킹 없이 실행
     try:
+        main_publish_at = next_main_publish_at()
         result = await asyncio.to_thread(
             uploader.upload,
             str(final_video),
@@ -1176,12 +1178,13 @@ async def upload_to_youtube(
             description,
             upload_tags,
             None,
-            body.privacy,
+            "private",
             upload_language,
             upload_category_id,
             body.made_for_kids,
             None,  # progress_callback (아직 프론트로 연결 안 함)
             comment_topic=(project.topic or _script_data.get("topic") or title),
+            publish_at=main_publish_at,
         )
         result = {**result, "studio_verified": False, "processing_verified": False}
         if metadata_localizations and result.get("video_id"):

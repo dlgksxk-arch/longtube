@@ -62,7 +62,7 @@ def _live_action_safe_negative_terms(values: Iterable[str]) -> list[str]:
 def supports_scene_contract_v2_model(model_id: object) -> bool:
     model = str(model_id or "").strip().lower()
     return (
-        model == "comfyui-krea2"
+        model in {"comfyui-krea2", "comfyui-krea2-expression"}
         or
         model.startswith("comfyui-flux2-")
         or model.startswith("comfyui-dreamshaper-xl")

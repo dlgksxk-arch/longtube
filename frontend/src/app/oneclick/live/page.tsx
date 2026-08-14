@@ -2243,7 +2243,7 @@ export default function LivePage() {
       setTask(started);
       syncLogsFromTask(started);
       addLog(
-        `[시스템] ${count}편 연속 제작 시작: 첫 작업 즉시 시작, 이후 10분 간격`,
+        `[시스템] ${count}편 연속 제작 시작: 각 작업 완료 10분 후 다음 작업 시작`,
         "success",
       );
       await new Promise((resolve) => setTimeout(resolve, 800));
@@ -2852,7 +2852,7 @@ export default function LivePage() {
                       className="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-md border border-sky-400/45 bg-sky-500/20 px-3 text-xs font-black text-sky-100 hover:bg-sky-500/30 disabled:cursor-not-allowed disabled:opacity-45"
                       title={
                         pendingQueueItems.length >= count
-                          ? `대기열 첫 ${count}편을 10분 간격으로 제작 시작`
+                          ? `대기열 첫 ${count}편을 완료 10분 후 순차 제작`
                           : `대기 작업이 ${count}편보다 적습니다`
                       }
                     >

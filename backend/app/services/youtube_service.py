@@ -606,6 +606,7 @@ class YouTubeUploader:
         made_for_kids: bool = False,
         progress_callback: Optional[Callable[[int], None]] = None,
         comment_topic: Optional[str] = None,
+        publish_at: Optional[str] = None,
     ) -> dict:
         """ì˜ìƒ ì—…ë¡œë“œ + (ì„ íƒ) ì¸ë„¤ì¼ ì„¤ì •.
 
@@ -636,13 +637,16 @@ class YouTubeUploader:
             snippet["defaultLanguage"] = language
             snippet["defaultAudioLanguage"] = language
 
+        effective_privacy = "private" if publish_at else privacy
         body = {
             "snippet": snippet,
             "status": {
-                "privacyStatus": privacy,
+                "privacyStatus": effective_privacy,
                 "selfDeclaredMadeForKids": bool(made_for_kids),
             },
         }
+        if publish_at:
+            body["status"]["publishAt"] = str(publish_at)
 
         try:
             media = MediaFileUpload(
@@ -680,12 +684,14 @@ class YouTubeUploader:
                                     "title": existing.get("title") or title,
                                     "already_uploaded": True,
                                     "recovered_after_upload_timeout": True,
+                                    "privacy_status": effective_privacy,
+                                    "publish_at": publish_at,
                                 }
                                 recovered["top_comment"] = self.ensure_upload_top_comment(
                                     video_id=video_id,
                                     topic=comment_topic or title,
                                     language=language,
-                                    privacy=privacy,
+                                    privacy=effective_privacy,
                                     made_for_kids=made_for_kids,
                                 )
                                 return recovered
@@ -709,12 +715,14 @@ class YouTubeUploader:
                             "title": existing.get("title") or title,
                             "already_uploaded": True,
                             "recovered_after_upload_timeout": True,
+                            "privacy_status": effective_privacy,
+                            "publish_at": publish_at,
                         }
                         recovered["top_comment"] = self.ensure_upload_top_comment(
                             video_id=video_id,
                             topic=comment_topic or title,
                             language=language,
-                            privacy=privacy,
+                            privacy=effective_privacy,
                             made_for_kids=made_for_kids,
                         )
                         return recovered
@@ -734,6 +742,8 @@ class YouTubeUploader:
         result = {
             "video_id": video_id,
             "url": f"https://youtube.com/watch?v={video_id}",
+            "privacy_status": effective_privacy,
+            "publish_at": publish_at,
         }
 
         # ì¸ë„¤ì¼ ì„¤ì • (ì„ íƒ)
@@ -757,7 +767,7 @@ class YouTubeUploader:
             video_id=video_id,
             topic=comment_topic or title,
             language=language,
-            privacy=privacy,
+            privacy=effective_privacy,
             made_for_kids=made_for_kids,
         )
         return result

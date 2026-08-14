@@ -67,12 +67,14 @@ def _normalize_path(project_id: str, asset_path: str) -> str:
 class CutUpdate(BaseModel):
     narration: Optional[str] = None
     image_prompt: Optional[str] = None
+    video_tag: Optional[str] = None
 
 
 class CutCreate(BaseModel):
     cut_number: int
     narration: str
     image_prompt: str
+    video_tag: Optional[str] = None
     scene_type: Optional[str] = "narration"
 
 
@@ -90,10 +92,17 @@ def _load_script(project_id: str) -> dict:
 
 
 def _strip_script_motion_prompts(script: dict) -> dict:
+    """Remove obsolete auto-motion fields while preserving explicit H3 tags."""
     for cut_data in script.get("cuts", []) or []:
         if isinstance(cut_data, dict):
             cut_data.pop("motion_prompt", None)
             cut_data.pop("video_motion_prompt", None)
+            if "video_tag" in cut_data:
+                value = str(cut_data.get("video_tag") or "").strip()
+                if value:
+                    cut_data["video_tag"] = value
+                else:
+                    cut_data.pop("video_tag", None)
     return script
 
 
@@ -526,6 +535,16 @@ def list_cuts(project_id: str, db: Session = Depends(get_db)):
     if dirty:
         db.commit()
 
+    script_cut_map: dict[int, dict] = {}
+    for item in _load_script(project_id).get("cuts", []) or []:
+        if not isinstance(item, dict):
+            continue
+        try:
+            item_cut_number = int(item.get("cut_number"))
+        except (TypeError, ValueError):
+            continue
+        script_cut_map[item_cut_number] = item
+
     return {
         "project_id": project_id,
         "total": len(cuts),
@@ -534,6 +553,9 @@ def list_cuts(project_id: str, db: Session = Depends(get_db)):
                 "cut_number": c.cut_number,
                 "narration": c.narration,
                 "image_prompt": c.image_prompt,
+                "video_tag": str(
+                    script_cut_map.get(int(c.cut_number), {}).get("video_tag") or ""
+                ).strip(),
                 "scene_type": c.scene_type,
                 "audio_path": c.audio_path,
                 "audio_duration": c.audio_duration,
@@ -592,6 +614,7 @@ def add_cut(
         "cut_number": body.cut_number,
         "narration": body.narration,
         "image_prompt": image_prompt,
+        **({"video_tag": body.video_tag.strip()} if body.video_tag and body.video_tag.strip() else {}),
         "scene_type": body.scene_type
     })
     _save_script(project_id, script, (project.config or {}).get("language", "ko"))
@@ -600,6 +623,7 @@ def add_cut(
         "cut_number": cut.cut_number,
         "narration": cut.narration,
         "image_prompt": cut.image_prompt,
+        "video_tag": body.video_tag.strip() if body.video_tag else "",
         "scene_type": cut.scene_type
     }
 
@@ -684,6 +708,22 @@ def edit_cut(
     if body.image_prompt is not None:
         normalized_image_prompt = normalize_image_prompt(body.image_prompt)
         cut.image_prompt = normalized_image_prompt
+    if body.video_tag is not None and not body.video_tag.strip() and cut.video_model == "local-minimax-h3":
+        project_dir = resolve_project_dir(project_id, project.config or {}, create=False)
+        base_candidates = (
+            project_dir / "videos" / f"cut_{cut_number}.mp4",
+            project_dir / "videos" / f"cut_{cut_number:03d}.mp4",
+        )
+        restored = next(
+            (
+                path for path in base_candidates
+                if path.exists() and path.is_file() and path.stat().st_size > 50
+            ),
+            None,
+        )
+        cut.video_path = restored.relative_to(project_dir).as_posix() if restored else None
+        cut.video_model = None
+        cut.status = "completed" if restored else "pending"
 
     db.commit()
 
@@ -694,6 +734,12 @@ def edit_cut(
                 cut_data["narration"] = body.narration
             if body.image_prompt is not None:
                 cut_data["image_prompt"] = normalized_image_prompt
+            if body.video_tag is not None:
+                video_tag = body.video_tag.strip()
+                if video_tag:
+                    cut_data["video_tag"] = video_tag
+                else:
+                    cut_data.pop("video_tag", None)
             cut_data.pop("motion_prompt", None)
             cut_data.pop("video_motion_prompt", None)
             break
@@ -703,6 +749,14 @@ def edit_cut(
         "cut_number": cut.cut_number,
         "narration": cut.narration,
         "image_prompt": cut.image_prompt,
+        "video_tag": body.video_tag.strip() if body.video_tag is not None else next(
+            (
+                str(item.get("video_tag") or "").strip()
+                for item in script.get("cuts", [])
+                if int(item.get("cut_number") or 0) == int(cut_number)
+            ),
+            "",
+        ),
         "scene_type": cut.scene_type
     }
 

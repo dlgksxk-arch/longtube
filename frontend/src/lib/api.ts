@@ -105,6 +105,8 @@ export const api = {
     request("DELETE", path, undefined, false, signal),
   upload: (path: string, formData: FormData, signal?: AbortSignal) =>
     request("POST", path, formData, true, signal),
+  uploadWithTimeout: (path: string, formData: FormData, timeoutMs: number, signal?: AbortSignal) =>
+    request("POST", path, formData, true, signal, timeoutMs),
 };
 
 export interface AuthUser {
@@ -314,6 +316,7 @@ export interface Cut {
   scene_block_id?: number;
   narration: string;
   image_prompt: string;
+  video_tag?: string;
   motion_prompt?: string;
   scene_type: string;
   duration_estimate?: number;
@@ -446,9 +449,9 @@ export const scriptApi = {
   generate: (id: string): Promise<{ cuts: Cut[]; total_duration_estimate: number }> =>
     api.post(`/script/${id}/generate`),
   generateAsync: (id: string) => api.post(`/script/${id}/generate-async`),
-  editCut: (id: string, cutNumber: number, data: { narration?: string; image_prompt?: string; motion_prompt?: string }) =>
+  editCut: (id: string, cutNumber: number, data: { narration?: string; image_prompt?: string; video_tag?: string }) =>
     api.put(`/script/${id}/cuts/${cutNumber}`, data),
-  addCut: (id: string, data: { cut_number: number; narration: string; image_prompt: string; motion_prompt?: string; scene_type: string }) =>
+  addCut: (id: string, data: { cut_number: number; narration: string; image_prompt: string; video_tag?: string; scene_type: string }) =>
     api.post(`/script/${id}/cuts/add`, data),
   deleteCut: (id: string, cutNumber: number) => api.delete(`/script/${id}/cuts/${cutNumber}`),
   reorderCuts: (id: string, order: number[]) => api.put(`/script/${id}/cuts/reorder`, { order }),
@@ -735,6 +738,15 @@ export interface CharacterSlotsResponse {
   slots: CharacterSlot[];
 }
 
+export interface ProductEditResult {
+  ok: boolean;
+  edit_id: string;
+  mode: "product_wear_or_use" | "clothing_background_edit";
+  product_count: number;
+  path: string;
+  model: string;
+}
+
 /**
  * 캐릭터 컷 제한 없음.
  * 캐릭터 이미지 또는 캐릭터 설명이 있으면 모든 유효 컷이 캐릭터 적용 가능 컷이다.
@@ -775,6 +787,24 @@ export const imageApi = {
   getAssets: (id: string): Promise<ProjectAssets> => api.get(`/image/${id}/assets`),
   getCharacterSlots: (id: string): Promise<CharacterSlotsResponse> =>
     api.get(`/image/${id}/character-slots`),
+  productEdit: (
+    id: string,
+    input: {
+      modelImage: File;
+      productImage1?: File | null;
+      productImage2?: File | null;
+      productName?: string;
+      prompt: string;
+    },
+  ): Promise<ProductEditResult> => {
+    const fd = new FormData();
+    fd.append("model_image", input.modelImage);
+    if (input.productImage1) fd.append("product_image_1", input.productImage1);
+    if (input.productImage2) fd.append("product_image_2", input.productImage2);
+    fd.append("product_name", input.productName || "");
+    fd.append("prompt", input.prompt);
+    return api.uploadWithTimeout(`/image/${id}/product-edit`, fd, 15 * 60 * 1000);
+  },
 };
 
 // ─── Video ───
@@ -1777,8 +1807,179 @@ export const channelOpsApi = {
       `/channel-ops/comments/reply-all`,
       { channel_id: channelId, comments },
       10 * 60_000,
-    ),
+  ),
 };
+
+// ─── Movie review source workspace ───
+export type MovieReviewJobStatus =
+  | "queued"
+  | "downloading"
+  | "extracting_audio"
+  | "transcribing"
+  | "generating_preview"
+  | "ready"
+  | "failed"
+  | "interrupted";
+
+export interface MovieReviewRuntime {
+  ready: boolean;
+  yt_dlp_version: string;
+  ffmpeg_path: string;
+  ffmpeg_error: string;
+  output_root: string;
+  active_jobs: number;
+}
+
+export interface MoviePreviewShortsLayout {
+  layout_version: 2;
+  canvas_width: 1080;
+  canvas_height: 1920;
+  background_color: string;
+  title_top: number;
+  title_center_x: number;
+  title_font_size: number;
+  title_accent_color: string;
+  video_top: number;
+  video_height: number;
+  caption_top: number;
+  caption_center_x: number;
+  caption_font_size: number;
+  caption_background_color: string;
+  caption_background_opacity: number;
+  caption_outline_color: string;
+  caption_outline_width: number;
+  movie_title_top: number;
+  movie_title_center_x: number;
+  movie_title_font_size: number;
+  movie_title_color: string;
+  movie_title_outline_color: string;
+  movie_title_outline_width: number;
+  channel_top: number;
+  channel_center_x: number;
+  channel_font_size: number;
+  channel_color: string;
+  intertitle_background_color: string;
+  intertitle_text_top: number;
+  intertitle_text_center_x: number;
+  intertitle_text_color: string;
+  intertitle_font_size: number;
+  intertitle_outline_color: string;
+  intertitle_outline_width: number;
+}
+
+export interface MoviePreviewHeroCopy {
+  lines: [string, string, string];
+  text: string;
+  accent_words: string[];
+  accent_ranges: number[][][];
+  tone: "high_curiosity";
+}
+
+export interface MovieReviewJob {
+  job_id: string;
+  source_url: string;
+  status: MovieReviewJobStatus;
+  running: boolean;
+  progress: number;
+  message: string;
+  created_at: string;
+  updated_at: string;
+  started_at?: string | null;
+  completed_at?: string | null;
+  failed_at?: string | null;
+  max_height: number;
+  subtitle_languages: string[];
+  sequence_number: number;
+  folder_name: string;
+  output_dir: string;
+  title: string;
+  video_id: string;
+  channel: string;
+  duration_seconds: number;
+  video_path: string;
+  audio_path: string;
+  subtitle_paths: string[];
+  metadata_path: string;
+  thumbnail_path: string;
+  thumbnail_source?: "youtube" | "video_frame";
+  thumbnail_time_seconds?: number | null;
+  meta_tags_path: string;
+  meta_tags_text_path: string;
+  tag_count: number;
+  transcription_provider?: string;
+  transcription_model?: string;
+  transcription_language?: string;
+  transcription_device?: string;
+  preview_script_path?: string;
+  preview_script_markdown_path?: string;
+  research_metadata_path?: string;
+  upload_metadata_path?: string;
+  research_model?: string;
+  research_generated_at?: string;
+  preview_generation_model?: string;
+  preview_generated_at?: string;
+  hero_copy?: MoviePreviewHeroCopy | null;
+  video_title?: string;
+  shorts_layout: MoviePreviewShortsLayout;
+  error: string;
+}
+
+export interface CreateMovieReviewJobRequest {
+  source_url: string;
+  max_height: 720 | 1080 | 1440 | 2160;
+  subtitle_languages: string[];
+  rights_confirmed: boolean;
+}
+
+async function movieReviewRequest<T>(
+  method: "GET" | "POST" | "PUT" | "DELETE",
+  path: string,
+  body?: unknown,
+): Promise<T> {
+  const response = await fetch(`/api/movie-review${path}`, {
+    method,
+    credentials: "include",
+    headers: body ? { "Content-Type": "application/json" } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!response.ok) {
+    let detail = response.statusText;
+    try {
+      const payload = await response.json();
+      detail = payload?.detail || detail;
+    } catch {}
+    throw new Error(detail || `요청 실패 (${response.status})`);
+  }
+  return response.json();
+}
+
+export const movieReviewApi = {
+  runtime: (): Promise<MovieReviewRuntime> => movieReviewRequest("GET", "/runtime"),
+  listJobs: (): Promise<{ jobs: MovieReviewJob[]; count: number }> =>
+    movieReviewRequest("GET", "/jobs"),
+  getJob: (jobId: string): Promise<MovieReviewJob> =>
+    movieReviewRequest("GET", `/jobs/${encodeURIComponent(jobId)}`),
+  createJob: (body: CreateMovieReviewJobRequest): Promise<MovieReviewJob> =>
+    movieReviewRequest("POST", "/jobs", body),
+  transcribeJob: (jobId: string): Promise<MovieReviewJob> =>
+    movieReviewRequest("POST", `/jobs/${encodeURIComponent(jobId)}/transcribe`),
+  generatePreview: (jobId: string): Promise<MovieReviewJob> =>
+    movieReviewRequest("POST", `/jobs/${encodeURIComponent(jobId)}/generate-preview`),
+  updateShortsLayout: (jobId: string, body: MoviePreviewShortsLayout): Promise<MovieReviewJob> =>
+    movieReviewRequest("PUT", `/jobs/${encodeURIComponent(jobId)}/shorts-layout`, body),
+  selectThumbnailFrame: (jobId: string, timeSeconds: number): Promise<MovieReviewJob> =>
+    movieReviewRequest("POST", `/jobs/${encodeURIComponent(jobId)}/thumbnail-frame`, { time_seconds: timeSeconds }),
+  deleteJob: (jobId: string): Promise<{
+    deleted: boolean;
+    job_id: string;
+    folder_name: string;
+    deleted_files: number;
+    deleted_bytes: number;
+  }> => movieReviewRequest("DELETE", `/jobs/${encodeURIComponent(jobId)}`),
+};
+
+export const movieReviewArtifactUrl = (jobId: string, kind: string) =>
+  `/api/movie-review/jobs/${encodeURIComponent(jobId)}/artifacts/${encodeURIComponent(kind)}`;
 
 // ─── Asset URL helper ───
 // v2.0.74: 정적 에셋(/assets/<id>/...) 도 env > window host > localhost 규칙.

@@ -472,6 +472,11 @@ def build_video_motion_prompt(
 ) -> str:
     """컷별 영상 모션 프롬프트 생성. routers/video.py 의 _build_video_motion_prompt 와 동일."""
     cfg = config or {}
+    resolved_model = str(cfg.get("resolved_video_model") or cfg.get("video_model") or "").strip()
+    if resolved_model == "local-minimax-h3" and isinstance(cut_data, dict):
+        video_tag = str(cut_data.get("video_tag") or "").strip()
+        if video_tag:
+            return video_tag
     if not _is_hunyuan_prompt_model(cfg):
         if _is_wan_ti2v_prompt_model(cfg):
             return _build_wan_ti2v_motion_prompt(cut_number, total_cuts, cfg, cut_data=cut_data)

@@ -50,6 +50,7 @@ _LONGTUBE_DARK_MANHWA_STYLE_MODELS = {
     "comfyui-flux2-klein-4b",
     "comfyui-flux2-klein-9b",
     "comfyui-krea2",
+    "comfyui-krea2-expression",
     "comfyui-dreamshaper-xl",
     "comfyui-dreamshaper-xl-longtube",
 }
@@ -3337,6 +3338,7 @@ _WORKFLOW_FILES = {
     "comfyui-flux2-klein-4b": "flux2_klein_4b_text2img.json",
     "comfyui-flux2-klein-9b": "flux2_klein_9b_text2img.json",
     "comfyui-krea2": "krea2_text2img.json",
+    "comfyui-krea2-expression": "krea2_expression_text2img.json",
     "comfyui-z-image-base": "z_image_base_text2img.json",
     "comfyui-z-image-turbo": "z_image_turbo_text2img.json",
     "comfyui-sd15": "sd15_text2img.json",
@@ -3359,6 +3361,7 @@ _WORKFLOW_FILES_REF = {
     "comfyui-revanimated": "revanimated_v2_text2img_ref.json",
     "comfyui-meinamix": "meinamix_v12_text2img_ref.json",
     "comfyui-dreamshaper-xl": "dreamshaper_xl_lightning_text2img_ref.json",
+    "comfyui-qwen-image-edit-2509": "qwen_image_edit_2509_text2img_ref.json",
 }
 
 # 모델별 표시명
@@ -3367,6 +3370,8 @@ _DISPLAY_NAMES = {
     "comfyui-flux2-klein-4b": "ComfyUI Flux.2 Klein 4B (local)",
     "comfyui-flux2-klein-9b": "ComfyUI Flux.2 Klein 9B FP8 (local)",
     "comfyui-krea2": "로컬krea2",
+    "comfyui-krea2-expression": "로컬krea2 표정개선",
+    "comfyui-qwen-image-edit-2509": "Qwen Image Edit 2509 (local)",
     "comfyui-z-image-base": "ComfyUI Z-Image Base (local, CFG)",
     "comfyui-z-image-turbo": "ComfyUI Z-Image Turbo (local, fast)",
     "comfyui-sd15": "ComfyUI SD 1.5 (local, ultra-fast)",
@@ -3393,8 +3398,8 @@ _SDXL_DIMS = {
     "4:3":  (1088, 832),
 }
 
-# Qwen-Image 계열 (1328 native, 64 배수 권장). 레퍼런스 필수.
-_QWEN_FAMILY = set()
+# Qwen-Image 계열 (1328 native, 64 배수 권장). 레퍼런스 1~3장 필수.
+_QWEN_FAMILY = {"comfyui-qwen-image-edit-2509"}
 
 _QWEN_DIMS = {
     "16:9": (1344, 768),
@@ -10875,6 +10880,34 @@ _FLUX2_BAEKJE_EP06_ROW_DIRECTIONS = {
     158: "LAYERED EXACT-THREE OPEN-RIVER TEASER: Domi and his wife move away together in one near boat while one distant king stands alone on the far bare bank; no guard, weapon, building, writing, or sign",
     159: "CLOSING WIDE EXACT-TWO DOMI-COUPLE SUNRISE: the couple recedes together in one small boat toward open water with no viewer gesture; no third person, text, icon, logo, writing, or sign",
 }
+
+
+def _attach_qwen_edit_reference_nodes(
+    graph: dict,
+    uploaded_names: list[str],
+) -> dict:
+    """Attach one model image and up to two product images to Qwen Edit.
+
+    The checked-in workflow contains image1. ComfyUI's native
+    TextEncodeQwenImageEditPlus node exposes image2/image3 as optional inputs,
+    so the extra LoadImage nodes are added only when those files were supplied.
+    """
+    names = [str(name or "").strip() for name in uploaded_names if str(name or "").strip()]
+    if not names:
+        raise ValueError("Qwen Image Edit requires at least one input image")
+    if len(names) > 3:
+        raise ValueError("Qwen Image Edit accepts at most three input images")
+
+    graph["5"]["inputs"]["image"] = names[0]
+    for index, uploaded_name in enumerate(names[1:], start=2):
+        node_id = str(10 + index)
+        graph[node_id] = {
+            "class_type": "LoadImage",
+            "inputs": {"image": uploaded_name},
+        }
+        graph["6"]["inputs"][f"image{index}"] = [node_id, 0]
+        graph["7"]["inputs"][f"image{index}"] = [node_id, 0]
+    return graph
 
 def _flux2_baekje_ep06_visual_direction(source_prompt: str) -> str:
     """Return deterministic FLUX2 camera direction for the prepared Baekje EP06 workbook."""
@@ -52346,7 +52379,7 @@ class ComfyUIImageService(BaseImageService):
         # Krea2는 LongTube 본편 프레임 규격인 1280x720(16:9)로 고정한다.
         # SD 1.5 는 512 기준 훈련 → input 해상도 무시하고 aspect 로 강제 매핑.
         # 그 외 (Flux.2 / Z-Image) 는 width/height 16 배수만 맞춰 그대로 사용.
-        if self.model_id == "comfyui-krea2":
+        if self.model_id in {"comfyui-krea2", "comfyui-krea2-expression"}:
             w, h = 1280, 720
         elif self.model_id in _SD15_FAMILY:
             aspect = self._guess_aspect(width, height)
@@ -52367,16 +52400,19 @@ class ComfyUIImageService(BaseImageService):
 
         neg = (self.negative_prompt or "").strip() or DEFAULT_NEGATIVE_PROMPT
 
-        # Qwen-Image-Edit: 레퍼런스 필수. 첫 번째 ref 를 ComfyUI 서버에 업로드하고
-        # LoadImage 노드에 파일명을 꽂는다. 없으면 즉시 실패 (조용한 폴백 금지).
+        # Qwen-Image-Edit: 모델 이미지 1장 + 제품 이미지 최대 2장을 네이티브
+        # image1/image2/image3 입력으로 전달한다. 첫 이미지는 항상 편집 대상이다.
         if self.model_id in _QWEN_FAMILY:
             if not reference_images:
                 raise RuntimeError(
                     "Qwen-Image-Edit 2509 은 레퍼런스 이미지가 필수입니다. "
                     "프로젝트에 스타일/캐릭터 레퍼런스를 등록하거나 다른 모델을 선택하세요."
                 )
-            ref_path = reference_images[0]
-            uploaded_name = await comfyui_client.upload_image(ref_path)
+            if len(reference_images) > 3:
+                raise RuntimeError("Qwen-Image-Edit 2509 입력 이미지는 최대 3장입니다.")
+            uploaded_names = []
+            for ref_path in reference_images:
+                uploaded_names.append(await comfyui_client.upload_image(ref_path))
             final_prompt_text = (prompt or "").strip() or "an image"
             if uses_scene_contract_v2(getattr(self, "prompt_profile", "")):
                 compiled = compile_image_prompt(
@@ -52394,17 +52430,18 @@ class ComfyUIImageService(BaseImageService):
                 "HEIGHT": h,
                 "SEED": seed,
                 "PREFIX": prefix,
-                "REF_IMAGE": uploaded_name,
+                "REF_IMAGE": uploaded_names[0],
             }
             self.last_positive_prompt = final_prompt_text
             self.last_negative_prompt = neg
             print(
                 f"[comfyui-image] qwen-image-edit-2509 {w}x{h} "
-                f"ref={uploaded_name} "
+                f"refs={uploaded_names!r} "
                 f"prompt_head={final_prompt_text[:180]!r}"
             )
             template = self._template_ref
             graph = comfyui_client.render_workflow(template, subs)
+            graph = _attach_qwen_edit_reference_nodes(graph, uploaded_names)
             label = self._context_label()
             summary = self._workflow_summary(graph)
             self._emit_log(
@@ -53249,7 +53286,7 @@ class ComfyUIImageService(BaseImageService):
         # Krea2 is a strict transport boundary: the application owns prompt
         # construction and the ComfyUI workflow receives that positive prompt
         # verbatim without compiler, style, or scene-lock rewrites.
-        if self.model_id == "comfyui-krea2":
+        if self.model_id in {"comfyui-krea2", "comfyui-krea2-expression"}:
             final_prompt_text = source_prompt_text
         self.last_positive_prompt = final_prompt_text
         self.last_negative_prompt = neg

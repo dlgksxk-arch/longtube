@@ -22,6 +22,7 @@ export default function StepScript({ project, onUpdate, onCutsChange }: Props) {
   const [editingCut, setEditingCut] = useState<number | null>(null);
   const [editNarration, setEditNarration] = useState("");
   const [editPrompt, setEditPrompt] = useState("");
+  const [editVideoTag, setEditVideoTag] = useState("");
   const [savingCut, setSavingCut] = useState(false);
   const [expandedCut, setExpandedCut] = useState<number | null>(null);
   const [llmModels, setLlmModels] = useState<ModelInfo[]>([]);
@@ -86,6 +87,7 @@ export default function StepScript({ project, onUpdate, onCutsChange }: Props) {
     setEditingCut(cut.cut_number);
     setEditNarration(cut.narration);
     setEditPrompt(cut.image_prompt);
+    setEditVideoTag(cut.video_tag || "");
   };
 
   const cancelEdit = () => {
@@ -99,11 +101,12 @@ export default function StepScript({ project, onUpdate, onCutsChange }: Props) {
       await scriptApi.editCut(project.id, editingCut, {
         narration: editNarration,
         image_prompt: editPrompt,
+        video_tag: editVideoTag,
       });
       setCuts((prev) =>
         prev.map((c) =>
           c.cut_number === editingCut
-            ? { ...c, narration: editNarration, image_prompt: editPrompt }
+            ? { ...c, narration: editNarration, image_prompt: editPrompt, video_tag: editVideoTag }
             : c
         )
       );
@@ -312,6 +315,16 @@ export default function StepScript({ project, onUpdate, onCutsChange }: Props) {
                       className="w-full bg-bg-primary border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-accent-primary resize-y"
                     />
                   </div>
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1">영상 태그 · 로컬영상미니맥스</label>
+                    <textarea
+                      value={editVideoTag}
+                      onChange={(e) => setEditVideoTag(e.target.value)}
+                      rows={4}
+                      placeholder="비워두면 기존 정적 컷을 사용합니다. 입력하면 렌더 시작 시 MiniMax H3로 먼저 영상화합니다."
+                      className="w-full bg-bg-primary border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-accent-primary resize-y"
+                    />
+                  </div>
                   <div className="flex items-center gap-2 justify-end">
                     <button onClick={cancelEdit} className="px-3 py-1.5 text-sm text-gray-400 hover:text-white">
                       <X size={14} className="inline mr-1" />취소
@@ -331,6 +344,12 @@ export default function StepScript({ project, onUpdate, onCutsChange }: Props) {
                     <span className="text-xs text-gray-500">이미지 프롬프트</span>
                     <p className="text-sm text-gray-400 mt-1 italic">{cut.image_prompt}</p>
                   </div>
+                  {cut.video_tag ? (
+                    <div>
+                      <span className="text-xs text-gray-500">영상 태그 · 로컬영상미니맥스</span>
+                      <p className="text-sm text-cyan-300 mt-1 whitespace-pre-wrap">{cut.video_tag}</p>
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
             </div>

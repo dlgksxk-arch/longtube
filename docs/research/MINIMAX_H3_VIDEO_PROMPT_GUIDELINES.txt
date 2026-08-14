@@ -1,0 +1,107 @@
+MiniMax H3 영상 프롬프트 작성 지침
+작성일: 2026-08-13
+적용 모델명: 로컬영상미니맥스
+모델 ID: local-minimax-h3
+대본 태그 필드: video_tag
+
+1. LongTube 작동 규칙
+
+- 컷의 video_tag가 비어 있으면 MiniMax H3를 실행하지 않는다.
+- video_tag가 있으면 최종 렌더 시작 직후 해당 컷들을 컷 번호순으로 먼저 연속 생성한다.
+- 입력 첫 프레임은 해당 컷의 기존 이미지다.
+- H3 원본 영상은 별도 캐시한다. 이미지와 video_tag가 같으면 다시 생성하지 않는다.
+- 로컬 H3 ComfyUI는 8190 포트의 독립 서버로 한 번만 시작한다.
+- 컷 사이와 렌더 종료 후에 /free, 모델 언로드, 서버 종료를 호출하지 않는다.
+- H3 영상에는 생성 오디오를 사용하지 않는다. 기존 LongTube TTS를 영상 생성 뒤 결합한다.
+- 현재 로컬 프리셋은 16:9 기준 608x352, 24fps, 124프레임, 20스텝이다.
+- 약 5.17초보다 긴 TTS 구간은 마지막 프레임을 유지해 컷 길이를 맞춘다.
+
+2. video_tag 작성 순서
+
+한 컷은 아래 순서로 한 문단에 작성한다.
+
+1) 등장인물 또는 핵심 물체
+2) 처음 상태와 표정
+3) 시간순 동작
+4) 카메라 움직임: 종류 + 이동 폭 + 속도
+5) 배경에서 실제로 움직일 요소
+6) 마지막 상태
+
+권장 형태:
+
+[주체]가 [초기 자세와 표정]으로 시작한다. 이어 [첫 동작], [다음 동작], [마지막 동작]을 한다. 카메라는 [종류]로 [이동 폭]만큼 [속도]로 움직인다. [배경 요소]가 [움직임]을 보인다. 마지막에는 [종료 자세와 표정]을 유지한다.
+
+3. 핵심 작성 원칙
+
+- 5초 한 컷에는 한 장면, 한 카메라 시점, 한 연속 동작만 작성한다.
+- “시네마틱하게”, “멋지게”만 쓰지 않는다. 보이는 동작과 카메라 변화를 구체적으로 쓴다.
+- 동작은 발생 순서대로 쓴다.
+- 카메라 이동은 pan, tilt, dolly, tracking, orbit, handheld 중 필요한 것만 쓴다.
+- 카메라는 이동 방향, 이동 폭, 속도를 함께 쓴다.
+- 원본 이미지에 없는 인물, 물건, 건물은 새로 등장시키지 않는다.
+- 얼굴은 눈썹, 눈, 입, 턱, 목, 어깨의 변화를 함께 적으면 표정 전달이 강해진다.
+- 손 동작은 손가락 세부 묘사보다 팔과 손의 큰 동작을 우선한다.
+- 대사 립싱크가 목적이 아니면 말하기, 입 모양, 발화 문구를 넣지 않는다.
+- LongTube는 TTS를 별도로 결합하므로 soundscape와 music은 사용하지 않는다.
+- 한 컷 안에 장면 전환, 몽타주, 분할 화면, 삽입 화면을 요구하지 않는다.
+
+4. 표정 강화 표현
+
+약한 표현:
+The woman looks surprised.
+
+강한 표현:
+Her inner eyebrows lift sharply, her eyes widen, her jaw drops slightly, and her shoulders lock as she stares at the shell without blinking.
+
+표정은 다음 요소 중 실제 필요한 것만 조합한다.
+
+- 눈썹: inner eyebrows raised, brows drawn together
+- 눈: eyes widen, eyes narrow, fixed stare, rapid glance
+- 입과 턱: lips press tight, jaw drops, jaw clenches
+- 목과 어깨: neck tenses, shoulders lock, shoulders recoil
+- 호흡: one sharp inhale, chest rises once
+- 시선: keeps her eyes fixed on, looks from A to B
+
+5. 카메라 표현
+
+좋음:
+The camera performs a slow 20-degree clockwise orbit around her over the full shot while keeping her face centered.
+
+나쁨:
+Dynamic cinematic camera movement.
+
+좋음:
+The camera makes a gentle dolly-in of one meter at a constant slow speed, ending on a medium close-up.
+
+나쁨:
+Zoom in dramatically.
+
+6. LongTube용 간결한 video_tag 예시
+
+Ara begins kneeling beside the cracked shell with her eyes fixed on it. Her inner eyebrows lift, her eyes widen, and her shoulders lock as the newborn hand pushes outward. She recoils ten centimeters, then slowly leans forward again without touching the shell. The camera makes a gentle half-meter dolly-in at a constant slow speed while keeping her face and the shell in frame. Cold mist drifts behind her. She ends frozen in shocked concentration.
+
+7. 공식 H3 전체 형식으로 직접 작성할 경우
+
+아래 네 구역을 모두 포함하면 LongTube가 내용을 그대로 전달한다.
+
+For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.
+
+integrated_multimodal_description: [Shot 1] 장면, 동작, 카메라, 끝 상태
+
+overall_soundscape: N/A
+
+non_diegetic_music: N/A
+
+8. 금지 사항
+
+- 여러 샷 번호를 한 5초 컷에 무리하게 배치하지 않는다.
+- “카메라가 알아서”, “자연스럽게 움직인다”처럼 측정할 수 없는 지시를 쓰지 않는다.
+- 원본의 인물 정체성, 의상, 시대, 소품 수, 조명 방향을 바꾸지 않는다.
+- 화면 글자, 자막, 로고, 워터마크 생성을 요구하지 않는다.
+- H3 생성 음성이나 음악을 요구하지 않는다.
+
+공식 기준 자료
+
+- MiniMax H3 공식 저장소: https://github.com/MiniMax-AI/MiniMax-H3
+- 공식 H3 Prompt Writing Skill: https://github.com/MiniMax-AI/MiniMax-H3/tree/main/skills/h3-prompt-writing
+- 공식 영상 생성 API 문서: https://platform.minimax.io/docs/guides/video-generation

@@ -1,7 +1,7 @@
 {
   "_meta": {
     "name": "Qwen-Image-Edit 2509 (fp8 e4m3fn) reference-style edit",
-    "notes": "ComfyUI 네이티브 Qwen-Image-Edit 2509 워크플로. 레퍼런스 이미지 1장 + 텍스트 프롬프트 → 스타일/구성 전이. 필수 파일: models/diffusion_models/qwen_image_edit_2509_fp8_e4m3fn.safetensors, models/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors, models/vae/qwen_image_vae.safetensors. 20 steps, cfg 2.5, euler/simple, shift 3.1. 해상도는 1024/1328 native 근접 권장."
+    "notes": "ComfyUI 네이티브 Qwen-Image-Edit 2509 워크플로. image1은 편집 대상 모델 사진이며 image2/image3 제품 사진은 서비스가 제공된 수만큼 동적으로 연결한다. 공식 2509 구조처럼 image1을 FluxKontextImageScale 후 VAEEncode하여 초기 잠재영상으로 사용한다. 필수 파일: models/diffusion_models/qwen_image_edit_2509_fp8_e4m3fn.safetensors, models/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors, models/vae/qwen_image_vae.safetensors. 20 steps, cfg 2.5, euler/simple, shift 3.1."
   },
   "1": {
     "class_type": "UNETLoader",
@@ -56,11 +56,10 @@
     }
   },
   "8": {
-    "class_type": "EmptySD3LatentImage",
+    "class_type": "VAEEncode",
     "inputs": {
-      "width": "${WIDTH}",
-      "height": "${HEIGHT}",
-      "batch_size": 1
+      "pixels": ["14", 0],
+      "vae": ["3", 0]
     }
   },
   "9": {
@@ -90,6 +89,12 @@
     "inputs": {
       "images": ["10", 0],
       "filename_prefix": "${PREFIX}"
+    }
+  },
+  "14": {
+    "class_type": "FluxKontextImageScale",
+    "inputs": {
+      "image": ["5", 0]
     }
   }
 }

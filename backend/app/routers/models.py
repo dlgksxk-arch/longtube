@@ -27,6 +27,7 @@ PROVIDER_KEY_MAP: dict[str, list[str]] = {
     "luma":       [],  # TODO: add key when implemented
     "pika":       [],  # TODO: add key when implemented
     "minimax":    [],  # TODO: add key when implemented
+    "minimax-h3-local": [],
 }
 
 

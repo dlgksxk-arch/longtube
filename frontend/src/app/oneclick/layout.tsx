@@ -17,6 +17,7 @@ import {
   LayoutDashboard,
   Key,
   FilePenLine,
+  Clapperboard,
 } from "lucide-react";
 import {
   oneclickApi,
@@ -33,6 +34,7 @@ const NAV = [
   { href: "/oneclick/upload-pending", label: "업로드 대기", icon: Upload },
   { href: "/oneclick/live", label: "작업대", icon: Activity },
   { href: "/oneclick/channel-ops", label: "채널운영", icon: MessageSquare },
+  { href: "/oneclick/movie-review", label: "영화 예고", icon: Clapperboard },
   { href: "/oneclick/library", label: "완성작 관리", icon: Film },
 ] as const;
 
@@ -144,6 +146,7 @@ const ONECLICK_SUBNAV = [
   { href: "/oneclick/upload-pending", label: "업로드 대기", icon: Upload },
   { href: "/oneclick/live", label: "작업대", icon: Activity },
   { href: "/oneclick/channel-ops", label: "채널운영", icon: MessageSquare },
+  { href: "/oneclick/movie-review", label: "영화 예고", icon: Clapperboard },
   { href: "/oneclick/library", label: "완성작 관리", icon: Film },
 ] as const;
 

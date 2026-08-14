@@ -32,6 +32,17 @@ SYSTEM_DIR = _RAW_DATA_DIR / "_system"
 SYSTEM_PROJECTS_ROOT = SYSTEM_DIR / "projects"
 RESULT_ARCHIVE_DIR = Path(os.getenv("RESULT_ARCHIVE_DIR", r"D:\long_result"))
 
+# 영화 리뷰 제작실 원본 보관 루트.
+MOVIE_REVIEW_ROOT = Path(os.getenv("MOVIE_REVIEW_ROOT", r"D:\영화튜브"))
+MOVIE_REVIEW_WHISPER_MODEL = os.getenv("MOVIE_REVIEW_WHISPER_MODEL", "large-v3").strip() or "large-v3"
+MOVIE_REVIEW_WHISPER_CACHE = Path(
+    os.getenv("MOVIE_REVIEW_WHISPER_CACHE", r"D:\LongTubeModels\huggingface")
+)
+MOVIE_REVIEW_WHISPER_MODEL_DIR = Path(
+    os.getenv("MOVIE_REVIEW_WHISPER_MODEL_DIR", r"D:\LongTubeModels\faster-whisper-large-v3")
+)
+MOVIE_PREVIEW_GPT_MODEL = os.getenv("MOVIE_PREVIEW_GPT_MODEL", "gpt-5.4-mini").strip() or "gpt-5.4-mini"
+
 DB_PATH = BASE_DIR / "data" / "longtube.db"                       # 로컬 DB
 
 # API Keys
@@ -42,6 +53,10 @@ OPENAI_API_DISABLED = True
 # production pipeline, but Channel Operations may use GPT for viewer-comment
 # translation and replies.
 OPENAI_CHANNEL_COMMENTS_ENABLED = True
+# Explicit user authorization (2026-08-12): movie-preview script and upload
+# metadata generation may use GPT mini.  This does not unlock OpenAI for any
+# other LongTube production path.
+OPENAI_MOVIE_PREVIEW_ENABLED = True
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 OPENAI_API_KEY = "" if OPENAI_API_DISABLED else os.getenv("OPENAI_API_KEY", "")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
@@ -85,6 +100,13 @@ def get_channel_comment_openai_api_key() -> str:
     return _read_env_file_value("OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY", "") or ""
 
 
+def get_movie_preview_openai_api_key() -> str:
+    """Return the OpenAI key only for movie-preview script generation."""
+    if not OPENAI_MOVIE_PREVIEW_ENABLED:
+        return ""
+    return _read_env_file_value("OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY", "") or ""
+
+
 def require_openai_api_enabled() -> None:
     if OPENAI_API_DISABLED:
         raise RuntimeError(
@@ -104,6 +126,19 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 COMFYUI_BASE_URL = os.getenv("COMFYUI_BASE_URL", "").rstrip("/")
 # ComfyUI 워크플로 JSON 프리셋 디렉토리
 COMFYUI_WORKFLOWS_DIR = BASE_DIR / "backend" / "workflows" / "comfyui"
+
+# MiniMax H3 is installed as an isolated local ComfyUI runtime.  It must not
+# share port, model paths, or lifecycle calls with the main image ComfyUI on
+# 8188.  The H3 service keeps its process and loaded weights alive between
+# tagged cuts and between renders.
+MINIMAX_H3_BASE_URL = os.getenv("MINIMAX_H3_BASE_URL", "http://127.0.0.1:8190").rstrip("/")
+MINIMAX_H3_ROOT = Path(os.getenv("MINIMAX_H3_ROOT", r"D:\MiniMaxH3"))
+MINIMAX_H3_PYTHON = Path(
+    os.getenv("MINIMAX_H3_PYTHON", str(MINIMAX_H3_ROOT / "venv" / "Scripts" / "python.exe"))
+)
+MINIMAX_H3_COMFYUI_DIR = Path(
+    os.getenv("MINIMAX_H3_COMFYUI_DIR", str(MINIMAX_H3_ROOT / "ComfyUI"))
+)
 
 # Debug
 DEBUG = os.getenv("DEBUG", "true").lower() == "true"

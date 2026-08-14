@@ -135,10 +135,57 @@ class StoryPlanProbeLLM(BaseLLMService):
 
 
 class OneClickQueueStabilityTests(unittest.TestCase):
-    def test_manual_batch_starts_requested_items_at_interval_with_parallel_followups(self):
+    def test_manual_batch_bypasses_auto_production_pause(self):
+        old_queue = copy.deepcopy(svc._QUEUE)
+        originals = {
+            "_normalize_queue_runtime_state": svc._normalize_queue_runtime_state,
+            "_emergency_stop_active": svc._emergency_stop_active,
+            "_auto_production_paused": svc._auto_production_paused,
+            "_queue_running_task_for_channel": svc._queue_running_task_for_channel,
+            "_has_inflight_task": svc._has_inflight_task,
+            "_resolve_item_preset": svc._resolve_item_preset,
+            "_find_existing_task_for_queue_item": svc._find_existing_task_for_queue_item,
+            "_find_existing_project_for_queue_item": svc._find_existing_project_for_queue_item,
+            "prepare_task": svc.prepare_task,
+            "_mark_queue_item_running": svc._mark_queue_item_running,
+            "start_task": svc.start_task,
+        }
+        calls = []
+
+        try:
+            svc._QUEUE.clear()
+            svc._QUEUE.update({
+                "items": [
+                    {"id": "manual-batch-1", "topic": "first", "channel": 1, "status": "pending"},
+                ],
+            })
+            svc._normalize_queue_runtime_state = lambda save=True: False
+            svc._emergency_stop_active = lambda: False
+            svc._auto_production_paused = lambda: True
+            svc._queue_running_task_for_channel = lambda channel: None
+            svc._has_inflight_task = lambda: False
+            svc._resolve_item_preset = lambda item: None
+            svc._find_existing_task_for_queue_item = lambda item, preset: None
+            svc._find_existing_project_for_queue_item = lambda item: None
+            svc.prepare_task = lambda **kwargs: {"task_id": "task-manual-batch"}
+            svc._mark_queue_item_running = lambda index, task, preset: calls.append(("marked", index))
+            svc.start_task = lambda task_id, allow_parallel=False: calls.append(("started", task_id))
+
+            task = asyncio.run(svc._fire_queue_for_channel(1, "manual-batch"))
+        finally:
+            for name, value in originals.items():
+                setattr(svc, name, value)
+            svc._QUEUE.clear()
+            svc._QUEUE.update(old_queue)
+
+        self.assertEqual(task["task_id"], "task-manual-batch")
+        self.assertEqual(calls, [("marked", 0), ("started", "task-manual-batch")])
+
+    def test_manual_batch_waits_for_completion_then_starts_sequential_followups(self):
         old_queue = copy.deepcopy(svc._QUEUE)
         old_state = copy.deepcopy(svc._QUEUE_BATCH_STATE)
         old_interval = svc._QUEUE_BATCH_INTERVAL_SECONDS
+        old_poll = svc._QUEUE_BATCH_POLL_SECONDS
         old_batch_task = svc._QUEUE_BATCH_TASK
         originals = {
             "_ensure_state_loaded": svc._ensure_state_loaded,
@@ -154,7 +201,13 @@ class OneClickQueueStabilityTests(unittest.TestCase):
             for item in svc._QUEUE["items"]:
                 if item.get("status") == "pending":
                     item["status"] = "running"
-                    return {"task_id": f"task-{len(calls)}", "channel": channel, "status": "queued"}
+                    task = {"task_id": f"task-{len(calls)}", "channel": channel, "status": "running"}
+                    svc._TASKS[task["task_id"]] = task
+                    asyncio.get_running_loop().call_later(
+                        0.01,
+                        lambda task=task: task.update(status="completed"),
+                    )
+                    return task
             return None
 
         async def exercise():
@@ -175,7 +228,10 @@ class OneClickQueueStabilityTests(unittest.TestCase):
                 ],
             })
             svc._QUEUE_BATCH_INTERVAL_SECONDS = 0.01
+            svc._QUEUE_BATCH_POLL_SECONDS = 0.005
             svc._QUEUE_BATCH_TASK = None
+            old_tasks = copy.deepcopy(svc._TASKS)
+            svc._TASKS.clear()
             svc._ensure_state_loaded = lambda: None
             svc._normalize_queue_runtime_state = lambda save=True: False
             svc._has_inflight_task = lambda: False
@@ -192,7 +248,10 @@ class OneClickQueueStabilityTests(unittest.TestCase):
             svc._QUEUE.update(old_queue)
             svc._QUEUE_BATCH_STATE = old_state
             svc._QUEUE_BATCH_INTERVAL_SECONDS = old_interval
+            svc._QUEUE_BATCH_POLL_SECONDS = old_poll
             svc._QUEUE_BATCH_TASK = old_batch_task
+            svc._TASKS.clear()
+            svc._TASKS.update(old_tasks)
 
         self.assertTrue(result["ok"])
         self.assertEqual(result["first_task"]["task_id"], "task-1")
@@ -200,8 +259,8 @@ class OneClickQueueStabilityTests(unittest.TestCase):
             calls,
             [
                 (1, "manual-batch", False),
-                (2, "manual-batch", True),
-                (3, "manual-batch", True),
+                (2, "manual-batch", False),
+                (3, "manual-batch", False),
             ],
         )
         self.assertFalse(state["active"])
@@ -864,6 +923,7 @@ class OneClickQueueStabilityTests(unittest.TestCase):
             "_auto_production_paused": svc._auto_production_paused,
             "_auto_next_delay_active": svc._auto_next_delay_active,
             "_has_running_task": svc._has_running_task,
+            "_pick_recovered_inflight_task_id": svc._pick_recovered_inflight_task_id,
             "_pick_next_queued_task_id": svc._pick_next_queued_task_id,
             "_schedule_oneclick_run": svc._schedule_oneclick_run,
         }
@@ -875,6 +935,7 @@ class OneClickQueueStabilityTests(unittest.TestCase):
             svc._auto_production_paused = lambda: True
             svc._auto_next_delay_active = lambda: False
             svc._has_running_task = lambda: False
+            svc._pick_recovered_inflight_task_id = lambda: None
             svc._pick_next_queued_task_id = lambda: "queued-task"
             svc._schedule_oneclick_run = lambda task_id: scheduled.append(task_id)
 
@@ -886,6 +947,42 @@ class OneClickQueueStabilityTests(unittest.TestCase):
 
         self.assertIsNone(result)
         self.assertEqual(scheduled, [])
+
+    def test_startup_resumes_recovered_inflight_task_when_auto_production_is_off(self):
+        old_lock = svc._QUEUE_SCHEDULER_LOCK_HANDLE
+        originals = {
+            "_ensure_state_loaded": svc._ensure_state_loaded,
+            "_emergency_stop_active": svc._emergency_stop_active,
+            "_auto_production_paused": svc._auto_production_paused,
+            "_auto_next_delay_active": svc._auto_next_delay_active,
+            "_has_running_task": svc._has_running_task,
+            "_pick_recovered_inflight_task_id": svc._pick_recovered_inflight_task_id,
+            "_schedule_oneclick_run": svc._schedule_oneclick_run,
+            "_save_tasks_to_disk": svc._save_tasks_to_disk,
+        }
+        old_tasks = svc._TASKS
+        scheduled = []
+        try:
+            svc._QUEUE_SCHEDULER_LOCK_HANDLE = object()
+            svc._TASKS = {"recovered-task": {"task_id": "recovered-task", "status": "queued"}}
+            svc._ensure_state_loaded = lambda: None
+            svc._emergency_stop_active = lambda: False
+            svc._auto_production_paused = lambda: True
+            svc._auto_next_delay_active = lambda: False
+            svc._has_running_task = lambda: False
+            svc._pick_recovered_inflight_task_id = lambda: "recovered-task"
+            svc._schedule_oneclick_run = lambda task_id: scheduled.append(task_id)
+            svc._save_tasks_to_disk = lambda: None
+
+            result = svc.resume_recovered_inflight_tasks_on_startup()
+        finally:
+            for name, value in originals.items():
+                setattr(svc, name, value)
+            svc._TASKS = old_tasks
+            svc._QUEUE_SCHEDULER_LOCK_HANDLE = old_lock
+
+        self.assertEqual(result, "recovered-task")
+        self.assertEqual(scheduled, ["recovered-task"])
 
     def test_atomic_json_state_recovers_last_known_good_backup(self):
         with tempfile.TemporaryDirectory() as tmp:

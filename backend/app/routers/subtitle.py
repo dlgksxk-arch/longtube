@@ -50,6 +50,10 @@ from app.services.video.longform_header import (
     resolve_longform_channel_name,
     resolve_longform_title,
 )
+from app.services.video.minimax_h3_render import (
+    mux_tagged_minimax_h3_videos,
+    prepare_tagged_minimax_h3_raw_videos,
+)
 from app.services.tts.voice_cast import tts_tags_for_cut
 from app.services.video.subprocess_helper import find_ffmpeg, run_subprocess
 from app.services.interlude_service import (
@@ -1154,6 +1158,23 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
     target_resolution = (project.config or {}).get("render_resolution", "1080p")
     resolution = _resolution_for_aspect(aspect_ratio, target_resolution)
 
+    # H3 video-tag cuts are the first expensive render operation. Generate
+    # them in one consecutive batch on the isolated persistent server before
+    # subtitle, audio-heal, FFmpeg, or Remotion work begins.
+    script_data = _load_script(project_id)
+    try:
+        h3_specs = await prepare_tagged_minimax_h3_raw_videos(
+            project_id,
+            project_dir,
+            script_data,
+            db,
+            aspect_ratio=aspect_ratio,
+        )
+    except Exception as e:
+        import traceback
+        print(f"[subtitle/render] MINIMAX H3 BATCH FAILED: {e}\n{traceback.format_exc()}")
+        raise HTTPException(500, f"MiniMax H3 tagged render failed: {type(e).__name__}: {e}")
+
     # 공통 본편 정책: 컷 및 최종 영상에는 자막을 번인하지 않는다.
     # 최종 음성 타이밍으로 SRT/ASS만 만들고 YouTube 자막 트랙으로 업로드한다.
     cut_level_subs = should_burn_cut_level_subtitles(project.config or {})
@@ -1187,6 +1208,20 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
         import traceback
         print(f"[subtitle/render] audio heal EXCEPTION (non-fatal): {e}\n{traceback.format_exc()}")
 
+    try:
+        await mux_tagged_minimax_h3_videos(
+            project_id,
+            project_dir,
+            h3_specs,
+            db,
+            config=project.config or {},
+            resolution=resolution,
+        )
+    except Exception as e:
+        import traceback
+        print(f"[subtitle/render] MINIMAX H3 TTS MUX FAILED: {e}\n{traceback.format_exc()}")
+        raise HTTPException(500, f"MiniMax H3 TTS mux failed: {type(e).__name__}: {e}")
+
     if not cut_level_subs or subtitle_delivery == "youtube_caption":
         # Audio heal/mux can update DB timing fields. Regenerate subtitles after
         # that step so burn-in and caption files use the final spoken timings.
@@ -1210,7 +1245,6 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
         .order_by(Cut.cut_number)
         .all()
     )
-    script_data = _load_script(project_id)
     channel_id = infer_project_channel(project_id, project.config or {})
     longform_title = resolve_longform_title(
         project.title,

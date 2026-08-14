@@ -396,6 +396,7 @@ async def _run_episode(episode: ScheduledEpisode) -> None:
             uploader = YouTubeUploader()
 
     from app.tasks.pipeline_tasks import load_script
+    from app.services.youtube_publish_schedule import next_main_publish_at
     from app.services.youtube_localization_service import (
         build_youtube_metadata_localizations,
     )
@@ -424,6 +425,7 @@ async def _run_episode(episode: ScheduledEpisode) -> None:
         or ""
     ).strip() or None
     try:
+        main_publish_at = next_main_publish_at()
         result = await asyncio.to_thread(
             uploader.upload,
             str(final_video),
@@ -431,12 +433,13 @@ async def _run_episode(episode: ScheduledEpisode) -> None:
             description,
             tags,
             None,
-            privacy,
+            "private",
             config.get("language", "ko"),
             category_id,
             False,       # made_for_kids
             None,        # progress_callback
             comment_topic=(script_data.get("topic") or script_data.get("title") or final_title),
+            publish_at=main_publish_at,
         )
         result = {**result, "studio_verified": False, "processing_verified": False}
         if metadata_localizations and result.get("video_id"):

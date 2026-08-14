@@ -48,6 +48,7 @@ from app.services.youtube_metadata import (
     validate_metadata_for_profile,
 )
 from app.services.multilingual_caption_service import should_upload_youtube_captions, upload_multilingual_captions
+from app.services.youtube_publish_schedule import next_production_publish_schedule
 
 celery_app = Celery("longtube", broker=REDIS_URL, backend=REDIS_URL)
 
@@ -1860,7 +1861,10 @@ def _step_video(project_id: str, config: dict):
     # v1.1.56: 로컬 ComfyUI 는 GPU 1개 큐라 동시 N 개 보내도 순차 처리 → 동시 1 로 강제.
     # 체감상 1번 컷이 먼저 완료돼 progress 가 빨리 돌고 총 시간은 동일.
     _video_model = resolve_video_model(config.get("video_model", DEFAULT_VIDEO_MODEL))
-    _is_comfy_video = VIDEO_REGISTRY.get(_video_model, {}).get("provider") == "comfyui"
+    _is_comfy_video = VIDEO_REGISTRY.get(_video_model, {}).get("provider") in {
+        "comfyui",
+        "minimax-h3-local",
+    }
     CONCURRENT = 1 if _is_comfy_video else 4
 
     project_dir = _ensure_project_layout(project_id, config)
@@ -2418,6 +2422,9 @@ def _step_upload(project_id: str, config: dict):
         cut_001 = project_dir / "images" / "cut_001.png"
         thumbnail_upload_path = cut_one if cut_one.exists() else cut_001
 
+    publish_schedule = next_production_publish_schedule()
+    main_publish_at = str(publish_schedule["main"])
+    shorts_publish_at = [str(value) for value in publish_schedule["shorts"]]
     existing_upload = uploader.find_existing_upload_by_title(upload_title)
     if existing_upload:
         existing_video_id = existing_upload.get("video_id")
@@ -2457,6 +2464,7 @@ def _step_upload(project_id: str, config: dict):
             language=upload_language,
             category_id=category_id,
             comment_topic=script.get("topic") or script.get("title") or upload_title,
+            publish_at=main_publish_at,
         )
         result = {**result, "studio_verified": False, "processing_verified": False}
         if _Path(thumbnail_upload_path).exists() and result.get("video_id"):
@@ -2623,10 +2631,11 @@ def _step_upload(project_id: str, config: dict):
                         description=shorts_description,
                         tags=shorts_tags,
                         thumbnail_path=None,
-                        privacy=str(config.get("youtube_privacy", "private") or "private"),
+                        privacy="private",
                         language=upload_language,
                         category_id=category_id,
                         comment_topic=shorts_base_title,
+                        publish_at=shorts_publish_at[min(idx - 1, len(shorts_publish_at) - 1)],
                     )
                     shorts_upload = {
                         **shorts_upload,

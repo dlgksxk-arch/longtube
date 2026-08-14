@@ -1,0 +1,328 @@
+KREA2 이미지 프롬프트 작성 지침
+버전: 1.0
+적용 대상: LongTube 로컬 comfyui-krea2 / comfyui-krea2-expression
+
+======================================================================
+1. 목적
+======================================================================Single continuous 16:9 cinematic live-action historical frame. Sobulgong holds the cloth over a small fire without looking away from Ara, his expression rigid and shoulders squared. The setting is a historically plausible late first century BCE Jinhan settlement in the southern Korean peninsula, with simple hemp clothing, timber-and-thatch structures, earthenware, and no later royal-palace ornament. Medium shot at eye level, photographed with a 50mm lens. Orange flame from below lights the cloth and the underside of his face against gray daylight. The image uses a divided orange, gray, and black palette and tactile burning cloth, smoke, coarse hemp, and wet stone. One camera viewpoint, one continuous scene, no split screen, no collage, no contact sheet, no inset panel, no subtitles, no logo, no watermark, and no readable text.
+
+Krea2 워크플로는 애플리케이션에서 받은 최종 이미지 Single continuous 16:9 cinematic live-action historical frame. Sobulgong holds the cloth over a small fire without looking away from Ara, his expression rigid and shoulders squared. The setting is a historically plausible late first century BCE Jinhan settlement in the southern Korean peninsula, with simple hemp clothing, timber-and-thatch structures, earthenware, and no later royal-palace ornament. Medium shot at eye level, photographed with a 50mm lens. Orange flame from below lights the cloth and the underside of his face against gray daylight. The image uses a divided orange, gray, and black palette and tactile burning cloth, smoke, coarse hemp, and wet stone. One camera viewpoint, one continuous scene, no split screen, no collage, no contact sheet, no inset panel, no subtitles, no logo, no watermark, and no readable text.Single continuous 16:9 cinematic live-action historical frame. Sobulgong holds the cloth over a small fire without looking away from Ara, his expression rigid and shoulders squared. The setting is a historically plausible late first century BCE Jinhan settlement in the southern Korean peninsula, with simple hemp clothing, timber-and-thatch structures, earthenware, and no later royal-palace ornament. Medium shot at eye level, photographed with a 50mm lens. Orange flame from below lights the cloth and the underside of his face against gray daylight. The image uses a divided orange, gray, and black palette and tactile burning cloth, smoke, coarse hemp, and wet stone. One camera viewpoint, one continuous scene, no split screen, no collage, no contact sheet, no inset panel, no subtitles, no logo, no watermark, and no readable text.프롬프트를 그대로 생성한다.
+ComfyUI 워크플로 내부에서 프롬프트를 추가하거나 수정하지 않는다.
+채널 스타일, 시대, 장면, 인물, 감정, 구도는 반드시 상위 이미지 프롬프트 작성 단계에서 완성한다.
+
+
+======================================================================
+2. 절대 원칙
+======================================================================
+
+1) 대사 내용을 그대로 그림에 쓰지 않는다.
+   대사가 의미하는 한순간의 시각적 장면으로 바꾼다.
+
+2) 키워드를 무작정 나열하지 않는다.
+   사진가나 촬영감독이 한 장면을 설명하듯 자연스러운 영문 문장으로 작성한다.
+
+3) 한 프롬프트에는 한 장면, 한 시점, 한 가지 핵심 행동만 넣는다.
+   시간의 흐름, 여러 장소, 전후 사건을 한 이미지에 함께 넣지 않는다.
+
+4) 원문 충실성을 우선한다.
+   대본에 없는 인물, 동물, 물건, 복식, 사건을 임의로 추가하지 않는다.
+
+5) 채널 스타일은 해당 채널 설정에서만 가져온다.
+   다른 채널의 실사, 카툰, 시대, 색감 지침을 섞지 않는다.
+
+6) 화면에 실제로 등장해야 하는 인물만 작성한다.
+   내레이션의 화자를 화면 속 인물로 자동 생성하지 않는다.
+
+7) 하나의 응집된 영문 문단으로 완성한다.
+   JSON, 마크다운, 항목명, 프롬프트 내부 메모, ElevenLabs 태그 원문을 넣지 않는다.
+
+8) 이미지 안의 문자는 생성하지 않는다.
+   썸네일 문구, 자막, 제목, 간판 문자는 렌더 단계에서 별도로 합성한다.
+
+
+======================================================================
+3. 기본 작성 순서
+======================================================================
+
+[매체·채널 스타일]
++ [주요 피사체와 정체]
++ [한 가지 행동]
++ [얼굴·몸으로 표현한 감정]
++ [시대·장소·근거가 있는 소품]
++ [구도·카메라 시점·렌즈]
++ [조명·색감·재질]
++ [단일 화면 및 문자 방지 조건]
+
+기본 골격:
+
+Single continuous 16:9 [채널 스타일] frame. [주요 인물 또는 피사체] [한 가지
+행동]. [얼굴과 몸에 나타나는 감정]. [시대와 장소 및 필요한 소품].
+[촬영 거리와 시점], photographed with a [렌즈] lens. [조명 방향과 성질],
+[색감], and [표면·재질]. One camera viewpoint, one continuous scene, no split
+screen, no collage, no contact sheet, no inset panel, no subtitles, no logo,
+no watermark, and no readable text.
+
+
+======================================================================
+4. 요소별 작성 지침
+======================================================================
+
+4.1 매체와 채널 스타일
+
+- 프롬프트 첫 문장에서 매체와 채널 고정 스타일을 선언한다.
+- 실사 채널이면 cinematic live-action historical frame처럼 명확하게 쓴다.
+- 카툰 채널이면 해당 채널에 등록된 고정 일러스트 스타일을 그대로 사용한다.
+- photorealistic, cartoon, anime, watercolor처럼 충돌하는 매체를 함께 쓰지 않는다.
+- cinematic, 8k, masterpiece, ultra detailed 같은 장식 키워드만 반복하지 않는다.
+
+4.2 주요 피사체
+
+- 핵심 인물 또는 사물을 문장 앞부분에 배치한다.
+- 인물은 성인 여부, 역할, 시대적 정체를 명확하게 쓴다.
+- 이름만으로 외형이 보장되지 않으면 역할과 시대를 함께 설명한다.
+- 여러 인물이 필요하면 각 인물의 위치와 행동을 분리해 명시한다.
+
+예:
+An adult female newspaper reporter in late-19th-century London...
+An elderly Goguryeo commander wearing historically plausible lamellar armor...
+
+4.3 행동
+
+- 정지 이미지에서 확인 가능한 동작만 쓴다.
+- thinking, realizing, remembering처럼 보이지 않는 상태만 적지 않는다.
+- 손, 시선, 몸의 방향, 물체와의 접촉으로 사건을 보여준다.
+- 서로 다른 행동을 연속해서 나열하지 않는다.
+
+나쁜 예:
+He enters the palace, argues with the king, loses the battle, and escapes.
+
+좋은 예:
+He stands before the throne with one clenched fist while the king watches him
+in silence.
+
+4.4 감정과 표정
+
+- angry, sad, surprised 같은 감정 단어만 쓰지 않는다.
+- 눈썹, 눈, 입, 턱, 목, 자세에 나타나는 물리적 특징으로 번역한다.
+- 표정이 중요하면 medium close-up 또는 close-up을 사용한다.
+- 전신 원경에서 미세한 눈물이나 입술 표정을 요구하지 않는다.
+
+4.5 시대와 장소
+
+- 대본에서 확인되는 시대, 지역, 건축, 복식, 재료만 사용한다.
+- 현대 물건, 현대 문자, 판타지 장식이 섞이지 않도록 한다.
+- 역사적 근거가 불명확한 세부 디자인을 과도하게 발명하지 않는다.
+
+4.6 구도와 카메라
+
+- 촬영 거리: extreme close-up / close-up / medium close-up / medium shot /
+  full-body shot / wide establishing shot
+- 시점: eye-level / low-angle / high-angle / over-the-shoulder / shot from behind
+- 구도: centered composition / subject on the left third / symmetrical composition
+- 렌즈: 24mm는 넓은 공간, 35mm는 현장감, 50mm는 자연스러운 인물,
+  85mm는 인물 클로즈업에 주로 사용한다.
+- 장면의 목적과 맞는 촬영 거리 하나를 선택한다.
+
+4.7 조명과 색감
+
+- 조명의 시간, 방향, 강도, 색을 구체적으로 쓴다.
+- soft light처럼 끝내지 말고 광원의 위치와 피사체에 미치는 효과를 적는다.
+
+예:
+Hard gaslight enters from camera-left and casts deep shadows across her face.
+Soft overcast daylight evenly illuminates the courtyard.
+Warm firelight outlines the soldiers against a cold blue night background.
+
+4.8 재질과 디테일
+
+- 장면을 증명하는 재질을 제한적으로 사용한다.
+- cloth, aged timber, rough stone, tarnished bronze, wet earth처럼 실제로 보여야
+  하는 표면을 적는다.
+- 장면과 관계없는 고해상도 수식어를 반복하지 않는다.
+
+
+======================================================================
+5. ElevenLabs 감정 태그의 시각화 규칙
+======================================================================
+
+태그 원문을 이미지 프롬프트에 그대로 넣지 않는다.
+화면에 실제 화자가 등장하는 경우에만 아래처럼 시각적 표현으로 변환한다.
+
+[angry]
+Her eyebrows are lowered and pulled tightly together, her eyes fixed sharply
+forward, nostrils slightly flared, and jaw visibly tense.
+
+[shouts]
+Her mouth is wide open mid-shout, with visible tension in her jaw and neck,
+and her upper body leaning forward.
+
+[crying]
+Her eyes are filled with tears, distinct tears run down both cheeks, her
+eyelids and nose are reddened, and her lower lip trembles.
+
+[surprised]
+Her eyebrows are raised high, her eyes are wide with visible sclera, her jaw
+is dropped, and her head pulls slightly backward.
+
+[stammers]
+Her lips are unevenly parted mid-word, her gaze is anxious and unfixed, and
+one hand is frozen in a hesitant gesture.
+
+[whispers]
+Her lips are barely parted, her expression is restrained, and her face leans
+closer toward the listener.
+
+[happily] / [giggle]
+Her cheeks are raised in a genuine smile, the corners of her eyes are softly
+creased, and her shoulders are relaxed.
+
+[worried]
+Her inner eyebrows are raised, her lips are pressed unevenly together, and
+her shoulders are held tense.
+
+내레이션 감정 태그:
+
+- 화면에 화자가 없으면 얼굴을 새로 만들지 않는다.
+- dramatic은 강한 명암과 긴장된 구도로 변환한다.
+- quietly는 절제된 움직임과 부드러운 조명으로 변환한다.
+- rushed는 대각선 구도, 급한 자세, 흔들리는 천이나 먼지 등으로 변환한다.
+- 감정 태그 때문에 대본에 없는 인물을 추가하지 않는다.
+
+
+======================================================================
+6. 문자와 다중 화면 방지
+======================================================================
+
+현재 로컬 Krea2 워크플로는 ConditioningZeroOut과 CFG 1.0을 사용한다.
+따라서 별도 네거티브 프롬프트에만 금지어를 넣지 않는다.
+아래 조건을 최종 긍정 프롬프트의 마지막에 직접 적는다.
+
+One camera viewpoint, one continuous scene, no split screen, no collage,
+no contact sheet, no inset panel, no subtitles, no logo, no watermark,
+and no readable text.
+
+문서, 지도, 편지, 간판이 장면에 필요할 때:
+
+- 문자를 읽을 수 있게 요구하지 않는다.
+- sealed envelope, folded document, unmarked map, illegible handwriting처럼
+  사물의 존재만 표현한다.
+- 실제 제목과 자막은 후속 렌더에서 합성한다.
+
+
+======================================================================
+7. 장면 유형별 권장 구성
+======================================================================
+
+표정 중심 장면:
+- 인물 1명
+- medium close-up 또는 close-up
+- 50mm 또는 85mm
+- 눈과 입을 가리지 않는 조명
+- 감정을 얼굴 근육과 자세로 기술
+
+대화 장면:
+- 인물 2명의 좌우 위치와 시선 방향 명시
+- medium two-shot 또는 over-the-shoulder
+- 두 인물의 행동을 각각 한 문장 안에서 명확히 구분
+
+행동 장면:
+- 한 가지 결정적 행동만 선택
+- low-angle, diagonal composition, wide shot 등 동작에 맞는 구도 사용
+- 무기, 손, 발의 접촉 관계를 명확하게 기술
+
+장소 소개 장면:
+- 인물을 억지로 넣지 않음
+- wide establishing shot
+- 시대를 증명하는 건축, 지형, 재료, 시간대 중심으로 작성
+
+사물 중심 장면:
+- 사물을 문장 맨 앞에 배치
+- 위치, 방향, 표면, 주변 증거를 구체화
+- 사물과 무관한 인물을 자동 추가하지 않음
+
+썸네일 이미지:
+- 핵심 인물 또는 핵심 사물을 크게 배치
+- 감정과 충돌을 한순간에 읽을 수 있게 함
+- 썸네일 문구가 들어갈 여백만 구도로 확보
+- 이미지 모델에 실제 썸네일 문자를 생성시키지 않음
+
+
+======================================================================
+8. 금지 사항
+======================================================================
+
+- ElevenLabs 태그 원문 삽입
+- 대사 원문을 화면 속 문자로 생성
+- 여러 사건과 여러 시간을 한 장에 압축
+- 다른 채널 스타일 혼합
+- 대본에 없는 미모, 성별, 복식, 소품 임의 추가
+- narrator, metaphor, symbolism 같은 추상어만 사용
+- 서로 충돌하는 카메라 거리와 시점 동시 지정
+- cinematic, masterpiece, 8k, ultra detailed 등의 반복 나열
+- split screen, triptych, storyboard, comic panels, before-and-after 구도
+- 워크플로 내부에 고정 이미지 프롬프트 추가
+- Krea 공식 prompt enhancement를 자동 활성화하여 원문을 재작성
+
+
+======================================================================
+9. 작성 후 자체 확인
+======================================================================
+
+아래 항목을 모두 만족해야 최종 프롬프트로 사용한다.
+
+[ ] 채널 고정 스타일이 첫 문장에 있는가?
+[ ] 대본에서 확인되는 한 장면만 표현했는가?
+[ ] 핵심 인물 또는 사물이 문장 앞부분에 있는가?
+[ ] 한 가지 핵심 행동이 눈으로 확인 가능하게 적혔는가?
+[ ] 감정이 얼굴과 몸의 물리적 특징으로 변환되었는가?
+[ ] 시대, 장소, 복식, 소품이 대본과 맞는가?
+[ ] 촬영 거리, 시점, 렌즈가 서로 충돌하지 않는가?
+[ ] 조명의 방향과 성질이 적혔는가?
+[ ] 대본에 없는 인물이나 물건을 추가하지 않았는가?
+[ ] 문자 생성 요구가 없는가?
+[ ] 단일 장면 및 다중 화면 방지 문장이 마지막에 있는가?
+[ ] 하나의 자연스러운 영문 문단으로 완성되었는가?
+
+
+======================================================================
+10. 완성 예시
+======================================================================
+
+나쁜 예:
+
+[angry] [shouts], cinematic, 8k, beautiful reporter, bloody letter,
+masterpiece, ultra detailed, dramatic, London
+
+좋은 예:
+
+Single continuous 16:9 cinematic live-action historical frame. An adult female
+reporter in a late-19th-century London newspaper office leans over a desk and
+shouts at someone just outside the frame. Her eyebrows are lowered and pulled
+tightly together, her eyes fixed sharply forward, nostrils flared, mouth wide
+open mid-shout, with visible tension in her jaw and neck. A sealed blood-stained
+envelope lies on the desk with no readable writing. Medium close-up at eye
+level, photographed with a 50mm lens and shallow depth of field. Hard gaslight
+enters from camera-left, creating deep shadows, a desaturated brown and crimson
+palette, and tactile paper and wool textures. One camera viewpoint, one
+continuous scene, no split screen, no collage, no contact sheet, no inset panel,
+no subtitles, no logo, no watermark, and no readable text.
+
+
+======================================================================
+11. 참고 자료
+======================================================================
+
+Krea 2 공식 프롬프트 확장 규칙:
+https://github.com/krea-ai/krea-2/blob/main/docs/expansion.txt
+
+Krea 2 공식 프롬프트 예시:
+https://github.com/krea-ai/krea-2/blob/main/docs/prompting.md
+
+Krea 2 공식 기술 보고서:
+https://www.krea.ai/blog/krea-2-technical-report
+
+ComfyUI 공식 Krea 2 워크플로 문서:
+https://github.com/Comfy-Org/docs/blob/main/tutorials/image/krea/krea-2.mdx
+
+검토한 한국어 가이드:
+https://fuerte.tistory.com/395

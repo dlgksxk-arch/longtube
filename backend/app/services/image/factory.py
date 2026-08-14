@@ -5,8 +5,8 @@ from app.services.image.comfyui_service import ComfyUIImageService
 from app.services.image.nano_banana_service import NanoBananaService
 from app.services.image.openai_image_service import OpenAIImageService
 
-DEFAULT_IMAGE_MODEL = "comfyui-dreamshaper-xl-longtube"
-DEFAULT_THUMBNAIL_MODEL = "comfyui-z-image-turbo"
+DEFAULT_IMAGE_MODEL = "comfyui-krea2-expression"
+DEFAULT_THUMBNAIL_MODEL = "comfyui-krea2-expression"
 
 IMAGE_REGISTRY: dict[str, dict] = {
     "comfyui-dreamshaper-xl": {
@@ -56,6 +56,18 @@ IMAGE_REGISTRY: dict[str, dict] = {
         "name": "로컬krea2",
         "provider": "comfyui",
         "cost_per_unit": "Free (local GPU)",
+        "cost_value": 0.0,
+    },
+    "comfyui-krea2-expression": {
+        "name": "로컬krea2 표정개선",
+        "provider": "comfyui",
+        "cost_per_unit": "Free (local GPU)",
+        "cost_value": 0.0,
+    },
+    "comfyui-qwen-image-edit-2509": {
+        "name": "Qwen Image Edit 2509",
+        "provider": "comfyui",
+        "cost_per_unit": "Free (local GPU, reference required)",
         "cost_value": 0.0,
     },
     "openai-image-1": {

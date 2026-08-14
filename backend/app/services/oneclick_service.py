@@ -111,6 +111,7 @@ from app.services.youtube_metadata import (
     recommended_shorts_title_hashtags,
     validate_metadata_for_profile,
 )
+from app.services.youtube_publish_schedule import next_production_publish_schedule
 
 # v1.1.52: pipeline_tasks 의 _redis_get 을 사용 — 인메모리 fallback 포함이라
 # Redis 없어도 같은 프로세스 내에서 진행률을 정확히 읽는다.
@@ -710,8 +711,7 @@ def _load_tasks_from_disk() -> None:
             # 실제 산출물 기준으로 첫 미완료 단계부터 자동 재개한다.
             if task.get("status") in ("running", "queued", "prepared"):
                 _reconcile_task_outputs(task, clear_terminal_cursor=True, cleanup_broken=False)
-                if not _should_preserve_loaded_external_task(tid, task):
-                    _prepare_inflight_task_for_restart(task)
+                _prepare_inflight_task_for_restart(task)
             elif task.get("status") == "uploading":
                 pass
             elif task.get("status") in ("failed", "cancelled", "paused", "completed"):
@@ -1050,6 +1050,7 @@ _AUTO_NEXT_DELAY_SECONDS = 10
 _AUTO_NEXT_DISPATCH_NOT_BEFORE = 0.0
 _AUTO_NEXT_DISPATCH_TASK: Optional["asyncio.Task"] = None
 _QUEUE_BATCH_INTERVAL_SECONDS = 600
+_QUEUE_BATCH_POLL_SECONDS = 1.0
 _QUEUE_BATCH_TASK: Optional["asyncio.Task"] = None
 _QUEUE_BATCH_STATE: dict[str, Any] = {
     "active": False,
@@ -1434,6 +1435,24 @@ def _pick_next_queued_task_id(*, exclude_task_id: Optional[str] = None) -> Optio
     return waiting[0][1] if waiting else None
 
 
+def _pick_recovered_inflight_task_id() -> Optional[str]:
+    """서버가 죽기 전에 실제 시작됐던 미완료 작업을 우선 복구한다."""
+    waiting: list[tuple[str, str]] = []
+    for tid, task in _TASKS.items():
+        if task.get("status") != "queued":
+            continue
+        if not str(task.get("started_at") or "").strip():
+            continue
+        if str(task.get("finished_at") or "").strip():
+            continue
+        runner = _ACTIVE_RUNS.get(tid)
+        if runner is not None and not runner.done():
+            continue
+        waiting.append((str(task.get("started_at") or task.get("created_at") or ""), tid))
+    waiting.sort(key=lambda item: item[0])
+    return waiting[0][1] if waiting else None
+
+
 def _dispatch_next_queued_task(
     *,
     exclude_task_id: Optional[str] = None,
@@ -1495,14 +1514,13 @@ def resume_recovered_inflight_tasks_on_startup() -> Optional[str]:
     _ensure_state_loaded()
     if _QUEUE_SCHEDULER_LOCK_HANDLE is None:
         return None
-    if (
-        _emergency_stop_active()
-        or _auto_production_paused()
-        or _auto_next_delay_active()
-        or _has_running_task()
-    ):
+    if _emergency_stop_active() or _has_running_task():
         return None
-    next_task_id = _pick_next_queued_task_id()
+    next_task_id = _pick_recovered_inflight_task_id()
+    if next_task_id is None:
+        if _auto_production_paused() or _auto_next_delay_active():
+            return None
+        next_task_id = _pick_next_queued_task_id()
     if not next_task_id:
         return None
     task = _TASKS.get(next_task_id)
@@ -1516,6 +1534,10 @@ def resume_recovered_inflight_tasks_on_startup() -> Optional[str]:
 def _should_auto_dispatch_after_task(task: dict[str, Any] | None) -> bool:
     """렌더 완료 후 업로드 대기로 넘어간 작업은 다음 제작을 바로 연결한다."""
     if not task:
+        return False
+    # 다편 제작은 run_queue_batch_now 가 "완료 -> 10분 대기 -> 다음 편"을
+    # 전담한다. 일반 10초 자동 디스패치가 끼어들면 순차 계약이 깨진다.
+    if str(task.get("triggered_by") or "").strip().lower() == "manual-batch":
         return False
     states = dict(task.get("step_states") or {})
     if (
@@ -4895,10 +4917,15 @@ async def _step_youtube_upload(
             or config.get("category_id")
             or ""
         ).strip() or None
-        privacy = config.get("youtube_privacy") or "private"
-        shorts_privacy = config.get("youtube_shorts_privacy") or privacy
+        publish_schedule = next_production_publish_schedule()
+        main_publish_at = str(publish_schedule["main"])
+        shorts_publish_at = [str(value) for value in publish_schedule["shorts"]]
+        privacy = "private"
+        shorts_privacy = "private"
         print(
-            f"[oneclick] YouTube upload: privacy={privacy}, category={category_id or 'default'}, "
+            f"[oneclick] YouTube scheduled upload: date={publish_schedule['publish_date']} "
+            f"timezone={publish_schedule['timezone']} main={main_publish_at}, "
+            f"privacy={privacy}, category={category_id or 'default'}, "
             f"desc_len={len(description)}, tags={len(tags)}, "
             f"localizations={sorted(metadata_localizations)}, thumb={thumb_path.exists()}"
         )
@@ -4971,6 +4998,7 @@ async def _step_youtube_upload(
                 False,  # made_for_kids
                 _upload_progress_callback,   # progress_callback
                 comment_topic=metadata_topic,
+                publish_at=main_publish_at,
             )
 
             video_url = result.get("url")
@@ -5075,6 +5103,8 @@ async def _step_youtube_upload(
             "caption_language": (main_caption_result or {}).get("language"),
             "caption_already_present": bool((main_caption_result or {}).get("already_present")),
             "top_comment": main_top_comment,
+            "privacy_status": "private",
+            "publish_at": (None if existing_video_url else main_publish_at),
             "last_checked_at": _utcnow_iso(),
         }]
         print(f"[oneclick] YouTube upload accepted: {video_url}")
@@ -5143,6 +5173,7 @@ async def _step_youtube_upload(
             short_upload_errors: list[str] = []
             for idx, short_path in enumerate(usable_shorts_files, start=1):
                 key = short_path.name
+                short_publish_at = shorts_publish_at[min(idx - 1, len(shorts_publish_at) - 1)]
                 existing = shorts_uploads.get(key)
                 existing_upload_record = (
                     dict(existing)
@@ -5260,6 +5291,7 @@ async def _step_youtube_upload(
                             False,  # made_for_kids
                             _shorts_progress_callback,   # progress_callback
                             comment_topic=short_title_base,
+                            publish_at=short_publish_at,
                         )
                 except Exception as exc:
                     message = f"{key}: {type(exc).__name__}: {exc}"
@@ -5293,6 +5325,8 @@ async def _step_youtube_upload(
                         "url": short_url,
                         "video_id": short_video_id,
                         "metadata_pending": True,
+                        "privacy_status": "private",
+                        "publish_at": short_publish_at,
                     }
                     shorts_uploads_path.write_text(
                         json.dumps(shorts_uploads, ensure_ascii=False, indent=2),
@@ -5307,7 +5341,6 @@ async def _step_youtube_upload(
                         tags=short_tags,
                         category_id=category_id or None,
                         default_language=metadata_language,
-                        privacy_status=shorts_privacy,
                     )
                 short_localization_result = None
                 if short_localizations and short_video_id:
@@ -5330,6 +5363,8 @@ async def _step_youtube_upload(
                         (short_localization_result or {}).get("languages") or []
                     ),
                     "top_comment": short_result.get("top_comment"),
+                    "privacy_status": short_result.get("privacy_status"),
+                    "publish_at": short_result.get("publish_at"),
                 }
                 shorts_playlist_id = str(
                     config.get("youtube_shorts_playlist_id")
@@ -5368,6 +5403,8 @@ async def _step_youtube_upload(
                         (short_localization_result or {}).get("languages") or []
                     ),
                     "top_comment": short_result.get("top_comment"),
+                    "privacy_status": short_result.get("privacy_status"),
+                    "publish_at": short_result.get("publish_at"),
                 })
                 shorts_uploads[key] = item
                 uploaded_items.append(item)
@@ -5902,9 +5939,9 @@ async def _start_studio_router_step(project_id: str, step_num: int) -> None:
                     db.commit()
             return
         if step_num == 5:
-            from app.routers.video import generate_all_videos_async
+            from app.routers.video import resume_videos_async
 
-            await generate_all_videos_async(project_id, db=db)
+            await resume_videos_async(project_id, db=db)
             return
         if step_num == 6:
             from app.routers.subtitle import render_video_async
@@ -7003,7 +7040,8 @@ async def _run_oneclick_task(task_id: str) -> None:
         async def __aexit__(self, exc_type, exc, tb):
             return False
 
-    run_context = _BatchRunContext() if task.get("triggered_by") == "manual-batch" else _RUN_LOCK
+    # 수동 다편 제작도 다른 제작과 동일하게 단일 실행 잠금을 사용한다.
+    run_context = _RUN_LOCK
     async with run_context:
         if task.get("status") == "cancelled":
             return
@@ -10884,7 +10922,10 @@ async def _fire_queue_for_channel(
     해당 채널에 items 가 없으면 아무것도 안 함.
     성공/실패 상관없이 pop-on-start.
     """
-    if triggered_by != "manual":
+    # 작업대의 단일 시작과 다편 시작은 모두 사용자가 직접 누른 수동 실행이다.
+    # manual-batch 를 자동 실행으로 취급하면 안전장치의 자동제작 일시정지에
+    # 막혀 첫 편조차 시작되지 않는다.
+    if triggered_by not in ("manual", "manual-batch"):
         if _emergency_stop_active():
             print(f"[oneclick.queue] defer ch{ch}: emergency stop guard active")
             return None
@@ -11217,7 +11258,7 @@ def get_queue_batch_state() -> dict[str, Any]:
 
 
 async def run_queue_batch_now(count: int) -> dict[str, Any]:
-    """대기열 앞에서부터 count편을 10분 간격으로 실제 실행한다."""
+    """대기열 앞에서부터 count편을 완료 후 10분 간격으로 순차 실행한다."""
     global _QUEUE_BATCH_TASK, _QUEUE_BATCH_STATE
 
     try:
@@ -11252,7 +11293,7 @@ async def run_queue_batch_now(count: int) -> dict[str, Any]:
         "error": None,
     }
 
-    async def _start_next(*, allow_parallel: bool) -> dict[str, Any]:
+    async def _start_next() -> dict[str, Any]:
         _normalize_queue_runtime_state()
         next_item = next(
             (
@@ -11268,7 +11309,7 @@ async def run_queue_batch_now(count: int) -> dict[str, Any]:
         started = await _fire_queue_for_channel(
             channel,
             "manual-batch",
-            allow_parallel=allow_parallel,
+            allow_parallel=False,
         )
         task_id = str((started or {}).get("task_id") or "").strip()
         if not task_id:
@@ -11279,17 +11320,33 @@ async def run_queue_batch_now(count: int) -> dict[str, Any]:
         _QUEUE_BATCH_STATE["started_count"] = len(_QUEUE_BATCH_STATE["started_task_ids"])
         return started
 
-    first_task = await _start_next(allow_parallel=False)
+    first_task = await _start_next()
+
+    async def _wait_until_completed(task_id: str) -> None:
+        while True:
+            current = _TASKS.get(task_id)
+            if current is None:
+                raise RuntimeError(f"다편 제작 작업을 찾을 수 없습니다: {task_id}")
+            status = str(current.get("status") or "").strip().lower()
+            if status == "completed":
+                return
+            if status in ("failed", "cancelled", "paused", "upload_failed"):
+                detail = str(current.get("error") or status)
+                raise RuntimeError(f"이전 작업이 완료되지 않아 연속 제작을 중단했습니다: {task_id} ({detail})")
+            await asyncio.sleep(_QUEUE_BATCH_POLL_SECONDS)
 
     async def _run_remaining() -> None:
         global _QUEUE_BATCH_TASK
         try:
+            previous_task_id = str(first_task.get("task_id") or "")
             for _ in range(1, requested):
+                await _wait_until_completed(previous_task_id)
                 next_epoch = time.time() + _QUEUE_BATCH_INTERVAL_SECONDS
                 _QUEUE_BATCH_STATE["next_start_at"] = datetime.fromtimestamp(next_epoch).isoformat()
                 await asyncio.sleep(_QUEUE_BATCH_INTERVAL_SECONDS)
                 _QUEUE_BATCH_STATE["next_start_at"] = None
-                await _start_next(allow_parallel=True)
+                started = await _start_next()
+                previous_task_id = str(started.get("task_id") or "")
         except asyncio.CancelledError:
             _QUEUE_BATCH_STATE["error"] = "다편 제작 예약이 중단되었습니다."
             raise

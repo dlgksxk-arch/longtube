@@ -42,7 +42,7 @@ from app.models.database import init_db
 # v1.1.43: oneclick_service 에 "주제 큐 + 매일 HH:MM" 형태의 새 스케줄러가
 # 다시 붙었다 (구 17 행 그리드 와는 완전히 다른 모델). startup/shutdown 에서
 # `start_queue_scheduler` / `stop_queue_scheduler` 를 호출한다.
-from app.routers import projects, pipeline, script, script_studio, voice, image, video, subtitle, interlude, youtube, downloads, models, api_status, api_keys, api_balances, tasks, oneclick, assets, auth, channel_ops
+from app.routers import projects, pipeline, script, script_studio, voice, image, video, subtitle, interlude, youtube, downloads, models, api_status, api_keys, api_balances, tasks, oneclick, assets, auth, channel_ops, movie_review
 # v2.1.0 병렬 라우터. 구 라우터와 독립적으로 /api/v2/* 에 마운트된다.
 from app.routers.v2 import (
     keys as v2_keys,
@@ -113,6 +113,15 @@ async def lifespan(app: FastAPI):
         print(f"[startup] ffmpeg OK: {ffpath}")
     except Exception as e:
         print(f"[startup] ffmpeg NOT FOUND: {e}")
+    try:
+        from app.services.movie_review_service import migrate_legacy_job_folders
+        movie_review_report = migrate_legacy_job_folders()
+        print(
+            "[startup] movie-review folders: "
+            f"renamed={movie_review_report['renamed']} indexed={movie_review_report['indexed']}"
+        )
+    except Exception as e:
+        print(f"[startup] movie-review folder migration failed (non-fatal): {e}")
     # v1.1.43: oneclick 주제 큐 스케줄러 기동. 사용자 요구: "딸깍제작 주제
     # 입력 리스트 만들고 매일 몇시에 시작 할지 입력 할 수 있게해". 30 초 간격
     # 루프가 DATA_DIR/oneclick_queue.json 을 감시하다가 설정된 HH:MM 에
@@ -235,6 +244,7 @@ app.include_router(tasks.router, prefix="/api/tasks", tags=["tasks"])
 # v1.1.43: /api/schedule 라우터 비활성화 (자동화 스케줄 기능 삭제)
 app.include_router(oneclick.router, prefix="/api/oneclick", tags=["oneclick"])
 app.include_router(channel_ops.router, prefix="/api/channel-ops", tags=["channel-ops"])
+app.include_router(movie_review.router, prefix="/api/movie-review", tags=["movie-review"])
 
 # v2.1.0 병렬 라우터 — 구 라우터와 독립. /api/v2/* 에 마운트.
 app.include_router(v2_keys.router, prefix="/api/v2/keys", tags=["v2-keys"])

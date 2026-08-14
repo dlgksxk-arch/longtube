@@ -1,8 +1,11 @@
 """Image generation router"""
 import re
 import datetime as _dt
+import json
+import shutil
+import uuid
 from pathlib import Path
-from fastapi import APIRouter, Depends, HTTPException, File, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, File, Form, UploadFile
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -42,6 +45,83 @@ from app.services.llm.visual_policy import (
 )
 
 router = APIRouter()
+
+
+_PRODUCT_EDIT_MODEL_ID = "comfyui-qwen-image-edit-2509"
+_PRODUCT_EDIT_MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+_PRODUCT_EDIT_ALLOWED_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
+
+
+def _product_edit_prompt(
+    user_prompt: str,
+    *,
+    product_count: int,
+    product_name: str = "",
+) -> str:
+    request = re.sub(r"\s+", " ", str(user_prompt or "").strip())
+    if not request:
+        raise HTTPException(400, "편집 프롬프트를 입력하세요.")
+
+    product_label = re.sub(r"\s+", " ", str(product_name or "").strip())
+    lines = [
+        "Image 1 is the target model/person image and must remain the compositional base.",
+    ]
+    if product_count:
+        refs = "Image 2" if product_count == 1 else "Images 2 and 3"
+        lines.extend(
+            [
+                f"{refs} are product reference images only.",
+                "Make the person in Image 1 naturally wear, hold, or use the referenced product according to its real product category.",
+                "If the referenced product is wearable, completely replace the existing garment or accessory on the same body area with the referenced product; do not retain the original item's color, shape, or construction.",
+                "Preserve the referenced product's shape, material, color, pattern, distinctive details, and branding as faithfully as possible.",
+                "Do not copy people, hands, backgrounds, stands, packaging, or photographic staging from the product reference images.",
+            ]
+        )
+        if product_label:
+            lines.append(f"Product name supplied by the user: {product_label}.")
+    else:
+        lines.append(
+            "No product reference image was supplied. Treat the request as a clothing and/or background edit of Image 1 only."
+        )
+
+    lines.extend(
+        [
+            "Preserve the person's facial identity, facial features, skin tone, hairstyle, and body proportions.",
+            "Preserve pose, hands, camera angle, framing, background, and lighting only when the user does not request changes to them.",
+            "Any pose, camera angle, framing, background, or lighting change explicitly stated in the user request overrides the source image and must be carried out.",
+            "Do not add unrelated people, products, accessories, text, or duplicate body parts.",
+            f"User edit request: {request}",
+        ]
+    )
+    return "\n".join(lines)
+
+
+async def _save_product_edit_upload(
+    upload: UploadFile,
+    destination: Path,
+) -> tuple[Path, tuple[int, int]]:
+    suffix = Path(upload.filename or "").suffix.lower()
+    if suffix not in _PRODUCT_EDIT_ALLOWED_SUFFIXES:
+        raise HTTPException(400, "PNG, JPG, JPEG, WEBP 이미지만 사용할 수 있습니다.")
+    content = await upload.read()
+    if not content:
+        raise HTTPException(400, f"빈 이미지입니다: {upload.filename or 'upload'}")
+    if len(content) > _PRODUCT_EDIT_MAX_UPLOAD_BYTES:
+        raise HTTPException(400, "이미지 한 장은 25MB를 초과할 수 없습니다.")
+
+    destination = destination.with_suffix(suffix)
+    destination.write_bytes(content)
+    try:
+        from PIL import Image
+
+        with Image.open(destination) as image:
+            image.verify()
+        with Image.open(destination) as image:
+            size = (int(image.width), int(image.height))
+    except Exception as exc:
+        destination.unlink(missing_ok=True)
+        raise HTTPException(400, f"올바른 이미지 파일이 아닙니다: {upload.filename or 'upload'}") from exc
+    return destination, size
 
 
 # v1.1.61: 파일 로그. backend/logs/image_async.log 에 찍어서
@@ -165,7 +245,7 @@ def _cut_has_committed_image(
 def _apply_image_prompt_profile(image_service, config: dict | None) -> str:
     profile = configured_prompt_profile(config)
     model_id = str(getattr(image_service, "model_id", "") or "").strip().lower()
-    if model_id == "comfyui-krea2":
+    if model_id in {"comfyui-krea2", "comfyui-krea2-expression"}:
         image_service.prompt_profile = ""
         image_service.preserve_prompt_verbatim = True
         return ""
@@ -196,6 +276,103 @@ async def comfyui_free_memory():
     from app.services import comfyui_client
     ok = await comfyui_client.free_memory()
     return {"ok": ok}
+
+
+@router.post("/{project_id}/product-edit")
+async def generate_product_edit(
+    project_id: str,
+    prompt: str = Form(...),
+    product_name: str = Form(""),
+    person_image: UploadFile = File(..., alias="model_image"),
+    product_image_1: UploadFile | None = File(None),
+    product_image_2: UploadFile | None = File(None),
+    db: Session = Depends(get_db),
+):
+    """Edit a model image with zero, one, or two product references.
+
+    Input order is strict: image1=model/person, image2=product main,
+    image3=product secondary. With no product image, the prompt is handled as a
+    clothing/background edit of image1.
+    """
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(404, "Project not found")
+    if product_image_2 is not None and product_image_1 is None:
+        raise HTTPException(400, "제품 이미지 2를 사용하려면 제품 이미지 1도 필요합니다.")
+
+    project_dir = resolve_project_dir(project_id, project.config or {}, create=True)
+    edit_id = _dt.datetime.now().strftime("%Y%m%d_%H%M%S") + f"_{uuid.uuid4().hex[:8]}"
+    edit_dir = project_dir / "product_edits" / edit_id
+    input_dir = edit_dir / "inputs"
+    input_dir.mkdir(parents=True, exist_ok=False)
+
+    try:
+        model_path, model_size = await _save_product_edit_upload(
+            person_image, input_dir / "model"
+        )
+        product_paths: list[Path] = []
+        for index, upload in enumerate((product_image_1, product_image_2), start=1):
+            if upload is None:
+                continue
+            saved, _ = await _save_product_edit_upload(
+                upload, input_dir / f"product_{index}"
+            )
+            product_paths.append(saved)
+
+        final_prompt = _product_edit_prompt(
+            prompt,
+            product_count=len(product_paths),
+            product_name=product_name,
+        )
+        output_path = edit_dir / "result.png"
+        image_service = get_image_service(_PRODUCT_EDIT_MODEL_ID)
+        image_service.negative_prompt = (
+            "low quality, blurry, duplicate person, duplicate product, extra limbs, "
+            "extra fingers, malformed hands, distorted face, changed identity, watermark, "
+            "unrelated text, product packaging, display stand"
+        )
+        await image_service.generate(
+            final_prompt,
+            model_size[0],
+            model_size[1],
+            str(output_path),
+            reference_images=[str(model_path), *[str(path) for path in product_paths]],
+        )
+
+        metadata = {
+            "version": 1,
+            "edit_id": edit_id,
+            "model": _PRODUCT_EDIT_MODEL_ID,
+            "mode": "product_wear_or_use" if product_paths else "clothing_background_edit",
+            "product_count": len(product_paths),
+            "product_name": re.sub(r"\s+", " ", str(product_name or "").strip()),
+            "user_prompt": str(prompt or "").strip(),
+            "effective_prompt": final_prompt,
+            "inputs": {
+                "model": model_path.relative_to(project_dir).as_posix(),
+                "products": [path.relative_to(project_dir).as_posix() for path in product_paths],
+            },
+            "output": output_path.relative_to(project_dir).as_posix(),
+            "created_at": _dt.datetime.now().isoformat(timespec="seconds"),
+        }
+        (edit_dir / "metadata.json").write_text(
+            json.dumps(metadata, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        return {
+            "ok": True,
+            "edit_id": edit_id,
+            "mode": metadata["mode"],
+            "product_count": len(product_paths),
+            "path": metadata["output"],
+            "model": _PRODUCT_EDIT_MODEL_ID,
+        }
+    except HTTPException:
+        shutil.rmtree(edit_dir, ignore_errors=True)
+        raise
+    except Exception as exc:
+        shutil.rmtree(edit_dir, ignore_errors=True)
+        raise HTTPException(500, f"제품 합성 실패: {exc}") from exc
 
 
 # v1.1.30: 레퍼런스 이미지가 첨부된 경우, cut.image_prompt 안에 이미 박혀있는
@@ -376,7 +553,7 @@ def _build_image_prompt(
     def _finalize(value: str) -> str:
         return apply_fixed_channel_image_style(value, style_config, project_id)
 
-    if resolved_model == "comfyui-krea2":
+    if resolved_model in {"comfyui-krea2", "comfyui-krea2-expression"}:
         return _finalize(str(image_prompt or "").strip())
     if is_canonical_script_image_prompt(image_prompt):
         return _finalize(_prepend_prompt_lock(

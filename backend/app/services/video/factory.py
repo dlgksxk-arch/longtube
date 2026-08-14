@@ -6,10 +6,12 @@ from app.services.video.ffmpeg_service import (
 )
 from app.services.video.fal_service import FalVideoService
 from app.services.video.comfyui_service import ComfyUIVideoService
+from app.services.video.minimax_h3_service import MiniMaxH3VideoService
 
 DEFAULT_VIDEO_MODEL = "ffmpeg-static"
 WAN22_TI2V_5B_MODEL = "comfyui-wan22-ti2v-5b"
 LTX23_V4_I2V_MODEL = "comfyui-ltx23-v4"
+LOCAL_MINIMAX_H3_MODEL = "local-minimax-h3"
 
 # Keep old saved project configs safe: these local test models are no longer
 # exposed in Studio, but if a preset still contains one, run FFmpeg Static instead.
@@ -59,6 +61,12 @@ VIDEO_REGISTRY: dict[str, dict] = {
         "cost_per_unit": "Free (local)",
         "cost_value": 0,
     },
+    LOCAL_MINIMAX_H3_MODEL: {
+        "name": "로컬영상미니맥스",
+        "provider": "minimax-h3-local",
+        "cost_per_unit": "Free (local)",
+        "cost_value": 0,
+    },
 }
 
 
@@ -90,6 +98,8 @@ def get_video_service(model_id: str) -> BaseVideoService:
         return FalVideoService(model_id)
     elif provider == "comfyui":
         return ComfyUIVideoService(model_id)
+    elif provider == "minimax-h3-local":
+        return MiniMaxH3VideoService(model_id)
     else:
         print(f"[video-factory] Provider '{provider}' not implemented, falling back to ffmpeg-static")
         return FFmpegStaticService()

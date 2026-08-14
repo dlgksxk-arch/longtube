@@ -21,6 +21,7 @@
 - 보관 인계: `docs/handoffs/`
 - 폐기된 v2 기획/패리티 문서: `docs/archive/v2/`
 - 연구 메모: `docs/research/`
+- SFX 운용 기준: `docs/research/SFX_OPERATION_GUIDELINES.txt`
 
 `docs/ARCHITECTURE.md`는 현재 구현 기준 문서가 아닙니다.
 
