@@ -20,6 +20,7 @@ from app.services.remotion_shorts_renderer import (  # noqa: E402
     SHARED_SHORTS_PIPELINE_ID,
     render_remotion_shorts,
 )
+from app.routers.subtitle import _resolve_local_shorts_channel_identity  # noqa: E402
 
 
 def _character_alignment(text: str, step: float = 0.1) -> dict:
@@ -31,6 +32,22 @@ def _character_alignment(text: str, step: float = 0.1) -> dict:
 
 
 class ShortsWordCaptionTests(unittest.TestCase):
+    def test_channel_five_render_identity_uses_factory_label_without_oauth(self):
+        name, avatar = _resolve_local_shorts_channel_identity(
+            {"factory_channel_label": "채널 5 - 신라사"},
+            5,
+        )
+        self.assertEqual(name, "신라사")
+        self.assertIsNone(avatar)
+
+    def test_render_source_does_not_open_youtube_oauth_for_shorts_metadata(self):
+        import inspect
+        from app.routers.subtitle import render_video_with_subtitles
+
+        source = inspect.getsource(render_video_with_subtitles)
+        self.assertNotIn("YouTubeUploader", source)
+        self.assertNotIn("get_channel_info", source)
+
     def test_shared_renderer_rejects_channel_specific_or_legacy_props(self):
         with self.assertRaisesRegex(RuntimeError, "invalid pipelineId"):
             asyncio.run(render_remotion_shorts(

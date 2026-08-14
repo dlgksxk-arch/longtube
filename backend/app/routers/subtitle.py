@@ -70,6 +70,46 @@ DEFAULT_RENDER_BGM_VOLUME = 0.21
 DEFAULT_RENDER_BGM_DUCKING = "low"
 DEFAULT_RENDER_BGM_START_OFFSET_SEC = 60.0
 
+_CACHED_SHORTS_CHANNEL_NAMES = {
+    1: "10분역공",
+    2: "Scartography",
+    3: "闇解き日本史",
+    4: "Empire Errors",
+}
+_CACHED_SHORTS_CHANNEL_AVATARS = {
+    1: "https://yt3.ggpht.com/lZRG--gQU8wZ5Gzeethzm6NBlG6FD9Jx4QxR4djz4kOgIj-LS9Dm1fO0ruuMEhrZE1AjEFeXQ3Q=s88-c-k-c0x00ffffff-no-rj",
+    2: "https://yt3.ggpht.com/kHPhHQSyGha1yRRa745pBE6YwPnNGwFTlIl7Z9zWZ4eFNiX5UPvUzStCD1AtsJR3ZAsg9UxU=s88-c-k-c0x00ffffff-no-rj",
+    3: "https://yt3.ggpht.com/lRHg7iB8VCuQYJPyiu6P4mKHK6jslowo8ZURRESjmTbiVYqvXCOn0draMc_XV_dGMS6tbjj8DJs=s88-c-k-c0x00ffffff-no-rj",
+    4: "https://yt3.ggpht.com/8mFhhpKQW1HpFEPyq0qziMmY26fDaaNTsUayMxnKWf65WuPzR_NQKB_pIb1ULR4lOqwbh_0=s88-c-k-c0x00ffffff-no-rj",
+}
+
+
+def _resolve_local_shorts_channel_identity(
+    cfg: dict,
+    channel_id: int,
+) -> tuple[str, str | None]:
+    """Resolve render metadata without starting an interactive YouTube OAuth flow."""
+    name = str(
+        cfg.get("shorts_channel_name")
+        or cfg.get("channel_display_name")
+        or cfg.get("youtube_channel_name")
+        or cfg.get("brand_name")
+        or _CACHED_SHORTS_CHANNEL_NAMES.get(channel_id)
+        or ""
+    ).strip()
+    if not name:
+        label = str(cfg.get("factory_channel_label") or "").strip()
+        name = label.rsplit(" - ", 1)[-1].strip() if " - " in label else label
+    if not name:
+        name = f"CH{channel_id}" if channel_id > 0 else "공장"
+    avatar = str(
+        cfg.get("shorts_channel_avatar_url")
+        or cfg.get("channel_avatar_url")
+        or _CACHED_SHORTS_CHANNEL_AVATARS.get(channel_id)
+        or ""
+    ).strip() or None
+    return name, avatar
+
 
 def _project_dir(project_id: str, *, create: bool = False) -> Path:
     config: dict = {}
@@ -1707,62 +1747,14 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
                     or cfg.get("subtitle_language")
                     or cfg.get("target_language")
                 )
-            shorts_channel_name = (
-                cfg.get("shorts_channel_name")
-                or cfg.get("channel_display_name")
-                or cfg.get("youtube_channel_name")
-                or cfg.get("brand_name")
-            )
             raw_channel = cfg.get("channel") or cfg.get("youtube_channel")
             try:
                 shorts_channel_id = int(raw_channel or 0)
             except (TypeError, ValueError):
                 shorts_channel_id = 0
-            cached_channel_avatars = {
-                1: "https://yt3.ggpht.com/lZRG--gQU8wZ5Gzeethzm6NBlG6FD9Jx4QxR4djz4kOgIj-LS9Dm1fO0ruuMEhrZE1AjEFeXQ3Q=s88-c-k-c0x00ffffff-no-rj",
-                2: "https://yt3.ggpht.com/kHPhHQSyGha1yRRa745pBE6YwPnNGwFTlIl7Z9zWZ4eFNiX5UPvUzStCD1AtsJR3ZAsg9UxU=s88-c-k-c0x00ffffff-no-rj",
-                3: "https://yt3.ggpht.com/lRHg7iB8VCuQYJPyiu6P4mKHK6jslowo8ZURRESjmTbiVYqvXCOn0draMc_XV_dGMS6tbjj8DJs=s88-c-k-c0x00ffffff-no-rj",
-                4: "https://yt3.ggpht.com/8mFhhpKQW1HpFEPyq0qziMmY26fDaaNTsUayMxnKWf65WuPzR_NQKB_pIb1ULR4lOqwbh_0=s88-c-k-c0x00ffffff-no-rj",
-            }
-            cached_channel_names = {
-                1: "10\ubd84\uc5ed\uacf5",
-                2: "Scartography",
-                3: "\u95c7\u89e3\u304d\u65e5\u672c\u53f2",
-                4: "Empire Errors",
-            }
-            if not shorts_channel_name:
-                shorts_channel_name = cached_channel_names.get(shorts_channel_id)
-            shorts_channel_avatar_url = (
-                cfg.get("shorts_channel_avatar_url")
-                or cfg.get("channel_avatar_url")
-                or cached_channel_avatars.get(shorts_channel_id)
+            shorts_channel_name, shorts_channel_avatar_url = (
+                _resolve_local_shorts_channel_identity(cfg, shorts_channel_id)
             )
-            if not shorts_channel_name:
-                try:
-                    from app.services.youtube_service import YouTubeUploader
-
-                    ch = shorts_channel_id
-                    if ch >= 1:
-                        channel_info = YouTubeUploader(channel_id=ch).get_channel_info()
-                        shorts_channel_name = channel_info.get("title") or None
-                        shorts_channel_avatar_url = (
-                            channel_info.get("thumbnail")
-                            or shorts_channel_avatar_url
-                        )
-                except Exception as e:
-                    print(f"[subtitle/render] shorts channel name lookup skipped: {e}")
-            elif not shorts_channel_avatar_url:
-                try:
-                    from app.services.youtube_service import YouTubeUploader
-
-                    ch = shorts_channel_id
-                    if ch >= 1:
-                        shorts_channel_avatar_url = (
-                            YouTubeUploader(channel_id=ch).get_channel_info().get("thumbnail")
-                            or None
-                        )
-                except Exception as e:
-                    print(f"[subtitle/render] shorts channel avatar lookup skipped: {e}")
             shorts_source_path = Path(shorts_body_path) if shorts_body_path else video_dir / "merged.mp4"
             if not shorts_source_path.exists():
                 shorts_source_path = video_dir / "merged.mp4"
