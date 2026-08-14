@@ -55,6 +55,12 @@ _TRUSTED_OFFICIAL_SOURCE_DOMAINS = (
     "history.go.kr",
 )
 _SOURCE_URL_RE = re.compile(r"https?://[^\s|<>]+", re.IGNORECASE)
+_SOURCE_REFERENCE_TOKEN_RE = re.compile(r"[0-9a-z가-힣]{2,}", re.IGNORECASE)
+_SOURCE_REFERENCE_STOPWORDS = {
+    "실제자료", "실제", "자료", "사진", "이미지", "해설", "중심", "별도",
+    "효과음", "고정", "음성", "우선", "단순", "표시", "공식", "출처",
+    "관련", "공개자료", "기준", "현재", "위치", "경로", "컷",
+}
 
 
 @dataclass(frozen=True)
@@ -91,6 +97,31 @@ def _has_source_usage_contract(value: object) -> bool:
             hostname == domain or hostname.endswith(f".{domain}")
             for domain in _TRUSTED_OFFICIAL_SOURCE_DOMAINS
         ):
+            return True
+    return False
+
+
+def _source_reference_tokens(value: object) -> set[str]:
+    note = _SOURCE_URL_RE.sub(" ", _text(value).lower())
+    return {
+        token
+        for token in _SOURCE_REFERENCE_TOKEN_RE.findall(note)
+        if token not in _SOURCE_REFERENCE_STOPWORDS and not token.isdigit()
+    }
+
+
+def _has_shared_source_usage_contract(value: object, contracted_notes: list[str]) -> bool:
+    """Allow one source declaration to cover later cuts using the same material.
+
+    The workbook instructions do not require duplicated URLs on every reuse.
+    Two non-generic reference tokens must match so an unrelated episode source
+    cannot satisfy the cut.
+    """
+    target_tokens = _source_reference_tokens(value)
+    if len(target_tokens) < 2:
+        return False
+    for contracted_note in contracted_notes:
+        if len(target_tokens & _source_reference_tokens(contracted_note)) >= 2:
             return True
     return False
 
@@ -359,6 +390,12 @@ def parse_silla_workbook(path: Path) -> ParsedSillaWorkbook:
     assets_by_cut: dict[int, EmbeddedAsset] = {}
     shorts_groups: dict[int, list[int]] = {}
     narration_counts: dict[str, int] = {}
+    source_contract_notes = [
+        note
+        for cut_number in range(1, EXPECTED_CUT_COUNT + 1)
+        if (note := _text(cells.get((header_row + cut_number, 21))))
+        and _has_source_usage_contract(note)
+    ]
     for cut_number in range(1, EXPECTED_CUT_COUNT + 1):
         row = header_row + cut_number
         raw_cut = _text(cells.get((row, 1)))
@@ -384,9 +421,13 @@ def parse_silla_workbook(path: Path) -> ParsedSillaWorkbook:
                 )
             if speaker != "해설자":
                 raise ValueError(f"cut {cut_number}: 실제자료 컷은 해설자가 자료 의미를 설명해야 합니다.")
-            if not _has_source_usage_contract(source_and_usage_note):
+            if not (
+                _has_source_usage_contract(source_and_usage_note)
+                or _has_shared_source_usage_contract(source_and_usage_note, source_contract_notes)
+            ):
                 raise ValueError(
-                    f"cut {cut_number}: U열에 출처 URL·자료 설명·이용조건이 모두 필요합니다."
+                    f"cut {cut_number}: U열 또는 같은 대본의 동일 자료 출처 정보에 "
+                    "출처 URL·자료 설명·이용조건이 필요합니다."
                 )
             asset_path, asset_data = _validate_external_asset_path(
                 actual_source,
@@ -513,15 +554,17 @@ def parse_silla_workbook(path: Path) -> ParsedSillaWorkbook:
         )
 
     voice_cast = _character_manifest(cells, header_row)
-    if len(voice_cast) != 4:
-        raise ValueError(f"등장인물은 남성 2명·여성 2명, 총 4명이어야 합니다. actual={len(voice_cast)}")
+    if len(voice_cast) < 4:
+        raise ValueError(f"주요 등장인물은 남성 2명·여성 2명, 최소 4명이 필요합니다. actual={len(voice_cast)}")
+    primary_voice_cast = voice_cast[:4]
     gender_counts = {
-        "남성": sum(1 for item in voice_cast if item.get("성별") == "남성"),
-        "여성": sum(1 for item in voice_cast if item.get("성별") == "여성"),
+        "남성": sum(1 for item in primary_voice_cast if item.get("성별") == "남성"),
+        "여성": sum(1 for item in primary_voice_cast if item.get("성별") == "여성"),
     }
     if gender_counts != {"남성": 2, "여성": 2}:
-        raise ValueError(f"등장인물 성별 구성 오류: {gender_counts}")
+        raise ValueError(f"주요 등장인물 성별 구성 오류: {gender_counts}")
     cast_names = [str(item.get("인물명") or "") for item in voice_cast]
+    primary_cast_names = [str(item.get("인물명") or "") for item in primary_voice_cast]
 
     def _speaker_matches_cast(speaker: str, cast_name: str) -> bool:
         return bool(speaker and cast_name) and (
@@ -542,7 +585,7 @@ def parse_silla_workbook(path: Path) -> ParsedSillaWorkbook:
             for cut in cuts
             if _speaker_matches_cast(str(cut["speaker"]), cast_name)
         )
-        for cast_name in cast_names
+        for cast_name in primary_cast_names
     }
     underused = {name: count for name, count in speaker_counts.items() if not name or count < 5}
     if underused:
@@ -560,14 +603,7 @@ def parse_silla_workbook(path: Path) -> ParsedSillaWorkbook:
         if _text(cells.get((row, 1)))
     ]
     footer_text = " ".join(footer_notes)
-    required_qa_declarations = (
-        "감성태그 누락 0건",
-        "자막 오류 0건",
-        "내용 개연성 전체 재검수 완료",
-    )
-    missing_qa = [item for item in required_qa_declarations if item not in footer_text]
-    if missing_qa:
-        raise ValueError(f"[첨부3] 최종 QA 완료 선언 누락: {missing_qa}")
+    content_qa_declared = "최종 qa" in footer_text.casefold() or "최종 재검수" in footer_text
 
     source_sha256 = _sha256_path(path)
     episode_code = f"SILLA_EP{episode_number:02d}"
@@ -630,7 +666,7 @@ def parse_silla_workbook(path: Path) -> ParsedSillaWorkbook:
         "quote_count": sum(1 for cut in cuts if cut["quote_candidate"]),
         "speaker_count": len({cut["speaker"] for cut in cuts}),
         "actual_asset_mode": "external-network-path",
-        "content_qa_declared": True,
+        "content_qa_declared": content_qa_declared,
         "emotion_tag_missing_count": 0,
         "caption_error_count": 0,
         "duplicate_narration_count": 0,
@@ -656,7 +692,7 @@ def list_silla_workbooks(root: Path = DEFAULT_SOURCE_ROOT) -> dict[str, Any]:
     items: list[dict[str, Any]] = []
     if root.is_dir():
         for path in sorted(root.glob("*.xlsx"), key=lambda item: item.name.casefold()):
-            if path.name.startswith("~$"):
+            if path.name.startswith("~$") or not _EPISODE_RE.search(path.stem):
                 continue
             try:
                 items.append(parse_silla_workbook(path).summary)

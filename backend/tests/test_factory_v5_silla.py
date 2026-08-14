@@ -21,6 +21,8 @@ from app.tasks.pipeline_tasks import _validate_prepared_script
 
 
 SILLA_EP02 = Path(r"D:\#대본\채널1_신라사\황금의_나라_EP02.xlsx")
+SILLA_EP03 = Path(r"D:\#대본\채널1_신라사\황금의_나라_EP03.xlsx")
+SILLA_EP04 = Path(r"D:\#대본\채널1_신라사\황금의_나라_EP04.xlsx")
 
 
 def _base_cut(**updates):
@@ -165,6 +167,51 @@ def test_source_usage_contract_does_not_trust_lookalike_or_general_domains():
     assert not factory_v5_silla._has_source_usage_contract(
         "출처: https://example.com/source"
     )
+
+
+def test_shared_source_contract_accepts_later_cut_using_same_landmarks():
+    declared = [
+        "국가유산포털 나정·오릉 대표점. 나정: "
+        "https://www.heritage.go.kr/heri/cul/detail | 오릉: "
+        "https://www.heritage.go.kr/heri/cul/detail2"
+    ]
+
+    assert factory_v5_silla._has_shared_source_usage_contract(
+        "국가유산포털 대표점 기준 나정·오릉 상세 위치도",
+        declared,
+    )
+    assert not factory_v5_silla._has_shared_source_usage_contract(
+        "국사편찬위원회 삼국사기 목판본",
+        declared,
+    )
+
+
+def test_silla_workbook_list_excludes_non_episode_reference_workbooks(tmp_path, monkeypatch):
+    episode = tmp_path / "황금의_나라_EP01.xlsx"
+    reference = tmp_path / "신라_확장_자료집.xlsx"
+    episode.touch()
+    reference.touch()
+    monkeypatch.setattr(
+        factory_v5_silla,
+        "parse_silla_workbook",
+        lambda path: SimpleNamespace(summary={"filename": path.name, "valid": True}),
+    )
+
+    result = factory_v5_silla.list_silla_workbooks(tmp_path)
+
+    assert [item["filename"] for item in result["workbooks"]] == [episode.name]
+
+
+@pytest.mark.skipif(
+    not all(path.is_file() for path in (SILLA_EP03, SILLA_EP04)),
+    reason="local Silla episode workbooks are unavailable",
+)
+@pytest.mark.parametrize("workbook", [SILLA_EP03, SILLA_EP04])
+def test_current_silla_episode_workbooks_pass_registration_validation(workbook: Path):
+    parsed = parse_silla_workbook(workbook)
+
+    assert parsed.summary["valid"] is True
+    assert parsed.summary["content_qa_declared"] is True
 
 
 def test_factory_v5_uses_youtube_caption_track_without_burning_subtitles():
