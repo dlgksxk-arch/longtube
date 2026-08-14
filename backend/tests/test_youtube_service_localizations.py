@@ -2,6 +2,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -11,6 +12,7 @@ from app.services.youtube_service import (  # noqa: E402
     build_upload_top_comment,
     prepare_youtube_thumbnail_upload_path,
 )
+from app.services import youtube_service  # noqa: E402
 
 
 class _Request:
@@ -19,6 +21,27 @@ class _Request:
 
     def execute(self):
         return self.response
+
+
+class ProjectTokenPathTests(unittest.TestCase):
+    def test_legacy_system_token_survives_factory_channel_move(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            moved_dir = root / "channels" / "CH5" / "projects" / "preset-1"
+            legacy_root = root / "_system" / "projects"
+            legacy_token = legacy_root / "preset-1" / "youtube_token.json"
+            moved_dir.mkdir(parents=True)
+            legacy_token.parent.mkdir(parents=True)
+            legacy_token.write_text("{}", encoding="utf-8")
+
+            with mock.patch.object(youtube_service, "resolve_project_dir", return_value=moved_dir), mock.patch.object(
+                youtube_service,
+                "get_system_projects_root",
+                return_value=legacy_root,
+            ):
+                uploader = youtube_service.YouTubeUploader(project_id="preset-1")
+
+            self.assertEqual(uploader.token_path, legacy_token)
 
 
 class _Videos:

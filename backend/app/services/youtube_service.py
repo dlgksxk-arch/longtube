@@ -26,7 +26,13 @@ from google_auth_httplib2 import AuthorizedHttp
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
-from app.config import YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET, BASE_DIR, resolve_project_dir
+from app.config import (
+    YOUTUBE_CLIENT_ID,
+    YOUTUBE_CLIENT_SECRET,
+    BASE_DIR,
+    get_system_projects_root,
+    resolve_project_dir,
+)
 
 # ì—…ë¡œë“œ + ì¸ë„¤ì¼ ì„¸íŒ… ê¶Œí•œ
 SCOPES = [
@@ -46,6 +52,18 @@ def _project_token_path(project_id: str) -> Path:
     ê° í”„ë¡œì íŠ¸ ë””ë ‰í† ë¦¬ ì•„ëž˜ì— ì €ìž¥í•˜ë©´ í”„ë¡œì íŠ¸ë³„ë¡œ ë‹¤ë¥¸ YouTube ê³„ì •ì„ ì—°ê²°í• 
     ìˆ˜ ìžˆìŠµë‹ˆë‹¤. í”„ë¡œì íŠ¸ ë””ë ‰í† ë¦¬ì˜ `youtube_token.json` í˜•íƒœ.
     """
+    resolved_dir = resolve_project_dir(project_id, create=False)
+    resolved_token = resolved_dir / "youtube_token.json"
+    if resolved_token.exists():
+        return resolved_token
+
+    # Factory V5 moved presets from `_system/projects/{id}` to
+    # `channels/CHn/projects/{id}`. Keep using an OAuth token that was linked
+    # before that move instead of treating the preset as unauthenticated.
+    legacy_system_token = get_system_projects_root() / str(project_id) / "youtube_token.json"
+    if legacy_system_token.exists():
+        return legacy_system_token
+
     return resolve_project_dir(project_id, create=True) / "youtube_token.json"
 
 

@@ -4644,8 +4644,8 @@ async def _step_youtube_upload(
 ) -> dict:
     """썸네일을 자동 생성하고 YouTube 에 업로드한다.
 
-    channel (1~8) 가 지정되면 해당 채널별 OAuth 토큰만 사용한다.
-    채널이 지정되지 않은 작업만 프로젝트 토큰으로 폴백한다.
+    channel (1~8) 토큰을 우선 사용하고, 없으면 현재 프로젝트 또는
+    연결된 프리셋의 OAuth 토큰을 사용한다.
     """
     from app.services.thumbnail_service import (
         generate_ai_thumbnail,
@@ -4779,8 +4779,9 @@ async def _step_youtube_upload(
         # 2) 현재 생성 프로젝트의 youtube_token.json
         # 3) 프리셋 프로젝트의 youtube_token.json
         #
-        # 채널이 명시된 작업은 다른 토큰으로 폴백하지 않는다. 선택한 채널 토큰의
-        # 실제 YouTube channel ID까지 확인한 뒤에만 업로드한다.
+        # 선택한 채널 토큰을 우선한다. 채널 토큰이 없으면 프리셋 설정 화면에서
+        # 연결한 프로젝트 토큰을 사용한다. 어떤 경로든 실제 YouTube channel
+        # ID를 조회하고 설정된 기대값과 대조한 뒤에만 업로드한다.
         uploader = None
         uploader_token_source = None
         uploader_project_id = None
@@ -4792,38 +4793,50 @@ async def _step_youtube_upload(
         )
         if ch_int is not None:
             ch_uploader = YouTubeUploader(channel_id=ch_int)
-            if not ch_uploader.is_authenticated():
-                raise RuntimeError(
-                    f"CH{ch_int} YouTube 인증이 안 되어 있습니다. "
-                    f"딸깍 위젯 → 채널별 YouTube 계정 → CH{ch_int} '연결' 을 먼저 해 주세요. "
-                    f"(다른 계정 토큰으로 잘못 업로드되는 것을 막기 위해 업로드를 중단합니다.)"
+            if ch_uploader.is_authenticated():
+                channel_info = await asyncio.to_thread(ch_uploader.get_channel_info)
+                _assert_oneclick_youtube_channel_identity(config, ch_int, channel_info)
+                uploader = ch_uploader
+                uploader_token_source = "channel"
+                uploader_channel_id = ch_int
+                print(
+                    f"[oneclick] using verified channel {ch_int} YouTube token: "
+                    f"{channel_info.get('title')} ({channel_info.get('channel_id')})"
                 )
-            channel_info = await asyncio.to_thread(ch_uploader.get_channel_info)
-            _assert_oneclick_youtube_channel_identity(config, ch_int, channel_info)
-            uploader = ch_uploader
-            uploader_token_source = "channel"
-            uploader_channel_id = ch_int
-            print(
-                f"[oneclick] using verified channel {ch_int} YouTube token: "
-                f"{channel_info.get('title')} ({channel_info.get('channel_id')})"
-            )
 
         if uploader is None:
             project_uploader = YouTubeUploader(project_id=project_id)
             if project_uploader.is_authenticated():
+                channel_info = await asyncio.to_thread(project_uploader.get_channel_info)
+                if ch_int is not None:
+                    _assert_oneclick_youtube_channel_identity(config, ch_int, channel_info)
                 uploader = project_uploader
                 uploader_token_source = "project"
                 uploader_project_id = project_id
-                print(f"[oneclick] using project-bound YouTube token ({project_id})")
+                print(
+                    f"[oneclick] using verified project-bound YouTube token ({project_id}): "
+                    f"{channel_info.get('title')} ({channel_info.get('channel_id')})"
+                )
 
         if uploader is None and template_project_id:
             template_uploader = YouTubeUploader(project_id=str(template_project_id))
             if template_uploader.is_authenticated():
+                channel_info = await asyncio.to_thread(template_uploader.get_channel_info)
+                if ch_int is not None:
+                    _assert_oneclick_youtube_channel_identity(config, ch_int, channel_info)
                 uploader = template_uploader
                 uploader_token_source = "project"
                 uploader_project_id = str(template_project_id)
-                print(f"[oneclick] using preset-bound YouTube token ({template_project_id})")
+                print(
+                    f"[oneclick] using verified preset-bound YouTube token ({template_project_id}): "
+                    f"{channel_info.get('title')} ({channel_info.get('channel_id')})"
+                )
         if uploader is None or not uploader.is_authenticated():
+            if ch_int is not None:
+                raise RuntimeError(
+                    f"CH{ch_int} 및 연결 프리셋의 YouTube 인증이 설정되지 않았습니다. "
+                    "프리셋 설정의 YouTube 계정 연결을 확인해주세요."
+                )
             raise RuntimeError(
                 "YouTube 인증이 설정되지 않았습니다. "
                 "프리셋 또는 현재 프로젝트에 연결된 YouTube OAuth를 먼저 확인해주세요."
