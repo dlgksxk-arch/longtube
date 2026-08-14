@@ -149,6 +149,24 @@ def test_source_usage_contract_accepts_public_domain_and_rejects_missing_terms()
     )
 
 
+def test_source_usage_contract_accepts_trusted_official_source_urls():
+    assert factory_v5_silla._has_source_usage_contract(
+        "단순 위치도. 나정: https://www.heritage.go.kr/heri/cul/detail"
+    )
+    assert factory_v5_silla._has_source_usage_contract(
+        "위치 참고: https://contents.history.go.kr/mobile/kc/view.do?levelId=kc_n101790"
+    )
+
+
+def test_source_usage_contract_does_not_trust_lookalike_or_general_domains():
+    assert not factory_v5_silla._has_source_usage_contract(
+        "출처: https://heritage.go.kr.example.com/source"
+    )
+    assert not factory_v5_silla._has_source_usage_contract(
+        "출처: https://example.com/source"
+    )
+
+
 def test_factory_v5_uses_youtube_caption_track_without_burning_subtitles():
     config = apply_main_caption_delivery_policy(
         {

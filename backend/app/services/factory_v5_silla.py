@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 from xml.etree import ElementTree as ET
 
 from PIL import Image
@@ -49,6 +50,11 @@ _USAGE_CONDITION_MARKERS = (
     "creative commons",
     "cc by",
 )
+_TRUSTED_OFFICIAL_SOURCE_DOMAINS = (
+    "heritage.go.kr",
+    "history.go.kr",
+)
+_SOURCE_URL_RE = re.compile(r"https?://[^\s|<>]+", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -74,7 +80,19 @@ def _text(value: object) -> str:
 
 def _has_source_usage_contract(value: object) -> bool:
     note = _text(value).lower()
-    return "http" in note and any(marker in note for marker in _USAGE_CONDITION_MARKERS)
+    urls = [match.rstrip(".,;:)]}") for match in _SOURCE_URL_RE.findall(note)]
+    if not urls:
+        return False
+    if any(marker in note for marker in _USAGE_CONDITION_MARKERS):
+        return True
+    for url in urls:
+        hostname = (urlsplit(url).hostname or "").lower().rstrip(".")
+        if any(
+            hostname == domain or hostname.endswith(f".{domain}")
+            for domain in _TRUSTED_OFFICIAL_SOURCE_DOMAINS
+        ):
+            return True
+    return False
 
 
 def _sha256_bytes(data: bytes) -> str:
