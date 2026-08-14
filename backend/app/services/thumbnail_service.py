@@ -1276,6 +1276,22 @@ def build_standard_thumbnail_prompt(
     return _append_thumbnail_minimal_contract(styled_prompt)
 
 
+def _uploaded_main_video_title(config: Optional[dict] = None) -> str:
+    upload_result = (config or {}).get("youtube_upload_result")
+    if not isinstance(upload_result, dict):
+        return ""
+    videos = upload_result.get("videos")
+    if not isinstance(videos, list):
+        return ""
+    for video in videos:
+        if not isinstance(video, dict) or video.get("kind") != "main":
+            continue
+        title = sanitize_thumbnail_title(video.get("title"))
+        if title:
+            return title
+    return ""
+
+
 def build_clickbait_thumbnail_overlay(
     script: Optional[dict] = None,
     title: Optional[str] = None,
@@ -1291,6 +1307,7 @@ def build_clickbait_thumbnail_overlay(
         else "en" if language in {"en", "eng", "english"}
         else ""
     )
+    uploaded_main_title = _uploaded_main_video_title(config)
     configured_overlay = sanitize_thumbnail_title(
         config.get("thumbnail_overlay_text")
     )
@@ -1321,6 +1338,7 @@ def build_clickbait_thumbnail_overlay(
                 for value in (
                     title,
                     config.get("youtube_title"),
+                    uploaded_main_title,
                     script.get("title"),
                     script.get("topic"),
                 )
@@ -1362,6 +1380,7 @@ def build_clickbait_thumbnail_overlay(
 
     base = sanitize_thumbnail_title(
         config.get("youtube_title")
+        or uploaded_main_title
         or title
         or script.get("title")
         or script.get("topic")

@@ -184,3 +184,27 @@ def test_japanese_yamata_no_orochi_thumbnail_gets_japanese_overlay():
     )
 
     assert overlay == "八つの頭の怪物\nヤマタノオロチ"
+
+
+def test_japanese_thumbnail_reuses_stored_main_upload_title():
+    overlay = build_clickbait_thumbnail_overlay(
+        {
+            "title": "日本史 시크릿 괴물의 꼬리에서 발견된 신검 EP.16",
+            "topic": "괴물의 꼬리에서 발견된 신검",
+            "thumbnail_hook": "괴물의 뱃속에서 나온 왕권의 보물?! 신검의 정체!",
+        },
+        "日本史 시크릿 괴물의 꼬리에서 발견된 신검 EP.16",
+        {
+            "language": "ja",
+            "youtube_upload_result": {
+                "videos": [
+                    {
+                        "kind": "main",
+                        "title": "八つの頭を持つ怪物、ヤマタノオロチ EP.16",
+                    }
+                ]
+            },
+        },
+    )
+
+    assert overlay == "八つの頭の怪物\nヤマタノオロチ"

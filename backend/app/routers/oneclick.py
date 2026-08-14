@@ -414,6 +414,18 @@ async def regenerate_thumbnail(task_id: str, body: ThumbnailRegenRequest = Thumb
     thumb_path = resolve_project_dir(project_id, config, create=True) / "output" / "thumbnail.png"
     thumb_path.parent.mkdir(parents=True, exist_ok=True)
 
+    title = (script.get("title") or "").strip()
+    overlay_seed = build_clickbait_thumbnail_overlay(script, title, config)
+    overlay_title, extracted_episode_label = extract_thumbnail_text_parts(overlay_seed or title, None)
+    overlay_title = suppress_foreign_hangul_thumbnail_overlay(overlay_title, config)
+    if not (overlay_title or "").strip():
+        raise HTTPException(
+            status_code=422,
+            detail="설정된 채널 언어로 된 썸네일 문구가 없어 재생성을 중단했습니다.",
+        )
+    episode_no = config.get("episode_number")
+    overlay_episode_label = normalize_episode_label(str(episode_no)) if episode_no else extracted_episode_label
+
     # 기존 썸네일 삭제
     if thumb_path.exists():
         thumb_path.unlink()
@@ -422,13 +434,6 @@ async def regenerate_thumbnail(task_id: str, body: ThumbnailRegenRequest = Thumb
         bg_path.unlink()
 
     _redis_set(f"thumbnail:status:{project_id}", "generating")
-
-    title = (script.get("title") or "").strip()
-    overlay_seed = build_clickbait_thumbnail_overlay(script, title, config)
-    overlay_title, extracted_episode_label = extract_thumbnail_text_parts(overlay_seed or title, None)
-    overlay_title = suppress_foreign_hangul_thumbnail_overlay(overlay_title, config)
-    episode_no = config.get("episode_number")
-    overlay_episode_label = normalize_episode_label(str(episode_no)) if episode_no else extracted_episode_label
 
     # 레퍼런스 + 캐릭터 이미지 수집 — 스튜디오와 동일
     char_paths = collect_character_images(project_id, config)
