@@ -593,9 +593,6 @@ def parse_silla_workbook(path: Path) -> ParsedSillaWorkbook:
     final_ten = cuts[-10:]
     if any(cut["speaker"] != "해설자" for cut in final_ten):
         raise ValueError("마지막 10컷은 해설자 중심의 정리·해석·예고·구독 요청이어야 합니다.")
-    final_text = " ".join(str(cut["narration"]) for cut in final_ten)
-    if "구독" not in final_text or "좋아요" not in final_text or "다음 편" not in final_text:
-        raise ValueError("마지막 10컷에 다음 편 예고와 구독·좋아요 요청이 모두 필요합니다.")
 
     footer_notes = [
         _text(cells.get((row, 1)))

@@ -21,6 +21,7 @@ from app.tasks.pipeline_tasks import _validate_prepared_script
 
 
 SILLA_EP02 = Path(r"D:\#대본\채널1_신라사\황금의_나라_EP02.xlsx")
+SILLA_EP01 = Path(r"D:\#대본\채널1_신라사\황금의_나라_EP01.xlsx")
 SILLA_EP03 = Path(r"D:\#대본\채널1_신라사\황금의_나라_EP03.xlsx")
 SILLA_EP04 = Path(r"D:\#대본\채널1_신라사\황금의_나라_EP04.xlsx")
 
@@ -203,10 +204,10 @@ def test_silla_workbook_list_excludes_non_episode_reference_workbooks(tmp_path, 
 
 
 @pytest.mark.skipif(
-    not all(path.is_file() for path in (SILLA_EP03, SILLA_EP04)),
+    not all(path.is_file() for path in (SILLA_EP01, SILLA_EP03, SILLA_EP04)),
     reason="local Silla episode workbooks are unavailable",
 )
-@pytest.mark.parametrize("workbook", [SILLA_EP03, SILLA_EP04])
+@pytest.mark.parametrize("workbook", [SILLA_EP01, SILLA_EP03, SILLA_EP04])
 def test_current_silla_episode_workbooks_pass_registration_validation(workbook: Path):
     parsed = parse_silla_workbook(workbook)
 
