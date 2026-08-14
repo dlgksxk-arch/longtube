@@ -31,6 +31,7 @@ import {
   oneclickApi,
   modelsApi,
   voiceApi,
+  videoApi,
   projectsApi,
   assetUrl,
   type OneClickTask,
@@ -1956,6 +1957,30 @@ export default function LivePage() {
   const handleRerunFromStep = async (fromStep: number) => {
     if (!task || rerunningStep !== null) return;
     const stepLabel = STEPS.find((s) => s.key === String(fromStep))?.label || `Step ${fromStep}`;
+    if (
+      fromStep === 5 &&
+      ["failed", "cancelled", "paused", "upload_failed"].includes(task.status)
+    ) {
+      setRerunningStep(fromStep);
+      try {
+        const liveTask = await resolveLiveTask(task);
+        const resumed = await videoApi.resumeAsync(liveTask.project_id);
+        markServerSync();
+        if (resumed.status === "nothing_to_resume") {
+          addLog("[시스템] 복구할 영상 컷이 없습니다.", "info");
+        } else if (resumed.status === "already_running") {
+          addLog("[시스템] 영상 복구가 이미 진행 중입니다.", "info");
+        } else {
+          addLog("[시스템] 원본 캐시를 보존한 영상 복구를 시작했습니다.", "success");
+        }
+        await handleRefresh();
+      } catch (e: any) {
+        addLog(`[오류] 영상 복구 실패: ${e?.message || e}`, "error");
+      } finally {
+        setRerunningStep(null);
+      }
+      return;
+    }
     if (!confirm(`"${stepLabel}" 단계부터 재실행합니다. 이후 단계 데이터가 초기화됩니다.`)) return;
     setRerunningStep(fromStep);
     try {

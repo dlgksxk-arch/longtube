@@ -572,8 +572,17 @@ export default function OneClickWidget() {
                         채널별 YouTube 계정
                       </label>
                       <div className="grid grid-cols-2 gap-2">
-                        {(["1","2","3","4"] as const).map((ch) => {
-                          const color = ch === "1" ? "text-blue-400" : ch === "2" ? "text-green-400" : ch === "3" ? "text-amber-400" : "text-purple-400";
+                        {(["1","2","3","4","5","6","7","8"] as const).map((ch) => {
+                          const color = ({
+                            "1": "text-blue-400",
+                            "2": "text-green-400",
+                            "3": "text-amber-400",
+                            "4": "text-purple-400",
+                            "5": "text-fuchsia-400",
+                            "6": "text-cyan-400",
+                            "7": "text-rose-400",
+                            "8": "text-lime-400",
+                          } as const)[ch];
                           const a = channelAuth[ch];
                           const busy = !!channelAuthBusy[ch];
                           return (
