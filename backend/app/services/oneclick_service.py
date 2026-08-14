@@ -6037,6 +6037,25 @@ async def _start_studio_router_step(project_id: str, step_num: int) -> None:
             await generate_script_async(project_id, db=db)
             return
         if step_num == 3:
+            project = db.query(Project).filter(Project.id == project_id).first()
+            project_config = dict(project.config or {}) if project else {}
+            try:
+                factory_version = int(project_config.get("factory_version") or 0)
+            except (TypeError, ValueError):
+                factory_version = 0
+            if factory_version >= 5:
+                from app.tasks.pipeline_tasks import _step_voice
+
+                await asyncio.to_thread(_step_voice, project_id, project_config)
+                db.expire_all()
+                project = db.query(Project).filter(Project.id == project_id).first()
+                if not project:
+                    raise RuntimeError(f"프로젝트를 찾을 수 없습니다: {project_id}")
+                step_states = dict(project.step_states or {})
+                step_states["3"] = "completed"
+                project.step_states = step_states
+                db.commit()
+                return
             from app.routers.voice import generate_all_voices_async
 
             await generate_all_voices_async(project_id, db=db)

@@ -1196,6 +1196,26 @@ def _step_voice(project_id: str, config: dict):
 
         track_progress(project_id, 3)
 
+    has_script_audio_direction = any(
+        str(cut_data.get(key) or "").strip()
+        for cut_data in script_cuts
+        if isinstance(cut_data, dict)
+        for key in ("amb_id", "sfx_id")
+    )
+    if has_script_audio_direction:
+        from app.services.tts.sfx_mix_service import mix_script_audio
+
+        mix_summary = run_async(
+            mix_script_audio(
+                script,
+                project_dir,
+                log=lambda msg: print(f"[Voice] {msg}"),
+            )
+        )
+        config["factory_v5_sfx_mix"] = mix_summary
+        if project:
+            project.config = dict(config)
+
     db.commit()
     db.close()
     save_script(project_id, script, config.get("language", "ko"), config)
