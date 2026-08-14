@@ -55,6 +55,7 @@ v1.1.43
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import math
 import os
@@ -1950,17 +1951,59 @@ def _committed_image_ok(
     return True
 
 
+def _source_asset_image_ok(
+    path: Path,
+    cut: Optional[dict],
+    *,
+    verify_image: bool = False,
+) -> bool:
+    """Validate a prepared real-source image without requiring an AI prompt sidecar."""
+    row = cut if isinstance(cut, dict) else {}
+    actual_asset = row.get("actual_asset")
+    if str(row.get("scene_type") or "").strip() != "source_asset" or not isinstance(actual_asset, dict):
+        return False
+    expected_sha256 = str(actual_asset.get("normalized_sha256") or "").strip().upper()
+    if not re.fullmatch(r"[0-9A-F]{64}", expected_sha256):
+        return False
+    if verify_image:
+        if not _image_ok(path):
+            return False
+    elif not _media_file_present(path, min_size=50):
+        return False
+    try:
+        digest = hashlib.sha256(path.read_bytes()).hexdigest().upper()
+    except Exception:
+        return False
+    return digest == expected_sha256
+
+
 def _count_committed_cut_images(project_dir: Path, config: Optional[dict]) -> int:
     image_dir = project_dir / "images"
     if not image_dir.exists():
         return 0
+    cuts_by_number: dict[int, dict] = {}
+    script_path = project_dir / "script.json"
+    if script_path.exists():
+        try:
+            script = json.loads(script_path.read_text(encoding="utf-8"))
+            for cut in script.get("cuts") or []:
+                if not isinstance(cut, dict):
+                    continue
+                number = int(cut.get("cut_number") or 0)
+                if number > 0:
+                    cuts_by_number[number] = cut
+        except Exception:
+            cuts_by_number = {}
     committed: set[int] = set()
     for path in image_dir.glob("cut_*.png"):
         match = re.fullmatch(r"cut_(\d+)\.png", path.name, flags=re.IGNORECASE)
         if not match:
             continue
         cut_number = int(match.group(1))
-        if _committed_image_ok(path, cut_number, config):
+        if _committed_image_ok(path, cut_number, config) or _source_asset_image_ok(
+            path,
+            cuts_by_number.get(cut_number),
+        ):
             committed.add(cut_number)
     return len(committed)
 
@@ -2045,11 +2088,13 @@ def _scan_project_outputs(
     counts["2"] = total_cuts
     states["2"] = "completed"
     expected_nums: list[int] = []
+    cuts_by_number: dict[int, dict] = {}
     for cut in cuts:
         try:
             num = int(cut.get("cut_number") or 0)
             if num > 0:
                 expected_nums.append(num)
+                cuts_by_number[num] = cut
         except (TypeError, ValueError):
             continue
 
@@ -2081,7 +2126,11 @@ def _scan_project_outputs(
             if cleanup_broken and _unlink_quiet(audio):
                 removed.append(str(audio))
 
-        image_ok = _committed_image_ok(
+        image_ok = _source_asset_image_ok(
+            image,
+            cuts_by_number.get(num),
+            verify_image=bool(verify_media),
+        ) or _committed_image_ok(
             image,
             num,
             config,

@@ -5,6 +5,7 @@ oneclick_service module further. They do not call external APIs or start jobs.
 """
 import asyncio
 import copy
+import hashlib
 import inspect
 import json
 import os
@@ -292,6 +293,34 @@ class OneClickQueueStabilityTests(unittest.TestCase):
         self.assertIn("if ch_uploader.is_authenticated():", source)
         self.assertIn("using verified preset-bound YouTube token", source)
         self.assertIn("uploader.wait_for_videos_processing", source)
+
+    def test_prepared_source_asset_counts_without_ai_prompt_sidecar(self):
+        from PIL import Image
+
+        with tempfile.TemporaryDirectory() as td:
+            project_dir = Path(td)
+            image_dir = project_dir / "images"
+            image_dir.mkdir()
+            image_path = image_dir / "cut_1.png"
+            Image.new("RGB", (16, 16), (20, 30, 40)).save(image_path)
+            digest = hashlib.sha256(image_path.read_bytes()).hexdigest().upper()
+            (project_dir / "script.json").write_text(
+                json.dumps({
+                    "cuts": [{
+                        "cut_number": 1,
+                        "scene_type": "source_asset",
+                        "actual_asset": {"normalized_sha256": digest},
+                    }],
+                }),
+                encoding="utf-8",
+            )
+
+            count = svc._count_committed_cut_images(
+                project_dir,
+                {"__oneclick_v3__": True},
+            )
+
+            self.assertEqual(count, 1)
 
     def test_copy_template_assets_skips_prepared_script_backups(self):
         with tempfile.TemporaryDirectory() as td:
