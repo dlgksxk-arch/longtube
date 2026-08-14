@@ -83,6 +83,26 @@ class InterludeTimelineTests(unittest.TestCase):
         self.assertIn("Dialogue: 0,0:00:02.00,0:00:04.00", generate_ass(cuts, {}))
         self.assertIn("00:00:02,000 --> 00:00:04,000", generate_srt(cuts))
 
+    def test_tts_audio_tags_are_not_rendered_as_display_captions(self):
+        cuts = [
+            {
+                "cut_number": 1,
+                "narration": "[quietly] [slowly] 먼저 사람을 보십시오.",
+                "cut_video_duration": 2.0,
+                "actual_duration": 2.0,
+            }
+        ]
+
+        ass = generate_ass(cuts, {})
+        srt = generate_srt(cuts)
+
+        self.assertNotIn("[quietly]", ass)
+        self.assertNotIn("[slowly]", ass)
+        self.assertNotIn("[quietly]", srt)
+        self.assertNotIn("[slowly]", srt)
+        self.assertIn("먼저 사람을 보십시오.", ass)
+        self.assertIn("먼저 사람을 보십시오.", srt)
+
 
 class InterludePreparationTests(unittest.IsolatedAsyncioTestCase):
     async def test_manual_compose_does_not_trim_or_pad_intermission(self):

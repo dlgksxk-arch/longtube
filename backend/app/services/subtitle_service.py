@@ -396,6 +396,18 @@ def _srt_escape(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "").replace("\r", " ").replace("\n", " ")).strip()
 
 
+_LEADING_TTS_AUDIO_TAGS_RE = re.compile(
+    r"^(?P<prefix>(?:\s*\[[a-z][a-z0-9_ -]{0,31}\])+\s*)",
+    re.IGNORECASE,
+)
+
+
+def strip_leading_tts_audio_tags(text: str) -> str:
+    """Remove source-authored ElevenLabs audio directions from display text."""
+    value = str(text or "")
+    return _LEADING_TTS_AUDIO_TAGS_RE.sub("", value, count=1).strip()
+
+
 def _split_text_for_subtitle(text: str, max_lines: int) -> list[str]:
     max_lines = max(1, int(max_lines or 1))
     if not text:
@@ -597,7 +609,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         if speech_dur > cut_window:
             speech_dur = cut_window
 
-        narration = cut.get("narration", "")
+        narration = strip_leading_tts_audio_tags(cut.get("narration", ""))
         sentences = split_sentences(narration)
 
         if sentences:
@@ -651,7 +663,7 @@ def generate_srt(
         if speech_dur > cut_window:
             speech_dur = cut_window
 
-        narration = cut.get("narration", "")
+        narration = strip_leading_tts_audio_tags(cut.get("narration", ""))
         sentences = split_sentences(narration)
         if sentences:
             sentence_dur = speech_dur / len(sentences)

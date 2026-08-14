@@ -179,6 +179,39 @@ class ShortsWordCaptionTests(unittest.TestCase):
         self.assertEqual(timings[0]["start"], 0.0)
         self.assertEqual(timings[-1]["end"], 4.0)
 
+    def test_tts_audio_tag_is_removed_from_shorts_display_cues(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            (project / "audio").mkdir()
+            audio = project / "audio" / "cut_001.mp3"
+            audio.write_bytes(b"audio")
+            text = "[firmly] 물길을 함께 합칩시다"
+            alignment = _character_alignment(text)
+            write_alignment_sidecar(
+                audio,
+                text=text,
+                alignment=alignment,
+                normalized_alignment=alignment,
+                provider="elevenlabs",
+                model_id="eleven_v3",
+            )
+            script = {
+                "cuts": [
+                    {"cut_number": 1, "narration": text, "audio_duration": 2.0},
+                ]
+            }
+
+            cues = shorts_service._build_short_caption_cues(
+                script,
+                [1],
+                project / "output",
+                [{"start": 0.0, "end": 2.0}],
+                1.0,
+            )
+
+            self.assertEqual([cue["text"] for cue in cues], ["물길을 함께 합칩시다"])
+            self.assertNotIn("[firmly]", " ".join(cue["text"] for cue in cues))
+
     def test_caption_offsets_use_measured_cut_video_durations(self):
         script = {
             "cuts": [

@@ -17,6 +17,7 @@ from app.services.remotion_shorts_renderer import (
     SHARED_SHORTS_PIPELINE_ID,
     render_remotion_shorts,
 )
+from app.services.subtitle_service import strip_leading_tts_audio_tags
 from app.services.tts.alignment import alignment_sidecar_path
 from app.services.video.ffmpeg_service import FFmpegService
 from app.services.video.subprocess_helper import find_ffmpeg, run_subprocess
@@ -1266,9 +1267,14 @@ def _alignment_word_timings(
     cut_duration: float,
 ) -> list[dict[str, Any]]:
     """Map display words to the TTS character timeline, with a legacy fallback."""
-    words = re.findall(r"\S+", _compact_text(display_text))
+    raw_display_text = _compact_text(display_text)
+    clean_display_text = strip_leading_tts_audio_tags(raw_display_text)
+    words = re.findall(r"\S+", clean_display_text)
     if not words:
         return []
+
+    removed_prefix = raw_display_text[: max(0, len(raw_display_text) - len(clean_display_text))]
+    removed_character_count = sum(1 for character in removed_prefix if not character.isspace())
 
     entries: list[tuple[str, float, float]] = []
     sidecar = alignment_sidecar_path(audio_path)
@@ -1285,6 +1291,8 @@ def _alignment_word_timings(
                     if not value or value.isspace():
                         continue
                     entries.append((value, max(0.0, float(start)), max(0.0, float(end))))
+                if removed_character_count:
+                    entries = entries[removed_character_count:]
         except (OSError, ValueError, TypeError, json.JSONDecodeError):
             entries = []
 
