@@ -3290,6 +3290,16 @@ export default function LivePage() {
                                 {item.channel ? `CH${item.channel} · ` : ""}{getTaskFailureStepName(item)} · {Math.round(item.progress_pct || 0)}%
                               </div>
                             </div>
+                            <button
+                              onClick={() => {
+                                handleSelectFailedTask(item);
+                                setRecoveryOpen(false);
+                              }}
+                              disabled={recoveryBulkQueuing || Boolean(recoveryUploadingId)}
+                              className="shrink-0 rounded-md border border-accent-primary/30 bg-accent-primary/10 px-2.5 py-1 text-xs font-semibold text-accent-primary hover:bg-accent-primary/15 disabled:opacity-40"
+                            >
+                              불러오기
+                            </button>
                             {isUploadRecoverableTask(item) && (
                               <button
                                 onClick={() => void handleRecoveryReupload(item)}
