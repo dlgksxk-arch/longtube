@@ -385,6 +385,14 @@ def apply_main_caption_delivery_policy(config: dict | None = None) -> dict:
 
 
 def resolve_main_subtitle_delivery(config: dict | None = None) -> str:
+    cfg = config if isinstance(config, dict) else {}
+    delivery = str(cfg.get("subtitle_delivery") or "").strip().lower()
+    try:
+        factory_version = int(cfg.get("factory_version") or 0)
+    except (TypeError, ValueError):
+        factory_version = 0
+    if factory_version == 5 and delivery in {"youtube_caption", "youtube_captions"}:
+        return "youtube_caption"
     return MAIN_VIDEO_SUBTITLE_DELIVERY
 
 
@@ -406,7 +414,7 @@ def _config_bool(config: dict | None, key: str, default: bool) -> bool:
 
 
 def should_burn_cut_level_subtitles(config: dict | None = None) -> bool:
-    return True
+    return resolve_main_subtitle_delivery(config) == "burn"
 
 
 def resolve_cut_video_duration(config: dict | None = None, default: float | None = None) -> float:

@@ -21,11 +21,23 @@ from app.config import (  # noqa: E402
 
 
 class MultilingualCaptionServiceTests(unittest.TestCase):
-    def test_cut_subtitle_burn_is_enabled_for_all_projects(self):
+    def test_cut_subtitle_burn_remains_enabled_for_legacy_projects(self):
         self.assertTrue(should_burn_cut_level_subtitles({}))
         self.assertTrue(should_burn_cut_level_subtitles({"cut_level_subtitles": True}))
         self.assertTrue(should_burn_cut_level_subtitles({"cut_level_subtitles": False}))
         self.assertTrue(should_burn_cut_level_subtitles({"cut_level_subtitles": "false"}))
+
+    def test_factory_v5_youtube_caption_mode_disables_cut_subtitle_burn(self):
+        config = apply_main_caption_delivery_policy(
+            {
+                "factory_version": 5,
+                "subtitle_delivery": "youtube_caption",
+                "cut_level_subtitles": True,
+            }
+        )
+
+        self.assertFalse(should_burn_cut_level_subtitles(config))
+        self.assertTrue(should_upload_youtube_captions(config))
 
     def test_main_caption_policy_overrides_legacy_project_settings(self):
         config = apply_main_caption_delivery_policy(
