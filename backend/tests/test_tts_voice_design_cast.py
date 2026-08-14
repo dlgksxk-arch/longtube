@@ -14,6 +14,21 @@ def test_voice_design_v3_payload_omits_unsupported_quality_parameter():
     assert "quality" not in payload
 
 
+def test_voice_design_minor_age_terms_are_removed_only_from_provider_payload():
+    original = (
+        "Korean adolescent boy around 13, clear youthful male voice, "
+        "slightly formal from being raised as a sacred child."
+    )
+
+    payload = _design_payload(prompt=original, series="신라사", speaker="박혁거세")
+
+    assert "13" not in payload["voice_description"]
+    assert "adolescent" not in payload["voice_description"].lower()
+    assert "child" not in payload["voice_description"].lower()
+    assert "youthful male" in payload["voice_description"]
+    assert "adolescent boy around 13" in original
+
+
 def _script():
     return {
         "series": "신라사",

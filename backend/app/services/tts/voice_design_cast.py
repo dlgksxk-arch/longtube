@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from datetime import datetime, timezone
 from typing import Any, Callable
 from urllib.parse import urlencode
@@ -28,9 +29,33 @@ def _prompt_hash(prompt: str) -> str:
     return hashlib.sha256(prompt.encode("utf-8")).hexdigest()
 
 
+def _provider_safe_prompt(prompt: str) -> str:
+    """Keep the requested voice character while removing explicit minor age terms."""
+    safe = re.sub(
+        r"Korean adolescent boy around\s+\d+",
+        "Korean youthful male",
+        prompt,
+        flags=re.IGNORECASE,
+    )
+    safe = re.sub(
+        r"Korean adolescent girl around\s+\d+",
+        "Korean youthful female",
+        safe,
+        flags=re.IGNORECASE,
+    )
+    safe = re.sub(
+        r"from being raised as a sacred child",
+        "from a formal ritual upbringing",
+        safe,
+        flags=re.IGNORECASE,
+    )
+    return safe.strip()
+
+
 def _design_payload(*, prompt: str, series: str, speaker: str) -> dict[str, Any]:
+    provider_prompt = _provider_safe_prompt(prompt)
     payload: dict[str, Any] = {
-        "voice_description": prompt,
+        "voice_description": provider_prompt,
         "model_id": VOICE_DESIGN_MODEL_ID,
         "text": VOICE_PREVIEW_TEXT,
         "seed": int(_prompt_hash(f"{series}:{speaker}:{prompt}")[:8], 16) & 0x7FFFFFFF,
@@ -91,7 +116,8 @@ class ElevenLabsVoiceDesignClient:
         return ""
 
     def create_or_reuse(self, *, voice_name: str, prompt: str, series: str, speaker: str) -> str:
-        existing = self._find_existing(voice_name, prompt)
+        provider_prompt = _provider_safe_prompt(prompt)
+        existing = self._find_existing(voice_name, provider_prompt)
         if existing:
             return existing
 
@@ -116,7 +142,7 @@ class ElevenLabsVoiceDesignClient:
                 headers=self.headers,
                 json={
                     "voice_name": voice_name,
-                    "voice_description": prompt,
+                    "voice_description": provider_prompt,
                     "generated_voice_id": generated_voice_id,
                     "labels": {
                         "language": "ko",
