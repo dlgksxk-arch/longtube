@@ -3,7 +3,7 @@ import "./globals.css";
 import Providers from "@/components/common/Providers";
 
 export const metadata: Metadata = {
-  title: "LongTube",
+  title: "공장",
   description: "YouTube longform video automation pipeline",
 };
 

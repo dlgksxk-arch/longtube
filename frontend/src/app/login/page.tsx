@@ -33,7 +33,7 @@ export default function LoginPage() {
           <div className="w-12 h-12 rounded-lg bg-accent-primary flex items-center justify-center mb-4">
             <LogIn size={24} />
           </div>
-          <h1 className="text-3xl font-bold">LongTube 로그인</h1>
+          <h1 className="text-3xl font-bold">공장 로그인</h1>
           <p className="mt-2 text-gray-400">승인된 계정만 제작 서버에 접근할 수 있습니다.</p>
         </div>
 

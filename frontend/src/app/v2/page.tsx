@@ -180,7 +180,7 @@ export default function V2Dashboard() {
     <div className="p-6 space-y-6">
       <header className="flex items-end justify-between gap-3">
         <div>
-          <h1 className="text-gray-100">LongTube v2</h1>
+          <h1 className="text-gray-100">공장 구형 v2</h1>
           <p className="text-sm text-gray-500 mt-1">
             프리셋 단일 진실원 기반 자동화 파이프라인
           </p>

@@ -18,6 +18,7 @@ import {
   Key,
   FilePenLine,
   Clapperboard,
+  FileSpreadsheet,
 } from "lucide-react";
 import {
   oneclickApi,
@@ -142,6 +143,7 @@ function readScriptStudioActiveCalls(): ActiveCallItem[] {
 
 const ONECLICK_SUBNAV = [
   { href: "/oneclick", label: "제작 큐", icon: ListTodo },
+  { href: "/oneclick/silla", label: "신라사 제작", icon: FileSpreadsheet },
   { href: "/oneclick/script-studio", label: "대본실", icon: FilePenLine },
   { href: "/oneclick/upload-pending", label: "업로드 대기", icon: Upload },
   { href: "/oneclick/live", label: "작업대", icon: Activity },
@@ -244,7 +246,7 @@ export default function OneClickLayout({
             <LayoutDashboard size={18} className="text-white" />
           </div>
           <span className="text-lg lg:text-xl xl:text-2xl font-bold text-white truncate">
-            LongTube
+            공장
           </span>
         </Link>
 

@@ -331,12 +331,17 @@ def _validate_prepared_script(
     required_cut_keys = (
         "cut_number",
         "narration",
-        "image_prompt",
         "visual_year",
         "visual_period",
         "visual_location",
         "visual_evidence",
     )
+    source_info = script.get("source") if isinstance(script.get("source"), dict) else {}
+    source_schema = str(script.get("source_schema") or source_info.get("schema") or "").strip()
+    allows_actual_assets = source_schema in {
+        "silla-episode-xlsx-v1",
+        "silla-episode-xlsx-v2",
+    }
     for idx, cut in enumerate(cuts, start=1):
         if not isinstance(cut, dict):
             raise RuntimeError(f"사전작성 대본 형식 오류: cut {idx} object 아님 ({source_path})")
@@ -344,6 +349,29 @@ def _validate_prepared_script(
         if missing:
             raise RuntimeError(
                 f"사전작성 대본 형식 오류: cut {idx} 필수값 누락 {missing} ({source_path})"
+            )
+        image_prompt = str(cut.get("image_prompt") or "").strip()
+        actual_asset = cut.get("actual_asset")
+        if allows_actual_assets and isinstance(actual_asset, dict):
+            asset_missing = [
+                key
+                for key in ("source_note", "source_sha256")
+                if not str(actual_asset.get(key) or "").strip()
+            ]
+            if not str(actual_asset.get("path") or actual_asset.get("source_member") or "").strip():
+                asset_missing.append("path/source_member")
+            if asset_missing:
+                raise RuntimeError(
+                    f"사전작성 대본 형식 오류: cut {idx} 실제자료 필수값 누락 "
+                    f"{asset_missing} ({source_path})"
+                )
+            if image_prompt:
+                raise RuntimeError(
+                    f"사전작성 대본 형식 오류: cut {idx} 실제자료와 image_prompt 동시 지정 ({source_path})"
+                )
+        elif not image_prompt:
+            raise RuntimeError(
+                f"사전작성 대본 형식 오류: cut {idx} 필수값 누락 ['image_prompt'] ({source_path})"
             )
     numbered_cuts = [
         int(cut.get("cut_number") or idx)
@@ -653,6 +681,7 @@ def _step_script(project_id: str, config: dict):
 
     def _persist_script_cuts(script: dict) -> None:
         db.query(Cut).filter(Cut.project_id == project_id).delete()
+        cut_rows: dict[int, Cut] = {}
         for c in script.get("cuts", []):
             cut = Cut(
                 project_id=project_id,
@@ -663,6 +692,10 @@ def _step_script(project_id: str, config: dict):
                 status="pending",
             )
             db.add(cut)
+            cut_rows[int(c["cut_number"])] = cut
+        from app.services.factory_v5_silla import apply_actual_assets_to_cut_rows
+
+        apply_actual_assets_to_cut_rows(project_id, config, script, cut_rows)
         project.total_cuts = len(script.get("cuts", []))
 
     guard = ScriptGenerationGuard(

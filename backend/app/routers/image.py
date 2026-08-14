@@ -554,7 +554,13 @@ def _build_image_prompt(
         return apply_fixed_channel_image_style(value, style_config, project_id)
 
     if resolved_model in {"comfyui-krea2", "comfyui-krea2-expression"}:
-        return _finalize(str(image_prompt or "").strip())
+        prompt = str(image_prompt or "").strip()
+        if (style_config or {}).get("factory_source_schema") in {
+            "silla-episode-xlsx-v1",
+            "silla-episode-xlsx-v2",
+        }:
+            prompt = _prepend_prompt_lock(prompt, IMAGE_SINGLE_FRAME_LOCK)
+        return _finalize(prompt)
     if is_canonical_script_image_prompt(image_prompt):
         return _finalize(_prepend_prompt_lock(
             apply_project_style_to_canonical_prompt(image_prompt, global_style),

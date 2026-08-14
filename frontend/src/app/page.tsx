@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Plus, Play, Trash2, ExternalLink, RefreshCw, CheckCircle, XCircle, AlertCircle, MinusCircle, Key, Clock, DollarSign, LayoutDashboard, Zap, Info, ListTodo, Activity, Film, Upload, MessageSquare, FilePenLine } from "lucide-react";
+import { Plus, Play, Trash2, ExternalLink, RefreshCw, CheckCircle, XCircle, AlertCircle, MinusCircle, Key, Clock, DollarSign, LayoutDashboard, Zap, Info, ListTodo, Activity, Film, Upload, MessageSquare, FilePenLine, FileSpreadsheet } from "lucide-react";
 import { api, apiStatusApi, type ApiStatusInfo, type ProjectEstimate } from "@/lib/api";
 import { APP_VERSION } from "@/lib/version";
 import { formatDurationKo, formatKrw, costTierClasses } from "@/lib/format";
@@ -21,6 +21,7 @@ const SIDEBAR_NAV = [
 
 const ONECLICK_SUBNAV = [
   { href: "/oneclick", label: "제작 큐", icon: ListTodo },
+  { href: "/oneclick/silla", label: "신라사 제작", icon: FileSpreadsheet },
   { href: "/oneclick/script-studio", label: "대본실", icon: FilePenLine },
   { href: "/oneclick/upload-pending", label: "업로드 대기", icon: Upload },
   { href: "/oneclick/live", label: "작업대", icon: Activity },
@@ -124,7 +125,7 @@ export default function Dashboard() {
             <LayoutDashboard size={22} className="text-white" />
           </div>
           <div className="flex flex-col leading-tight">
-            <span className="text-2xl font-bold text-white">LongTube</span>
+            <span className="text-2xl font-bold text-white">공장</span>
             <span className="text-xs text-gray-500 font-mono">v{APP_VERSION}</span>
           </div>
         </div>

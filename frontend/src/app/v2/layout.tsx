@@ -83,7 +83,7 @@ export default function V2Layout({ children }: { children: React.ReactNode }) {
         <div className="px-4 py-4 border-b border-border">
           <Link href="/v2" className="flex items-center gap-2 text-base font-semibold">
             <ImageIcon size={18} className="text-sky-400" />
-            LongTube <span className="text-xs text-gray-500">v2</span>
+            공장 <span className="text-xs text-gray-500">구형 v2</span>
           </Link>
         </div>
 

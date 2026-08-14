@@ -1,4 +1,4 @@
-"""LongTube Backend - FastAPI Application"""
+"""Factory V5 Backend - FastAPI Application"""
 # reload-trigger: 2026-04-14 v1.1.54 tts-duration-fix-cancel-thumbnail
 import sys
 import asyncio
@@ -42,7 +42,7 @@ from app.models.database import init_db
 # v1.1.43: oneclick_service 에 "주제 큐 + 매일 HH:MM" 형태의 새 스케줄러가
 # 다시 붙었다 (구 17 행 그리드 와는 완전히 다른 모델). startup/shutdown 에서
 # `start_queue_scheduler` / `stop_queue_scheduler` 를 호출한다.
-from app.routers import projects, pipeline, script, script_studio, voice, image, video, subtitle, interlude, youtube, downloads, models, api_status, api_keys, api_balances, tasks, oneclick, assets, auth, channel_ops, movie_review
+from app.routers import projects, pipeline, script, script_studio, voice, image, video, subtitle, interlude, youtube, downloads, models, api_status, api_keys, api_balances, tasks, oneclick, assets, auth, channel_ops, movie_review, factory_v5
 # v2.1.0 병렬 라우터. 구 라우터와 독립적으로 /api/v2/* 에 마운트된다.
 from app.routers.v2 import (
     keys as v2_keys,
@@ -154,9 +154,9 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="LongTube",
+    title="공장",
     description="YouTube longform video automation pipeline",
-    version="V4.1",
+    version="5.0",
     lifespan=lifespan,
 )
 
@@ -245,6 +245,7 @@ app.include_router(tasks.router, prefix="/api/tasks", tags=["tasks"])
 app.include_router(oneclick.router, prefix="/api/oneclick", tags=["oneclick"])
 app.include_router(channel_ops.router, prefix="/api/channel-ops", tags=["channel-ops"])
 app.include_router(movie_review.router, prefix="/api/movie-review", tags=["movie-review"])
+app.include_router(factory_v5.router, prefix="/api/factory-v5", tags=["factory-v5"])
 
 # v2.1.0 병렬 라우터 — 구 라우터와 독립. /api/v2/* 에 마운트.
 app.include_router(v2_keys.router, prefix="/api/v2/keys", tags=["v2-keys"])
@@ -263,4 +264,4 @@ app.mount("/assets", StaticFiles(directory=str(DATA_DIR)), name="assets")
 @app.get("/api/health")
 async def health():
     from app.config import COMFYUI_BASE_URL as _CU
-    return {"status": "ok", "version": "V4.1", "comfyui_base_url": _CU or None}
+    return {"status": "ok", "name": "공장", "version": "5.0", "comfyui_base_url": _CU or None}

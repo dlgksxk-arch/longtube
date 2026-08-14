@@ -117,6 +117,7 @@ def _save_script(project_id: str, script: dict, language: str = "ko"):
 
 def _persist_script_cuts(db: Session, project: Project, script: dict) -> None:
     project_id = project.id
+    cut_rows: dict[int, Cut] = {}
     for cut_data in script.get("cuts", []):
         existing = db.query(Cut).filter(
             Cut.project_id == project_id,
@@ -134,15 +135,22 @@ def _persist_script_cuts(db: Session, project: Project, script: dict) -> None:
             existing.image_model = None
             existing.video_path = None
             existing.status = "pending"
+            cut_rows[int(cut_data["cut_number"])] = existing
         else:
-            db.add(Cut(
+            cut = Cut(
                 project_id=project_id,
                 cut_number=cut_data["cut_number"],
                 narration=cut_data.get("narration"),
                 image_prompt=normalize_image_prompt(cut_data.get("image_prompt") or ""),
                 scene_type=cut_data.get("scene_type"),
                 status="pending",
-            ))
+            )
+            db.add(cut)
+            cut_rows[int(cut_data["cut_number"])] = cut
+
+    from app.services.factory_v5_silla import apply_actual_assets_to_cut_rows
+
+    apply_actual_assets_to_cut_rows(project_id, project.config or {}, script, cut_rows)
 
     project.total_cuts = len(script.get("cuts", []))
 
