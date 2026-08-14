@@ -220,7 +220,7 @@ export default function SillaFactoryPage() {
         <div className="space-y-4">
           {loading && !source ? (
             <div className="flex items-center justify-center gap-2 rounded-xl border border-border bg-bg-secondary py-16 text-gray-400">
-              <Loader2 size={20} className="animate-spin" /> XLSX 구조와 내장 이미지를 확인하고 있습니다.
+              <Loader2 size={20} className="animate-spin" /> XLSX 구조와 외부 실제사진을 확인하고 있습니다.
             </div>
           ) : source?.workbooks.map((workbook) => (
             <article
