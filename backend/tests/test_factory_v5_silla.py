@@ -268,6 +268,14 @@ def test_factory_v5_uses_youtube_caption_track_without_burning_subtitles():
     assert config["youtube_captions_enabled"] is True
     assert config["caption_languages"] == ["ko"]
 
+    subtitle_router = (
+        Path(__file__).resolve().parents[1] / "app" / "routers" / "subtitle.py"
+    ).read_text(encoding="utf-8")
+    highlight_block = subtitle_router.split("body_sub_path = body_path", 1)[1].split(
+        "if not cut_level_subs and burn_main_subtitles", 1
+    )[0]
+    assert "burn_main_subtitles" in highlight_block
+
 
 def test_queue_item_template_overrides_channel_default(monkeypatch):
     monkeypatch.setattr(

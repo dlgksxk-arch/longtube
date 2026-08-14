@@ -1507,6 +1507,8 @@ async def render_video_with_subtitles(project_id: str, db: Session = Depends(get
     if (
         not cut_level_subs
         and
+        burn_main_subtitles
+        and
         bool((project.config or {}).get("variety_highlights_enabled", False))
         and has_explicit_variety_highlights
         and highlight_file.exists()
