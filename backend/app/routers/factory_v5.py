@@ -65,6 +65,8 @@ def create_silla_preset(db: Session = Depends(get_db)):
             **DEFAULT_CONFIG,
             "factory_version": 5,
             "factory_series": "신라사",
+            "factory_channel": 1,
+            "factory_channel_label": "채널 1 - 신라사",
             "factory_source_schema": SOURCE_SCHEMA,
             "factory_source_root": str(DEFAULT_SOURCE_ROOT),
             "factory_actual_asset_root": str(DEFAULT_ACTUAL_ASSET_ROOT),
@@ -74,14 +76,14 @@ def create_silla_preset(db: Session = Depends(get_db)):
             "target_cuts": EXPECTED_CUT_COUNT,
             "target_duration": 600,
             "cut_level_subtitles": False,
-            "subtitle_delivery": "youtube_captions",
+            "subtitle_delivery": "youtube_caption",
             "youtube_captions_enabled": True,
             "caption_languages": ["ko"],
         }
     )
     project = Project(
         id=str(uuid.uuid4())[:8],
-        title="신라사 공장",
+        title="채널 1 - 신라사",
         topic="신라사",
         config=config,
         status="draft",

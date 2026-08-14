@@ -8,8 +8,9 @@ from types import SimpleNamespace
 import pytest
 from PIL import Image
 
+from app.config import apply_main_caption_delivery_policy
 from app.routers.image import IMAGE_SINGLE_FRAME_LOCK, _build_image_prompt
-from app.services import factory_v5_silla
+from app.services import factory_v5_silla, oneclick_service
 from app.services.factory_v5_silla import (
     SOURCE_SCHEMA,
     apply_actual_assets_to_cut_rows,
@@ -146,6 +147,36 @@ def test_source_usage_contract_accepts_public_domain_and_rejects_missing_terms()
     assert not factory_v5_silla._has_source_usage_contract(
         "공공누리 제1유형이지만 URL 없음"
     )
+
+
+def test_factory_v5_uses_youtube_caption_track_without_burning_subtitles():
+    config = apply_main_caption_delivery_policy(
+        {
+            "factory_version": 5,
+            "language": "ko",
+            "subtitle_delivery": "youtube_captions",
+            "cut_level_subtitles": True,
+        }
+    )
+
+    assert config["cut_level_subtitles"] is False
+    assert config["subtitle_delivery"] == "youtube_caption"
+    assert config["youtube_captions_enabled"] is True
+    assert config["caption_languages"] == ["ko"]
+
+
+def test_queue_item_template_overrides_channel_default(monkeypatch):
+    monkeypatch.setattr(
+        oneclick_service,
+        "_QUEUE",
+        {"channel_presets": {"1": "channel-default"}, "items": []},
+    )
+
+    item = {"channel": 1, "template_project_id": "item-explicit"}
+    assert oneclick_service._resolve_item_preset(item) == "item-explicit"
+    assert oneclick_service._channel_studio_project_id(1, "item-explicit") == "item-explicit"
+    assert oneclick_service._resolve_item_preset({"channel": 1}) == "channel-default"
+    assert oneclick_service._channel_studio_project_id(1) == "channel-default"
 
 
 def test_actual_asset_is_materialized_as_custom_canonical_image(tmp_path: Path, monkeypatch):

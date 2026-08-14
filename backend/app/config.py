@@ -364,6 +364,15 @@ def apply_main_caption_delivery_policy(config: dict | None = None) -> dict:
     """
     cfg = dict(config or {})
     language = _primary_caption_language(cfg)
+    if int(cfg.get("factory_version") or 0) == 5 and str(
+        cfg.get("subtitle_delivery") or ""
+    ).strip() in {"youtube_caption", "youtube_captions"}:
+        cfg["cut_level_subtitles"] = False
+        cfg["subtitle_delivery"] = "youtube_caption"
+        cfg["youtube_captions_enabled"] = True
+        cfg["caption_language"] = language
+        cfg["caption_languages"] = [language]
+        return cfg
     cfg["cut_level_subtitles"] = True
     cfg["subtitle_delivery"] = MAIN_VIDEO_SUBTITLE_DELIVERY
     cfg["variety_highlights_enabled"] = True

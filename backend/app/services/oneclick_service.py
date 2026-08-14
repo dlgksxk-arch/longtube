@@ -3699,14 +3699,16 @@ def _ensure_project_layout(project_id: str, config: Optional[dict] = None) -> Pa
 
 
 def _channel_studio_project_id(channel: Optional[int], fallback_project_id: Optional[str] = None) -> Optional[str]:
-    """Return the Studio project linked to the channel."""
+    """Return the item's explicit Studio project, then the channel default."""
+    fallback = str(fallback_project_id or "").strip()
+    if fallback:
+        return fallback
     ch = _valid_channel(channel)
     if ch is not None:
         cp = (_QUEUE.get("channel_presets") or {}).get(str(ch))
         if cp:
             return str(cp).strip() or None
-    fallback = str(fallback_project_id or "").strip()
-    return fallback or None
+    return None
 
 
 def _generate_v3_run_project_id(channel: Optional[int], episode_number: Optional[int], db) -> str:
@@ -10504,11 +10506,7 @@ def _save_queue_to_disk() -> None:
 
 
 def _resolve_item_preset(item: dict) -> Optional[str]:
-    """Return the Studio project linked to the item's channel.
-
-    V3 작업대는 큐 아이템별 template_project_id 로 실행 원본을 바꾸지 않는다.
-    채널 편집에 연결된 Studio 프로젝트가 실행 원본이다.
-    """
+    """Return the item's explicit Studio project, then the channel default."""
     ch = item.get("channel") or 1
     try:
         ch = int(ch)
@@ -10516,12 +10514,12 @@ def _resolve_item_preset(item: dict) -> Optional[str]:
         ch = 1
     if ch < 1 or ch > 4:
         ch = 1
-    cp = (_QUEUE.get("channel_presets") or {}).get(str(ch))
-    if cp:
-        return str(cp)
     tpl = item.get("template_project_id")
     if tpl:
         return str(tpl)
+    cp = (_QUEUE.get("channel_presets") or {}).get(str(ch))
+    if cp:
+        return str(cp)
     return None
 
 
