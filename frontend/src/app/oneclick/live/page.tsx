@@ -1685,7 +1685,7 @@ export default function LivePage() {
       ]);
       markServerSync();
       const failed = (tasks || [])
-        .filter((t) => ["failed", "cancelled", "paused"].includes(t.status) || isUploadRecoverableTask(t))
+        .filter((t) => ["failed", "cancelled", "paused", "upload_failed"].includes(t.status) || isUploadRecoverableTask(t))
         .filter((t) => channel == null || Number(t.channel || 0) === channel)
         .sort(
           (a, b) => {
