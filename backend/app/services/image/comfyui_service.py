@@ -51316,6 +51316,87 @@ def _image_has_split_panel_divider(path: str | Path, *, include_inset: bool = Tr
     return False
 
 
+def _image_has_abrupt_common_panel_seam(path: str | Path) -> bool:
+    """Detect borderless multi-panel layouts split at common layout fractions.
+
+    Krea2 sometimes joins independent scenes directly without drawing a black or
+    white divider.  The older divider detector only sees explicit divider lines.
+    A borderless panel join is still a nearly full-span, one-pixel discontinuity
+    at an exact half/third/quarter canvas boundary, so detect that geometry here.
+    """
+    try:
+        from PIL import Image, ImageChops, ImageStat
+
+        with Image.open(path) as img:
+            im = img.convert("RGB")
+            if im.width < 128 or im.height < 128:
+                return False
+            if im.width > 640:
+                scaled_h = max(1, round(im.height * (640 / im.width)))
+                im = im.resize((640, scaled_h), Image.Resampling.LANCZOS)
+            w, h = im.size
+
+            def _column_score(x: int) -> tuple[float, float]:
+                diff = ImageChops.difference(
+                    im.crop((x - 1, 0, x, h)),
+                    im.crop((x, 0, x + 1, h)),
+                )
+                mean = sum(ImageStat.Stat(diff).mean) / 3.0
+                pixels = list(diff.getdata())
+                coverage = sum(
+                    1 for r, g, b in pixels if (r + g + b) / 3.0 >= 25.0
+                ) / max(len(pixels), 1)
+                return mean, coverage
+
+            def _row_score(y: int) -> tuple[float, float]:
+                diff = ImageChops.difference(
+                    im.crop((0, y - 1, w, y)),
+                    im.crop((0, y, w, y + 1)),
+                )
+                mean = sum(ImageStat.Stat(diff).mean) / 3.0
+                pixels = list(diff.getdata())
+                coverage = sum(
+                    1 for r, g, b in pixels if (r + g + b) / 3.0 >= 25.0
+                ) / max(len(pixels), 1)
+                return mean, coverage
+
+            def _has_seam(length: int, scorer) -> bool:
+                common = (0.25, 1 / 3, 0.5, 2 / 3, 0.75)
+                tolerance = max(3, round(length * 0.006))
+                for fraction in common:
+                    center = round(length * fraction)
+                    for pos in range(
+                        max(1, center - tolerance),
+                        min(length - 1, center + tolerance) + 1,
+                    ):
+                        score, coverage = scorer(pos)
+                        if score < 75.0 or coverage < 0.78:
+                            continue
+                        neighbors = []
+                        for offset in range(-24, 25):
+                            if -3 <= offset <= 3:
+                                continue
+                            neighbor = pos + offset
+                            if 1 <= neighbor < length:
+                                neighbors.append(scorer(neighbor)[0])
+                        if not neighbors:
+                            continue
+                        neighbors.sort()
+                        median = neighbors[len(neighbors) // 2]
+                        if score / max(median, 1.0) >= 8.0:
+                            return True
+                return False
+
+            return _has_seam(w, _column_score) or _has_seam(h, _row_score)
+    except Exception:
+        return False
+
+
+def _image_has_multi_panel_layout(path: str | Path) -> bool:
+    """Reject any explicit or borderless split/multi-panel generated image."""
+    return _image_has_abrupt_common_panel_seam(path)
+
+
 _SPLIT_PANEL_GENERATION_CHECK_RE = re.compile(
     r"\b(?:split\s+panel|diptych|triptych|before\s+and\s+after|picture[- ]in[- ]picture|"
     r"framed\s+(?:painting|portrait|image)|painting|mirror\s+reflecting|"
@@ -53439,7 +53520,11 @@ class ComfyUIImageService(BaseImageService):
         )
         generation_width = w + 64 if z_image_edge_crop and not z_image_exact_layout else w
         generation_height = h + 48 if z_image_edge_crop and not z_image_exact_layout else h
-        max_generation_attempts = 1
+        krea2_multi_panel_guard = self.model_id in {
+            "comfyui-krea2",
+            "comfyui-krea2-expression",
+        }
+        max_generation_attempts = 3 if krea2_multi_panel_guard else 1
         for attempt in range(max_generation_attempts):
             subs = {
                 "PROMPT": final_prompt_text,
@@ -53496,9 +53581,37 @@ class ComfyUIImageService(BaseImageService):
                 self._emit_log(
                     f"{label} ComfyUI 실행 완료: {seconds:.2f}s, 캐시 노드 {cached}개"
                 )
+            candidate_output_path = output_path
+            if krea2_multi_panel_guard:
+                output = Path(output_path)
+                candidate_output_path = str(
+                    output.with_name(
+                        f"{output.stem}.candidate-{attempt + 1}{output.suffix or '.png'}"
+                    )
+                )
             await comfyui_client.download_first_output(
-                entry, output_path, kinds=("images",)
+                entry, candidate_output_path, kinds=("images",)
             )
+            if krea2_multi_panel_guard and _image_has_multi_panel_layout(
+                candidate_output_path
+            ):
+                try:
+                    Path(candidate_output_path).unlink(missing_ok=True)
+                except OSError:
+                    pass
+                self._emit_log(
+                    f"{label} KREA2 다중 패널 출력 차단: "
+                    f"재생성 {attempt + 1}/{max_generation_attempts}",
+                    "warn",
+                )
+                if attempt + 1 >= max_generation_attempts:
+                    self._emit_status(None)
+                    raise RuntimeError(
+                        "KREA2 다중 패널 이미지가 연속 검출되어 컷 저장을 차단했습니다."
+                    )
+                continue
+            if krea2_multi_panel_guard:
+                Path(candidate_output_path).replace(output_path)
             if z_image_shichishito_object_exact_layout:
                 scores = _validate_baekje_ep05_shichishito_object_geometry(
                     output_path
