@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -66,27 +66,79 @@ export default function SillaFactoryPage() {
   const [importing, setImporting] = useState<string | null>(null);
   const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
   const [imported, setImported] = useState<Record<string, string>>({});
+  const [lastCheckedAt, setLastCheckedAt] = useState("");
+  const loadRequestRef = useRef(0);
+  const loadAbortRef = useRef<AbortController | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (manual = false) => {
+    const requestId = loadRequestRef.current + 1;
+    loadRequestRef.current = requestId;
+    loadAbortRef.current?.abort();
+    const controller = new AbortController();
+    loadAbortRef.current = controller;
     setLoading(true);
     setMessage(null);
     try {
-      const [workbookData, presetData] = await Promise.all([
-        api.getWithTimeout("/factory-v5/silla/workbooks", 60_000),
-        api.get("/factory-v5/silla/presets"),
+      const refreshKey = Date.now();
+      const [workbookResult, presetResult] = await Promise.allSettled([
+        api.getWithTimeout(
+          `/factory-v5/silla/workbooks?refresh=${refreshKey}`,
+          60_000,
+          controller.signal,
+        ),
+        api.get(`/factory-v5/silla/presets?refresh=${refreshKey}`, controller.signal),
       ]);
-      setSource(workbookData);
-      setPresets(presetData);
-      setSelectedPreset((current) => current || presetData[0]?.id || "");
+      if (requestId !== loadRequestRef.current) return;
+
+      if (workbookResult.status === "fulfilled") {
+        const workbookData = workbookResult.value as WorkbookResponse;
+        setSource(workbookData);
+        const checkedAt = new Date().toLocaleTimeString("ko-KR", {
+          hour12: false,
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+        });
+        setLastCheckedAt(checkedAt);
+        if (manual && presetResult.status === "fulfilled") {
+          const valid = workbookData.workbooks.filter((item) => item.valid).length;
+          setMessage({
+            kind: "ok",
+            text: `새로 확인 완료: ${workbookData.workbooks.length}개 파일 중 ${valid}개 정상 · ${checkedAt}`,
+          });
+        }
+      }
+
+      if (presetResult.status === "fulfilled") {
+        const presetData = presetResult.value as SillaPreset[];
+        setPresets(presetData);
+        setSelectedPreset((current) => current || presetData[0]?.id || "");
+      }
+
+      const errors: string[] = [];
+      if (workbookResult.status === "rejected") {
+        errors.push(`대본 검증 실패: ${(workbookResult.reason as Error).message}`);
+      }
+      if (presetResult.status === "rejected") {
+        errors.push(`프리셋 확인 실패: ${(presetResult.reason as Error).message}`);
+      }
+      if (errors.length > 0) {
+        setMessage({ kind: "error", text: errors.join(" / ") });
+      }
     } catch (error) {
+      if (requestId !== loadRequestRef.current) return;
       setMessage({ kind: "error", text: (error as Error).message });
     } finally {
-      setLoading(false);
+      if (requestId === loadRequestRef.current) {
+        setLoading(false);
+        if (loadAbortRef.current === controller) loadAbortRef.current = null;
+      }
     }
   }, []);
 
   useEffect(() => {
-    void load();
+    void load(false);
+    return () => loadAbortRef.current?.abort();
   }, [load]);
 
   const createPreset = async () => {
@@ -146,11 +198,12 @@ export default function SillaFactoryPage() {
             </p>
           </div>
           <button
-            onClick={() => void load()}
+            onClick={() => void load(true)}
             disabled={loading}
             className="flex items-center gap-2 rounded-lg border border-border bg-bg-secondary px-4 py-2.5 text-sm font-bold text-gray-200 hover:border-accent-primary disabled:opacity-50"
           >
-            <RefreshCw size={16} className={loading ? "animate-spin" : ""} /> 새로 확인
+            <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
+            {loading ? "확인 중" : "새로 확인"}
           </button>
         </div>
 
@@ -173,6 +226,9 @@ export default function SillaFactoryPage() {
             </div>
             <div className="text-2xl font-black text-white">
               {validCount}<span className="ml-1 text-sm font-medium text-gray-500">/ {source?.workbooks.length || 0} 파일</span>
+            </div>
+            <div className="mt-2 text-xs text-gray-500">
+              최근 확인 {lastCheckedAt || "-"}
             </div>
           </div>
         </div>
