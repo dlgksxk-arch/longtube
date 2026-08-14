@@ -93,6 +93,7 @@ export default function SillaFactoryPage() {
       if (workbookResult.status === "fulfilled") {
         const workbookData = workbookResult.value as WorkbookResponse;
         setSource(workbookData);
+        if (manual) setImported({});
         const checkedAt = new Date().toLocaleTimeString("ko-KR", {
           hour12: false,
           hour: "2-digit",
@@ -172,7 +173,7 @@ export default function SillaFactoryPage() {
       }));
       setMessage({
         kind: "ok",
-        text: `${workbook.episode_code} 등록 완료. 제작 큐는 변경하지 않았습니다.`,
+        text: `${workbook.episode_code} 대본 등록 완료. 제작 큐는 변경하지 않았습니다.`,
       });
     } catch (error) {
       setMessage({ kind: "error", text: (error as Error).message });
@@ -193,7 +194,7 @@ export default function SillaFactoryPage() {
             </div>
             <h1 className="text-3xl font-black text-white">신라사 제작</h1>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-gray-400">
-              에피소드당 XLSX 한 파일과 외부 실제사진 경로를 함께 검증해 전용 프리셋에 등록합니다.
+              에피소드당 XLSX 한 파일과 외부 실제사진 경로를 함께 검증해 선택한 신라사 프리셋에 대본으로 등록합니다.
               XLSX 내장 이미지는 차단하며 원본 XLSX와 기존 제작 큐, 기존 대본은 변경하지 않습니다.
             </p>
           </div>
@@ -236,7 +237,7 @@ export default function SillaFactoryPage() {
         <section className="mb-6 rounded-xl border border-border bg-bg-secondary p-5">
           <div className="flex flex-wrap items-end gap-3">
             <label className="min-w-[260px] flex-1">
-              <span className="mb-2 block text-sm font-bold text-gray-200">등록 대상 신라사 프리셋</span>
+              <span className="mb-2 block text-sm font-bold text-gray-200">대본 등록 대상 신라사 프리셋</span>
               <select
                 value={selectedPreset}
                 onChange={(event) => setSelectedPreset(event.target.value)}
@@ -324,17 +325,27 @@ export default function SillaFactoryPage() {
                   )}
                   {imported[workbook.filename] && (
                     <div className="mt-3 break-all text-xs text-emerald-300">
-                      등록본: {imported[workbook.filename]}
+                      대본 등록본: {imported[workbook.filename]}
                     </div>
                   )}
                 </div>
                 <button
                   onClick={() => void importWorkbook(workbook)}
-                  disabled={!workbook.valid || !selectedPreset || importing !== null}
+                  disabled={!workbook.valid || !selectedPreset || importing !== null || Boolean(imported[workbook.filename])}
                   className="flex items-center gap-2 rounded-lg border border-accent-primary/50 bg-accent-primary/10 px-4 py-2.5 text-sm font-black text-accent-primary hover:bg-accent-primary/20 disabled:cursor-not-allowed disabled:opacity-35"
                 >
-                  {importing === workbook.filename ? <Loader2 size={16} className="animate-spin" /> : <Database size={16} />}
-                  전용 프리셋에 등록
+                  {importing === workbook.filename ? (
+                    <Loader2 size={16} className="animate-spin" />
+                  ) : imported[workbook.filename] ? (
+                    <CheckCircle2 size={16} />
+                  ) : (
+                    <Database size={16} />
+                  )}
+                  {importing === workbook.filename
+                    ? "대본 등록 중"
+                    : imported[workbook.filename]
+                      ? "대본 등록 완료"
+                      : "대본 등록"}
                 </button>
               </div>
             </article>
