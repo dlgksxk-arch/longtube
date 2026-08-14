@@ -1208,6 +1208,87 @@ class YouTubeUploader:
                 }
         return out
 
+    def wait_for_videos_processing(
+        self,
+        video_ids: list[str],
+        *,
+        timeout_seconds: float = 3600,
+        poll_seconds: float = 10,
+        require_hd: bool = True,
+    ) -> dict[str, dict]:
+        """Wait until every uploaded video is processed and, by default, HD-ready."""
+        self._ensure()
+        ids = list(dict.fromkeys(str(value or "").strip() for value in video_ids))
+        ids = [value for value in ids if value]
+        if not ids:
+            raise YouTubeUploadError("처리 상태를 확인할 YouTube video_id가 없습니다.")
+
+        deadline = time.monotonic() + max(1.0, float(timeout_seconds))
+        last_states: dict[str, dict] = {}
+        while True:
+            try:
+                response = self.youtube.videos().list(
+                    part="status,contentDetails,processingDetails",
+                    id=",".join(ids),
+                    maxResults=min(50, len(ids)),
+                ).execute()
+            except Exception as exc:
+                raise YouTubeUploadError(f"YouTube 처리 상태 조회 실패: {exc}") from exc
+
+            last_states = {}
+            for item in response.get("items") or []:
+                video_id = str(item.get("id") or "").strip()
+                status = item.get("status") or {}
+                content = item.get("contentDetails") or {}
+                processing = item.get("processingDetails") or {}
+                last_states[video_id] = {
+                    "video_id": video_id,
+                    "upload_status": str(status.get("uploadStatus") or "").strip().lower(),
+                    "processing_status": str(processing.get("processingStatus") or "").strip().lower(),
+                    "definition": str(content.get("definition") or "").strip().lower(),
+                    "failure_reason": processing.get("processingFailureReason"),
+                }
+
+            missing = [video_id for video_id in ids if video_id not in last_states]
+            terminal = [
+                state
+                for state in last_states.values()
+                if state["processing_status"] in {"failed", "terminated"}
+                or state["upload_status"] in {"deleted", "failed", "rejected"}
+            ]
+            if terminal:
+                raise YouTubeUploadError(
+                    "YouTube 처리 실패: "
+                    + "; ".join(
+                        f"{state['video_id']} upload={state['upload_status']} "
+                        f"processing={state['processing_status']} "
+                        f"reason={state['failure_reason'] or '-'}"
+                        for state in terminal
+                    )
+                )
+
+            pending = [
+                state
+                for state in last_states.values()
+                if state["upload_status"] != "processed"
+                or state["processing_status"] != "succeeded"
+                or (require_hd and state["definition"] != "hd")
+            ]
+            if not missing and not pending:
+                return last_states
+
+            if time.monotonic() >= deadline:
+                detail = [f"missing={','.join(missing)}"] if missing else []
+                detail.extend(
+                    f"{state['video_id']}:upload={state['upload_status']},"
+                    f"processing={state['processing_status']},definition={state['definition']}"
+                    for state in pending
+                )
+                raise YouTubeUploadError(
+                    "YouTube 처리 완료 대기 시간 초과: " + "; ".join(detail)
+                )
+            time.sleep(max(0.1, float(poll_seconds)))
+
     def update_video(
         self,
         video_id: str,

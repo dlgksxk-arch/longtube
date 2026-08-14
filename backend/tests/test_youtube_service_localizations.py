@@ -23,6 +23,22 @@ class _Request:
         return self.response
 
 
+class _ProcessingVideos:
+    def __init__(self, items):
+        self.items = items
+
+    def list(self, **kwargs):
+        return _Request({"items": self.items})
+
+
+class _ProcessingYouTube:
+    def __init__(self, items):
+        self.videos_api = _ProcessingVideos(items)
+
+    def videos(self):
+        return self.videos_api
+
+
 class ProjectTokenPathTests(unittest.TestCase):
     def test_legacy_system_token_survives_factory_channel_move(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -42,6 +58,53 @@ class ProjectTokenPathTests(unittest.TestCase):
                 uploader = youtube_service.YouTubeUploader(project_id="preset-1")
 
             self.assertEqual(uploader.token_path, legacy_token)
+
+    def test_wait_for_videos_processing_requires_processed_hd_results(self):
+        uploader = YouTubeUploader(project_id="preset-1")
+        uploader.youtube = _ProcessingYouTube([
+            {
+                "id": "video-main",
+                "status": {"uploadStatus": "processed"},
+                "contentDetails": {"definition": "hd"},
+                "processingDetails": {"processingStatus": "succeeded"},
+            },
+            {
+                "id": "video-short",
+                "status": {"uploadStatus": "processed"},
+                "contentDetails": {"definition": "hd"},
+                "processingDetails": {"processingStatus": "succeeded"},
+            },
+        ])
+
+        result = uploader.wait_for_videos_processing(
+            ["video-main", "video-short"],
+            timeout_seconds=1,
+            poll_seconds=0.1,
+        )
+
+        self.assertEqual(set(result), {"video-main", "video-short"})
+        self.assertTrue(all(item["definition"] == "hd" for item in result.values()))
+
+    def test_wait_for_videos_processing_rejects_terminal_failure(self):
+        uploader = YouTubeUploader(project_id="preset-1")
+        uploader.youtube = _ProcessingYouTube([
+            {
+                "id": "video-bad",
+                "status": {"uploadStatus": "failed"},
+                "contentDetails": {"definition": "sd"},
+                "processingDetails": {
+                    "processingStatus": "failed",
+                    "processingFailureReason": "invalidVideoFile",
+                },
+            },
+        ])
+
+        with self.assertRaisesRegex(youtube_service.YouTubeUploadError, "YouTube 처리 실패"):
+            uploader.wait_for_videos_processing(
+                ["video-bad"],
+                timeout_seconds=1,
+                poll_seconds=0.1,
+            )
 
 
 class _Videos:

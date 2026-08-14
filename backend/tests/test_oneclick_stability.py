@@ -291,6 +291,7 @@ class OneClickQueueStabilityTests(unittest.TestCase):
         self.assertLess(channel_pos, template_pos)
         self.assertIn("if ch_uploader.is_authenticated():", source)
         self.assertIn("using verified preset-bound YouTube token", source)
+        self.assertIn("uploader.wait_for_videos_processing", source)
 
     def test_copy_template_assets_skips_prepared_script_backups(self):
         with tempfile.TemporaryDirectory() as td:

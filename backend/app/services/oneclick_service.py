@@ -5456,6 +5456,50 @@ async def _step_youtube_upload(
             db.commit()
             print(f"[oneclick] YouTube Shorts uploaded count: {len(uploaded_items)}")
 
+        uploaded_video_ids = [
+            str(item.get("video_id") or "").strip()
+            for item in uploaded_videos
+            if isinstance(item, dict) and str(item.get("video_id") or "").strip()
+        ]
+        processing_states = await asyncio.to_thread(
+            uploader.wait_for_videos_processing,
+            uploaded_video_ids,
+            timeout_seconds=float(config.get("youtube_processing_timeout_seconds") or 3600),
+            poll_seconds=float(config.get("youtube_processing_poll_seconds") or 10),
+            require_hd=_bool_config(config.get("youtube_require_hd_processing"), True),
+        )
+        verified_at = _utcnow_iso()
+        for item in uploaded_videos:
+            state = processing_states.get(str(item.get("video_id") or "").strip())
+            if not state:
+                continue
+            item["processing_verified"] = True
+            item["processed"] = True
+            item["studio_verified"] = True
+            item["processing_status"] = state.get("processing_status")
+            item["definition"] = state.get("definition")
+            item["last_checked_at"] = verified_at
+
+        if usable_shorts_files:
+            for item in shorts_uploads.values():
+                if not isinstance(item, dict):
+                    continue
+                state = processing_states.get(str(item.get("video_id") or "").strip())
+                if not state:
+                    continue
+                item["processing_verified"] = True
+                item["processing_status"] = state.get("processing_status")
+                item["definition"] = state.get("definition")
+                item["last_checked_at"] = verified_at
+            shorts_uploads_path.write_text(
+                json.dumps(shorts_uploads, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        print(
+            f"[oneclick] YouTube processing verified: "
+            f"{len(processing_states)}/{len(uploaded_video_ids)}"
+        )
+
         cfg = dict(project.config or {})
         cfg["youtube_upload_result"] = {
             "status": "completed",
