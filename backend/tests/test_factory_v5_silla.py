@@ -102,6 +102,52 @@ def test_silla_title_length_is_not_rejected(monkeypatch):
     assert parsed.summary["title"] == "글자 수 제한 없이 사용하는 신라사 에피소드 제목"
 
 
+@pytest.mark.skipif(not SILLA_EP02.is_file(), reason="local Silla EP02 workbook is unavailable")
+def test_silla_actual_asset_is_allowed_in_shorts(monkeypatch):
+    sheet_name, source_cells, embedded_assets = factory_v5_silla._read_first_sheet(SILLA_EP02)
+    cells = dict(source_cells)
+    header_row = factory_v5_silla._find_cut_header(cells)
+    actual_row = header_row + 136
+    moved_short_row = next(
+        row
+        for (row, column), value in cells.items()
+        if column == 2 and str(value).strip() == "S4-15"
+    )
+    cells[(actual_row, 2)] = "S4-15"
+    cells[(moved_short_row, 2)] = ""
+    cells[(moved_short_row, 15)] = ""
+    monkeypatch.setattr(
+        factory_v5_silla,
+        "_read_first_sheet",
+        lambda _path: (sheet_name, cells, embedded_assets),
+    )
+
+    parsed = parse_silla_workbook(SILLA_EP02)
+    cut = parsed.payload["cuts"][135]
+
+    assert cut["actual_asset"]
+    assert cut["shorts_candidate"] is True
+    assert cut["shorts_group"] == 4
+    assert cut["shorts_order"] == 15
+    assert cut["image_prompt"] == ""
+    assert cut["video_tag"] == ""
+
+
+def test_source_usage_contract_accepts_public_domain_and_rejects_missing_terms():
+    assert factory_v5_silla._has_source_usage_contract(
+        "Natural Earth public domain: https://www.naturalearthdata.com/"
+    )
+    assert factory_v5_silla._has_source_usage_contract(
+        "국가유산청 공공누리 제1유형 https://www.heritage.go.kr/"
+    )
+    assert not factory_v5_silla._has_source_usage_contract(
+        "출처만 있음: https://example.com/source"
+    )
+    assert not factory_v5_silla._has_source_usage_contract(
+        "공공누리 제1유형이지만 URL 없음"
+    )
+
+
 def test_actual_asset_is_materialized_as_custom_canonical_image(tmp_path: Path, monkeypatch):
     source = tmp_path / "source.png"
     Image.new("RGB", (64, 36), (120, 80, 40)).save(source)

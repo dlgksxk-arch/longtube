@@ -42,6 +42,13 @@ _DRAWING_MAIN_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
 _CJK_RE = re.compile(r"[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af]")
 _EPISODE_RE = re.compile(r"(?:^|[_\-. ])EP\.?\s*0*(\d{1,4})(?:[_\-. ]|$)", re.IGNORECASE)
 _SHORTS_RE = re.compile(r"^S0*([1-9]\d*)-0*([1-9]\d*)$", re.IGNORECASE)
+_USAGE_CONDITION_MARKERS = (
+    "이용",
+    "공공누리",
+    "public domain",
+    "creative commons",
+    "cc by",
+)
 
 
 @dataclass(frozen=True)
@@ -63,6 +70,11 @@ class ParsedSillaWorkbook:
 
 def _text(value: object) -> str:
     return re.sub(r"\s+", " ", str(value or "").replace("\r", " ").replace("\n", " ")).strip()
+
+
+def _has_source_usage_contract(value: object) -> bool:
+    note = _text(value).lower()
+    return "http" in note and any(marker in note for marker in _USAGE_CONDITION_MARKERS)
 
 
 def _sha256_bytes(data: bytes) -> str:
@@ -348,13 +360,13 @@ def parse_silla_workbook(path: Path) -> ParsedSillaWorkbook:
             raise ValueError(f"cut {cut_number}: 인물 또는 대사 누락")
         narration_counts[narration] = narration_counts.get(narration, 0) + 1
         if actual_source:
-            if image_prompt or _text(cells.get((row, 15))) or _text(cells.get((row, 2))):
+            if image_prompt or _text(cells.get((row, 15))):
                 raise ValueError(
-                    f"cut {cut_number}: 실제자료 컷은 숏츠·KREA2·H3에서 제외해야 합니다."
+                    f"cut {cut_number}: 실제자료 컷은 KREA2·H3에서 제외해야 합니다."
                 )
             if speaker != "해설자":
                 raise ValueError(f"cut {cut_number}: 실제자료 컷은 해설자가 자료 의미를 설명해야 합니다.")
-            if "http" not in source_and_usage_note.lower() or "이용" not in source_and_usage_note:
+            if not _has_source_usage_contract(source_and_usage_note):
                 raise ValueError(
                     f"cut {cut_number}: U열에 출처 URL·자료 설명·이용조건이 모두 필요합니다."
                 )
