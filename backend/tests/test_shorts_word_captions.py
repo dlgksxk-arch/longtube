@@ -20,6 +20,7 @@ from app.services.remotion_shorts_renderer import (  # noqa: E402
     SHARED_SHORTS_PIPELINE_ID,
     render_remotion_shorts,
 )
+from app.services import remotion_shorts_renderer  # noqa: E402
 from app.routers.subtitle import _resolve_local_shorts_channel_identity  # noqa: E402
 
 
@@ -32,6 +33,43 @@ def _character_alignment(text: str, step: float = 0.1) -> dict:
 
 
 class ShortsWordCaptionTests(unittest.TestCase):
+    def test_shared_renderer_retries_transient_windows_spawn_error(self):
+        valid_props = {
+            "pipelineId": SHARED_SHORTS_PIPELINE_ID,
+            "playbackRate": 1.2,
+            "keepSegments": [{"start": 0.0, "end": 1.0}],
+            "captionCues": [{"text": "one two three", "startFrame": 0, "endFrame": 30}],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "remotion-shorts"
+            root.mkdir()
+            (root / "render.mjs").write_text("", encoding="utf-8")
+            (root / "package-lock.json").write_text("{}", encoding="utf-8")
+            (root / "node_modules").mkdir()
+            output = Path(tmp) / "short.mp4"
+            attempts = 0
+
+            async def fake_run_subprocess(*args, **kwargs):
+                nonlocal attempts
+                attempts += 1
+                if attempts == 1:
+                    return 1, b"", b"Error: spawn UNKNOWN\n  code: 'UNKNOWN'"
+                output.write_bytes(b"video")
+                return 0, b"", b""
+
+            with (
+                mock.patch.object(remotion_shorts_renderer, "remotion_shorts_root", return_value=root),
+                mock.patch.object(remotion_shorts_renderer, "_find_node", return_value="node"),
+                mock.patch.object(remotion_shorts_renderer, "run_subprocess", fake_run_subprocess),
+                mock.patch.object(remotion_shorts_renderer.asyncio, "sleep", mock.AsyncMock()),
+            ):
+                asyncio.run(render_remotion_shorts(
+                    [{"props": valid_props, "outputPath": str(output)}],
+                    manifest_path=Path(tmp) / "manifest.json",
+                ))
+
+            self.assertEqual(attempts, 2)
+
     def test_channel_five_render_identity_uses_factory_label_without_oauth(self):
         name, avatar = _resolve_local_shorts_channel_identity(
             {"factory_channel_label": "채널 5 - 신라사"},

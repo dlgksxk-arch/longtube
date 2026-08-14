@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,8 @@ from app.services.video.subprocess_helper import run_subprocess
 
 
 SHARED_SHORTS_PIPELINE_ID = "shared-all-channels-3word-captions-v2"
+_TRANSIENT_SPAWN_ERRORS = ("Error: spawn UNKNOWN", "code: 'UNKNOWN'", 'code: "UNKNOWN"')
+_MAX_RENDER_ATTEMPTS = 3
 
 
 def remotion_shorts_root() -> Path:
@@ -77,16 +80,23 @@ async def render_remotion_shorts(
     )
 
     cmd = [_find_node(), str(renderer), str(manifest_path)]
-    rc, _, stderr = await run_subprocess(
-        cmd,
-        timeout=3600.0,
-        capture_stdout=False,
-        capture_stderr=True,
-    )
-    if rc != 0:
+    for attempt in range(1, _MAX_RENDER_ATTEMPTS + 1):
+        rc, _, stderr = await run_subprocess(
+            cmd,
+            timeout=3600.0,
+            capture_stdout=False,
+            capture_stderr=True,
+        )
+        if rc == 0:
+            break
         stderr_text = (stderr or b"").decode(errors="replace")
-        detail = stderr_text.strip()[-2000:]
-        raise RuntimeError(f"Remotion shorts render failed: {detail}")
+        is_transient_spawn_error = any(
+            marker in stderr_text for marker in _TRANSIENT_SPAWN_ERRORS
+        )
+        if not is_transient_spawn_error or attempt >= _MAX_RENDER_ATTEMPTS:
+            detail = stderr_text.strip()[-2000:]
+            raise RuntimeError(f"Remotion shorts render failed: {detail}")
+        await asyncio.sleep(float(attempt * 2))
 
     missing = [str(item.get("outputPath")) for item in renders if not Path(str(item.get("outputPath"))).is_file()]
     if missing:
