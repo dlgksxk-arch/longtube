@@ -1,6 +1,7 @@
 """Video service factory"""
 from app.services.video.base import BaseVideoService
 from app.services.video.ffmpeg_service import (
+    FFmpegImageMotionService,
     FFmpegSafeMotionService,
     FFmpegStaticService,
 )
@@ -29,6 +30,12 @@ VIDEO_REGISTRY: dict[str, dict] = {
     # 효과 없는 정지 이미지 영상. 사용자 선택 모델 드롭다운에는 default=False.
     "ffmpeg-static":    {"name": "FFmpeg Static (no motion)", "provider": "local-static",
                          "default": True, "cost_per_unit": "Free (local)", "cost_value": 0},
+    "ffmpeg-image-motion": {
+        "name": "FFmpeg Image Motion",
+        "provider": "local-image-motion",
+        "cost_per_unit": "Free (local)",
+        "cost_value": 0,
+    },
     "ffmpeg-safe-motion": {
         "name": "숏츠",
         "provider": "local-safe-motion",
@@ -92,6 +99,8 @@ def get_video_service(model_id: str) -> BaseVideoService:
 
     if provider == "local-static":
         return FFmpegStaticService()
+    elif provider == "local-image-motion":
+        return FFmpegImageMotionService()
     elif provider == "local-safe-motion":
         return FFmpegSafeMotionService()
     elif provider == "fal":

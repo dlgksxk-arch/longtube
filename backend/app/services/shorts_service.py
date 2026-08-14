@@ -1451,8 +1451,13 @@ def _build_short_caption_cues(
 
 def _cut_video_path(output_dir: Path, cut_num: int) -> Path | None:
     videos_dir = output_dir.parent / "videos"
-    for name in (f"cut_{cut_num:03d}.mp4", f"cut_{cut_num}.mp4"):
-        candidate = videos_dir / name
+    candidates = (
+        videos_dir / "minimax_h3" / f"cut_{cut_num:03d}.mp4",
+        videos_dir / "minimax_h3" / f"cut_{cut_num}.mp4",
+        videos_dir / f"cut_{cut_num:03d}.mp4",
+        videos_dir / f"cut_{cut_num}.mp4",
+    )
+    for candidate in candidates:
         if candidate.exists() and candidate.stat().st_size > 0:
             return candidate
     return None
@@ -1786,53 +1791,10 @@ async def render_shorts_from_final(
             concat_tmp = None
             source_clip = concat_source
         except Exception as concat_exc:
-            print(f"[shorts] cut concat fallback to timeline trim for short_{idx}: {concat_exc}")
-            first_cut = cut_numbers[0] if cut_numbers else start_cut
-            if timeline:
-                start_sec = timeline.get(first_cut, (0.0, float(CUT_VIDEO_DURATION)))[0]
-                duration = sum(
-                    timeline.get(num, (0.0, float(CUT_VIDEO_DURATION)))[1]
-                    for num in cut_numbers
-                )
-                render_duration = duration
-            timeline_source = shorts_dir / f"_timeline_short_{idx}.mp4"
-            timeline_tmp = _temp_render_path(timeline_source)
-            try:
-                timeline_cmd = [
-                    ffmpeg, "-y",
-                    "-ss", f"{start_sec:.3f}",
-                    "-i", str(final_video),
-                    "-t", f"{duration:.3f}",
-                    "-vf", "fps=30,format=yuv420p",
-                    "-af", "aresample=async=1:first_pts=0",
-                    "-c:v", "libx264",
-                    "-preset", SHORTS_VIDEO_PRESET,
-                    "-crf", SHORTS_VIDEO_CRF,
-                    "-pix_fmt", "yuv420p",
-                    "-profile:v", "high",
-                    "-level", "4.2",
-                    "-r", "30",
-                    "-c:a", "aac",
-                    "-b:a", "192k",
-                    "-ar", "48000",
-                    "-movflags", "+faststart",
-                    str(timeline_tmp),
-                ]
-                rc, _, stderr = await run_subprocess(
-                    timeline_cmd,
-                    timeout=300.0,
-                    capture_stdout=False,
-                    capture_stderr=True,
-                )
-                if rc != 0:
-                    err = (stderr or b"").decode(errors="replace")[-500:]
-                    raise RuntimeError(f"shorts timeline source failed for short_{idx}: {err}")
-                await _validate_rendered_video(ffmpeg, timeline_tmp, f"short_{idx} timeline source")
-                os.replace(timeline_tmp, timeline_source)
-                timeline_tmp = None
-                source_clip = timeline_source
-            finally:
-                _discard_temp_render(timeline_tmp)
+            raise RuntimeError(
+                f"short_{idx} videoized cut assembly failed; image/timeline fallback is disabled: "
+                f"{concat_exc}"
+            ) from concat_exc
         finally:
             _discard_temp_render(concat_tmp)
 
@@ -1951,6 +1913,7 @@ async def render_shorts_from_final(
             "source_duration_seconds": duration,
             "playback_speed": SHORTS_PLAYBACK_SPEED,
             "source_playback_speed": SHORTS_SOURCE_PLAYBACK_SPEED,
+            "source_clip_type": "videoized-cut-concat",
             "silence_removed_seconds": max(0.0, duration - kept_duration),
             "keep_segments": keep_segments,
             "caption_cue_count": len(caption_cues),

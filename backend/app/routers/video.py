@@ -32,7 +32,7 @@ from app.config import (
     resolve_cut_video_duration,
     resolve_cut_video_duration_for_audio,
     resolve_project_dir,
-    should_burn_cut_level_subtitles,
+    should_burn_variety_highlights,
 )
 from app.services.video.factory import (
     DEFAULT_VIDEO_MODEL,
@@ -157,7 +157,7 @@ def _cut_video_needs_regeneration(
     if video_path is None or not video_path.exists() or video_path.stat().st_size <= 0:
         return True
     if (
-        not should_burn_cut_level_subtitles(config)
+        not should_burn_variety_highlights(config)
         and video_path.with_suffix(".subtitle.json").exists()
     ):
         return True
@@ -226,8 +226,8 @@ def _load_script_cut_map(project_id: str) -> dict[int, dict]:
 # concat 할 수 있는 cut_N.mp4 파일을 여전히 만들어둔다. 렌더는 모든 컷의 mp4 가
 # 존재해야 합성 가능한 구조이므로 **skip 은 쓸 수 없다** — 싸게 때우는 전략.
 #
-# v1.1.40: 폴백을 ffmpeg-kenburns(줌인 효과) → ffmpeg-static(효과 없음) 으로
-# 변경. 사용자 요청 — "나머지에 켄번 효과 넣지 말라고".
+# 영상화 대상으로 선택되지 않은 컷도 ffmpeg-image-motion 으로 자연스러운
+# 화면 움직임을 만든다. 원본 이미지를 그대로 정지시키는 폴백은 사용하지 않는다.
 #
 # 선택 규칙 (모두 1-based cut_number):
 #   - "all"            : 전부 AI 비디오 (기본, 현재 동작)
@@ -488,7 +488,7 @@ async def _generate_one_cut_safe(
     primary_service,
     kenburns_service,
     safe_motion_service,
-    static_service,
+    image_motion_service,
     video_model: str,
     use_ai: bool,
     force_full_fallback: bool,
@@ -510,7 +510,7 @@ async def _generate_one_cut_safe(
         "ai"                    — primary 가 성공
         "ai_fallback_kenburns"  — primary 실패 후 kenburns 성공
         "ffmpeg_forced"         — 사전 체크 실패로 kenburns 강제
-        "ffmpeg_selection"      — selection="every_N"/"character_only" 으로 static 선택
+        "ffmpeg_selection"      — selection 규칙에 따라 FFmpeg image motion 선택
 
     kenburns 마저 실패하면 예외를 raise — 호출자가 컷을 "failed" 로 기록한다.
 
@@ -547,9 +547,9 @@ async def _generate_one_cut_safe(
         )
         return output_path, "ffmpeg_safe_motion"
 
-    # 1) AI 대상이 아닌 컷 → 원래 동작: ffmpeg-static 으로 채워넣기
+    # 1) AI 대상이 아닌 컷 → 부드러운 FFmpeg pan/zoom 영상으로 채워넣기
     if not use_ai:
-        await static_service.generate(
+        await image_motion_service.generate(
             image_path=img_abs,
             audio_path=None,
             duration=duration,
@@ -563,7 +563,7 @@ async def _generate_one_cut_safe(
     # v1.2.20: 폴백 제거. 사용자 요구 — "API 이용할 때 설정된 모델의 API 연결
     # 안되있을때 알림창 띄우고 풀백으로 처리하지마." preflight 실패 / primary
     # 사용 불가 시 kenburns 로 갈아치우지 않고 명시적 RuntimeError 를 올려 컷
-    # 단위 실패로 기록한다. (use_ai=False 인 컷이 처음부터 ffmpeg-static 으로
+    # 단위 실패로 기록한다. (use_ai=False 인 컷이 처음부터 ffmpeg-image-motion 으로
     # 가는 건 사용자 설정이므로 폴백 아님 — 위에서 그대로 처리)
     if (force_full_fallback or primary_disabled[0]) and not is_forced_ai:
         raise RuntimeError(
@@ -833,12 +833,11 @@ async def generate_all_videos(project_id: str, db: Session = Depends(get_db)):
     script_cut_map = _load_script_cut_map(project_id)
 
     primary_service = get_video_service(video_model)
-    # v1.1.40: 선택되지 않은 컷은 효과 없는 ffmpeg-static 폴백 (비용 0).
-    # primary 가 이미 ffmpeg-static 이면 동일 인스턴스를 재사용.
-    fallback_service = (
+    # 선택되지 않은 컷은 비용 없는 FFmpeg image motion 으로 영상화한다.
+    image_motion_service = (
         primary_service
-        if video_model == "ffmpeg-static"
-        else get_video_service("ffmpeg-static")
+        if video_model == "ffmpeg-image-motion"
+        else get_video_service("ffmpeg-image-motion")
     )
     safe_motion_service = (
         primary_service
@@ -886,8 +885,8 @@ async def generate_all_videos(project_id: str, db: Session = Depends(get_db)):
                 svc = safe_motion_service
                 used_model = "ffmpeg-safe-motion"
             else:
-                svc = primary_service if use_ai else fallback_service
-                used_model = video_model if use_ai else "ffmpeg-static"
+                svc = primary_service if use_ai else image_motion_service
+                used_model = video_model if use_ai else "ffmpeg-image-motion"
             cut_audio_abs = _to_absolute(project_id, cut.audio_path)
             clip_duration, speech_duration, audio_start_offset = _timeline_for_audio(
                 project.config or {},
@@ -923,7 +922,7 @@ async def generate_all_videos(project_id: str, db: Session = Depends(get_db)):
                     Path(mux_tmp).unlink(missing_ok=True)
                 except Exception:
                     pass
-            if should_burn_cut_level_subtitles(project.config or {}):
+            if should_burn_variety_highlights(project.config or {}):
                 script_cut = script_cut_map.get(int(cut.cut_number), {}) or {}
                 await burn_cut_variety_highlight_file(
                     result_path,
@@ -1082,10 +1081,10 @@ async def generate_all_videos_async(project_id: str, db: Session = Depends(get_d
                 if video_model == "ffmpeg-kenburns"
                 else get_video_service("ffmpeg-kenburns")
             )
-            static_service = (
+            image_motion_service = (
                 primary_service
-                if video_model == "ffmpeg-static"
-                else get_video_service("ffmpeg-static")
+                if video_model == "ffmpeg-image-motion"
+                else get_video_service("ffmpeg-image-motion")
             )
             safe_motion_service = (
                 primary_service
@@ -1218,7 +1217,7 @@ async def generate_all_videos_async(project_id: str, db: Session = Depends(get_d
                     print(
                         f"[video-async] cut {cut_number}/{total} START "
                         f"duration={clip_duration:.3f} "
-                        f"model={'ffmpeg-safe-motion' if force_safe_motion else (video_model if use_ai else 'ffmpeg-static')} ai={use_ai} "
+                        f"model={'ffmpeg-safe-motion' if force_safe_motion else (video_model if use_ai else 'ffmpeg-image-motion')} ai={use_ai} "
                         f"motion={motion_prompt[:60]}..."
                     )
                     _s = _t.time()
@@ -1229,7 +1228,7 @@ async def generate_all_videos_async(project_id: str, db: Session = Depends(get_d
                                 primary_service=primary_service,
                                 kenburns_service=kenburns_service,
                                 safe_motion_service=safe_motion_service,
-                                static_service=static_service,
+                                image_motion_service=image_motion_service,
                                 video_model=video_model,
                                 use_ai=use_ai,
                                 force_safe_motion=force_safe_motion,
@@ -1266,7 +1265,7 @@ async def generate_all_videos_async(project_id: str, db: Session = Depends(get_d
                                 pass
                         elapsed = _t.time() - _s
                         print(f"[video-async] cut {cut_number} DONE in {elapsed:.1f}s (source={source})")
-                        if should_burn_cut_level_subtitles(proj_config):
+                        if should_burn_variety_highlights(proj_config):
                             await burn_cut_variety_highlight_file(
                                 result_path,
                                 spec.get("script_cut") or {},
@@ -1296,7 +1295,7 @@ async def generate_all_videos_async(project_id: str, db: Session = Depends(get_d
                                 elif source == "ffmpeg_safe_motion":
                                     wc.video_model = "ffmpeg-safe-motion"
                                 else:
-                                    wc.video_model = "ffmpeg-static"
+                                    wc.video_model = "ffmpeg-image-motion"
                                 wc.status = "completed"
                                 # v1.1.55-fix: 스튜디오 영상 생성 비용 기록 (AI 모델만)
                                 if source == "ai":
@@ -1508,10 +1507,10 @@ async def resume_videos_async(project_id: str, db: Session = Depends(get_db)):
                 if video_model == "ffmpeg-kenburns"
                 else get_video_service("ffmpeg-kenburns")
             )
-            static_service = (
+            image_motion_service = (
                 primary_service
-                if video_model == "ffmpeg-static"
-                else get_video_service("ffmpeg-static")
+                if video_model == "ffmpeg-image-motion"
+                else get_video_service("ffmpeg-image-motion")
             )
             safe_motion_service = (
                 primary_service
@@ -1638,7 +1637,7 @@ async def resume_videos_async(project_id: str, db: Session = Depends(get_db)):
                     print(
                         f"[video-resume] cut {cut_number} START "
                         f"duration={clip_duration:.3f} "
-                        f"model={'ffmpeg-safe-motion' if force_safe_motion else (video_model if use_ai else 'ffmpeg-static')} ai={use_ai}"
+                        f"model={'ffmpeg-safe-motion' if force_safe_motion else (video_model if use_ai else 'ffmpeg-image-motion')} ai={use_ai}"
                     )
                     _s = _t.time()
                     try:
@@ -1647,7 +1646,7 @@ async def resume_videos_async(project_id: str, db: Session = Depends(get_db)):
                                 primary_service=primary_service,
                                 kenburns_service=kenburns_service,
                                 safe_motion_service=safe_motion_service,
-                                static_service=static_service,
+                                image_motion_service=image_motion_service,
                                 video_model=video_model,
                                 use_ai=use_ai,
                                 force_safe_motion=force_safe_motion,
@@ -1684,7 +1683,7 @@ async def resume_videos_async(project_id: str, db: Session = Depends(get_db)):
                                 pass
                         elapsed = _t.time() - _s
                         print(f"[video-resume] cut {cut_number} DONE in {elapsed:.1f}s (source={source})")
-                        if should_burn_cut_level_subtitles(proj_config):
+                        if should_burn_variety_highlights(proj_config):
                             await burn_cut_variety_highlight_file(
                                 result_path,
                                 spec.get("script_cut") or {},
@@ -1715,7 +1714,7 @@ async def resume_videos_async(project_id: str, db: Session = Depends(get_db)):
                                 elif source == "ffmpeg_safe_motion":
                                     wc.video_model = "ffmpeg-safe-motion"
                                 else:
-                                    wc.video_model = "ffmpeg-static"
+                                    wc.video_model = "ffmpeg-image-motion"
                                 wc.status = "completed"
                                 # v1.1.55-fix: 스튜디오 영상 resume 비용 기록
                                 if source == "ai":

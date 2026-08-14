@@ -1,5 +1,6 @@
 """FFmpeg local video generation."""
 import asyncio
+import hashlib
 import os
 import re
 from typing import Optional
@@ -695,6 +696,105 @@ class FFmpegSafeMotionService(BaseVideoService):
                 output_path,
             ]
 
+        await FFmpegService._run_ffmpeg(cmd, timeout=180.0)
+        return output_path
+
+
+class FFmpegImageMotionService(BaseVideoService):
+    """Smooth deterministic pan/zoom for cuts that do not use an I2V model."""
+
+    def __init__(self):
+        self.model_id = "ffmpeg-image-motion"
+        self.display_name = "FFmpeg Image Motion"
+
+    @staticmethod
+    def _resolution_for(aspect_ratio: str) -> tuple[int, int]:
+        if aspect_ratio == "9:16":
+            return 1080, 1920
+        if aspect_ratio == "1:1":
+            return 1080, 1080
+        if aspect_ratio == "3:4":
+            return 1080, 1440
+        return 1920, 1080
+
+    @staticmethod
+    def _variant_for(image_path: str, prompt: str) -> int:
+        match = re.search(r"cut[_-]?(\d+)", os.path.basename(image_path), re.IGNORECASE)
+        if match:
+            return (max(1, int(match.group(1))) - 1) % 8
+        digest = hashlib.sha1(f"{image_path}|{prompt}".encode("utf-8")).digest()
+        return digest[0] % 8
+
+    @classmethod
+    def motion_filter(
+        cls,
+        *,
+        image_path: str,
+        prompt: str,
+        duration: float,
+        aspect_ratio: str,
+    ) -> tuple[str, str]:
+        """Return a smooth, high-resolution zoompan graph and its variant label."""
+        width, height = cls._resolution_for(aspect_ratio)
+        source_width, source_height = width * 2, height * 2
+        frames = max(2, int(round(max(0.1, float(duration)) * 30.0)))
+        last = frames - 1
+        progress = f"min(on/{last},1)"
+        variant = cls._variant_for(image_path, prompt)
+        profiles = (
+            ("center-push", f"1.00+0.11*{progress}", "(iw-iw/zoom)/2", "(ih-ih/zoom)/2"),
+            ("center-release", f"1.12-0.10*{progress}", "(iw-iw/zoom)/2", "(ih-ih/zoom)/2"),
+            ("pan-left-right", f"1.08+0.02*{progress}", f"(iw-iw/zoom)*{progress}", "(ih-ih/zoom)/2"),
+            ("pan-right-left", f"1.08+0.02*{progress}", f"(iw-iw/zoom)*(1-{progress})", "(ih-ih/zoom)/2"),
+            ("closeup-left", f"1.02+0.12*{progress}", "(iw-iw/zoom)*0.28", "(ih-ih/zoom)*0.48"),
+            ("closeup-right", f"1.02+0.12*{progress}", "(iw-iw/zoom)*0.72", "(ih-ih/zoom)*0.48"),
+            ("diagonal-drift", f"1.05+0.07*{progress}", f"(iw-iw/zoom)*(0.15+0.65*{progress})", f"(ih-ih/zoom)*(0.25+0.45*{progress})"),
+            ("vertical-drift", f"1.08+0.03*{progress}", "(iw-iw/zoom)/2", f"(ih-ih/zoom)*(0.15+0.70*{progress})"),
+        )
+        label, zoom, x_pos, y_pos = profiles[variant]
+        graph = (
+            f"[0:v]scale={source_width}:{source_height}:force_original_aspect_ratio=increase,"
+            f"crop={source_width}:{source_height},setsar=1,"
+            f"zoompan=z='{zoom}':x='{x_pos}':y='{y_pos}':d=1:"
+            f"s={width}x{height}:fps=30,format=yuv420p[v]"
+        )
+        return graph, label
+
+    async def generate(
+        self,
+        image_path: str,
+        audio_path: Optional[str] = None,
+        duration: float = 5.0,
+        output_path: str = "",
+        aspect_ratio: str = "16:9",
+        prompt: str = "",
+        audio_start_offset: float = 0.0,
+    ) -> str:
+        if not os.path.exists(image_path):
+            raise FileNotFoundError(f"Image not found: {image_path}")
+        if not output_path:
+            raise ValueError("output_path required")
+
+        vf, variant = self.motion_filter(
+            image_path=image_path,
+            prompt=prompt,
+            duration=duration,
+            aspect_ratio=aspect_ratio,
+        )
+        print(f"[ffmpeg-image-motion] {os.path.basename(image_path)} variant={variant}")
+        cmd = [
+            "ffmpeg", "-y",
+            "-loop", "1", "-framerate", "30", "-i", image_path,
+            "-filter_complex", vf,
+            "-map", "[v]",
+            "-an",
+            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "20",
+            "-t", str(duration),
+            "-r", "30",
+            "-pix_fmt", "yuv420p",
+            "-movflags", "+faststart",
+            output_path,
+        ]
         await FFmpegService._run_ffmpeg(cmd, timeout=180.0)
         return output_path
 

@@ -417,6 +417,11 @@ def should_burn_cut_level_subtitles(config: dict | None = None) -> bool:
     return resolve_main_subtitle_delivery(config) == "burn"
 
 
+def should_burn_variety_highlights(config: dict | None = None) -> bool:
+    """Keep authored entertainment captions independent from full subtitles."""
+    return _config_bool(config, "variety_highlights_enabled", False)
+
+
 def resolve_cut_video_duration(config: dict | None = None, default: float | None = None) -> float:
     """Return per-project cut duration, falling back to the 4s default."""
     fallback = float(default if default is not None else CUT_VIDEO_DURATION)

@@ -13,7 +13,7 @@ from app.config import (
     resolve_cut_video_duration,
     resolve_cut_video_duration_for_audio,
     resolve_project_dir,
-    should_burn_cut_level_subtitles,
+    should_burn_variety_highlights,
 )
 from app.models.database import SessionLocal
 from app.models.project import Project
@@ -1991,9 +1991,9 @@ def _step_video(project_id: str, config: dict):
 
     v1.1.52: 스튜디오(video.py router)와 **완전히 동일한** 로직으로 영상 생성.
     - video_model 에 따라 AI 비디오 서비스(fal/kling 등) 또는 FFmpeg 사용
-    - video_target_selection 에 따라 AI/static 분기
+    - video_target_selection 에 따라 AI/FFmpeg image-motion 분기
     - _build_video_motion_prompt 로 컷별 모션 프롬프트 생성
-    - primary 실패 시 ffmpeg-static 폴백
+    - 영상화 미선택 컷은 ffmpeg-image-motion 처리
     - 동시 4개 병렬 생성
     - v1.1.55: 각 컷 mp4 가 만들어지자마자 자기 대사 자막을 바로 번인
       (머지 후 자막 싱크 깨짐 사고 차단)
@@ -2032,10 +2032,10 @@ def _step_video(project_id: str, config: dict):
     aspect_ratio = config.get("aspect_ratio", "16:9")
 
     primary_service = get_video_service(video_model)
-    fallback_service = (
+    image_motion_service = (
         primary_service
-        if video_model == "ffmpeg-static"
-        else get_video_service("ffmpeg-static")
+        if video_model == "ffmpeg-image-motion"
+        else get_video_service("ffmpeg-image-motion")
     )
     safe_motion_service = (
         primary_service
@@ -2044,7 +2044,7 @@ def _step_video(project_id: str, config: dict):
     )
 
     # v1.1.55: 컷 자막 스타일 — DEFAULT_CONFIG 의 subtitle_style 와 동일 키.
-    cut_level_subtitles = should_burn_cut_level_subtitles(config)
+    variety_highlights_enabled = should_burn_variety_highlights(config)
 
     db = SessionLocal()
     all_cuts = script.get("cuts", [])
@@ -2167,7 +2167,7 @@ def _step_video(project_id: str, config: dict):
         )
         if existing_is_current:
             print(f"[Video] Cut {num} 이미 존재 — 건너뜀")
-            if cut_level_subtitles:
+            if variety_highlights_enabled:
                 try:
                     ok = run_async(_burn_cut_variety_highlight(
                         str(existing), cut_data, float(target_clip_duration),
@@ -2263,15 +2263,15 @@ def _step_video(project_id: str, config: dict):
                         used_model = "ffmpeg-safe-motion"
                         print(f"[Video] Cut {num} source-lock guard -> ffmpeg-safe-motion")
                     else:
-                        svc = primary_service if use_ai else fallback_service
-                        used_model = video_model if use_ai else "ffmpeg-static"
+                        svc = primary_service if use_ai else image_motion_service
+                        used_model = video_model if use_ai else "ffmpeg-image-motion"
 
-                    # v1.2.20: AI 영상 실패 시 ffmpeg-static 폴백 제거. 사용자 요구 —
+                    # v1.2.20: AI 영상 실패 시 로컬 대체 폴백 제거. 사용자 요구 —
                     # "API 이용할 때 설정된 모델의 API 연결 안되있을때 알림창
                     # 띄우고 풀백으로 처리하지마." AI 컷이 실패하면 그대로
                     # 예외를 올려 task 가 실패하도록 한다. (use_ai=False 인
-                    # 컷은 처음부터 ffmpeg-static 으로 가는 게 사용자 설정이라
-                    # 폴백이 아님 — 그건 그대로 유지)
+                    # 컷은 처음부터 ffmpeg-image-motion 으로 가는 것이 선택 규칙이며
+                    # AI 실패 폴백이 아니다.)
                     result_path = await svc.generate(
                         image_path=img,
                         audio_path=None,
@@ -2306,7 +2306,7 @@ def _step_video(project_id: str, config: dict):
                     # 머지/normalize 후에 자막 입히면 컷 길이 변경으로 싱크가
                     # 깨지는 사고 → 컷 단계에서 0~audio_duration 에 정확히
                     # 박아 둔다. 실패해도 영상 자체는 그대로.
-                    if cut_level_subtitles:
+                    if variety_highlights_enabled:
                         try:
                             dur = float(target_clip_duration)
                             ok = await _burn_cut_variety_highlight(
@@ -2332,7 +2332,7 @@ def _step_video(project_id: str, config: dict):
                 track_progress(project_id, 5)
                 continue
             num, output, used_model = r
-            # v1.1.55: AI 비디오 성공 클립만 지출 기록 (ffmpeg-static 은 무과금)
+            # v1.1.55: AI 비디오 성공 클립만 지출 기록 (FFmpeg motion 은 무과금)
             if used_model and not str(used_model).startswith("ffmpeg-"):
                 try:
                     from app.services import spend_ledger

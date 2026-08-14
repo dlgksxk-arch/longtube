@@ -20,11 +20,12 @@ from app.config import (
     resolve_cut_audio_start_offset,
     resolve_cut_video_duration,
     resolve_cut_video_duration_for_audio,
-    should_burn_cut_level_subtitles,
+    should_burn_variety_highlights,
 )
 from app.models.cut import Cut
 from app.services.cancel_ctx import raise_if_cancelled
 from app.services.image.asset_guard import find_existing_cut_image
+from app.services.subtitle_service import burn_cut_variety_highlight_file
 from app.services.video.ffmpeg_service import FFmpegService
 from app.services.video.minimax_h3_service import (
     MODEL_ID,
@@ -45,6 +46,7 @@ class TaggedH3Cut:
     image_path: Path
     raw_path: Path
     fingerprint: str
+    cut_data: dict
 
 
 def _absolute_project_asset(project_dir: Path, stored_path: str | None) -> Path | None:
@@ -152,6 +154,7 @@ def _collect_tagged_cuts(
                 image_path=image_path,
                 raw_path=raw_path,
                 fingerprint=_source_fingerprint(image_path, tag, configured_aspect),
+                cut_data=dict(cut_data),
             )
         )
     return sorted(specs, key=lambda item: item.cut_number)
@@ -304,7 +307,16 @@ async def mux_tagged_minimax_h3_videos(
                     f"MiniMax H3 컷 {spec.cut_number} TTS 결합 결과가 비어 있습니다."
                 )
             os.replace(temporary, final_path)
-            if not should_burn_cut_level_subtitles(config):
+            if should_burn_variety_highlights(config):
+                await burn_cut_variety_highlight_file(
+                    str(final_path),
+                    spec.cut_data,
+                    aspect_ratio=spec.aspect_ratio,
+                    duration=float(clip_duration),
+                    panel_mode=str(config.get("variety_highlight_panel_mode") or "emotion_auto"),
+                    fixed_panel=str(config.get("variety_highlight_style") or "neutral"),
+                )
+            else:
                 final_path.with_suffix(".subtitle.json").unlink(missing_ok=True)
         finally:
             temporary.unlink(missing_ok=True)
