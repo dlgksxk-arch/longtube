@@ -28,6 +28,21 @@ def _prompt_hash(prompt: str) -> str:
     return hashlib.sha256(prompt.encode("utf-8")).hexdigest()
 
 
+def _design_payload(*, prompt: str, series: str, speaker: str) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "voice_description": prompt,
+        "model_id": VOICE_DESIGN_MODEL_ID,
+        "text": VOICE_PREVIEW_TEXT,
+        "seed": int(_prompt_hash(f"{series}:{speaker}:{prompt}")[:8], 16) & 0x7FFFFFFF,
+        "guidance_scale": 3.0,
+    }
+    # ElevenLabs rejects `quality` for eleven_ttv_v3 even though the generic
+    # endpoint schema exposes the field. It is supported only by v2.
+    if VOICE_DESIGN_MODEL_ID == "eleven_multilingual_ttv_v2":
+        payload["quality"] = 0.9
+    return payload
+
+
 def _dialogue_speakers(script: dict[str, Any]) -> list[str]:
     speakers: list[str] = []
     for cut in script.get("cuts") or []:
@@ -84,16 +99,13 @@ class ElevenLabsVoiceDesignClient:
             designed = client.post(
                 f"{ELEVENLABS_BASE_URL}/v1/text-to-voice/design",
                 headers=self.headers,
-                json={
-                    "voice_description": prompt,
-                    "model_id": VOICE_DESIGN_MODEL_ID,
-                    "text": VOICE_PREVIEW_TEXT,
-                    "seed": int(_prompt_hash(f"{series}:{speaker}:{prompt}")[:8], 16) & 0x7FFFFFFF,
-                    "guidance_scale": 3.0,
-                    "quality": 0.9,
-                },
+                json=_design_payload(prompt=prompt, series=series, speaker=speaker),
             )
-            designed.raise_for_status()
+            if designed.status_code >= 400:
+                raise RuntimeError(
+                    f"Voice Design 미리보기 실패 HTTP {designed.status_code}: "
+                    f"{designed.text[:500]}"
+                )
             previews = designed.json().get("previews") or []
             generated_voice_id = _text(previews[0].get("generated_voice_id")) if previews else ""
             if not generated_voice_id:
@@ -114,7 +126,11 @@ class ElevenLabsVoiceDesignClient:
                     },
                 },
             )
-            created.raise_for_status()
+            if created.status_code >= 400:
+                raise RuntimeError(
+                    f"Voice Design 저장 실패 HTTP {created.status_code}: "
+                    f"{created.text[:500]}"
+                )
             voice_id = _text(created.json().get("voice_id"))
             if not voice_id:
                 raise RuntimeError(f"Voice Design 생성 결과에 voice_id가 없습니다: {speaker}")

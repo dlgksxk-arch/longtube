@@ -1,6 +1,17 @@
 from __future__ import annotations
 
-from app.services.tts.voice_design_cast import ensure_dialogue_voice_cast
+from app.services.tts.voice_design_cast import _design_payload, ensure_dialogue_voice_cast
+
+
+def test_voice_design_v3_payload_omits_unsupported_quality_parameter():
+    payload = _design_payload(
+        prompt="Korean male ceremonial officiant with a low steady voice.",
+        series="신라사",
+        speaker="장례 집전자",
+    )
+
+    assert payload["model_id"] == "eleven_ttv_v3"
+    assert "quality" not in payload
 
 
 def _script():
