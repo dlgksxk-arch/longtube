@@ -325,9 +325,6 @@ def parse_silla_workbook(path: Path) -> ParsedSillaWorkbook:
     missing_metadata = [key for key, value in required_metadata.items() if not value]
     if missing_metadata:
         raise ValueError(f"필수 메타데이터 누락: {missing_metadata}")
-    if len(title) < 15 or len(title) > 20:
-        raise ValueError(f"에피소드 제목은 15~20자여야 합니다. actual={len(title)}")
-
     cuts: list[dict[str, Any]] = []
     assets_by_cut: dict[int, EmbeddedAsset] = {}
     shorts_groups: dict[int, list[int]] = {}

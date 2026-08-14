@@ -82,6 +82,26 @@ def test_real_silla_ep02_contract_and_import(tmp_path: Path):
     assert all(Path(cut["actual_asset"]["path"]).is_file() for cut in actual_cuts)
 
 
+@pytest.mark.skipif(not SILLA_EP02.is_file(), reason="local Silla EP02 workbook is unavailable")
+def test_silla_title_length_is_not_rejected(monkeypatch):
+    sheet_name, cells, embedded_assets = factory_v5_silla._read_first_sheet(SILLA_EP02)
+    title_row = next(
+        row
+        for (row, column), value in cells.items()
+        if column == 1 and str(value).strip() == "에피소드 제목"
+    )
+    cells[(title_row, 2)] = "글자 수 제한 없이 사용하는 신라사 에피소드 제목"
+    monkeypatch.setattr(
+        factory_v5_silla,
+        "_read_first_sheet",
+        lambda _path: (sheet_name, cells, embedded_assets),
+    )
+
+    parsed = parse_silla_workbook(SILLA_EP02)
+
+    assert parsed.summary["title"] == "글자 수 제한 없이 사용하는 신라사 에피소드 제목"
+
+
 def test_actual_asset_is_materialized_as_custom_canonical_image(tmp_path: Path, monkeypatch):
     source = tmp_path / "source.png"
     Image.new("RGB", (64, 36), (120, 80, 40)).save(source)
