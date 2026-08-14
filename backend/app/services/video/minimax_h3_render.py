@@ -20,6 +20,7 @@ from app.config import (
     resolve_cut_audio_start_offset,
     resolve_cut_video_duration,
     resolve_cut_video_duration_for_audio,
+    should_burn_cut_level_subtitles,
 )
 from app.models.cut import Cut
 from app.services.cancel_ctx import raise_if_cancelled
@@ -303,6 +304,8 @@ async def mux_tagged_minimax_h3_videos(
                     f"MiniMax H3 컷 {spec.cut_number} TTS 결합 결과가 비어 있습니다."
                 )
             os.replace(temporary, final_path)
+            if not should_burn_cut_level_subtitles(config):
+                final_path.with_suffix(".subtitle.json").unlink(missing_ok=True)
         finally:
             temporary.unlink(missing_ok=True)
         cut.video_path = final_path.relative_to(project_dir).as_posix()

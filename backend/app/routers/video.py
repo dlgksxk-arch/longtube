@@ -138,7 +138,11 @@ def _probe_media_seconds(path: str) -> float:
         return 0.0
 
 
-def _cut_video_needs_regeneration(project_dir: Path, cut: Cut) -> bool:
+def _cut_video_needs_regeneration(
+    project_dir: Path,
+    cut: Cut,
+    config: dict | None = None,
+) -> bool:
     """Regenerate missing clips and clips older than their image or audio input."""
     if not cut.video_path:
         return True
@@ -151,6 +155,11 @@ def _cut_video_needs_regeneration(project_dir: Path, cut: Cut) -> bool:
 
     video_path = _absolute(cut.video_path)
     if video_path is None or not video_path.exists() or video_path.stat().st_size <= 0:
+        return True
+    if (
+        not should_burn_cut_level_subtitles(config)
+        and video_path.with_suffix(".subtitle.json").exists()
+    ):
         return True
     video_mtime = video_path.stat().st_mtime_ns
     for source_value in (cut.image_path, cut.audio_path):
@@ -1436,7 +1445,11 @@ async def resume_videos_async(project_id: str, db: Session = Depends(get_db)):
         _vlog(f"resume restored {restored_paths} missing cut media paths from disk")
     pending_cuts = [
         c for c in cuts
-        if c.image_path and c.audio_path and _cut_video_needs_regeneration(project_dir, c)
+        if c.image_path and c.audio_path and _cut_video_needs_regeneration(
+            project_dir,
+            c,
+            project.config or {},
+        )
     ]
     if not pending_cuts:
         return {"status": "nothing_to_resume", "step": "video", "total": 0}
@@ -1514,7 +1527,11 @@ async def resume_videos_async(project_id: str, db: Session = Depends(get_db)):
 
             pending_specs = []
             for c in db_cuts:
-                should_generate = _cut_video_needs_regeneration(v_dir.parent, c)
+                should_generate = _cut_video_needs_regeneration(
+                    v_dir.parent,
+                    c,
+                    proj_config,
+                )
                 if should_generate and c.video_path:
                     print(f"[video-resume] cut {c.cut_number} source image/audio is newer than clip - regenerate")
                 if not should_generate and c.video_path:
@@ -1676,6 +1693,8 @@ async def resume_videos_async(project_id: str, db: Session = Depends(get_db)):
                                 panel_mode=str((proj_config or {}).get("variety_highlight_panel_mode") or "emotion_auto"),
                                 fixed_panel=str((proj_config or {}).get("variety_highlight_style") or "neutral"),
                             )
+                        else:
+                            Path(result_path).with_suffix(".subtitle.json").unlink(missing_ok=True)
                         counts[source] += 1
                         cut_results[cut_number] = result_path
 

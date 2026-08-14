@@ -66,3 +66,28 @@ class VideoStaleDetectionTests(unittest.TestCase):
 
             video.unlink()
             self.assertTrue(_cut_video_needs_regeneration(root, cut))
+
+    def test_factory_v5_caption_mode_regenerates_previously_burned_clip(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            image = root / "images" / "cut_1.png"
+            audio = root / "audio" / "cut_1.mp3"
+            video = root / "videos" / "cut_1.mp4"
+            marker = video.with_suffix(".subtitle.json")
+            for path in (image, audio, video, marker):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"data")
+
+            cut = SimpleNamespace(
+                image_path="images/cut_1.png",
+                audio_path="audio/cut_1.mp3",
+                video_path="videos/cut_1.mp4",
+            )
+            config = {
+                "factory_version": 5,
+                "subtitle_delivery": "youtube_caption",
+            }
+
+            self.assertTrue(_cut_video_needs_regeneration(root, cut, config))
+            marker.unlink()
+            self.assertFalse(_cut_video_needs_regeneration(root, cut, config))
