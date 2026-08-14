@@ -1756,12 +1756,6 @@ async def resume_videos_async(project_id: str, db: Session = Depends(get_db)):
             any_video = any(c.video_path for c in db_cuts)
             ss = dict(proj.step_states or {})
             if any_video:
-                ss["5"] = "completed"
-                proj.step_states = ss
-                local_db.commit()
-                complete_task(project_id, "video")
-                print(f"[video-resume] DONE: {sum(1 for c in db_cuts if c.video_path)}/{len(db_cuts)} total clips")
-
                 # v2.1.1: 영상 생성 완료 후 자동 렌더링 (자막 번인 포함)
                 _auto_render_log = str(resolve_project_dir(project_id, proj.config if proj else {}, create=True) / "auto_render.log")
                 try:
@@ -1782,6 +1776,16 @@ async def resume_videos_async(project_id: str, db: Session = Depends(get_db)):
                     with open(_auto_render_log, "a", encoding="utf-8") as _lf:
                         _lf.write(f"auto-render FAILED: {re}\n{tb}\n")
                     print(f"[video-resume] auto-render FAILED (non-fatal): {re}")
+
+                # Keep the Studio video task running until the internal render
+                # exits.  OneClick waits on this task state before starting its
+                # own Step 6 render; completing early makes both renders write
+                # the same temporary files concurrently.
+                ss["5"] = "completed"
+                proj.step_states = ss
+                local_db.commit()
+                complete_task(project_id, "video")
+                print(f"[video-resume] DONE: {sum(1 for c in db_cuts if c.video_path)}/{len(db_cuts)} total clips")
             else:
                 ss["5"] = "failed"
                 proj.step_states = ss

@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.routers.script import _strip_script_motion_prompts  # noqa: E402
 from app.routers.subtitle import render_video_with_subtitles  # noqa: E402
 from app.routers.video import should_generate_ai_video_in_step5  # noqa: E402
+from app.routers.video import resume_videos_async  # noqa: E402
 from app.services import comfyui_client  # noqa: E402
 from app.services.video.factory import VIDEO_REGISTRY  # noqa: E402
 from app.services.video.minimax_h3_render import (  # noqa: E402
@@ -180,6 +181,12 @@ class MiniMaxH3VideoTests(unittest.TestCase):
                 ai_first_n=5,
             )
         )
+
+    def test_video_resume_completes_only_after_internal_render_exits(self):
+        source = inspect.getsource(resume_videos_async)
+        render_index = source.index("await render_video_with_subtitles")
+        complete_index = source.index('complete_task(project_id, "video")')
+        self.assertLess(render_index, complete_index)
 
     def test_script_save_policy_preserves_only_explicit_video_tag(self):
         script = {
