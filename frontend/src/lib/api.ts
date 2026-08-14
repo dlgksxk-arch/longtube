@@ -1015,7 +1015,7 @@ export const youtubeApi = {
   channelAuthStatus: (ch: number): Promise<{ channel: number; authenticated: boolean }> =>
     api.get(`/youtube/auth/channel/${ch}/status`),
   channelAuthenticate: (ch: number): Promise<{ status: string; channel: number; message: string }> =>
-    api.post(`/youtube/auth/channel/${ch}`),
+    api.postWithTimeout(`/youtube/auth/channel/${ch}`, undefined, 10 * 60_000),
   channelAuthInfo: (ch: number): Promise<YouTubeChannelInfo & { channel: number }> =>
     api.get(`/youtube/auth/channel/${ch}/info`),
   channelAuthReset: (ch: number): Promise<{ status: string; channel: number; token_removed: boolean }> =>
