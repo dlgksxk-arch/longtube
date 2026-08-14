@@ -268,6 +268,43 @@ def _resume_prompt_mismatch_requires_regeneration(reason: str, configured: bool)
     }
 
 
+def _apply_runtime_visual_policy_prompt(cut: Cut, policy_cut: dict | None) -> None:
+    """Refresh generated-cut prompts without turning prepared source assets into AI cuts."""
+    if not isinstance(policy_cut, dict):
+        return
+    if isinstance(policy_cut.get("actual_asset"), dict):
+        return
+    prompt = str(policy_cut.get("image_prompt") or "").strip()
+    if prompt:
+        cut.image_prompt = prompt
+
+
+def _restore_prepared_actual_assets(
+    project_id: str,
+    config: dict | None,
+    cuts: list[Cut],
+) -> tuple[dict, int]:
+    """Re-materialize immutable prepared assets before any image generation pass."""
+    script_path = resolve_project_dir(project_id, config or {}, create=False) / "script.json"
+    if not script_path.is_file():
+        return {}, 0
+    script = json.loads(script_path.read_text(encoding="utf-8"))
+    if not any(
+        isinstance(item, dict) and isinstance(item.get("actual_asset"), dict)
+        for item in script.get("cuts", []) or []
+    ):
+        return script, 0
+    from app.services.factory_v5_silla import apply_actual_assets_to_cut_rows
+
+    restored = apply_actual_assets_to_cut_rows(
+        project_id,
+        config or {},
+        script,
+        {int(cut.cut_number): cut for cut in cuts},
+    )
+    return script, restored
+
+
 # v1.1.59: ComfyUI VRAM 수동 해제 엔드포인트.
 # 배치 작업 후 모델이 VRAM 에 계속 남아있을 때 프론트에서 호출.
 @router.post("/comfyui/free")
@@ -909,7 +946,16 @@ async def generate_all_images_async(project_id: str, db: Session = Depends(get_d
         _ilog(f"generate-async already_running project={project_id}")
         return {"status": "already_running", "step": "image"}
 
-    cut_count = db.query(Cut).filter(Cut.project_id == project_id).count()
+    cuts = db.query(Cut).filter(Cut.project_id == project_id).order_by(Cut.cut_number).all()
+    _policy_script, restored_actual_assets = _restore_prepared_actual_assets(
+        project_id,
+        project.config,
+        cuts,
+    )
+    if restored_actual_assets:
+        _ilog(f"generate-async restored actual assets={restored_actual_assets} project={project_id}")
+        db.commit()
+    cut_count = len(cuts)
     state = start_task(project_id, "image", cut_count)
 
     step_states = dict(project.step_states or {})
@@ -1151,6 +1197,14 @@ async def resume_images_async(project_id: str, db: Session = Depends(get_db)):
         return {"status": "already_running", "step": "image"}
 
     cuts = db.query(Cut).filter(Cut.project_id == project_id).order_by(Cut.cut_number).all()
+    _policy_script, restored_actual_assets = _restore_prepared_actual_assets(
+        project_id,
+        project.config,
+        cuts,
+    )
+    if restored_actual_assets:
+        _ilog(f"resume-async restored actual assets={restored_actual_assets} project={project_id}")
+        db.commit()
     project_dir = resolve_project_dir(project_id, project.config, create=False)
     image_model = resolve_image_model(project.config.get("image_model"))
     global_style = fixed_channel_image_style(
@@ -1312,8 +1366,7 @@ async def resume_images_async(project_id: str, db: Session = Depends(get_db)):
             pending = []
             for c in db_cuts:
                 policy_cut = policy_cuts.get(int(c.cut_number))
-                if policy_cut and str(policy_cut.get("image_prompt") or "").strip():
-                    c.image_prompt = str(policy_cut["image_prompt"]).strip()
+                _apply_runtime_visual_policy_prompt(c, policy_cut)
                 if not c.image_prompt:
                     continue
                 existing = find_existing_cut_image(resolve_project_dir(project_id, proj.config, create=False), c.cut_number)

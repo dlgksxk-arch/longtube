@@ -875,6 +875,7 @@ def apply_actual_assets_to_cut_rows(
             converted = image.convert("RGB") if image.mode not in {"RGB", "RGBA"} else image
             converted.save(temporary, format="PNG", optimize=True)
             temporary.replace(target)
+        target.with_name(target.name + ".prompt.json").unlink(missing_ok=True)
         sidecar = target.with_name(target.name + ".source.json")
         _write_json_atomic(
             sidecar,

@@ -9,7 +9,11 @@ import pytest
 from PIL import Image
 
 from app.config import apply_main_caption_delivery_policy
-from app.routers.image import IMAGE_SINGLE_FRAME_LOCK, _build_image_prompt
+from app.routers.image import (
+    IMAGE_SINGLE_FRAME_LOCK,
+    _apply_runtime_visual_policy_prompt,
+    _build_image_prompt,
+)
 from app.services import factory_v5_silla, oneclick_service
 from app.services.factory_v5_silla import (
     SOURCE_SCHEMA,
@@ -315,12 +319,31 @@ def test_actual_asset_is_materialized_as_custom_canonical_image(tmp_path: Path, 
             )
         ]
     }
+    stale_prompt_sidecar = tmp_path / "run" / "images" / "cut_1.png.prompt.json"
+    stale_prompt_sidecar.parent.mkdir(parents=True, exist_ok=True)
+    stale_prompt_sidecar.write_text("{}", encoding="utf-8")
     assert apply_actual_assets_to_cut_rows("run-id", {}, script, {1: row}) == 1
     assert row.image_path == "images/cut_1.png"
     assert row.image_model == "source-asset"
     assert row.is_custom_image is True
     assert row.status == "completed"
     assert (tmp_path / "run" / "images" / "cut_1.png").is_file()
+    assert not stale_prompt_sidecar.exists()
+
+
+def test_runtime_visual_policy_does_not_turn_actual_asset_back_into_ai_cut():
+    row = SimpleNamespace(image_prompt="")
+    _apply_runtime_visual_policy_prompt(
+        row,
+        {
+            "image_prompt": "generated prompt must not be restored",
+            "actual_asset": {"path": "prepared_assets/cut_001.png"},
+        },
+    )
+    assert row.image_prompt == ""
+
+    _apply_runtime_visual_policy_prompt(row, {"image_prompt": "generated cut prompt"})
+    assert row.image_prompt == "generated cut prompt"
 
 
 def test_silla_krea_prompt_adds_single_frame_lock_without_changing_legacy_projects():
