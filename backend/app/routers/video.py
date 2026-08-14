@@ -34,7 +34,12 @@ from app.config import (
     resolve_project_dir,
     should_burn_cut_level_subtitles,
 )
-from app.services.video.factory import DEFAULT_VIDEO_MODEL, get_video_service, resolve_video_model
+from app.services.video.factory import (
+    DEFAULT_VIDEO_MODEL,
+    LOCAL_MINIMAX_H3_MODEL,
+    get_video_service,
+    resolve_video_model,
+)
 from app.services.video.ffmpeg_service import FFmpegService
 from app.services.subtitle_service import burn_cut_variety_highlight_file
 
@@ -258,6 +263,18 @@ def should_generate_ai_video(cut_number: int, selection: str, ai_first_n: int = 
         # legacy 저장값 호환 — 현재는 every_5 와 동일
         return (cut_number - 1) % 5 == 0
     return True
+
+
+def should_generate_ai_video_in_step5(
+    video_model: str,
+    cut_number: int,
+    selection: str,
+    ai_first_n: int = 5,
+) -> bool:
+    """Keep tagged MiniMax H3 generation in the final-render batch only."""
+    if resolve_video_model(video_model) == LOCAL_MINIMAX_H3_MODEL:
+        return False
+    return should_generate_ai_video(cut_number, selection, ai_first_n)
 
 
 def count_ai_video_cuts(total_cuts: int, selection: str, ai_first_n: int = 5) -> int:
@@ -845,7 +862,12 @@ async def generate_all_videos(project_id: str, db: Session = Depends(get_db)):
                 video_model,
             )
 
-            use_ai = should_generate_ai_video(cut.cut_number, selection, ai_first_n)
+            use_ai = should_generate_ai_video_in_step5(
+                video_model,
+                cut.cut_number,
+                selection,
+                ai_first_n,
+            )
             force_safe_motion = use_ai and _should_force_safe_motion(
                 script_cut_map.get(int(cut.cut_number)),
                 project.config or {},
@@ -1167,7 +1189,12 @@ async def generate_all_videos_async(project_id: str, db: Session = Depends(get_d
                         spec.get("script_cut"),
                         video_model,
                     )
-                    use_ai = should_generate_ai_video(cut_number, selection, ai_first_n)
+                    use_ai = should_generate_ai_video_in_step5(
+                        video_model,
+                        cut_number,
+                        selection,
+                        ai_first_n,
+                    )
                     force_safe_motion = use_ai and _should_force_safe_motion(
                         spec.get("script_cut"),
                         proj_config,
@@ -1574,7 +1601,12 @@ async def resume_videos_async(project_id: str, db: Session = Depends(get_db)):
                         spec.get("script_cut"),
                         video_model,
                     )
-                    use_ai = should_generate_ai_video(cut_number, selection, ai_first_n)
+                    use_ai = should_generate_ai_video_in_step5(
+                        video_model,
+                        cut_number,
+                        selection,
+                        ai_first_n,
+                    )
                     force_safe_motion = use_ai and _should_force_safe_motion(
                         spec.get("script_cut"),
                         proj_config,

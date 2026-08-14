@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.routers.script import _strip_script_motion_prompts  # noqa: E402
 from app.routers.subtitle import render_video_with_subtitles  # noqa: E402
+from app.routers.video import should_generate_ai_video_in_step5  # noqa: E402
 from app.services import comfyui_client  # noqa: E402
 from app.services.video.factory import VIDEO_REGISTRY  # noqa: E402
 from app.services.video.minimax_h3_render import (  # noqa: E402
@@ -161,6 +162,24 @@ class MiniMaxH3VideoTests(unittest.TestCase):
             cut_data={"video_tag": tag, "image_prompt": "unused"},
         )
         self.assertEqual(result, tag)
+
+    def test_step5_defers_minimax_h3_to_tagged_final_render_batch(self):
+        self.assertFalse(
+            should_generate_ai_video_in_step5(
+                "local-minimax-h3",
+                cut_number=1,
+                selection="all",
+                ai_first_n=5,
+            )
+        )
+        self.assertTrue(
+            should_generate_ai_video_in_step5(
+                "seedance-lite",
+                cut_number=1,
+                selection="all",
+                ai_first_n=5,
+            )
+        )
 
     def test_script_save_policy_preserves_only_explicit_video_tag(self):
         script = {
