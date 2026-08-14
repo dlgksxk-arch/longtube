@@ -237,7 +237,22 @@ class MiniMaxH3VideoService(BaseVideoService):
         async with httpx.AsyncClient(timeout=30.0) as client:
             while asyncio.get_running_loop().time() < deadline:
                 raise_if_cancelled("minimax-h3-wait")
-                response = await client.get(f"{MINIMAX_H3_BASE_URL}/history/{prompt_id}")
+                try:
+                    response = await client.get(
+                        f"{MINIMAX_H3_BASE_URL}/history/{prompt_id}"
+                    )
+                except httpx.RequestError as exc:
+                    # The isolated H3 ComfyUI runtime can temporarily stop
+                    # accepting HTTP connections while its single GPU prompt
+                    # is executing.  The prompt keeps running, so a polling
+                    # timeout must not be treated as generation failure or it
+                    # will submit the same expensive cut again.
+                    print(
+                        f"[minimax-h3] history poll deferred "
+                        f"prompt_id={prompt_id}: {type(exc).__name__}"
+                    )
+                    await asyncio.sleep(1.5)
+                    continue
                 response.raise_for_status()
                 entry = response.json().get(prompt_id)
                 if entry:

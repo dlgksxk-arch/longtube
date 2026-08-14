@@ -6,6 +6,7 @@ import json
 import sys
 import tempfile
 import unittest
+import httpx
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -104,6 +105,52 @@ class MiniMaxH3VideoTests(unittest.TestCase):
             "non_diegetic_music: N/A"
         )
         self.assertEqual(build_minimax_h3_i2v_prompt(original), original)
+
+    def test_history_poll_connection_timeout_keeps_waiting_for_same_prompt(self):
+        prompt_id = "h3-prompt"
+
+        class _Response:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {
+                    prompt_id: {
+                        "status": {"status_str": "success", "completed": True},
+                        "outputs": {"13": {"images": [{"filename": "cut.mp4"}]}},
+                    }
+                }
+
+        class _Client:
+            calls = 0
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            async def get(self, url):
+                self.calls += 1
+                if self.calls == 1:
+                    raise httpx.ConnectTimeout("H3 is busy")
+                return _Response()
+
+        client = _Client()
+        with (
+            patch(
+                "app.services.video.minimax_h3_service.httpx.AsyncClient",
+                return_value=client,
+            ),
+            patch(
+                "app.services.video.minimax_h3_service.asyncio.sleep",
+                new=AsyncMock(),
+            ),
+        ):
+            entry = asyncio.run(MiniMaxH3VideoService._wait(prompt_id, timeout=5.0))
+
+        self.assertTrue(entry["status"]["completed"])
+        self.assertEqual(client.calls, 2)
 
     def test_selected_minimax_model_uses_video_tag_verbatim(self):
         tag = "She takes one step while the camera tracks left."
