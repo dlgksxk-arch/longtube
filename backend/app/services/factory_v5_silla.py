@@ -715,6 +715,39 @@ def list_silla_workbooks(root: Path = DEFAULT_SOURCE_ROOT) -> dict[str, Any]:
     }
 
 
+def list_silla_registrations(project_dir: Path) -> dict[str, dict[str, Any]]:
+    """Return persisted Silla prepared-script registrations by source XLSX filename."""
+    registrations: dict[str, dict[str, Any]] = {}
+    prepared_dir = project_dir.resolve() / "prepared_scripts"
+    if not prepared_dir.is_dir():
+        return registrations
+    for path in sorted(prepared_dir.glob("*.json"), key=lambda item: item.name.casefold()):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(payload, dict) or not _is_silla_prepared_payload(payload):
+            continue
+        source = payload.get("source") if isinstance(payload.get("source"), dict) else {}
+        source_filename = Path(str(source.get("script_xlsx") or "")).name
+        if not source_filename:
+            continue
+        registrations[source_filename] = {
+            "registered": True,
+            "episode_code": _text(payload.get("episode_code") or source.get("episode_code")),
+            "prepared_script": str(path),
+            "prepared_script_sha256": _sha256_path(path),
+            "source_sha256": _text(source.get("script_xlsx_sha256")).upper(),
+        }
+    return registrations
+
+
+def _is_silla_prepared_payload(payload: dict[str, Any]) -> bool:
+    source = payload.get("source") if isinstance(payload.get("source"), dict) else {}
+    schema = _text(payload.get("source_schema") or source.get("schema"))
+    return schema in {SOURCE_SCHEMA, LEGACY_SOURCE_SCHEMA}
+
+
 def _write_png(data: bytes, target: Path) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_suffix(target.suffix + ".tmp")

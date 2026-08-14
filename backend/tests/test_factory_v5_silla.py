@@ -203,6 +203,40 @@ def test_silla_workbook_list_excludes_non_episode_reference_workbooks(tmp_path, 
     assert [item["filename"] for item in result["workbooks"]] == [episode.name]
 
 
+def test_silla_registrations_are_loaded_from_persisted_prepared_scripts(tmp_path: Path):
+    prepared_dir = tmp_path / "prepared_scripts"
+    prepared_dir.mkdir()
+    registered = prepared_dir / "SILLA_EP02_script.json"
+    registered.write_text(
+        json.dumps(
+            {
+                "prepared_source": True,
+                "source_schema": SOURCE_SCHEMA,
+                "episode_code": "SILLA_EP02",
+                "source": {
+                    "schema": SOURCE_SCHEMA,
+                    "script_xlsx": r"D:\#대본\채널1_신라사\황금의_나라_EP02.xlsx",
+                    "script_xlsx_sha256": "A" * 64,
+                },
+                "cuts": [_base_cut()],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (prepared_dir / "unrelated.json").write_text(
+        json.dumps({"source_schema": "other", "source": {"script_xlsx": "other.xlsx"}}),
+        encoding="utf-8",
+    )
+
+    result = factory_v5_silla.list_silla_registrations(tmp_path)
+
+    assert list(result) == ["황금의_나라_EP02.xlsx"]
+    assert result["황금의_나라_EP02.xlsx"]["registered"] is True
+    assert result["황금의_나라_EP02.xlsx"]["episode_code"] == "SILLA_EP02"
+    assert result["황금의_나라_EP02.xlsx"]["source_sha256"] == "A" * 64
+
+
 @pytest.mark.skipif(
     not all(path.is_file() for path in (SILLA_EP01, SILLA_EP03, SILLA_EP04)),
     reason="local Silla episode workbooks are unavailable",

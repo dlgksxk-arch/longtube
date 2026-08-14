@@ -19,6 +19,7 @@ from app.services.factory_v5_silla import (
     EXPECTED_CUT_COUNT,
     SOURCE_SCHEMA,
     import_silla_workbook,
+    list_silla_registrations,
     list_silla_workbooks,
     parse_silla_workbook,
     resolve_source_workbook,
@@ -56,6 +57,21 @@ def silla_presets(db: Session = Depends(get_db)):
         for project in projects
         if (project.config or {}).get("factory_series") == "신라사"
     ]
+
+
+@router.get("/silla/registrations")
+def silla_registrations(project_id: str, db: Session = Depends(get_db)):
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(404, "프리셋을 찾을 수 없습니다.")
+    config = dict(project.config or {})
+    if config.get("factory_series") != "신라사" or config.get("factory_source_schema") != SOURCE_SCHEMA:
+        raise HTTPException(400, "신라사 전용 프리셋을 사용하세요.")
+    project_dir = resolve_project_dir(project.id, config=config, create=False)
+    return {
+        "project_id": project.id,
+        "registrations": list_silla_registrations(project_dir),
+    }
 
 
 @router.post("/silla/presets")

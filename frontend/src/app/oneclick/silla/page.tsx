@@ -32,6 +32,7 @@ interface WorkbookItem {
   shorts_cut_count?: number;
   quote_count?: number;
   speaker_count?: number;
+  source_sha256?: string;
 }
 
 interface WorkbookResponse {
@@ -52,6 +53,14 @@ interface SillaPreset {
   config: Record<string, unknown>;
 }
 
+interface SillaRegistration {
+  registered: boolean;
+  episode_code: string;
+  prepared_script: string;
+  prepared_script_sha256: string;
+  source_sha256: string;
+}
+
 function formatBytes(value = 0) {
   if (value < 1024 * 1024) return `${Math.max(1, Math.round(value / 1024))}KB`;
   return `${(value / 1024 / 1024).toFixed(1)}MB`;
@@ -66,6 +75,8 @@ export default function SillaFactoryPage() {
   const [importing, setImporting] = useState<string | null>(null);
   const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
   const [imported, setImported] = useState<Record<string, string>>({});
+  const [registrations, setRegistrations] = useState<Record<string, SillaRegistration>>({});
+  const [registrationPresetId, setRegistrationPresetId] = useState("");
   const [lastCheckedAt, setLastCheckedAt] = useState("");
   const loadRequestRef = useRef(0);
   const loadAbortRef = useRef<AbortController | null>(null);
@@ -142,6 +153,29 @@ export default function SillaFactoryPage() {
     return () => loadAbortRef.current?.abort();
   }, [load]);
 
+  useEffect(() => {
+    let cancelled = false;
+    if (!selectedPreset) {
+      setRegistrations({});
+      setRegistrationPresetId("");
+      return;
+    }
+    setRegistrationPresetId("");
+    void api.get(`/factory-v5/silla/registrations?project_id=${encodeURIComponent(selectedPreset)}`)
+      .then((result) => {
+        if (cancelled) return;
+        setRegistrations(result.registrations || {});
+        setRegistrationPresetId(selectedPreset);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setRegistrations({});
+        setRegistrationPresetId(selectedPreset);
+        setMessage({ kind: "error", text: `대본 등록 상태 확인 실패: ${(error as Error).message}` });
+      });
+    return () => { cancelled = true; };
+  }, [selectedPreset, lastCheckedAt]);
+
   const createPreset = async () => {
     setCreating(true);
     setMessage(null);
@@ -170,6 +204,16 @@ export default function SillaFactoryPage() {
       setImported((current) => ({
         ...current,
         [workbook.filename]: result.import.prepared_script,
+      }));
+      setRegistrations((current) => ({
+        ...current,
+        [workbook.filename]: {
+          registered: true,
+          episode_code: workbook.episode_code || "",
+          prepared_script: result.import.prepared_script,
+          prepared_script_sha256: result.import.prepared_script_sha256,
+          source_sha256: workbook.source_sha256 || "",
+        },
       }));
       setMessage({
         kind: "ok",
@@ -279,7 +323,17 @@ export default function SillaFactoryPage() {
             <div className="flex items-center justify-center gap-2 rounded-xl border border-border bg-bg-secondary py-16 text-gray-400">
               <Loader2 size={20} className="animate-spin" /> XLSX 구조와 외부 실제사진을 확인하고 있습니다.
             </div>
-          ) : source?.workbooks.map((workbook) => (
+          ) : source?.workbooks.map((workbook) => {
+            const persistedRegistration = registrations[workbook.filename];
+            const persistedIsCurrent = Boolean(
+              persistedRegistration?.registered
+              && persistedRegistration.source_sha256
+              && persistedRegistration.source_sha256 === workbook.source_sha256,
+            );
+            const registeredPath = imported[workbook.filename]
+              || (persistedIsCurrent ? persistedRegistration.prepared_script : "");
+            const registrationReady = registrationPresetId === selectedPreset;
+            return (
             <article
               key={workbook.filename}
               className={`rounded-xl border bg-bg-secondary p-5 ${
@@ -297,6 +351,11 @@ export default function SillaFactoryPage() {
                       <span className="rounded-full border border-emerald-400/30 bg-emerald-400/10 px-2 py-0.5 text-xs font-bold text-emerald-300">정상</span>
                     ) : (
                       <span className="rounded-full border border-red-400/30 bg-red-400/10 px-2 py-0.5 text-xs font-bold text-red-300">차단</span>
+                    )}
+                    {registeredPath && (
+                      <span className="rounded-full border border-emerald-400/30 bg-emerald-400/10 px-2 py-0.5 text-xs font-bold text-emerald-300">
+                        대본 등록됨
+                      </span>
                     )}
                   </div>
                   <div className="font-mono text-xs text-gray-500">
@@ -323,33 +382,36 @@ export default function SillaFactoryPage() {
                       {(workbook.errors || []).map((error) => <li key={error}>· {error}</li>)}
                     </ul>
                   )}
-                  {imported[workbook.filename] && (
+                  {registeredPath && (
                     <div className="mt-3 break-all text-xs text-emerald-300">
-                      대본 등록본: {imported[workbook.filename]}
+                      대본 등록본: {registeredPath}
                     </div>
                   )}
                 </div>
                 <button
                   onClick={() => void importWorkbook(workbook)}
-                  disabled={!workbook.valid || !selectedPreset || importing !== null || Boolean(imported[workbook.filename])}
+                  disabled={!workbook.valid || !selectedPreset || !registrationReady || importing !== null || Boolean(registeredPath)}
                   className="flex items-center gap-2 rounded-lg border border-accent-primary/50 bg-accent-primary/10 px-4 py-2.5 text-sm font-black text-accent-primary hover:bg-accent-primary/20 disabled:cursor-not-allowed disabled:opacity-35"
                 >
                   {importing === workbook.filename ? (
                     <Loader2 size={16} className="animate-spin" />
-                  ) : imported[workbook.filename] ? (
+                  ) : registeredPath ? (
                     <CheckCircle2 size={16} />
                   ) : (
                     <Database size={16} />
                   )}
                   {importing === workbook.filename
                     ? "대본 등록 중"
-                    : imported[workbook.filename]
+                    : registeredPath
                       ? "대본 등록 완료"
+                      : !registrationReady
+                        ? "등록 상태 확인 중"
                       : "대본 등록"}
                 </button>
               </div>
             </article>
-          ))}
+            );
+          })}
 
           {!loading && source && source.workbooks.length === 0 && (
             <div className="rounded-xl border border-dashed border-border bg-bg-secondary py-16 text-center text-gray-500">
