@@ -234,7 +234,7 @@ export interface ProjectConfig {
   variety_highlight_style?: string;
   /** v1.1.55: YouTube 공개 범위 — "private" | "unlisted" | "public" */
   youtube_privacy?: string;
-  /** v1.1.55: YouTube 업로드 대상 채널 1~4. 0/null = 자동. */
+  /** v1.1.55: YouTube 업로드 대상 채널 1~8. 0/null = 자동. */
   youtube_channel?: number | null;
   /** OneClick channel number stamped onto generated projects/presets. */
   channel?: number | null;
@@ -1011,7 +1011,7 @@ export const youtubeApi = {
   authChannel: (): Promise<YouTubeChannelInfo> => api.get("/youtube/auth/channel"),
   authReset: (): Promise<{ status: string; token_removed: boolean }> =>
     api.post("/youtube/auth/reset"),
-  // 채널별 토큰 (딸깍 CH1~CH4)
+  // 채널별 토큰 (딸깍 CH1~CH8)
   channelAuthStatus: (ch: number): Promise<{ channel: number; authenticated: boolean }> =>
     api.get(`/youtube/auth/channel/${ch}/status`),
   channelAuthenticate: (ch: number): Promise<{ status: string; channel: number; message: string }> =>
@@ -1361,7 +1361,7 @@ export interface OneClickTask {
     stalled_stopped?: boolean;
   };
   triggered_by?: "manual" | "schedule";
-  channel?: number;  // v1.1.58: 채널 1~4 (없으면 수동 실행)
+  channel?: number;  // v1.1.58: 채널 1~8 (없으면 수동 실행)
   // v1.2.17: 에피소드 번호 — 완료/실패 목록의 EP 배지 표시에 사용
   episode_number?: number | null;
   // v1.1.52: 각 스텝에서 사용하는 AI 모델명
@@ -1441,7 +1441,7 @@ export interface OneClickQueueItem {
   template_project_id: string | null;
   target_duration: number | null;  // 초 단위. null 이면 템플릿 기본값
   target_cuts?: number | null;     // 준비 대본의 실제 컷 수. 지정 시 4초/컷으로 고정
-  channel: number;                 // v1.1.57: 채널 1~4 (기본 1)
+  channel: number;                 // v1.1.57: 채널 1~8 (기본 1)
   // v1.2.9: 에피소드 상세 — 스크립트 생성 프롬프트에 주입된다.
   openings?: string[];             // 오프닝 대사 1~5 (고정 길이 5, 빈 문자열 허용)
   endings?: string[];              // 엔딩 대사 1~5 (고정 길이 5, 빈 문자열 허용)

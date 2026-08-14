@@ -323,7 +323,7 @@ async def reset_auth():
     return {"status": "reset", "token_removed": removed}
 
 
-# ---------- OAuth 엔드포인트 (채널별 토큰: 딸깍 CH1~CH4) ----------
+# ---------- OAuth 엔드포인트 (채널별 토큰: 딸깍 CH1~CH8) ----------
 
 
 def _validate_channel(ch: int) -> int:

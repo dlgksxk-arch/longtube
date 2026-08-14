@@ -1,6 +1,6 @@
 import type { OneClickQueueItem, OneClickTask } from "@/lib/api";
 
-export const DEFAULT_QUEUE_CHANNELS = [1, 2, 3, 4] as const;
+export const DEFAULT_QUEUE_CHANNELS = [1, 2, 3, 4, 5, 6, 7, 8] as const;
 
 export const DEFAULT_QUEUE_CHANNEL_TIMES: Record<string, string | null> = Object.fromEntries(
   DEFAULT_QUEUE_CHANNELS.map((ch) => [String(ch), null]),

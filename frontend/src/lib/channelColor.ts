@@ -9,9 +9,13 @@
  *   CH2 → green-400
  *   CH3 → amber-400
  *   CH4 → pink-400
+ *   CH5 → cyan-400
+ *   CH6 → lime-400
+ *   CH7 → orange-400
+ *   CH8 → rose-400
  */
 
-export type ChannelId = 1 | 2 | 3 | 4;
+export type ChannelId = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 
 /** 팔레트 (Tailwind 4xx 기준). */
 export const CHANNEL_PALETTE: Record<ChannelId, {
@@ -54,13 +58,45 @@ export const CHANNEL_PALETTE: Record<ChannelId, {
     dot: "bg-pink-400",
     name: "pink",
   },
+  5: {
+    text: "text-cyan-400",
+    bg: "bg-cyan-500",
+    bgSoft: "bg-cyan-500/10",
+    border: "border-cyan-500/40",
+    dot: "bg-cyan-400",
+    name: "cyan",
+  },
+  6: {
+    text: "text-lime-400",
+    bg: "bg-lime-500",
+    bgSoft: "bg-lime-500/10",
+    border: "border-lime-500/40",
+    dot: "bg-lime-400",
+    name: "lime",
+  },
+  7: {
+    text: "text-orange-400",
+    bg: "bg-orange-500",
+    bgSoft: "bg-orange-500/10",
+    border: "border-orange-500/40",
+    dot: "bg-orange-400",
+    name: "orange",
+  },
+  8: {
+    text: "text-rose-400",
+    bg: "bg-rose-500",
+    bgSoft: "bg-rose-500/10",
+    border: "border-rose-500/40",
+    dot: "bg-rose-400",
+    name: "rose",
+  },
 };
 
-/** 값이 1~4 범위 밖이면 가장 가까운 값으로 보정한다. */
+/** 값이 1~8 범위 밖이면 가장 가까운 값으로 보정한다. */
 function normalize(ch: number | string | null | undefined): ChannelId {
   const n = Number(ch);
   if (!Number.isFinite(n)) return 1;
-  const v = Math.min(4, Math.max(1, Math.trunc(n)));
+  const v = Math.min(8, Math.max(1, Math.trunc(n)));
   return v as ChannelId;
 }
 

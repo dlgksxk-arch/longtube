@@ -179,6 +179,17 @@ def test_queue_item_template_overrides_channel_default(monkeypatch):
     assert oneclick_service._channel_studio_project_id(1) == "channel-default"
 
 
+def test_channel_eight_resolves_its_own_queue_preset(monkeypatch):
+    monkeypatch.setattr(
+        oneclick_service,
+        "_QUEUE",
+        {"channel_presets": {"8": "channel-eight"}, "items": []},
+    )
+
+    assert oneclick_service._resolve_item_preset({"channel": 8}) == "channel-eight"
+    assert oneclick_service._channel_studio_project_id(8) == "channel-eight"
+
+
 def test_actual_asset_is_materialized_as_custom_canonical_image(tmp_path: Path, monkeypatch):
     source = tmp_path / "source.png"
     Image.new("RGB", (64, 36), (120, 80, 40)).save(source)

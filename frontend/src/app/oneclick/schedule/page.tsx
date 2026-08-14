@@ -23,7 +23,7 @@ import {
 } from "@/lib/api";
 
 const DAYS_KO = ["일", "월", "화", "수", "목", "금", "토"];
-const DEFAULT_CHANNELS = ["1", "2", "3", "4"];
+const DEFAULT_CHANNELS = ["1", "2", "3", "4", "5", "6", "7", "8"];
 
 function normalizeChannelTimes(times?: Record<string, string | null | undefined> | null) {
   const out: Record<string, string> = {};

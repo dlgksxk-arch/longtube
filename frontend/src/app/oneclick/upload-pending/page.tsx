@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { oneclickApi, type OneClickTask } from "@/lib/api";
 
-const CHANNELS = [1, 2, 3, 4] as const;
+const CHANNELS = [1, 2, 3, 4, 5, 6, 7, 8] as const;
 type RowUploadState = "uploading" | "pending" | "success" | "error";
 const UPLOAD_PENDING_CACHE_KEY = "longtube:upload-pending:last-loaded-tasks";
 
@@ -183,7 +183,7 @@ export default function UploadPendingPage() {
     const out: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0 };
     for (const task of tasks.filter(isUploadPending)) {
       const ch = Number(task.channel || 0);
-      if (ch >= 1 && ch <= 4) out[ch] += 1;
+      if (ch >= 1 && ch <= 8) out[ch] += 1;
     }
     return out;
   }, [tasks]);

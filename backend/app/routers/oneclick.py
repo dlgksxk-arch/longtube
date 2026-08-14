@@ -603,7 +603,7 @@ class QueueItemModel(BaseModel):
     target_cuts: Optional[int] = None
     # Opt-in only: pause after each generated image batch for manual review.
     manual_image_review_batch_size: Optional[int] = None
-    # v1.1.57: 채널 번호 (1~4). None/0 이면 채널 1.
+    # v1.1.57: 채널 번호 (1~8). None/0 이면 채널 1.
     channel: Optional[int] = None
     # v1.2.9: 에피소드 상세 — 스크립트 프롬프트에 주입.
     # 길이 5 고정이 기대되지만 짧거나 길어도 normalize 에서 맞춘다.
@@ -772,7 +772,7 @@ def list_orphans(channel: Optional[int] = None):
     """_TASKS 에 없지만 DB/디스크에 남은 딸깍 프로젝트를 나열.
 
     v1.2.28 — 프론트 채널 편집 패널의 "고아 프로젝트" 섹션이 호출.
-    `channel` 이 주어지면 해당 채널(1~4)만, 없으면 전체 반환.
+    `channel` 이 주어지면 해당 채널(1~8)만, 없으면 전체 반환.
     """
     try:
         items = oneclick_service.list_orphan_projects(channel)

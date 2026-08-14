@@ -17,7 +17,7 @@ import {
   type ChannelOpsReplyRequest,
 } from "@/lib/api";
 
-const CHANNELS = [1, 2, 3, 4] as const;
+const CHANNELS = [1, 2, 3, 4, 5, 6, 7, 8] as const;
 
 type ChannelMessage = { type: "success" | "error" | "info"; text: string };
 type ChannelError = { video_id?: string; video_title?: string; error: string };

@@ -150,7 +150,7 @@ export default function OneClickWidget() {
   const loadChannelAuth = useCallback(async () => {
     const next: Record<string, { authenticated: boolean; title?: string }> = {};
     await Promise.all(
-      [1, 2, 3, 4].map(async (ch) => {
+      [1, 2, 3, 4, 5, 6, 7, 8].map(async (ch) => {
         try {
           const s = await youtubeApi.channelAuthStatus(ch);
           next[String(ch)] = { authenticated: !!s.authenticated };
@@ -772,7 +772,7 @@ function QueueRow(props: {
                 const p = projects.find((x) => x.id === tid);
                 const cfgCh = (p as unknown as { config?: { youtube_channel?: number | null } } | undefined)
                   ?.config?.youtube_channel;
-                if (cfgCh && cfgCh >= 1 && cfgCh <= 4) {
+                if (cfgCh && cfgCh >= 1 && cfgCh <= 8) {
                   patch.channel = cfgCh;
                 }
               }

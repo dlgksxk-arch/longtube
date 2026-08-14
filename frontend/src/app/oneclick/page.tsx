@@ -50,7 +50,7 @@ const CUT_BASED_STEPS = new Set([0, 1, 2, 3]);
 
 type StepState = "done" | "active" | "pending" | "failed";
 type ChannelListPageKey = "queue" | "active" | "completed" | "failed" | "orphans";
-const DEFAULT_CHANNEL_KEYS = ["1", "2", "3", "4"];
+const DEFAULT_CHANNEL_KEYS = ["1", "2", "3", "4", "5", "6", "7", "8"];
 
 function normalizeChannelMap(
   value: Record<string, string | null | undefined> | null | undefined,
@@ -623,10 +623,10 @@ export default function QueuePage() {
   const [queue, setQueue] = useState<OneClickQueueItem[]>([]);
   // v1.1.57: 채널별 스케줄 시간
   const [channelTimes, setChannelTimes] = useState<Record<string, string>>({
-    "1": "", "2": "", "3": "", "4": "",
+    "1": "", "2": "", "3": "", "4": "", "5": "", "6": "", "7": "", "8": "",
   });
   const [channelPresets, setChannelPresets] = useState<Record<string, string>>({
-    "1": "", "2": "", "3": "", "4": "",
+    "1": "", "2": "", "3": "", "4": "", "5": "", "6": "", "7": "", "8": "",
   });
   const [tasks, setTasks] = useState<OneClickTask[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -640,7 +640,7 @@ export default function QueuePage() {
   const [recoverInput, setRecoverInput] = useState("");
   const [recovering, setRecovering] = useState(false);
   // v1.2.6: 채널별 탭 필터 제거 — 채널별 섹션 구조로 전환 (탭 불필요).
-  // v1.2.7: 채널 편집 모달 오픈 상태 — null 이면 닫힘. CH1~4 버튼 클릭시 해당 번호.
+  // v1.2.7: 채널 편집 모달 오픈 상태 — null 이면 닫힘. CH1~8 버튼 클릭시 해당 번호.
   const [openChannel, setOpenChannel] = useState<string | null>(null);
   // v1.2.9: 주제 편집 팝업(중첩). 어떤 queue index 를 편집하는지. null 이면 닫힘.
   const [editingIdx, setEditingIdx] = useState<number | null>(null);

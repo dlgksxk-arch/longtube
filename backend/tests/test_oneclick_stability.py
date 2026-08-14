@@ -701,9 +701,10 @@ class OneClickQueueStabilityTests(unittest.TestCase):
             {
                 "daily_time": "07:30",
                 "last_run_date": "2026-05-04",
-                "channel_presets": {"2": "preset-ch2"},
+                "channel_presets": {"2": "preset-ch2", "8": "preset-ch8"},
                 "items": [
                     {"topic": "Keep", "channel": "2", "episode_number": 7, "queued_source": "import"},
+                    {"topic": "Keep channel eight", "channel": "8", "episode_number": 1},
                     {"topic": "", "channel": 1},
                     {"topic": "Bad channel fallback", "channel": 99, "queued_source": "bad"},
                 ],
@@ -713,9 +714,12 @@ class OneClickQueueStabilityTests(unittest.TestCase):
         self.assertEqual(normalized["channel_times"]["1"], "07:30")
         self.assertEqual(normalized["last_run_dates"]["1"], "2026-05-04")
         self.assertEqual(normalized["channel_presets"]["2"], "preset-ch2")
-        self.assertEqual(len(normalized["items"]), 2)
+        self.assertEqual(normalized["channel_presets"]["8"], "preset-ch8")
+        self.assertEqual(set(normalized["channel_times"]), {str(ch) for ch in range(1, 9)})
+        self.assertEqual(len(normalized["items"]), 3)
         by_topic = {item["topic"]: item for item in normalized["items"]}
         self.assertEqual(by_topic["Keep"]["channel"], 2)
+        self.assertEqual(by_topic["Keep channel eight"]["channel"], 8)
         self.assertEqual(by_topic["Keep"]["episode_number"], 7)
         self.assertEqual(by_topic["Keep"]["queued_source"], "import")
         self.assertEqual(by_topic["Bad channel fallback"]["channel"], 1)

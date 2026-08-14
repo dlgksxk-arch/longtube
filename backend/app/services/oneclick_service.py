@@ -125,6 +125,7 @@ from app.tasks.pipeline_tasks import _redis_get, _redis_delete, run_async, Pipel
 # task_id → dict[str, Any]
 _TASKS: dict[str, dict[str, Any]] = {}
 _STATE_LOADED = False
+CHANNELS = list(range(1, 9))
 
 # v1.1.52: 태스크 상태 영속화 — 서버 재시작 후에도 실패/취소 태스크를 복원해서
 # "이어서 하기" 가능하게 한다. running 중이던 태스크는 "interrupted" 로 표시.
@@ -2630,13 +2631,13 @@ def _project_channel_from_id_or_config(project: Project, config: dict[str, Any])
         m = re.match(r"^딸깍_CH(\d+)_", project.id or "")
         if m:
             ch = int(m.group(1))
-            if 1 <= ch <= 4:
+            if ch in CHANNELS:
                 return ch
     except Exception:
         pass
     try:
         ch = int(config.get("channel") or 0)
-        if 1 <= ch <= 4:
+        if ch in CHANNELS:
             return ch
     except (TypeError, ValueError):
         pass
@@ -2812,7 +2813,7 @@ def _restore_backup_for_queue_item(project_id: str, item: dict[str, Any]) -> boo
     config["__oneclick__"] = True
     try:
         ch = int(item.get("channel") or config.get("channel") or 0)
-        if 1 <= ch <= 4:
+        if ch in CHANNELS:
             config["channel"] = ch
     except (TypeError, ValueError):
         pass
@@ -2891,7 +2892,7 @@ def _restore_backup_project_record_for_queue_item(item: dict[str, Any]) -> Optio
     }
     try:
         ch = int(item.get("channel") or 0)
-        if 1 <= ch <= 4:
+        if ch in CHANNELS:
             config["channel"] = ch
     except (TypeError, ValueError):
         pass
@@ -3330,7 +3331,7 @@ def _redirect_empty_v3_task_to_existing_episode(task_id: str, task: dict[str, An
     merged["triggered_by"] = task.get("triggered_by") or recovered.get("triggered_by")
     try:
         ch = int(item.get("channel") or 0)
-        if 1 <= ch <= 4:
+        if ch in CHANNELS:
             merged["channel"] = ch
     except (TypeError, ValueError):
         pass
@@ -3371,7 +3372,7 @@ def _find_blocking_broken_project(topic: str) -> Optional[str]:
     """
     safe_topic = _sanitize_for_filename(topic)
     try:
-        for ch in range(1, 5):
+        for ch in CHANNELS:
             root = get_channel_projects_root(ch)
             if not root.exists():
                 continue
@@ -3446,7 +3447,7 @@ def _generate_oneclick_project_id(
     if channel is not None:
         try:
             ch_int = int(channel)
-            if 1 <= ch_int <= 4:
+            if ch_int in CHANNELS:
                 prefix = f"딸깍_CH{ch_int}{ep_part}_{date_str}"
             else:
                 prefix = f"딸깍_{date_str}"
@@ -3475,7 +3476,7 @@ def _generate_oneclick_project_id(
 def _is_titleless_oneclick_project_id(project_id: str) -> bool:
     pid = str(project_id or "").strip()
     return bool(
-        re.fullmatch(r"딸깍_CH[1-4](?:_EP\d+)?_\d{6}-\d+", pid)
+        re.fullmatch(r"딸깍_CH[1-8](?:_EP\d+)?_\d{6}-\d+", pid)
         or re.fullmatch(r"딸깍_\d{6}-\d+", pid)
     )
 
@@ -4063,7 +4064,7 @@ def _clone_project_from_template(
         try:
             if channel is not None:
                 ch_int = int(channel)
-                if 1 <= ch_int <= 4:
+                if ch_int in CHANNELS:
                     base_config["channel"] = ch_int
         except (TypeError, ValueError):
             pass
@@ -4637,7 +4638,7 @@ async def _step_youtube_upload(
 ) -> dict:
     """썸네일을 자동 생성하고 YouTube 에 업로드한다.
 
-    channel (1~4) 가 지정되면 해당 채널별 OAuth 토큰만 사용한다.
+    channel (1~8) 가 지정되면 해당 채널별 OAuth 토큰만 사용한다.
     채널이 지정되지 않은 작업만 프로젝트 토큰으로 폴백한다.
     """
     from app.services.thumbnail_service import (
@@ -5575,7 +5576,7 @@ _ONECLICK_CLONE_PRESERVE_KEYS = (
 def _valid_channel(value: Any) -> Optional[int]:
     try:
         ch = int(value)
-        if 1 <= ch <= 4:
+        if ch in CHANNELS:
             return ch
     except (TypeError, ValueError):
         pass
@@ -7423,7 +7424,7 @@ def prepare_task(
             task = recover_project(existing_project_id)
             try:
                 ch_int = int(channel or task.get("channel") or 0)
-                if 1 <= ch_int <= 4:
+                if ch_int in CHANNELS:
                     task["channel"] = ch_int
             except (TypeError, ValueError):
                 pass
@@ -7735,7 +7736,7 @@ def prepare_task(
             task["total_cuts"] = int(project.total_cuts)
         try:
             ch_int = int(channel or config.get("channel") or 0)
-            if 1 <= ch_int <= 4:
+            if ch_int in CHANNELS:
                 task["channel"] = ch_int
         except (TypeError, ValueError):
             pass
@@ -7789,7 +7790,7 @@ def prepare_task(
     try:
         if channel is not None:
             ch_int = int(channel)
-            if 1 <= ch_int <= 4:
+            if ch_int in CHANNELS:
                 task["channel"] = ch_int
     except (TypeError, ValueError):
         pass
@@ -8877,7 +8878,7 @@ def _project_cleanup_paths(project_id: str, config: dict | None = None) -> list[
         candidates.append(SYSTEM_DIR / "projects" / pid)
     except Exception:
         pass
-    for ch in range(1, 5):
+    for ch in CHANNELS:
         try:
             candidates.append(get_channel_projects_root(ch) / pid)
         except Exception:
@@ -9379,7 +9380,7 @@ def list_orphan_projects(channel: Optional[int] = None) -> list[dict]:
         "created_at": str,        # ISO string — Project.created_at
       }
 
-    `channel` 인수가 주어지면(1~4) 해당 채널만 반환. 없으면 모든 채널.
+    `channel` 인수가 주어지면(1~8) 해당 채널만 반환. 없으면 모든 채널.
     """
     _ensure_state_loaded()
     if _dedupe_tasks():
@@ -9433,7 +9434,7 @@ def list_orphan_projects(channel: Optional[int] = None) -> list[dict]:
                 _m = re.match(r"^딸깍_CH(\d+)_", proj.id or "")
                 if _m:
                     _c = int(_m.group(1))
-                    if 1 <= _c <= 4:
+                    if _c in CHANNELS:
                         ch = _c
             except Exception:
                 ch = None
@@ -9442,7 +9443,7 @@ def list_orphan_projects(channel: Optional[int] = None) -> list[dict]:
                 try:
                     if ch_raw is not None:
                         _c = int(ch_raw)
-                        if 1 <= _c <= 4:
+                        if _c in CHANNELS:
                             ch = _c
                 except (TypeError, ValueError):
                     ch = None
@@ -9622,7 +9623,7 @@ def requeue_orphan_projects(
                 _m = re.match(r"^딸깍_CH(\d+)_", pid or "")
                 if _m:
                     _c = int(_m.group(1))
-                    if 1 <= _c <= 4:
+                    if _c in CHANNELS:
                         ch = _c
                         resolved = True
             except Exception:
@@ -9630,12 +9631,12 @@ def requeue_orphan_projects(
         if not resolved:
             try:
                 _c = int(cfg.get("channel") or 1)
-                if 1 <= _c <= 4:
+                if _c in CHANNELS:
                     ch = _c
                     resolved = True
             except (TypeError, ValueError):
                 pass
-        if ch < 1 or ch > 4:
+        if ch not in CHANNELS:
             ch = 1
 
         openings = cfg.get("episode_openings") or []
@@ -10273,34 +10274,32 @@ def get_library_stats() -> dict:
 
 
 # --------------------------------------------------------------------------- #
-# v1.1.43 — 주제 큐 + 매일 HH:MM 스케줄러 (4채널 독립)
+# v1.1.43 — 주제 큐 + 매일 HH:MM 스케줄러 (8채널 독립)
 # --------------------------------------------------------------------------- #
 # 1. 30 초 간격으로 `_queue_loop` 가 돈다.
-# 2. 각 채널(1~4) 독립적으로 점검:
+# 2. 각 채널(1~8) 독립적으로 점검:
 #    - channel_times[ch] 가 비어있으면 건너뜀
 #    - 해당 채널의 items 가 없으면 건너뜀
 #    - 오늘 HH:MM 시각을 지났고 last_run_dates[ch] 가 오늘이 아니면
 #      해당 채널의 큐 맨 앞 1 건을 pop 해서 즉시 prepare + start.
 # 3. 채널별로 last_run_dates[ch] 를 갱신해 같은 날 재발화 방지.
 
-CHANNELS = [1, 2, 3, 4]
-
 _QUEUE_FILE = SYSTEM_DIR / "oneclick_queue.json"
 
 _QUEUE_DEFAULT: dict[str, Any] = {
-    "channel_times": {"1": None, "2": None, "3": None, "4": None},
-    "last_run_dates": {"1": None, "2": None, "3": None, "4": None},
+    "channel_times": {str(ch): None for ch in CHANNELS},
+    "last_run_dates": {str(ch): None for ch in CHANNELS},
     # v1.2.14: 채널별 기본 프리셋 — 아이템의 template_project_id 가 비면
     # 이 값으로 대체. None 이면 프리셋 없이 실행 (prepare_task 가 빈 템플릿 처리).
-    "channel_presets": {"1": None, "2": None, "3": None, "4": None},
+    "channel_presets": {str(ch): None for ch in CHANNELS},
     "items": [],
 }
 
 # 프로세스 내 캐시. 파일을 정답으로 두고, 이 dict 는 읽기 가속용.
 _QUEUE: dict[str, Any] = {
-    "channel_times": {"1": None, "2": None, "3": None, "4": None},
-    "last_run_dates": {"1": None, "2": None, "3": None, "4": None},
-    "channel_presets": {"1": None, "2": None, "3": None, "4": None},
+    "channel_times": {str(ch): None for ch in CHANNELS},
+    "last_run_dates": {str(ch): None for ch in CHANNELS},
+    "channel_presets": {str(ch): None for ch in CHANNELS},
     "items": [],
 }
 
@@ -10512,7 +10511,7 @@ def _resolve_item_preset(item: dict) -> Optional[str]:
         ch = int(ch)
     except Exception:
         ch = 1
-    if ch < 1 or ch > 4:
+    if ch not in CHANNELS:
         ch = 1
     tpl = item.get("template_project_id")
     if tpl:
@@ -10596,7 +10595,7 @@ def recover_existing_for_queue_item(item_id: str) -> dict[str, Any]:
         task = recover_project(project_id)
         try:
             ch = int(item.get("channel") or 0)
-            if 1 <= ch <= 4:
+            if ch in CHANNELS:
                 task["channel"] = ch
         except (TypeError, ValueError):
             pass

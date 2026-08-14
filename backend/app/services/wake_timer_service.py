@@ -14,7 +14,7 @@ from xml.sax.saxutils import escape
 from app.config import SYSTEM_DIR
 
 
-DEFAULT_CHANNELS = (1, 2, 3, 4)
+DEFAULT_CHANNELS = tuple(range(1, 9))
 TASK_PREFIX = "LongTube Wake CH"
 WAKE_MARGIN_MINUTES = int(os.getenv("LONGTUBE_WAKE_MARGIN_MINUTES", "5"))
 

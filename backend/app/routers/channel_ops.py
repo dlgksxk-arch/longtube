@@ -36,11 +36,11 @@ class CommentReplyTarget(BaseModel):
 
 
 class CommentReplyRequest(CommentReplyTarget):
-    channel_id: int = Field(..., ge=1, le=4)
+    channel_id: int = Field(..., ge=1, le=8)
 
 
 class CommentReplyAllRequest(BaseModel):
-    channel_id: int = Field(..., ge=1, le=4)
+    channel_id: int = Field(..., ge=1, le=8)
     comments: list[CommentReplyTarget] = Field(default_factory=list)
 
 
@@ -543,7 +543,7 @@ def _should_skip_reply(target: CommentReplyTarget) -> Optional[str]:
 
 @router.get("/comments")
 async def list_comments(
-    channel_id: int = Query(..., ge=1, le=4),
+    channel_id: int = Query(..., ge=1, le=8),
     max_videos: int = Query(50, ge=1, le=MAX_COMMENT_SCAN_VIDEOS),
     max_comments: int = Query(25, ge=1, le=100),
 ):

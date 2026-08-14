@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Any, Optional
 
 
-DEFAULT_CHANNELS = [1, 2, 3, 4]
+DEFAULT_CHANNELS = list(range(1, 9))
 QUEUE_EPISODE_FALLBACK = 10**9
 QUEUE_ACTIVE_STATUSES = {"running", "queued", "prepared"}
 QUEUE_TERMINAL_STATUSES = {

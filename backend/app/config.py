@@ -185,7 +185,7 @@ def infer_project_channel(project_id: str, config: dict | None = None) -> int | 
     parsed_v3 = parse_v3_oneclick_project_id(pid)
     if parsed_v3:
         return parsed_v3[0]
-    m = re.search(r"(?:^|[_-])CH([1-4])(?:[_-]|$)", pid, flags=re.IGNORECASE)
+    m = re.search(r"(?:^|[_-])CH([1-8])(?:[_-]|$)", pid, flags=re.IGNORECASE)
     if m:
         return int(m.group(1))
 
@@ -258,7 +258,7 @@ def resolve_project_dir(project_id: str, config: dict | None = None, create: boo
                 actual_path.mkdir(parents=True, exist_ok=True)
             return actual_path
 
-    channel_candidates: set[int] = set(range(1, 5))
+    channel_candidates: set[int] = set(range(1, 9))
     try:
         for child in CHANNELS_ROOT.iterdir():
             m = re.fullmatch(r"CH([1-9]\d*)", child.name, flags=re.IGNORECASE)
@@ -319,7 +319,7 @@ class _DataDirProxy:
         return getattr(self._root, item)
 
 
-for _ch in range(1, 5):
+for _ch in range(1, 9):
     get_channel_projects_root(_ch).mkdir(parents=True, exist_ok=True)
 SYSTEM_DIR.mkdir(parents=True, exist_ok=True)
 SYSTEM_PROJECTS_ROOT.mkdir(parents=True, exist_ok=True)
