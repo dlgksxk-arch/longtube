@@ -45,6 +45,30 @@ class TTSVoiceCastTests(unittest.TestCase):
                 resolved = resolve_tts_voice({"speaker": speaker}, config)
                 self.assertEqual((resolved.role, resolved.voice_id), (role, voice_id))
 
+    def test_direct_character_voice_id_map_has_priority(self):
+        config = {
+            **CONFIG,
+            "tts_character_voice_ids": {"소벌공": "sobeol-voice"},
+        }
+        resolved = resolve_tts_voice(
+            {
+                "speaker": "소벌공",
+                "voice_generation_mode": "DIALOGUE",
+            },
+            config,
+        )
+        self.assertEqual((resolved.role, resolved.voice_id), ("character", "sobeol-voice"))
+
+    def test_dialogue_without_dedicated_voice_is_blocked(self):
+        with self.assertRaisesRegex(ValueError, "전용 voice_id"):
+            resolve_tts_voice(
+                {
+                    "speaker": "소벌공",
+                    "voice_generation_mode": "DIALOGUE",
+                },
+                CONFIG,
+            )
+
     def test_elevenlabs_gets_existing_and_korean_emotion_tags(self):
         resolved = resolve_tts_voice({"speaker": "남성1", "emotion": "분출하는 분노, 핏발 선 서늘한 고함"}, CONFIG)
         self.assertEqual(resolved.emotion_tags, ("angry", "shouts"))

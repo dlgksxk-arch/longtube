@@ -46,9 +46,22 @@ def resolve_tts_voice(cut_data: dict[str, Any] | None, config: dict[str, Any] | 
     emotion = str(cut.get("emotion") or "").strip()
     role = "narrator"
     voice_id = str(cfg.get("tts_voice_id") or "").strip()
+    direct_voice_id = str(cut.get("voice_id") or "").strip()
+    character_voice_ids = cfg.get("tts_character_voice_ids")
+    if not direct_voice_id and isinstance(character_voice_ids, dict):
+        normalized_speaker = speaker.casefold()
+        for character_name, candidate_voice_id in character_voice_ids.items():
+            if str(character_name or "").strip().casefold() == normalized_speaker:
+                direct_voice_id = str(candidate_voice_id or "").strip()
+                break
+    if direct_voice_id:
+        role = "character"
+        voice_id = direct_voice_id
     explicit_role = str(cut.get("voice_role") or "").strip().lower()
     mapped_role = explicit_role if explicit_role in _VOICE_ROLES else _mapped_character_role(speaker, cfg)
-    if mapped_role:
+    if direct_voice_id:
+        pass
+    elif mapped_role:
         configured = str(cfg.get(f"tts_voice_{mapped_role}_id") or "").strip()
         if configured:
             role = mapped_role
@@ -61,6 +74,11 @@ def resolve_tts_voice(cut_data: dict[str, Any] | None, config: dict[str, Any] | 
                     role = candidate
                     voice_id = configured
                 break
+    if (
+        str(cut.get("voice_generation_mode") or "").strip().upper() == "DIALOGUE"
+        and role == "narrator"
+    ):
+        raise ValueError(f"DIALOGUE 화자 전용 voice_id가 없습니다: {speaker or '(빈 화자)'}")
     return ResolvedTTSVoice(
         voice_id=voice_id,
         role=role,

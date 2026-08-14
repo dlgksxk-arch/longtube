@@ -101,3 +101,27 @@ def scale_alignment_sidecar(audio_path: str | Path, factor: float) -> None:
     tmp = sidecar.with_name(f"{sidecar.name}.tmp")
     tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     os.replace(tmp, sidecar)
+
+
+def offset_alignment_sidecar(audio_path: str | Path, seconds: float) -> None:
+    """Shift timestamps after leading silence is added to a generated file."""
+    sidecar = alignment_sidecar_path(audio_path)
+    if not sidecar.exists() or seconds <= 0:
+        return
+    try:
+        payload = json.loads(sidecar.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+
+    for key in ("alignment", "normalized_alignment"):
+        value = payload.get(key)
+        if not isinstance(value, dict):
+            continue
+        for field in ("character_start_times_seconds", "character_end_times_seconds"):
+            times = value.get(field)
+            if isinstance(times, list):
+                value[field] = [round(max(0.0, float(item)) + seconds, 6) for item in times]
+
+    tmp = sidecar.with_name(f"{sidecar.name}.tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(tmp, sidecar)

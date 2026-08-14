@@ -901,6 +901,105 @@ def _step_voice(project_id: str, config: dict):
     project = db.query(Project).filter(Project.id == project_id).first()
     topic = project.topic if project else ""
 
+    # Factory V5 scripts carry a Voice Design cast table. Provision every
+    # DIALOGUE speaker before the first TTS request and persist the mapping on
+    # both the generated project and its source preset. A missing mapping must
+    # fail here instead of silently falling back to the narrator.
+    from app.services.tts.voice_design_cast import ensure_dialogue_voice_cast
+
+    source_project = None
+    source_project_id = str(
+        config.get("source_project_id") or config.get("template_project_id") or ""
+    ).strip()
+    if source_project_id:
+        source_project = db.query(Project).filter(Project.id == source_project_id).first()
+        if source_project and isinstance(source_project.config, dict):
+            for key in ("tts_character_voice_ids", "tts_character_voice_registry"):
+                inherited = source_project.config.get(key)
+                if isinstance(inherited, dict) and inherited:
+                    merged = dict(inherited)
+                    current = config.get(key)
+                    if isinstance(current, dict):
+                        merged.update(current)
+                    config[key] = merged
+
+    def _persist_voice_cast(_speaker: str, _record: dict) -> None:
+        if project:
+            project.config = dict(config)
+        if source_project:
+            source_config = dict(source_project.config or {})
+            source_config["tts_character_voice_ids"] = dict(
+                config.get("tts_character_voice_ids") or {}
+            )
+            source_config["tts_character_voice_registry"] = dict(
+                config.get("tts_character_voice_registry") or {}
+            )
+            for key in (
+                "factory_v5_per_cut_audio_timing",
+                "cut_audio_lead_in_sec",
+                "cut_audio_tail_sec",
+                "tts_tail_polish",
+            ):
+                if key in config:
+                    source_config[key] = config[key]
+            source_project.config = source_config
+        db.commit()
+        save_script(project_id, script, config.get("language", "ko"), config)
+
+    voice_cast_changed = ensure_dialogue_voice_cast(
+        script,
+        config,
+        on_voice_ready=_persist_voice_cast,
+        log=lambda msg: print(f"[Voice] {msg}"),
+    )
+    if voice_cast_changed:
+        _persist_voice_cast("", {})
+
+    has_per_cut_audio_timing = any(
+        isinstance(cut_data, dict)
+        and (
+            "audio_lead_in_sec" in cut_data
+            or "audio_tail_sec" in cut_data
+            or "tts_speed" in cut_data
+        )
+        for cut_data in script.get("cuts", []) or []
+    )
+    if has_per_cut_audio_timing:
+        config["factory_v5_per_cut_audio_timing"] = True
+        config["cut_audio_lead_in_sec"] = 0.0
+        config["cut_audio_tail_sec"] = 0.0
+        config["tts_tail_polish"] = False
+        _persist_voice_cast("", {})
+
+    from app.services.tts.dialogue_service import (
+        apply_cut_audio_padding,
+        generate_dialogue_groups,
+    )
+
+    dialogue_results = generate_dialogue_groups(
+        script,
+        config,
+        project_dir,
+        log=lambda msg: print(f"[Voice] {msg}"),
+    )
+    for cut_data in script.get("cuts", []) or []:
+        num = int(cut_data.get("cut_number") or 0)
+        dialogue_result = dialogue_results.get(num)
+        if not dialogue_result:
+            continue
+        cut_data["actual_duration"] = float(dialogue_result["duration"])
+        cut_data["actual_original_duration"] = float(dialogue_result["original_duration"])
+        cut = db.query(Cut).filter(Cut.project_id == project_id, Cut.cut_number == num).first()
+        if cut:
+            cut.narration = (cut_data.get("narration") or "").strip()
+            cut.audio_path = str(dialogue_result["path"])
+            cut.audio_duration = float(dialogue_result["duration"])
+            cut.audio_original_duration = float(dialogue_result["original_duration"])
+            cut.status = "voice_done"
+    if dialogue_results:
+        db.commit()
+        save_script(project_id, script, config.get("language", "ko"), config)
+
     def _generate_tts_result(
         cut_data: dict,
         output_path: str,
@@ -908,6 +1007,8 @@ def _step_voice(project_id: str, config: dict):
         spoken_narration: str,
         request_context: dict,
         cut_voice_id: str,
+        cut_speed: float,
+        cut_config: dict,
     ) -> dict:
         spoken_cut_data = dict(cut_data)
         spoken_cut_data["narration"] = spoken_narration
@@ -917,9 +1018,9 @@ def _step_voice(project_id: str, config: dict):
                 spoken_narration,
                 cut_voice_id,
                 output_path,
-                speed=speed,
+                speed=cut_speed,
                 voice_settings=voice_settings,
-                config=config,
+                config=cut_config,
                 topic=topic,
                 language=config.get("language", "ko"),
                 cut_number=int(cut_data.get("cut_number") or 0),
@@ -937,8 +1038,21 @@ def _step_voice(project_id: str, config: dict):
     for cut_data in script_cuts:
         check_pause_or_cancel(project_id, 3)
         num = cut_data["cut_number"]
+        if (cut_data.get("voice_generation_mode") or "").strip().upper() == "DIALOGUE":
+            if int(num) not in dialogue_results:
+                raise RuntimeError(f"Dialogue 음성 결과가 없습니다: cut {num}")
+            track_progress(project_id, 3)
+            continue
         output = str(project_dir / "audio" / f"cut_{num:03d}.mp3")
         original_narration = (cut_data.get("narration") or "").strip()
+        try:
+            cut_speed = float(cut_data.get("tts_speed") or speed)
+        except (TypeError, ValueError):
+            cut_speed = speed
+        cut_speed = max(0.7, min(1.2, cut_speed))
+        cut_config = dict(config)
+        if has_per_cut_audio_timing:
+            cut_config["tts_tail_polish"] = False
         prepared_tts = prepared_tts_inputs.get(int(num))
         if prepared_tts is None:
             raise ValueError(f"TTS 입력 준비 실패: cut {num}")
@@ -963,9 +1077,9 @@ def _step_voice(project_id: str, config: dict):
             provider=tts_model,
             engine_model=getattr(service, "engine_model_id", tts_model),
             voice_id=resolved_voice.voice_id or voice_id,
-            speed=speed,
+            speed=cut_speed,
             voice_settings=(
-                service.effective_voice_settings(speed, voice_settings)
+                service.effective_voice_settings(cut_speed, voice_settings)
                 if hasattr(service, "effective_voice_settings")
                 else dict(voice_settings or {})
             ),
@@ -1029,7 +1143,13 @@ def _step_voice(project_id: str, config: dict):
             spoken_narration,
             request_context,
             resolved_voice.voice_id or voice_id,
+            cut_speed,
+            cut_config,
         )
+        if has_per_cut_audio_timing:
+            lead = max(0.0, float(cut_data.get("audio_lead_in_sec") or 0.0))
+            tail = max(0.0, float(cut_data.get("audio_tail_sec") or 0.0))
+            result["duration"] = apply_cut_audio_padding(output, lead=lead, tail=tail)
         try:
             from app.services.tts.narration_fit import ensure_audio_duration_window
             original_duration = result.get("original_duration") or result.get("duration", 0.0)
